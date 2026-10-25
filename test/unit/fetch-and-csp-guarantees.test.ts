@@ -119,9 +119,9 @@ describe('CB5: a terminated listener that builds again from the same inputs is a
     const settled = () => new Promise(resolve => setTimeout(resolve, 0));
     it.each([
         ['an unknown mode (a refusal)', { mode: 'Strict' }, false],
-        ['origins that cannot be read (a refusal)', { origins: { images: 'x; script-src *' } }, false],
+        ['origins that cannot be read (a refusal)', { mode: 'strict', origins: { images: 'x; script-src *' } }, false],
         // a config other than the mount's: the same one again would be no change, and build nothing (R1:R3-7)
-        ['a build that throws (a build failure)', { capabilities: ['allow-scripts'], html: '<p>other</p>' }, true],
+        ['a build that throws (a build failure)', { mode: 'strict', capabilities: ['allow-scripts'], html: '<p>other</p>' }, true],
     ])('%s: one termination, one warning, no recursion; the state stays terminated', async (_, config, breakBuild) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount({ capabilities: ['allow-scripts'] });

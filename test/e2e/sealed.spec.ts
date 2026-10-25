@@ -6,17 +6,17 @@ import { useRecorder } from './recorder';
 import { inFrames, inView, waitInView } from './strict-view';
 
 /**
- * Sealed mode (docs/research/24_sealed_mode), opt-in with `mode: 'sealed'`: strict mode's view and worker with no
- * network. A smoke test on every engine: a sealed sandbox renders and runs an app from its files, as an embedder
+ * Sealed mode (docs/research/24_sealed_mode, ADR-008), the default: strict mode's view and worker with no network. A smoke test on every engine: a sealed sandbox renders and runs an app from its files, as an embedder
  * configures it (setConfig() itself, no baseline and no scriptUnsafe); a guest request is refused and reported and the
  * listener sees nothing, while the same request from strict mode with the listener in `origins` reaches it (positive
- * control); and a sealed config that names `origins` is refused with its reason. Evidence from outside the library
+ * control); and a sealed config that names `origins` or `fetchBridge`, with the mode written or left out, is refused
+ * with its reason. Evidence from outside the library
  * (strict-view.ts): the frames, the view's policy and body.
  */
 
 const recorder = useRecorder();
 
-const REASON = "origins and fetchBridge open the network, which sealed mode does not have: set `mode: 'strict'`";
+const REASON = "origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'`";
 
 /** Applies `config` exactly as given (no baseline) and resolves with 'ready' or 'terminated'. */
 const apply = (page: Page, config: SandboxConfig) => page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
@@ -84,5 +84,15 @@ test.describe('sealed mode', () => {
         expect(await apply(page, { mode: 'sealed', origins: { images: [recorder.allowed] } } as unknown as SandboxConfig)).toBe('terminated');
         expect((await sandbox.terminations()).at(-1)!.reason).toBe(REASON);
         expect(await apply(page, { mode: 'sealed', html: '<p>ok</p>' })).toBe('ready');
+    });
+
+    test("a config with no mode that names origins or fetchBridge is refused the same way (sealed is the default); the fix the reason names, mode: 'strict', builds", async ({ sandbox, page }) => {
+        void sandbox;
+        for (const network of [{ origins: { images: [recorder.allowed] } }, { fetchBridge: { allow: [recorder.allowed] } }]) {
+            expect(await apply(page, { html: '<p>x</p>', ...network } as unknown as SandboxConfig), JSON.stringify(network)).toBe('terminated');
+            expect((await sandbox.terminations()).at(-1)!.reason).toBe(REASON);
+            expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).shadowRoot.querySelectorAll('iframe').length)).toBe(0);
+            expect(await apply(page, { mode: 'strict', html: '<p>x</p>', hostContentSecurityPolicy: false, ...network } as SandboxConfig), JSON.stringify(network)).toBe('ready');
+        }
     });
 });

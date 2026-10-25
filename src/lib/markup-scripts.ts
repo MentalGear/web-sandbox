@@ -2,8 +2,8 @@ import { parseInert } from './trusted-types';
 
 /**
  * Finds whether guest markup asks to run script: a `script` element (any namespace) or an event handler attribute (`on…`,
- * any case, any namespace), anywhere, template contents included. Strict mode, the default, runs none of it (the
- * renderer drops both, ADR-005), so the element says so once (host.ts, _warnAboutStrictHtml).
+ * any case, any namespace), anywhere, template contents included. Strict mode's view, which sealed mode, the default,
+ * shares, runs none of it (the renderer drops both, ADR-005), so the element says so once (host.ts, _warnAboutStrictHtml).
  *
  * Read with the host's DOMParser (parseInert, trusted-types.ts): a parsed document has no browsing context, so nothing in it runs or loads. Only
  * elements and attribute names are read, so text, comments, raw-text content (`<textarea>`, `<style>`, `<title>`) and

@@ -24,9 +24,9 @@ const ENTRY = `sandboxView.render('<p id="hello">hi</p>'); console.log('ENTRY RA
 // without the bootstrap would still be seen.
 const GUEST_SCRIPT = `<script>top.postMessage({ guestRan: true }, '*')</script>`;
 const MODES: readonly [name: string, config: object][] = [
-    ['strict', { entry: 'main.js' }],
+    ['strict', { mode: 'strict', entry: 'main.js' }],
     ['sealed', { mode: 'sealed', entry: 'main.js' }],
-    ['strict with the fetch bridge', { entry: 'main.js', fetchBridge: { allow: ['https://api.example'] } }],
+    ['strict with the fetch bridge', { mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['https://api.example'] } }],
     ['cooperative', { mode: 'cooperative', capabilities: ['allow-scripts'], html: `<p>x</p>${GUEST_SCRIPT}` }],
     ['worker', { mode: 'worker' }],
 ];
@@ -110,7 +110,7 @@ async function bootstrapTexts(sandbox: SandboxDriver): Promise<Texts> {
         });
     };
     await sandbox.registerFiles({ 'main.js': ENTRY });
-    const strict = await read({ entry: 'main.js', fetchBridge: { allow: ['https://api.example'] } });
+    const strict = await read({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['https://api.example'] } });
     const cooperative = await read({ mode: 'cooperative', capabilities: ['allow-scripts'], html: '<p>x</p>' });
     const worker = await read({ mode: 'worker' });
     expect(strict.inner).toBe(strict.bridge); // the one hashed bootstrap: the view's document and the bridge frame's

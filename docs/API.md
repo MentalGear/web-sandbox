@@ -92,24 +92,26 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 ## Configuration
 
-<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig, api:SealedSandboxConfig, api:NetworkSandboxOptions sig:555e5a254f4fbd6c0745f42e3088805fcb46 -->
+<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig, api:SealedSandboxConfig, api:NetworkSandboxOptions sig:2daf5a254f4fbd6cdaecf42e3088af61cb46 -->
 [`setConfig(config)`](#setconfigconfig) takes a `SandboxConfig`, a union keyed by `mode` (`StrictSandboxConfig`,
 `SealedSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the
 options every mode takes; all but `SealedSandboxConfig` also extend `NetworkSandboxOptions`, the options that open the
 network: `origins` and `fetchBridge`): strict mode's `origins` has no `scripts`, a sealed config has no `origins` and no
-`fetchBridge`, and a config without `mode` is a strict config (strict mode is the default; sealed mode is named with
-`mode: 'sealed'`). How a call is applied (over the defaults, copied, validated, and what a config that cannot be used
-does) is under [`setConfig()`](#setconfigconfig) below.
+`fetchBridge`, and a config without `mode` is a sealed config (sealed mode is the default; strict mode is named with
+`mode: 'strict'`, so `{ origins }` without it does not type-check). How a call is applied (over the defaults, copied,
+validated, and what a config that cannot be used does) is under [`setConfig()`](#setconfigconfig) below.
 
 - `SandboxConfig` narrows each mode: `entry`, `allowAnimations` and `allowAutoplay` only in strict and sealed mode, `workerExecutionTimeout` not in cooperative mode,
   `html` and `autoResize` not in worker mode, `unsafeCapabilities` not in strict or sealed mode, `origins` and
   `fetchBridge` not in sealed mode. A config from JSON is held to the same rules at run time: an option outside its
   modes (the Modes column) is ignored and takes its default, with one warning for `entry`, `allowAnimations`,
   `allowAutoplay`, `unsafeCapabilities` and `autoResize`, silently for `html` and `workerExecutionTimeout`.
-- A sealed config that names `origins` or `fetchBridge` (with any value but `undefined`) is not ignored but refused,
-  since either would open the network the mode does not have: nothing of it is applied, and the sandbox terminates with
-  the reason `` origins and fetchBridge open the network, which sealed mode does not have: set `mode: 'strict'` ``
-  ([`terminated` reasons](#terminated-reasons)), as it does for a `mode` that is not one.
+- A sealed config that names `origins` or `fetchBridge` (with any value but `undefined`), with `mode: 'sealed'` written
+  or with no `mode`, is not ignored but refused, since either would open the network the mode does not have: nothing of
+  it is applied, and the sandbox terminates with the reason
+  `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``
+  ([`terminated` reasons](#terminated-reasons)), as it does for a `mode` that is not one. It is never read as strict mode
+  and never stripped: one key would otherwise change the mode, or lose the network an app relies on, silently.
 - Each option's default, accepted values, bounds, warnings and modes are declared once (`src/lib/config-schema.ts`), and
   so are the checks across options, which hold for every config: every call that `callLimits` can carry fits an empty
   window ([below](#calllimits)); a `fetchBridge` response of `maxBytes` fits one call result; a `fetchBridge` request
@@ -121,8 +123,8 @@ does) is under [`setConfig()`](#setconfigconfig) below.
 <!-- generated:begin configuration -->
 | Option | Type | Default | Modes | What it does |
 | :--- | :--- | :--- | :--- | :--- |
-| `mode` | `'strict' \| 'sealed' \| 'cooperative' \| 'worker'` | `'strict'` | — | Where guest code runs; see [Modes](#modes). `'sealed'` is strict mode with no network: a sealed config that names `origins` or `fetchBridge` is refused, and the sandbox terminates with the reason `` origins and fetchBridge open the network, which sealed mode does not have: set `mode: 'strict'` ``. Any other value starts no environment: the sandbox terminates with the reason `unknown mode …` until a valid mode is configured. `'iframe'` was renamed `'cooperative'`: refused the same way, and the reason says so. |
-| `html` | `string` | `''` | strict, sealed, cooperative | The initial view (strict and sealed mode) or the guest document (cooperative mode). In strict and sealed mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element: ``strict mode (the default) runs no script in `html`; …`` (in sealed mode ``sealed mode runs no script in `html`; …``). Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
+| `mode` | `'strict' \| 'sealed' \| 'cooperative' \| 'worker'` | `'sealed'` | — | Where guest code runs; see [Modes](#modes). `'sealed'`, the default, is strict mode with no network: a sealed config that names `origins` or `fetchBridge`, with the mode written or left out, is refused, and the sandbox terminates with the reason `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``. To open the network, name `mode: 'strict'`. Any other value starts no environment: the sandbox terminates with the reason `unknown mode …` until a valid mode is configured. `'iframe'` was renamed `'cooperative'`: refused the same way, and the reason says so. |
+| `html` | `string` | `''` | strict, sealed, cooperative | The initial view (strict and sealed mode) or the guest document (cooperative mode). In strict and sealed mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element: ``sealed mode (the default) runs no script in `html`; …`` (in strict mode ``strict mode runs no script in `html`; …``). Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
 | `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-orientation-lock`, `allow-scripts`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict and sealed mode always have `allow-scripts allow-forms` (listing either there changes nothing). |
 | `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-downloads`, `allow-forms`, `allow-modals`, `allow-pointer-lock`, `allow-popups`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `allow-pointer-lock` and `fullscreen` let a guest hide the cursor, capture relative input or draw over the whole screen, so each can imitate host or browser UI. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict and sealed mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no opener: the guest's `window.open()` returns `null`, though the page opens. |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
@@ -143,10 +145,10 @@ does) is under [`setConfig()`](#setconfigconfig) below.
 
 <!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d26274f1099fbb86493659f5 -->
 The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
-kind of load, and can change nothing else:
+kind of load, and can change nothing else. Sealed mode, the default, takes none: name the mode that does.
 
 ```js
-sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] } });
+sandbox.setConfig({ mode: 'strict', origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] } });
 ```
 
 | Kind | Directive | What loads from it |
@@ -497,7 +499,7 @@ Replaces the configuration and rebuilds the environment now (while the element i
 load(html: string): void
 ```
 
-Sets `html` (the guest document, or the initial view in strict mode), keeps the rest of the configuration and
+Sets `html` (the guest document, or the initial view in sealed and strict mode), keeps the rest of the configuration and
 rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still
 rebuilds.
 
@@ -541,7 +543,7 @@ execute(code: string): void
 ```
 
 Runs `code` in the guest's global scope as the body of a function: in the guest document in cooperative mode, in
-the worker in worker and strict mode. It is compiled with the `Function` the bootstrap captured before any guest
+the worker in worker, strict and sealed mode. It is compiled with the `Function` the bootstrap captured before any guest
 code ran. Nothing reaches the host: no return value and no report that it returned.
 
 - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
@@ -550,7 +552,7 @@ code ran. Nothing reaches the host: no return value and no report that it return
 - While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the
  guest document is parsed (see [Ready and the startup gate](#ready-and-the-startup-gate)), in order with calls.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
-- In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
+- In worker, strict and sealed mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
  the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a
  handler guest code cannot reach, and only a free event loop can run it. No answer within
  `EXECUTION_TIMEOUT_GRACE_MS` terminates the sandbox.
@@ -611,8 +613,8 @@ Calls a method the guest exposed with `bridge.expose()` and resolves with its re
 - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
  `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
  call's timeout.
-- Calls made while `'loading'` are queued and sent when the build becomes `ready`, in every mode (strict mode
- included, whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue
+- Calls made while `'loading'` are queued and sent when the build becomes `ready`, in every mode (strict and
+ sealed mode included, whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue
  and never runs. In cooperative mode a call reaches the guest's method once the guest document is parsed (see
  [Ready and the startup gate](#ready-and-the-startup-gate)).
 - Calls made while `'idle'` (not in the document) or `'terminated'` reject at once with `TERMINATED`, as
@@ -975,19 +977,19 @@ type FetchRecord = {
 | :--- | :--- |
 | `terminated by the host` | `terminate()` without a reason, or with an empty one (or with your own text instead). |
 | `the guest stopped responding (watchdog)` | `watchdogTimeout` expired. |
-| `the guest entry failed to start` | Strict mode: the entry threw or did not parse. |
+| `the guest entry failed to start` | Strict and sealed mode: the entry threw or did not parse. |
 | `the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)` | The frame loaded but the library's startup script (strict mode's view bootstrap, cooperative and worker mode's bootstrap) never checked in: the host page's policy refused it. See [Host page policy](#host-page-policy). |
-| `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)` | Strict and worker mode: the worker's script could not be loaded at all; nothing of the guest's ran. Worker mode is never `ready` then. |
+| `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)` | Strict, sealed and worker mode: the worker's script could not be loaded at all; nothing of the guest's ran. Worker mode is never `ready` then. |
 | `the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)` | The host page enforces Trusted Types and its `trusted-types` directive does not name `web-sandbox`, also when the host page's own default policy takes the element's strings (the view and worker mode's frame need the policy themselves). |
 | `the sandbox document's origin is not opaque: it is not running in the frame the library built` | A bootstrap of the library's (strict mode's view, the cooperative guest's document, worker mode's frame, the fetch bridge's frame) read an origin other than `'null'`: its document is not in a frame the library sandboxed as built. It stayed inert, so nothing of the guest's ran. |
 | `the sandbox document is not an about:srcdoc document: it is not the document the library built` | A bootstrap of the library's read a document URL other than `about:srcdoc`: its document is not the srcdoc the library wrote. It stayed inert, so nothing of the guest's ran. |
 | `the sandbox document's base URL is not about:blank: the host page's Content-Security-Policy must allow the library's <base> (base-uri must include about: or be omitted; see docs/API.md#host-page-policy)` | A bootstrap of the library's read a base URL other than `about:blank`: the host page's `base-uri` refused the `<base>` the library's wrapper sets, so the sandbox would have seen the host page's URL. It stayed inert, so nothing of the guest's ran. Allow `about:` in `base-uri`, or omit the directive (see [Host page policy](#host-page-policy)). |
 | `the host page is cross-origin isolated (COOP and COEP); a sandbox does not run there (see docs/API.md#host-page-policy)` | The host page reads `crossOriginIsolated === true` (it sends both `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`), and a guest never runs cross-origin isolated, on any engine. The element builds no frame (a bootstrap of the library's that reads it in its own document stays inert too), so nothing of the guest's ran. Serve the page that embeds a sandbox without COOP and COEP (see [Host page policy](#host-page-policy)). |
-| `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
-| `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
-| `the view spent more than 2000 ms on one operation twice within 5 minutes` | Strict mode: an operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it, and another one had, at most 5 minutes before it. The first such operation only logs a `warn` line (see [`sandbox-log`](#sandbox-log--sandboxlog)); see [`sandboxView`](#sandboxview-strict-mode). |
+| `the guest entry "…" is not a registered JavaScript file` | Strict and sealed mode: `entry` names no registered JavaScript file. |
+| `the sandbox view stopped responding` | Strict and sealed mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
+| `the view spent more than 2000 ms on one operation twice within 5 minutes` | Strict and sealed mode: an operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it, and another one had, at most 5 minutes before it. The first such operation only logs a `warn` line (see [`sandbox-log`](#sandbox-log--sandboxlog)); see [`sandboxView`](#sandboxview-strict-mode). |
 | `unknown mode …` | `mode` is not `strict`, `sealed`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`. |
-| `` origins and fetchBridge open the network, which sealed mode does not have: set `mode: 'strict'` `` | `mode` is `'sealed'` and the config names `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set. |
+| `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` `` | `mode` is `'sealed'` or left out (sealed mode is the default), and the config names `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set. |
 | `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned (the error's name follows, as in `(DataCloneError)`), an `origins` that is not an object (`(TypeError: origins is not an object)`), or a kind of it that is not a list (`(TypeError: origins.connect is not a list)`, naming the kind). |
 | `the environment could not be built (…)` | Building the frame failed. |
 | `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
@@ -995,7 +997,7 @@ type FetchRecord = {
 | `the guest frame announced itself again (it reloaded or rewrote its document)` | Cooperative and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
 | `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included). |
 | `the guest frame is missing` | The library's frame has no guest frame. |
-| `the guest raised more uncaught errors or unhandled rejections in one second than their budget allows` | Worker and strict mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)). |
+| `the guest raised more uncaught errors or unhandled rejections in one second than their budget allows` | Worker, strict and sealed mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)). |
 <!-- generated:end -->
 
 Branch on `state` and the event, not on these texts. A reason never carries the text of an error the element
@@ -1456,24 +1458,39 @@ page in Chromium and Firefox, with no user activation (measured; cooperative mod
 
 ## Modes
 
-| | `strict` (default) | `sealed` | `cooperative` | `worker` |
+| | `sealed` (default) | `strict` | `cooperative` | `worker` |
 | :--- | :--- | :--- | :--- | :--- |
-| For | content you do not trust | content you do not trust, with no network | cooperative content | headless code (frozen) |
-| Guest code runs in | a worker; the view runs only the library's hash-admitted script | as strict | the guest document | a worker spawned inside the frame |
-| Guest markup | `html` is the initial view, rendered without scripts or handlers; then `sandboxView.render()` | as strict | `html` / `load()` | none |
+| For | content you do not trust | content you do not trust that needs the network | cooperative content | headless code (frozen) |
+| Guest code runs in | a worker; the view runs only the library's hash-admitted script | as sealed | the guest document | a worker spawned inside the frame |
+| Guest markup | `html` is the initial view, rendered without scripts or handlers; then `sandboxView.render()` | as sealed | `html` / `load()` | none |
 | How code starts | `entry`, `execute()` | `entry`, `execute()` | markup scripts, `execute()` | `execute()` |
-| Network | `origins`, `fetchBridge` | none: the view's fetch directives are `'none'` or `blob:` for registered files, `connect-src 'none'`; a config that names `origins` or `fetchBridge` is refused | `origins`, `fetchBridge` | `origins`, `fetchBridge` |
+| Network | none: the view's fetch directives are `'none'` or `blob:` for registered files, `connect-src 'none'`; a config that names `origins` or `fetchBridge` is refused | `origins`, `fetchBridge` | `origins`, `fetchBridge` | `origins`, `fetchBridge` |
 | `autoResize` | ✓ | ✓ | ✓ | — |
 | `workerExecutionTimeout` | ✓ | ✓ | — | ✓ |
 | Watchdog bounds a loop | ✓ | ✓ | where the frame runs in its own process | ✓ |
 | `unsafeCapabilities` | — | — | ✓ | ✓ |
-| Files named from markup | `src`, `href`, `poster` in rendered markup | as strict | ✓ | — |
+| Files named from markup | `src`, `href`, `poster` in rendered markup | as sealed | ✓ | — |
 | Worker globals | allowlist | allowlist | — | allowlist |
 
-A config without `mode` is strict; sealed mode is named with `mode: 'sealed'`. Sealed mode is strict mode with no
+A config without `mode` is sealed; strict mode is named with `mode: 'strict'`. Sealed mode is strict mode with no
 network: the same view, worker, renderer and bootstrap, with a view policy (its worker inherits it) that admits no
-network source, and `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. `'iframe'` is not a mode; it starts nothing, like
-any value that is not a mode. [ADR-005](ADR-005-strict-mode.md)
+network source, and `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. A config with no `mode` that names `origins` or
+`fetchBridge` is refused with the reason
+`` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``.
+`'iframe'` is not a mode; it starts nothing, like any value that is not a mode. [ADR-005](ADR-005-strict-mode.md),
+[ADR-008](ADR-008-sealed-mode.md)
+
+### Migrating to sealed as the default
+
+What changes for an embed written when strict mode was the default:
+
+| You have | Now | What to do |
+| :--- | :--- | :--- |
+| no `mode`, and no `origins` or `fetchBridge` | sealed mode: the same view, worker and API, nothing visible changes. A `<script>` or `on…` handler in `html` behaves as in strict mode: it never runs, and the one warning says `sealed mode (the default) runs no script in html; …`. `connect-src` has no `blob:`, so a guest `fetch()` of its own file's URL is refused: read the file with `sandboxFiles.read()` or `text()` | nothing |
+| no `mode`, with `origins` or `fetchBridge` | refused: nothing is built, and the sandbox terminates with the reason `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``; in TypeScript, a type error | add `mode: 'strict'` |
+| `mode: 'strict'`, `'cooperative'` or `'worker'` | unchanged | nothing |
+| TypeScript that types a config with no mode as `StrictSandboxConfig` | `mode` is required there | add `mode: 'strict'`, or type it `SealedSandboxConfig` |
+| a host page policy that lists origins for the sandbox in `img-src`, `connect-src` and so on | sealed mode needs none of them | keep `blob:`; drop the origins if nothing else of the page needs them |
 
 **What strict mode does not cover**: the host page's availability wherever the view shares the host page's thread
 (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation; desktop Chromium 127+ runs it in a
@@ -1807,15 +1824,15 @@ a copy of its Content-Security-Policy list, its Trusted Types requirement and it
 policy in the list must allow a load, so your page's policy narrows the sandbox's, never widens it. What your page's
 policy must allow:
 
-| Your page's | strict (default) | cooperative | worker |
+| Your page's | sealed (default) and strict | cooperative | worker |
 | :--- | :--- | :--- | :--- |
 | `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
 | `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
 | `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; while `allowAnimations` is `false` (the default), also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
-| `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` (in `connect-src`, named by scheme and host, not `'self'`: [below](#your-connect-src)) | the same | the same |
+| `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; strict mode: every origin in `origins` (in `connect-src`, named by scheme and host, not `'self'`: [below](#your-connect-src)); sealed mode: no origin, it has none | `blob:` for registered files of that kind; every origin in `origins` | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | `base-uri` | `about:` (for example `base-uri 'self' about:`), or omit the directive: the wrapper sets `<base href="about:blank">` so the guest never sees your page's URL, and a policy that refuses it (`'self'`, `'none'`) ends the build, because every bootstrap first checks its document's base URL | the same | the same |
-| With `fetchBridge` | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy; name each origin by scheme and host, [below](#your-connect-src)) | the same: `'unsafe-inline'` admits the frame's script | the same |
+| With `fetchBridge` (not in sealed mode) | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy; name each origin by scheme and host, [below](#your-connect-src)) | the same: `'unsafe-inline'` admits the frame's script | the same |
 | Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox` from their first write (so the page gets no violation, console error or report from them), which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused. A browser without Trusted Types (Firefox 146, the version measured) cannot do this itself: pass your page's policy as `hostContentSecurityPolicy` and the library refuses as the others do (a `trusted-types` list that does not name the policy ends the build with the Trusted Types reason, and `execute()` warns and does nothing); without it nothing is applied there ([Trusted Types without the browser](#trusted-types-without-the-browser)) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
 | `Cross-Origin-Embedder-Policy: require-corp` (without `Cross-Origin-Opener-Policy: same-origin`) | works in Chromium and Firefox; WebKit refuses the view's `blob:` worker | works; resources from `origins` need CORP or CORS headers | as strict |
 | `Cross-Origin-Opener-Policy: same-origin` with `Cross-Origin-Embedder-Policy` (`require-corp` or `credentialless`), when the browser makes the page cross-origin isolated (`crossOriginIsolated` is `true`) | **not supported, on any engine**: a guest never runs cross-origin isolated. The element reads `crossOriginIsolated` of your page before it creates a frame and, when it is `true`, ends the build with `the host page is cross-origin isolated …`; no frame exists and nothing of the guest runs. The outcome follows your page's isolation, not the engine (which pairs isolate a page is the browser's: COOP with `require-corp` does everywhere, and with `credentialless` in Chromium and Firefox but not in WebKit, where the sandbox then runs). The library's own bootstraps check the same value in their documents as well | not supported (the same) | not supported (the same) |
@@ -1887,6 +1904,7 @@ violation to learn it. So a configuration that lists an `origins.connect` or `fe
 
 ```js
 sandbox.setConfig({
+    mode: 'strict',
     entry: 'main.js',
     origins: { connect: ['https://api.example.com'] },
     hostContentSecurityPolicy: "default-src 'self'; connect-src 'self' https://api.example.com", // or false
@@ -2048,15 +2066,15 @@ Types:
 | `SafeCapability` | A member of `SAFE_CAPABILITIES`: an entry of the `capabilities` option. |
 | `SandboxCapability` | A value that may end up in a frame's `sandbox` attribute: a `SafeCapability` or a member of `UNSAFE_SANDBOX_FLAGS`. |
 | `SandboxConfig` | The configuration `setConfig()` takes: a union keyed by `mode`. |
-| `SandboxConfigOptions` | The options every mode takes, and the ones a mode's config narrows (`StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`). |
+| `SandboxConfigOptions` | The options every mode takes, and the ones a mode's config narrows (`SealedSandboxConfig`, `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`). |
 | `SandboxFiles` | The guest's view of the registered files: the global `sandboxFiles`, present in every environment (empty when no file is registered). |
 | `SandboxLog` | The `detail` of a `sandbox-log` event: one log line, frozen. |
 | `SandboxLogLevel` | The level of a `SandboxLog` line. |
 | `SandboxOrigins` | The `origins` option: the exact origins the guest may load each kind of resource from, one list per kind. |
 | `SandboxState` | Where the element is in its lifecycle; read it from `state`. |
 | `SandboxViolation` | The `detail` of a `violation` event: the guest's policy refused a load. |
-| `SealedSandboxConfig` | The configuration of sealed mode: strict mode with no network. |
-| `StrictSandboxConfig` | The configuration of strict mode ([ADR-005](ADR-005-strict-mode.md)), the default: guest code runs only in a worker that a view document spawns, and the worker draws into the view with `sandboxView.render()`. |
+| `SealedSandboxConfig` | The configuration of sealed mode, the default ([ADR-008](ADR-008-sealed-mode.md)): strict mode with no network. |
+| `StrictSandboxConfig` | The configuration of strict mode ([ADR-005](ADR-005-strict-mode.md)): sealed mode's view and worker, with the network options. |
 | `StrictSandboxOrigins` | `SandboxOrigins` in strict mode: no `scripts`, since the view runs only the library's bootstrap ([ADR-005](ADR-005-strict-mode.md)). |
 | `UnsafeCapability` | A member of `UNSAFE_CAPABILITIES`: an entry of the `unsafeCapabilities` option. |
 | `UnsafePermission` | A member of `UNSAFE_PERMISSIONS`: a capability granted through the frames' `allow` attribute, not a sandbox flag. |
@@ -2099,7 +2117,7 @@ sandbox.addEventListener('ready', async () => {
 });
 ```
 
-**Strict mode (the default) with files, a watchdog and the fetch bridge**:
+**Strict mode with files, a watchdog and the fetch bridge** (sealed mode, the default, has no `fetchBridge`):
 
 ```js
 sandbox.registerFiles({
@@ -2113,6 +2131,7 @@ sandbox.registerFiles({
         });`,
 });
 sandbox.setConfig({
+    mode: 'strict',
     entry: 'main.js',
     watchdogTimeout: 2000,
     fetchBridge: { allow: ['https://api.example'] },

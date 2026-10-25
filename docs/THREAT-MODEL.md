@@ -30,23 +30,30 @@ the reasons are the [ADRs](README.md#decisions).
 fragment) and, as far as engines allow, its origin; the host page's thread (availability); the embedder's exposed
 methods and whatever data it hands the guest (which must leave only to listed origins); other sandboxes' state.
 
-**What the library promises the embedder, per mode.** Strict mode is the default and is for content you do not trust;
-sealed mode (`mode: 'sealed'`) is strict mode with no network; cooperative mode is for content that cooperates, with a
-frozen list of limits ([S44](BACKLOG.md#s44)); worker mode is frozen ([S49](BACKLOG.md#s49)).
+**What the library promises the embedder, per mode.** Sealed mode is the default and is for content you do not trust:
+strict mode's view and worker with no network ([ADR-008](ADR-008-sealed-mode.md)); strict mode (`mode: 'strict'`) adds
+the network options, `origins` and `fetchBridge`; cooperative mode is for content that cooperates, with a frozen list of
+limits ([S44](BACKLOG.md#s44)); worker mode is frozen ([S49](BACKLOG.md#s49)).
 
-| Promise | `strict` (default) | `sealed` | `cooperative` | `worker` |
+**The review board's scope is sealed mode** (owner, 2026-10-24): sealed mode at its default configuration, with its own
+opt-ins (`allowAnimations`, `allowAutoplay`, `guestWrites`, `autoResize`, `watchdogTimeout`, `workerExecutionTimeout`,
+`capabilities`, `callLimits`). A data finding that reaches only strict mode's network options (`origins`,
+`fetchBridge`) does not count against a clean pass: it is fixed, or documented as a limit of those options, as
+cooperative mode's are ([S74](BACKLOG.md#s74)). `scriptUnsafe` is for testing and outside the scope.
+
+| Promise | `sealed` (default) | `strict` | `cooperative` | `worker` |
 | :--- | :--- | :--- | :--- | :--- |
 | Guest code cannot read or change the host page's DOM, scripts, storage, Service Workers or `document.cookie` | ✓ | ✓ | ✓ | ✓ |
 | No guest script runs in any document | ✓ | ✓ | — (by design) | ✓ (the frame runs only the library's bootstrap) |
 | Guest code cannot navigate the host page, the tab or its own frame | ✓ | ✓ | ✓, except the user's modifier clicks and the guest's synthesized ones on a link ([R1:R2-2](archive/reviews/REVIEW-ROUND-1-2026-10-15.md#r1-r2-2)) and session-history entries | ✓ |
-| The guest reaches the network only through the policy (`origins`) or the fetch bridge | ✓ | stronger: no network (the view's fetch directives are `'none'` or `blob:` for registered files, `connect-src 'none'`, the request gate admits nothing, and a config that names `origins` or `fetchBridge` is refused) | ✓, except frames and workers the guest creates, WebKit's preconnect and the pre-policy window ([S8](BACKLOG.md#s8)) | ✓ |
-| A `fetch()`, `XMLHttpRequest` or `WebSocket` the policy does not admit fails, and is reported, the same on every engine | ✓ | ✓ (every one) | ✓, except frames and workers the guest creates | ✓ |
-| `fetch()` and `XMLHttpRequest` carry no cookie | ✓ | N/A: none leaves | ✓, except frames and workers the guest creates | ✓ |
-| The loads of rendered markup and CSS carry no cookie | ✓ (CORS without credentials; no network URL in CSS or a poster) | N/A: `blob:` loads only | — (the engine's) | ✓ (no document) |
-| No request carries a cookie, on any engine | ✓ (no cookie carrier: the above, and no `WebSocket`) | ✓ (no request leaves) | — ([the carriers](#cookie-carriers)) | — (a `WebSocket` handshake) |
+| The guest reaches the network only through the policy (`origins`) or the fetch bridge | stronger: no network (the view's fetch directives are `'none'` or `blob:` for registered files, `connect-src 'none'`, the request gate admits nothing, and a config that names `origins` or `fetchBridge` is refused) | ✓ | ✓, except frames and workers the guest creates, WebKit's preconnect and the pre-policy window ([S8](BACKLOG.md#s8)) | ✓ |
+| A `fetch()`, `XMLHttpRequest` or `WebSocket` the policy does not admit fails, and is reported, the same on every engine | ✓ (every one) | ✓ | ✓, except frames and workers the guest creates | ✓ |
+| `fetch()` and `XMLHttpRequest` carry no cookie | N/A: none leaves | ✓ | ✓, except frames and workers the guest creates | ✓ |
+| The loads of rendered markup and CSS carry no cookie | N/A: `blob:` loads only | ✓ (CORS without credentials; no network URL in CSS or a poster) | — (the engine's) | ✓ (no document) |
+| No request carries a cookie, on any engine | ✓ (no request leaves) | ✓ (no cookie carrier: the above, and no `WebSocket`) | — ([the carriers](#cookie-carriers)) | — (a `WebSocket` handshake) |
 | Nothing the guest reads reveals the host page's URL | ✓ | ✓ | partly: [S15](archive/backlog/BACKLOG-done.md#s15), [S17](archive/backlog/BACKLOG-done.md#s17), [S18](archive/backlog/BACKLOG-done.md#s18) | ✓ |
-| The host can always stop the guest | ✓, but `terminate()` waits for a stall of the view where it shares the host page's thread, and for reports already queued ([Availability](#availability)) | as strict | only where the frame has its own process | ✓, but it waits for reports already queued |
-| The host page's availability | a stated bound where the view shares its thread ([Availability](#availability)) | as strict | none where the frame shares its thread | the worker is off the thread; Firefox's rejection reports are bounded |
+| The host can always stop the guest | ✓, but `terminate()` waits for a stall of the view where it shares the host page's thread, and for reports already queued ([Availability](#availability)) | as sealed | only where the frame has its own process | ✓, but it waits for reports already queued |
+| The host page's availability | a stated bound where the view shares its thread ([Availability](#availability)) | as sealed | none where the frame shares its thread | the worker is off the thread; Firefox's rejection reports are bounded |
 | `violation` reports cannot be forged | the view's (`source: 'view'`) | the view's (`source: 'view'`) | no | no |
 
 ## Trust boundaries
@@ -252,6 +259,8 @@ under pressure, inconsistent state, anything that moves data or crosses the poli
 **The board's rule (owner, 2026-10-21).** In the S74 review board's fix batches, a finding that leaks data is fixed;
 every denial-of-service or availability finding, including a budget that fails open with only an availability effect,
 is backlogged. Backlogged is not mitigated and not downgraded: the gaps that remain are listed under [Resource limits](#resource-limits).
+Its scope is sealed mode, the default ([above](#assets-and-parties)): a data finding that reaches only strict mode's
+network options does not count against a clean pass.
 
 **Where the view runs.** Firefox, WebKit and Safari, Android WebView and Chromium's headless shell run the strict view on
 the host page's thread ([research 16](research/16_view_isolation/README.md)); there no budget of the library's removes
@@ -480,7 +489,7 @@ The open items of the [backlog](BACKLOG.md) that bear on this model:
 | [S79](BACKLOG.md#s79) | Medium: on desktop Chromium the view's liveness ping ends a healthy sandbox on one documented stall (fails closed) | strict |
 | [S80](BACKLOG.md#s80) | Medium: no test guards the event reads of the bootstrap's `error` and `unhandledrejection` listeners | strict, worker |
 | [S81](BACKLOG.md#s81), [S82](BACKLOG.md#s82) | Low: tests that fail under machine load; the other lows of the board's pass 1 | — |
-| [S74](BACKLOG.md#s74) | The final adversarial review board of the current state; a pass is clean when none of its findings leaks or can manipulate data (owner, 2026-10-21); passes 1 and 2 (2026-10-21) were not | — |
+| [S74](BACKLOG.md#s74) | The final adversarial review board of the current state; a pass is clean when none of its findings leaks or can manipulate data (owner, 2026-10-21); passes 1 and 2 (2026-10-21) were not; its scope is sealed mode, the default (owner, 2026-10-24) | sealed |
 
 Residuals stated in the decisions rather than the backlog: DNS rebinding for the fetch bridge
 ([ADR-006](ADR-006-fetch-bridge.md#consequences)); CSS probing the view's own content, forgeable worker reports, a

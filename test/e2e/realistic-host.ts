@@ -262,8 +262,8 @@ export class RealisticHost {
     }
 
     /**
-     * The element in a mode, as an embedder would configure it (the library's defaults, the mode named only where it is not
-     * strict, and the page's policy as `hostContentSecurityPolicy`), running `guest` (an async function body that returns what it saw; see `guestBattery()`):
+     * The element in a mode, as an embedder would configure it (the library's defaults, the mode named, and the page's
+     * policy as `hostContentSecurityPolicy`), running `guest` (an async function body that returns what it saw; see `guestBattery()`):
      * strict and sealed mode as the entry file, cooperative mode as the guest document's script, worker mode through `execute()`
      * (a page with `guestCode: 'execute'`).
      */
@@ -276,7 +276,7 @@ export class RealisticHost {
         if (mode === 'strict' || mode === 'sealed') {
             if (source !== undefined) await sandbox.registerFiles({ 'main.js': `sandboxView.render('<p id="hello">hello</p>'); ${source}` });
             else await sandbox.registerFiles({ 'main.js': `sandboxView.render('<p id="hello">hello</p>');` });
-            return this.configure({ ...(mode === 'sealed' ? { mode } : {}), entry: 'main.js', ...shared });
+            return this.configure({ mode, entry: 'main.js', ...shared });
         }
         if (mode === 'cooperative') {
             const html = `<p>guest document</p>${source === undefined ? '' : `<script>${source.replace(/<\/script/gi, '<\\/script')}</script>`}`;

@@ -96,7 +96,7 @@ async function ownRequestControl(host: RealisticHost, name: string, browserName:
     return worker;
 }
 
-test.describe('strict mode (the default)', () => {
+test.describe('the view modes: sealed (the default) and strict', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         test('the default configuration starts on the production host, renders, runs its worker, and stops cleanly', async ({ sandbox, page, browserName }) => {
             const host = await RealisticHost.open(sandbox, { mode });

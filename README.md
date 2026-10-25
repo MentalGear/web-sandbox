@@ -8,11 +8,13 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
 
 **Key Features:**
 *   **Local-First:** No server round-trips for code execution.
-*   **Secure by default:** [strict mode](#strict-mode), the default, runs guest code only in a worker; the visible
-    frame runs no guest script. Every guest runs in an opaque origin: no access to the host origin's storage, Service
-    Workers, DOM or scripts. No request of strict mode carries a cookie, on any engine (its worker opens no WebSocket),
-    and it admits no `origins` entry on the host page's site (see [Cookies](#limits)). [Cooperative mode](#modes) runs guest script
-    in a document, for content that cooperates, with the [limits listed below](#limits).
+*   **Secure by default:** [sealed mode](#modes), the default, runs guest code only in a worker, the visible frame
+    runs no guest script, and nothing of either reaches the network: no option of the mode opens it. Every guest runs
+    in an opaque origin: no access to the host origin's storage, Service Workers, DOM or scripts. [Strict
+    mode](#strict-mode) is the same view and worker with the network options (`origins`, `fetchBridge`); no request of
+    strict mode carries a cookie, on any engine (its worker opens no WebSocket), and it admits no `origins` entry on the
+    host page's site (see [Cookies](#limits)). [Cooperative mode](#modes) runs guest script in a document, for content
+    that cooperates, with the [limits listed below](#limits).
 *   **Unified:** Use the same "Preset" definitions for both manual testing (Playground) and automated regression testing.
 
 ## Getting Started
@@ -52,7 +54,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full workflow.
 
 Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/playground/index.html).
 
-*   **Presets:** Select a scenario from the dropdown to load pre-configured code and security rules; the playground opens on a strict-mode demo, the default mode. Every preset names the mode it was written for. The regression specs run the very same presets (`fromPreset()` in `test/e2e/presets.ts`), and a unit test fails if a security preset has no spec. A preset says whether to use "Run Code" or "Run as HTML".
+*   **Presets:** Select a scenario from the dropdown to load pre-configured code and security rules; the playground opens on a sealed-mode demo, the default mode. Every preset names the mode it was written for. The regression specs run the very same presets (`fromPreset()` in `test/e2e/presets.ts`), and a unit test fails if a security preset has no spec. A preset says whether to use "Run Code" or "Run as HTML".
 *   **Code Editor:** Modify the JavaScript code to test different behaviors.
 *   **Rules Editor:** The configuration as JSON: execution mode, capabilities, the `origins` the guest may load from.
 *   **Logs:** View `console.log` output and security events from within the sandbox.
@@ -83,8 +85,13 @@ import { defineWebSandbox } from 'web-sandbox';   // or './src/index.ts' from a 
 
 defineWebSandbox();                 // registers <web-sandbox>; pass a name to use your own tag
 const sandbox = document.querySelector('web-sandbox');
-sandbox.load('<h1>Hello</h1>');     // strict mode, the default: shown, and no script in it runs
+sandbox.load('<h1>Hello</h1>');     // sealed mode, the default: shown, no script in it runs, no network
 ```
+
+**Need the network? Use `mode: 'strict'`.** Sealed mode has no `origins` and no `fetchBridge`: a config that names
+either without `mode: 'strict'` is refused, and the sandbox terminates with the reason ``origins and fetchBridge open
+the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``. An embed written when strict mode
+was the default: [Migrating to sealed as the default](docs/API.md#migrating-to-sealed-as-the-default).
 
 Importing the module registers nothing, so you choose the tag name. The element is a block by default; give it a
 height. The package is private and not published yet ([D1](docs/BACKLOG.md#bl-d1)), so `import … from 'web-sandbox'`
@@ -97,27 +104,30 @@ the browser ([Host page policy](docs/API.md#host-page-policy)). `bun run dev` se
 page's Content-Security-Policy, Trusted Types and Cross-Origin-Embedder-Policy. A host policy that refuses what the
 sandbox needs ends the build with a reason that names it; what to allow, per mode, is in
 [API.md](docs/API.md#host-page-policy). Cooperative and worker mode need `'unsafe-inline'` in your `script-src`, which
-browsers ignore next to a hash or a nonce: they cost a page its own nonce- or hash-based script policy, so prefer strict mode.
+browsers ignore next to a hash or a nonce: they cost a page its own nonce- or hash-based script policy, so prefer sealed
+mode (the default) or strict mode.
 
 ### Modes
 
 | Mode | Guest code runs in | For |
 | :--- | :--- | :--- |
-| `strict` (default) | a worker; the view runs only the library's own script, admitted by its hash, and shows what the worker renders | content you do not trust ([Strict mode](#strict-mode)) |
-| `sealed` | as strict, with no network: the view's policy admits only `blob:` for registered files, `connect-src 'none'`, and a config that names `origins` or `fetchBridge` is refused (named with `mode: 'sealed'`) | content you do not trust that needs no network ([API](docs/API.md#modes)) |
+| `sealed` (default) | a worker; the view runs only the library's own script, admitted by its hash, and shows what the worker renders. No network: the view's policy admits only `blob:` for registered files and `connect-src 'none'`, and a config that names `origins` or `fetchBridge` is refused | content you do not trust ([Strict mode](#strict-mode) describes the view and worker it shares; [API](docs/API.md#modes)) |
+| `strict` | as sealed, with the network options: `origins` and `fetchBridge` (named with `mode: 'strict'`) | content you do not trust that needs the network ([Strict mode](#strict-mode)) |
 | `cooperative` | the guest document: its scripts, handlers and `execute()` | cooperative content: code that does not attack the page, such as your own, within the [cooperative-mode limits](#cooperative-mode-limits) |
 | `worker` | a worker inside a hidden frame; no markup, code through `execute()` | headless code; frozen, to be folded into strict mode |
 
-In strict mode `html` (and `load()`) is the initial view: its `<script>` elements and `on…` handlers never run, and
-the element says so once (`strict mode (the default) runs no script in html; …`). Put the code in a registered file
-named by `entry`, or choose `mode: 'cooperative'`. `mode: 'iframe'` is not a mode: it starts nothing,
-and the `terminated` reason names `'cooperative'`.
+In sealed and strict mode `html` (and `load()`) is the initial view: its `<script>` elements and `on…` handlers never
+run, and the element says so once (`sealed mode (the default) runs no script in html; …`, or `strict mode …`). Put the
+code in a registered file named by `entry`, or choose `mode: 'cooperative'`. `mode: 'iframe'` is not a mode: it starts
+nothing, and the `terminated` reason names `'cooperative'`.
 
-**The guest reaches nothing by default.** List the exact origins it may load each kind from in `origins`
-(`connect`, `images`, `styles`, `fonts`, `media`, `scripts`); everything else in its policy is fixed:
+**The guest reaches nothing by default.** Sealed mode has no network at all. In strict mode, list the exact origins it
+may load each kind from in `origins` (`connect`, `images`, `styles`, `fonts`, `media`, `scripts`); everything else in
+its policy is fixed:
 
 ```js
 sandbox.setConfig({
+    mode: 'strict', // the network options need it: without a mode the config is sealed, and refused
     entry: 'main.js',
     origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] },
     hostContentSecurityPolicy: false, // your page's Content-Security-Policy as text, or false if it sends none (below)
@@ -252,7 +262,7 @@ Why it is built this way: [ADR-003](docs/ADR-003-lifecycle-and-liveness.md).
 
 ## Auto-sizing
 
-With `autoResize: true` (strict and cooperative mode, off by default) the element's height follows the guest's
+With `autoResize: true` (sealed, strict and cooperative mode, off by default) the element's height follows the guest's
 content, growing and shrinking with it, a frame or two after the content changes.
 
 ```js
@@ -328,7 +338,7 @@ sandbox.registerFiles({ 'main.js': `
     bridge.expose('sum', (a, b) => a + b);                  // guest method, callable by the host
     bridge.call('ping').then(reply => console.log(reply));  // logs "pong"
 ` });
-sandbox.setConfig({ entry: 'main.js' });                    // strict mode runs the entry in its worker
+sandbox.setConfig({ entry: 'main.js' });                    // sealed mode, the default, runs the entry in its worker
 
 const total = await sandbox.call('sum', 1, 2);              // 3, once the sandbox is ready
 ```
@@ -373,19 +383,20 @@ Why it is built this way: [ADR-002](docs/ADR-002-host-guest-broker.md).
 
 ## Fetch bridge
 
-By default the guest reaches no network at all (`connect-src 'none'`). With `fetchBridge`, the guest gets
-`sandboxFetch(url, init)`: the **host** decides each request under a fixed discipline and logs it, and a hidden
+By default the guest reaches no network at all (sealed mode, `connect-src 'none'`). With `fetchBridge` (strict,
+cooperative and worker mode), the guest gets `sandboxFetch(url, init)`: the **host** decides each request under a fixed discipline and logs it, and a hidden
 frame of the library's, with an opaque origin of its own, makes it. The guest policy does not change: direct `fetch`
 and `WebSocket` stay refused unless `origins.connect` lists them (and in strict mode `WebSocket` stays refused).
 
 ```js
-// strict mode, the default: the guest's code is a registered file, named by `entry`
+// strict mode: the guest's code is a registered file, named by `entry`
 sandbox.registerFiles({ 'main.js': `
     sandboxFetch('https://api.example/items', { headers: { accept: 'application/json' } })
         .then(response => response.json())
         .then(items => console.log(items.length));
 ` });
 sandbox.setConfig({
+    mode: 'strict', // sealed mode, the default, has no fetchBridge: naming it there is refused
     entry: 'main.js',
     fetchBridge: { allow: ['https://api.example'], maxBytes: 1024 * 1024, timeoutMs: 10000 },
     hostContentSecurityPolicy: false, // your page's policy as text, or false if it sends none
@@ -434,7 +445,8 @@ sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.u
     the library applies it from `hostContentSecurityPolicy` (left out, `allow` is dropped: [API](docs/API.md#your-connect-src)). A
     frame whose script never runs while the sandbox does fails closed: every request is refused with `FETCH_FAILED`.
 *   `sandboxFetch` is a separate global; `fetch` itself is untouched (assign `globalThis.fetch = sandboxFetch`
-    in the guest if you want that). It works in every mode. The name `sandbox:fetch`, like every
+    in the guest if you want that). It works in every mode but sealed, where it rejects with `FETCH_NOT_ALLOWED` and
+    sends nothing. The name `sandbox:fetch`, like every
     method name starting with `sandbox:`, is reserved: `expose()` refuses it on both sides.
 
 Why it is built this way: [ADR-006](docs/ADR-006-fetch-bridge.md).
@@ -549,7 +561,7 @@ sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the fl
     plus `FILES_BUSY` past the rate and `FILES_NOT_ALLOWED` when writes are off.
 *   **The guest sees its own writes** in `list()`, `read()` and `text()` once the host accepted them, but
     `url()` of a written path is `NOT_FOUND`: the guest gets no URL for anything it wrote.
-*   **Strict mode shows written images**: a PNG, JPEG, GIF, WebP or AVIF the guest wrote (a chart drawn on an
+*   **Sealed and strict mode show written images**: a PNG, JPEG, GIF, WebP or AVIF the guest wrote (a chart drawn on an
     `OffscreenCanvas`) can be named by path in an `<img>` of the next render, without a rebuild. The view makes the URL
     from the bytes the host holds, and only decodes it; a later write replaces it, a removal ends it. Nothing else the
     guest writes loads anywhere.
@@ -566,9 +578,11 @@ Why it is built this way: [ADR-004](docs/ADR-004-files-as-blob-urls.md).
 
 ## Strict mode
 
-Strict mode, the default (`mode: 'strict'`, or no `mode`), takes guest script out of every document. Guest code runs
-only in a worker; the visible frame (the *view*) runs one script, the library's own, admitted by its hash, and shows
-what the worker renders.
+Strict mode (`mode: 'strict'`) takes guest script out of every document. Guest code runs only in a worker; the visible
+frame (the *view*) runs one script, the library's own, admitted by its hash, and shows what the worker renders. Sealed
+mode, the default (no `mode`, or `mode: 'sealed'`), is this view and worker with no network: everything below holds
+for it, except what names `origins` or `fetchBridge`, which sealed mode refuses
+([ADR-008](docs/ADR-008-sealed-mode.md)).
 
 ```js
 sandbox.registerFiles({
@@ -576,7 +590,7 @@ sandbox.registerFiles({
                 sandboxView.on('click', 'go', () => sandboxView.render('clicked', 'out'));`,
     'logo.png': pngBytes,
 });
-sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
+sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
 ```
 
 *   **Guest API (in the worker)**: `sandboxView.render(html, into?)` replaces the view's body, or the children of
@@ -664,7 +678,7 @@ defense:
 10. **No WebRTC in the Guest**: The bootstrap removes `RTCPeerConnection` from the guest's global scope before guest code runs (workers never have it), since no CSP directive governs ICE traffic. A frame the guest creates is a realm of its own and keeps it, and its ICE traffic leaves the sandbox ([backlog S13](docs/BACKLOG.md)); strict mode closes this.
 11. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer, and WebKit sends the full host URL to a same-site origin ([backlog S18](docs/BACKLOG.md)); WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)). Strict mode closes S17 and S18.
 12. **Mediated Network, Opt-In**: With `fetchBridge`, the host decides the guest's requests, to exact listed origins only, without credentials, referrer or redirects, with capped bodies, time and concurrency, and logs each one; a hidden frame of the library's with an opaque origin makes them, so the host page's Service Worker and `fetch` wrappers never apply, and the target sees `Origin: null`. The guest policy stays as strict as configured ([ADR-006](docs/ADR-006-fetch-bridge.md)).
-13. **Strict Mode, the Default**: Guest code only in a worker; a view whose one script is the library's, admitted by its hash, with rendered markup cleaned before it is inserted and moved, never cloned ([ADR-005](docs/ADR-005-strict-mode.md)).
+13. **Sealed Mode, the Default, and Strict Mode**: Guest code only in a worker; a view whose one script is the library's, admitted by its hash, with rendered markup cleaned before it is inserted and moved, never cloned ([ADR-005](docs/ADR-005-strict-mode.md)). Sealed mode, the default, has no network by construction: its policy template has no origin to write, its build never runs the network code, and a config that names `origins` or `fetchBridge` is refused ([ADR-008](docs/ADR-008-sealed-mode.md)).
 14. **Fail Closed on Configuration**: A `mode` the element does not know starts no environment (the sandbox terminates with a reason) rather than falling back to the default (`'iframe'`, renamed `'cooperative'`, is refused like any unknown mode).
 15. **Guest-Realm Hardening (cooperative and worker mode)**: Gaps no CSP directive covers are closed in the guest's realm before guest code runs: `fetch()` with `keepalive` is refused (Firefox sends it past `connect-src`); `history.back()`, `forward()`, `go()` and the Navigation API's traversal do nothing (Firefox and WebKit let them move the host page); `window.name` is inert (a named guest frame received the host's named navigations and `window.open()` handles); DNS prefetching is off; no worker loads from `data:` (WebKit runs a `data:` SharedWorker outside the policy). [Broad review](docs/archive/reviews/BROAD-REVIEW-2026-10-14.md). This list is frozen: a new gap in cooperative mode is a [limit](#cooperative-mode-limits), not a new patch.
 
@@ -674,7 +688,8 @@ One list, the same in [API.md](docs/API.md#modes) and the [backlog](docs/BACKLOG
 
 ### What strict mode does not cover
 
-What remains for the default:
+What remains for strict mode and for sealed mode, the default, which shares its view and worker (sealed mode has no
+network, so the items about requests and cookies are strict mode's):
 
 *   **The host page's availability**: strict mode protects confidentiality and egress. It does not protect the host
     page's availability wherever the view shares the host page's thread: Firefox, Safari and every WebKit browser,
@@ -723,8 +738,8 @@ What remains for the default:
 ### Cooperative-mode limits
 
 Cooperative mode is for cooperative content. Its limits are a frozen list: the library adds no new guest-realm
-patches there, and a new finding in cooperative mode is added here as a limit. None of them applies in strict mode,
-the default. Measured per engine and asserted by tests; worker mode shares the reporting item, and nothing else here.
+patches there, and a new finding in cooperative mode is added here as a limit. None of them applies in sealed mode,
+the default, or in strict mode. Measured per engine and asserted by tests; worker mode shares the reporting item, and nothing else here.
 
 *   **Same-thread execution**: where the browser runs the guest frame on the host page's thread (WebKit always,
     Chromium in some environments), a guest loop freezes the host page and no watchdog can stop it.

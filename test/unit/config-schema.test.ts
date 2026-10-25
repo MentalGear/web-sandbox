@@ -249,7 +249,7 @@ describe('the config schema: every option, normalised once, with the cross-field
     }, 30000);
 
     it('a refused config gives no config, only the warnings said before what refused it', () => {
-        for (const config of [null, 5, [], 'x', { origins: null }, { origins: 'x' }, { origins: { images: 'x' } }, { capabilities: 5, origins: [] }]) {
+        for (const config of [null, 5, [], 'x', { mode: 'strict', origins: null }, { mode: 'strict', origins: 'x' }, { mode: 'strict', origins: { images: 'x' } }, { mode: 'strict', capabilities: 5, origins: [] }]) {
             const { value, warnings, refusal } = normaliseWhole(config);
             expect(value, shownCase(config)).toBeNull();
             expect(refusal).toBeInstanceOf(TypeError);
@@ -304,7 +304,7 @@ describe("the config schema, which docs/API.md's Configuration table is generate
 
     // Each option's edges, as its row describes them: [option, given, mode, stored, a warning that contains this or null].
     const EDGE_TABLE: [string, unknown, SandboxMode, unknown, string | null][] = [
-        ['mode', undefined, 'strict', 'strict', null],
+        ['mode', undefined, 'sealed', 'sealed', null],
         ['html', 5, 'strict', '', '"html" must be a string; a value of type number was dropped.'],
         ['html', '<p>', 'worker', '', null],
         ['capabilities', ['allow-forms'], 'cooperative', [], '"allow-forms" is not allowed in "capabilities" and was dropped. It reaches outside the sandbox'],
@@ -358,10 +358,10 @@ describe("the config schema, which docs/API.md's Configuration table is generate
 
     it('the parsed options: fetchBridge off or its policy, callLimits its budget, origins its lists', () => {
         expect(normaliseWhole({}).value!.fetchPolicy).toBeNull();
-        expect(normaliseWhole({ fetchBridge: true }).value!.fetchPolicy).toBeNull();
-        expect(normaliseWhole({ fetchBridge: { allow: [] } }).value!.fetchPolicy).toMatchObject({ allow: [], maxBytes: 1048576, timeoutMs: 10000, maxConcurrent: 4 });
+        expect(normaliseWhole({ mode: 'strict', fetchBridge: true }).value!.fetchPolicy).toBeNull();
+        expect(normaliseWhole({ mode: 'strict', fetchBridge: { allow: [] } }).value!.fetchPolicy).toMatchObject({ allow: [], maxBytes: 1048576, timeoutMs: 10000, maxConcurrent: 4 });
         expect(normaliseWhole({ callLimits: { maxPerSecond: 0 } }).value!.callBudget).toEqual(DEFAULT_CALL_BUDGET);
-        expect(normaliseWhole({ origins: { scripts: ['https://s.example'] } }).value!.origins.scripts).toEqual([]);
+        expect(normaliseWhole({ mode: 'strict', origins: { scripts: ['https://s.example'] } }).value!.origins.scripts).toEqual([]);
         expect(normaliseWhole({ mode: 'cooperative', origins: { scripts: ['https://s.example'] } }).value!.origins.scripts).toEqual(['https://s.example']);
     });
 });
@@ -427,15 +427,15 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         expect(kept('cooperative', { images: ['http://127.0.0.1:9000'] }, { hostOrigin: '', hostSites: [''] }).images).toEqual([]);
     });
 
-    it('strict is the default mode: a config that names none drops the host origin; the dropped policy is frozen, and an untouched one is the parsed one', () => {
-        const result = normaliseConfig({ origins: { connect: [PAGE], images: ['https://img.other.example'] } }, { hostOrigin: PAGE, hostSites: [PAGE] });
+    it('strict mode drops the host origin; the dropped policy is frozen, and an untouched one is the parsed one', () => {
+        const result = normaliseConfig({ mode: 'strict', origins: { connect: [PAGE], images: ['https://img.other.example'] } }, { hostOrigin: PAGE, hostSites: [PAGE] });
         expect(result.value!.origins.connect).toEqual([]);
         expect(result.value!.origins.images).toEqual(['https://img.other.example']);
         expect(Object.isFrozen(result.value!.origins)).toBe(true);
         expect(Object.isFrozen(result.value!.origins.connect)).toBe(true);
         expect(Object.isFrozen(result.value!.origins.images)).toBe(true);
         expect(result.warnings.filter(message => SAID.test(message))).toEqual([expect.stringContaining('origins.connect dropped')]);
-        const untouched = normaliseConfig({ origins: { images: ['https://img.other.example'] } }, { hostOrigin: PAGE, hostSites: [PAGE] }).value!.origins;
+        const untouched = normaliseConfig({ mode: 'strict', origins: { images: ['https://img.other.example'] } }, { hostOrigin: PAGE, hostSites: [PAGE] }).value!.origins;
         expect(Object.isFrozen(untouched) && Object.isFrozen(untouched.images)).toBe(true);
     });
 
@@ -495,13 +495,13 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
 
     it('fetchBridge.allow: a loopback, private or link-local host is dropped with one warning from a host page that is not on one, kept with a warning from one that is; the host page\'s own origin is still honoured', () => {
         const allow = ['https://api.example', 'http://127.0.0.1:8080', 'https://10.0.0.5'];
-        const publicPage = normaliseConfig({ fetchBridge: { allow } }, { hostOrigin: PAGE, hostSites: [PAGE] });
+        const publicPage = normaliseConfig({ mode: 'strict', fetchBridge: { allow } }, { hostOrigin: PAGE, hostSites: [PAGE] });
         expect(publicPage.value!.fetchPolicy!.allow).toEqual(['https://api.example']);
         expect(publicPage.warnings.filter(message => message.startsWith('[Sandbox] fetchBridge.allow dropped'))).toHaveLength(2);
-        const localPage = normaliseConfig({ fetchBridge: { allow } }, { hostOrigin: LOCAL_PAGE, hostSites: [LOCAL_PAGE] });
+        const localPage = normaliseConfig({ mode: 'strict', fetchBridge: { allow } }, { hostOrigin: LOCAL_PAGE, hostSites: [LOCAL_PAGE] });
         expect(localPage.value!.fetchPolicy!.allow).toEqual(allow);
         expect(localPage.warnings.filter(message => message.startsWith('[Sandbox] fetchBridge.allow lists'))).toHaveLength(2);
-        const own = normaliseConfig({ fetchBridge: { allow: [PAGE] } }, { hostOrigin: PAGE, hostSites: [PAGE] });
+        const own = normaliseConfig({ mode: 'strict', fetchBridge: { allow: [PAGE] } }, { hostOrigin: PAGE, hostSites: [PAGE] });
         expect(own.value!.fetchPolicy!.allow).toEqual([PAGE]);
         expect(own.warnings).toEqual([expect.stringContaining("lists the host page's own origin")]);
     });
@@ -547,8 +547,8 @@ describe('config reads: own fields only', () => {
     const PLANTED: unknown[] = [['DELETE', 'authorization', 'https://evil.example', 'allow-popups'], 1e308, 'cooperative', true, { images: ['https://evil.example'] }];
     const CONFIGS: unknown[] = [
         {},
-        { fetchBridge: { allow: ['https://api.example'] }, callLimits: {}, origins: {} },
-        { fetchBridge: {}, callLimits: { maxPerSecond: 5 }, origins: { images: ['https://img.example'] } },
+        { mode: 'strict', fetchBridge: { allow: ['https://api.example'] }, callLimits: {}, origins: {} },
+        { mode: 'strict', fetchBridge: {}, callLimits: { maxPerSecond: 5 }, origins: { images: ['https://img.example'] } },
         { mode: 'worker', fetchBridge: { allow: [], methods: ['GET'], headers: ['x-a'], maxBytes: 5, timeoutMs: 5, maxConcurrent: 1 }, callLimits: { maxBytesPerSecond: 99999999 } },
         { mode: 'cooperative', capabilities: [], unsafeCapabilities: [], html: '<p>', origins: { scripts: [], connect: [] }, fetchBridge: { maxBytes: 5 } },
     ];
@@ -583,7 +583,7 @@ describe('config reads: own fields only', () => {
     });
 
     it('the comparison sees a difference when there is one', () => {
-        expect(parse({ fetchBridge: { allow: ['https://api.example'] } })).not.toBe(parse({ fetchBridge: { allow: ['https://api.example'], maxBytes: 5 } }));
+        expect(parse({ mode: 'strict', fetchBridge: { allow: ['https://api.example'] } })).not.toBe(parse({ mode: 'strict', fetchBridge: { allow: ['https://api.example'], maxBytes: 5 } }));
         expect(parse({ callLimits: {} })).not.toBe(parse({ callLimits: { maxPerSecond: 7 } }));
     });
 

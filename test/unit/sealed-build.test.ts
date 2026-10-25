@@ -114,7 +114,8 @@ describe("the sealed path reads nothing of the host page's origin or site, and r
     it('setConfig(), reset(), load(), registerFiles() and a switch from strict mode: no read of the host page and no network code, in the config or the build', async () => {
         const el = await mount();
         el.registerFiles({ 'main.js': 'void 0', 'a.css': 'p { color: red }', 'b.png': 'x', 'c.json': '{}' });
-        for (const fn of Object.values(NETWORK)) fn.mockClear(); // the element's first build (strict, the default)
+        el.setConfig({ mode: 'strict' }); // a strict build first, which runs the network code
+        for (const fn of Object.values(NETWORK)) fn.mockClear();
         el.setConfig(SEALED_EVERY);
         expect(el.state).toBe('loading');
         el.reset();
@@ -149,12 +150,12 @@ describe("the sealed path reads nothing of the host page's origin or site, and r
     it("normaliseConfig: a sealed config never asks for the host page (its function is not called); strict, cooperative and worker configs ask once", () => {
         let asked = 0;
         const page = (): NormaliseContext => { asked++; return { hostOrigin: 'https://app.example', hostSites: ['https://app.example'] }; };
-        for (const config of [{ mode: 'sealed' }, SEALED_EVERY]) {
+        for (const config of [{ mode: 'sealed' }, {}, SEALED_EVERY]) {
             const { value, refusal } = normaliseConfig(config, page);
             expect([refusal, value!.fetchPolicy, value!.origins.connect, value!.origins.images]).toEqual([null, null, [], []]);
         }
         expect(asked).toBe(0);
-        for (const mode of ['strict', 'cooperative', 'worker', undefined]) {
+        for (const mode of ['strict', 'cooperative', 'worker']) {
             asked = 0;
             normaliseConfig({ mode, origins: { connect: [API] }, fetchBridge: { allow: [API] } }, page);
             expect(asked, String(mode)).toBe(1); // once per argument, for both rules
@@ -560,15 +561,15 @@ describe("T9: every row of the host page's context says what it is in sealed mod
 // ---- the strict-html warning in the mode's words
 
 describe("the warning about scripts in `html` names sealed mode in sealed mode", () => {
-    it('sealed says sealed mode, once per element; strict says strict mode (the default)', async () => {
+    it('sealed says sealed mode (the default), once per element; strict says strict mode', async () => {
         const warn = vi.mocked(console.warn);
         const el = await mount();
         el.setConfig({ mode: 'sealed', html: '<script>x()</script>' });
         el.setConfig({ mode: 'sealed', html: '<p onclick="y()">y</p>' });
         const said = () => warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('runs no script in `html`'));
-        expect(said()).toEqual(["[Sandbox] sealed mode runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`."]);
+        expect(said()).toEqual(["[Sandbox] sealed mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`."]);
         el.setConfig({ mode: 'strict', html: '<script>x()</script>' });
-        expect(said()[1]).toBe("[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.");
+        expect(said()[1]).toBe("[Sandbox] strict mode runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.");
     });
 
     it("a registered stylesheet's network URL: sealed mode's warning names no origin to list, strict mode's does", async () => {

@@ -43,7 +43,7 @@ describe("the element tells the config the host page's origin (BD1:NEW-1)", () =
 
     it("fetchBridge.allow naming the host page's own origin warns once", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        await mount({ fetchBridge: { allow: [globalThis.origin] } });
+        await mount({ mode: 'strict', fetchBridge: { allow: [globalThis.origin] } });
         expect(warnings().filter(m => m.includes("fetchBridge.allow lists the host page's own origin"))).toHaveLength(1);
     });
 });
@@ -84,7 +84,7 @@ describe("the element decides the host page's site from its realm, with no probe
         expect(cooperative._origins.connect).toEqual([]);
         expect(cooperative._origins.images).toEqual(['https://cdn.other.example']);
 
-        const strict = await mount({ origins: { images: ['https://api.wiring.co.uk'] } });
+        const strict = await mount({ mode: 'strict', origins: { images: ['https://api.wiring.co.uk'] } });
         expect(warnings().filter(m => m.includes("origins.images dropped https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(1);
         expect(strict._origins.images).toEqual([]);
         expect({ cookieWrites, cookieReads }).toEqual({ cookieWrites: 0, cookieReads: 0 });

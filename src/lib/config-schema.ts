@@ -160,7 +160,8 @@ export class ConfigRefusal extends Error {
 
 /**
  * A sealed config that names `origins` or `fetchBridge` (with any value but `undefined`) is refused whole, with its
- * reason (`sealedNetwork`), never read as another mode and never stripped. An option outside its modes is otherwise
+ * reason (`sealedNetwork`), never read as another mode and never stripped: the mode written, or implied (sealed is the
+ * default, so a config that names no mode is sealed; ADR-008). An option outside its modes is otherwise
  * ignored with a warning; these two would open the network the mode does not have, so silence would be the wrong failure.
  */
 export function sealedNetworkRefusal(mode: unknown, source: Record<string, unknown>): ConfigRefusal | null {
@@ -412,15 +413,17 @@ const SITE_COOKIES = sameSiteCookieClause();
  */
 export const CONFIG_SCHEMA = {
     mode: {
-        default: 'strict', documented: "`'strict'`", modes: ALL_MODES,
+        // sealed, the mode with no network, is the default (ADR-008): a config that names no mode and names origins or
+        // fetchBridge is a sealed config, so it is refused (sealedNetworkRefusal), never read as strict
+        default: 'sealed', documented: "`'sealed'`", modes: ALL_MODES,
         // any other value is kept, and refused at every build (unknownModeReason), never read as the default (AR:A4)
-        read: ({ given }) => (given === undefined ? 'strict' : given),
+        read: ({ given }) => (given === undefined ? 'sealed' : given),
         notice: ({ mode }) => (isSandboxMode(mode) ? [] : [`[Sandbox] mode ${describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}${renamedModeNote(mode)}: the sandbox will not start until setConfig() names one of them.`]),
     },
     capabilities: {
         default: [], documented: '`[]`', modes: ALL_MODES,
         // strict mode's view always has its own flags (STRICT_VIEW_FLAGS), so listing one of them there is not dropped
-        read: ({ given, mode, warn }) => asList(filterCapabilities(given, (hasStrictView(mode ?? 'strict') ? STRICT_CAPABILITIES : SAFE_CAPABILITIES) as readonly SafeCapability[], 'capabilities', warn)),
+        read: ({ given, mode, warn }) => asList(filterCapabilities(given, (hasStrictView(mode ?? 'sealed') ? STRICT_CAPABILITIES : SAFE_CAPABILITIES) as readonly SafeCapability[], 'capabilities', warn)),
     },
     unsafeCapabilities: {
         default: [], documented: '`[]`', modes: ['cooperative', 'worker'], ignoredIn: hasStrictView,
@@ -453,9 +456,8 @@ export const CONFIG_SCHEMA = {
     virtualFilesUrl: { removed: '[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).' },
     origins: {
         default: NO_ORIGINS, documented: 'none', modes: NETWORK_MODES, ignoredIn: (mode) => mode === 'sealed',
-        // parsed for the mode the build will have, the default included, so strict mode drops `scripts` whether the
-        // config names it or not; a value that cannot be read refuses the config (origins.ts). Never read in sealed
-        // mode (readIn), as fetchBridge.
+        // parsed for the mode the build will have, so strict mode drops `scripts`; a value that cannot be read refuses
+        // the config (origins.ts). Never read in sealed mode, the default (readIn), as fetchBridge.
         read: ({ given, mode, warn, host }) => limitHostReach(parseOrigins(given, mode, warn), host(), warn, mode),
     },
     hostContentSecurityPolicy: {
@@ -630,7 +632,7 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
     },
     {
         name: 'capabilities are only those the mode allows (strict and sealed: the view flags too); unsafeCapabilities only unsafe ones',
-        holds: ({ config }) => config.capabilities.every(capability => ((hasStrictView(config.mode ?? 'strict') ? STRICT_CAPABILITIES : SAFE_CAPABILITIES) as readonly string[]).includes(capability))
+        holds: ({ config }) => config.capabilities.every(capability => ((hasStrictView(config.mode ?? 'sealed') ? STRICT_CAPABILITIES : SAFE_CAPABILITIES) as readonly string[]).includes(capability))
             && config.unsafeCapabilities.every(capability => (UNSAFE_CAPABILITIES as readonly string[]).includes(capability)),
     },
     {

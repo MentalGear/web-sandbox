@@ -51,7 +51,7 @@ async function configure(sandbox: SandboxDriver, config: object): Promise<HostEv
 
 async function strictEntry(sandbox: SandboxDriver): Promise<HostEvent[]> {
     await sandbox.registerFiles({ 'main.js': ENTRY });
-    return configure(sandbox, { entry: 'main.js' });
+    return configure(sandbox, { mode: 'strict', entry: 'main.js' });
 }
 
 /**
@@ -162,7 +162,7 @@ test.describe('host page policy', () => {
             // strict: renders (the view's template sink) and the bridge's frame (a second srcdoc), with markup the host reads inert.
             // (The page's policy is given, as docs/API.md#your-connect-src says, so the bridge keeps its origin.)
             await sandbox.registerFiles({ 'main.js': `let i = 0; const timer = setInterval(() => { sandboxView.render('<p id="r' + i + '">' + i + '</p>'); if (++i === ${RENDERS}) { clearInterval(timer); console.log('RENDERED'); } }, 20);` });
-            expect(await configure(sandbox, { entry: 'main.js', html: '<p>x</p><script>1</script>', fetchBridge: { allow: ['https://api.example'] }, hostContentSecurityPolicy: csp }), csp).toEqual([{ type: 'ready', reason: null }]);
+            expect(await configure(sandbox, { mode: 'strict', entry: 'main.js', html: '<p>x</p><script>1</script>', fetchBridge: { allow: ['https://api.example'] }, hostContentSecurityPolicy: csp }), csp).toEqual([{ type: 'ready', reason: null }]);
             await sandbox.waitForLog('RENDERED');
             await waitInView(page, browserName, `!!document.getElementById('r${RENDERS - 1}')`);
             await quiet(`${csp}, strict`);
@@ -178,7 +178,7 @@ test.describe('host page policy', () => {
         expect(await configure(sandbox, COOPERATIVE)).toEqual(expected);
         // given the page's policy, every engine ends alike (the rest of the table: trusted-types-uniform.spec.ts)
         const ended = [{ type: 'terminated', reason: TRUSTED_TYPES }];
-        expect(await configure(sandbox, { entry: 'main.js', hostContentSecurityPolicy: csp })).toEqual(ended);
+        expect(await configure(sandbox, { mode: 'strict', entry: 'main.js', hostContentSecurityPolicy: csp })).toEqual(ended);
         expect(await configure(sandbox, { ...COOPERATIVE, hostContentSecurityPolicy: csp })).toEqual(ended);
     });
 
