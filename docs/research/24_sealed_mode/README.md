@@ -4,7 +4,7 @@
 `origins` or `fetchBridge` (research 22). If the default mode had no network at all, what would leave its code, what
 would its policies be, and could it still run an app the host drives from outside, with WebAssembly?
 
-**Answer.** Decided by the owner on 2026-10-24, **built** (steps 1 to 4 below): `mode: 'sealed'` is the default mode,
+**Answer.** Decided by the owner on 2026-10-24, **built** (steps 1 to 5 below): `mode: 'sealed'` is the default mode,
 with its type, its schema rule, its view policy and a build path of its own that reaches no network code; strict mode is
 named with `mode: 'strict'` ([ADR-008](../../ADR-008-sealed-mode.md)). The decision:
 
@@ -35,7 +35,7 @@ engines.
 | 2 | The sealed build path: strict's view with no network, no host-site call in `setConfig()`, no bridge, an empty gate list, `sandboxFetch` refusing in the guest's realm; the sealed column of the egress table and of `INHERITED_CONTEXT` (T4, T5, T6, T9) | done: [ARCHITECTURE](../../../ARCHITECTURE.md#sealed-mode-strict-mode-with-no-network), `test/unit/sealed-build.test.ts` |
 | 3 | The no-network e2e on all three engines (a listener that must see nothing) and the property suite in sealed | done: `test/e2e/sealed-no-network.spec.ts` (every request maker of `test/e2e/sealed-makers.ts`, which `test/unit/sealed-makers.test.ts` ties to the library's lists), and the strict specs that use no network, the directive matrix among them, run in sealed mode too (`test/e2e/view-modes.ts`) |
 | 4 | Sealed becomes the default: the codemod over tests and presets, README, API.md, THREAT-MODEL, ARCHITECTURE, an ADR, the playground, the board's scope for its next pass | done: [ADR-008](../../ADR-008-sealed-mode.md), `test/unit/default-mode.test.ts` and `test/e2e/default-mode.spec.ts` (T8), [migration](../../API.md#migrating-to-sealed-as-the-default) |
-| 5 | Driven from outside, docs: the app recipe, the stream pattern, the guest-write route for images, and the `openExternal` example fixed and run by a spec | not built |
+| 5 | Driven from outside, docs: the app recipe, the stream pattern, the guest-write route for images, and the `openExternal` example fixed and run by a spec | done: [API.md](../../API.md#building-an-app-in-sealed-mode), the app in `examples/sealed-app/` run by `test/e2e/sealed-app.spec.ts`; the `openExternal` example by `test/unit/attacker-text-docs.test.ts` |
 | later | `allowWebAssembly` as an opt-in (needs a ledger row `webassembly-termination` and the shared-buffer tests) | not decided to build |
 
 **Decisions of the owner (2026-10-24).**

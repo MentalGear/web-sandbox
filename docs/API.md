@@ -14,6 +14,7 @@ leaves to you, read the [threat model](THREAT-MODEL.md).
 - [Refusal codes](#refusal-codes)
 - [Guest globals](#guest-globals)
 - [Modes](#modes)
+- [Building an app in sealed mode](#building-an-app-in-sealed-mode)
 - [Limits](#limits)
 - [The view's cost to the host page](#the-views-cost-to-the-host-page)
 - [Host page policy](#host-page-policy)
@@ -1506,6 +1507,197 @@ synthesizes (a new top-level tab without `allow-popups`; with `allow-forms`, Chr
 Trusted Types requirement. Each is described in the
 [README](../README.md#cooperative-mode-limits). Worker mode shares only the reports: the worker's are per engine, as
 in strict mode.
+
+---
+
+## Building an app in sealed mode
+
+An app is a bundle the user saved, plain HTML and CSS plus its JavaScript logic, and your page drives it from outside: the
+host is the app's only input and output, and sealed mode (the default) is what the app runs in. The code below is
+[`examples/sealed-app/`](../examples/sealed-app), a todo list; `test/e2e/sealed-app.spec.ts` runs it on all three
+engines, and each block here is generated from its file (`bun run docs:gen`), so the page cannot drift from the code.
+
+### The bundle
+
+- **`html`** is the app's initial view: markup the renderer cleans before it shows it. A `<script>` or an `on…` handler
+  in it never runs; the code goes in `entry`.
+- **`entry`** is the app's JavaScript, a registered file that runs in the worker with `bridge`, `sandboxFiles` and
+  [`sandboxView`](#sandboxview-strict-mode).
+- **CSS, images, fonts and media** are registered files, named by path in the markup (`href`, `src`, `poster`). The view
+  shows the types listed under `sandboxView` (raster images, fonts, audio, video, CSS, WebVTT); an SVG, HTML or JSON file
+  is the worker's, read with `sandboxFiles`, and a vector graphic is an inline `<svg>`.
+- Register the files before `setConfig()`: they reach the app at the next build. At most 1000 files and 8 MiB in all
+  ([Limits](#limits)).
+
+<!-- generated:begin example:sealed-app-html -->
+```html
+<link rel="stylesheet" href="app.css">
+<h1><img src="logo.png" alt="" width="24" height="24"> Todo</h1>
+<form id="add"><input id="new" name="text"> <button>Add</button></form>
+<ul id="list"></ul>
+<p><span id="count"></span> <span id="badge"></span></p>
+```
+<!-- generated:end -->
+
+<!-- generated:begin example:sealed-app-css -->
+```css
+h1 { font: 600 18px sans-serif; color: rgb(34, 170, 119); }
+li { list-style: none; font: 14px sans-serif; }
+```
+<!-- generated:end -->
+
+### The host
+
+<!-- generated:begin example:sealed-app-host -->
+```js
+// The embedder's side: register the bundle, answer the app's calls, feed it data.
+export async function mountTodoApp(sandbox, { bundle, store }) {
+    const get = (name) => fetch(`${bundle}/${name}`);
+    sandbox.registerFiles({
+        'app.js': await (await get('app.js')).text(),
+        'app.css': await (await get('app.css')).text(),
+        'logo.png': new Uint8Array(await (await get('logo.png')).arrayBuffer()),
+    });
+
+    // The app's call runs here with your page's rights, and its argument is the app's data: check its type and size,
+    // and keep a copy of what you expect, not the object itself.
+    sandbox.expose('save', (todos) => {
+        if (!Array.isArray(todos) || todos.length > 1000) throw new Error('save: expected at most 1000 todos');
+        const clean = todos.map((todo) => {
+            if (typeof todo?.text !== 'string' || todo.text.length > 200 || typeof todo.done !== 'boolean') throw new Error('save: bad todo');
+            return { text: todo.text, done: todo.done };
+        });
+        store.setItem('todos', JSON.stringify(clean));
+    });
+
+    sandbox.setConfig({ entry: 'app.js', html: await (await get('app.html')).text(), guestWrites: true });
+    await sandbox.call('load', JSON.parse(store.getItem('todos') ?? '[]')); // queued until the app is ready
+}
+
+// A stream: the host sends a batch when it has one, and the next only after the app took the last.
+export async function pushAll(sandbox, todos, batchSize = 50) {
+    for (let at = 0; at < todos.length; at += batchSize) await sandbox.call('push', todos.slice(at, at + batchSize));
+}
+```
+<!-- generated:end -->
+
+### The app
+
+<!-- generated:begin example:sealed-app-guest -->
+```js
+let todos = [];
+
+async function show() {
+    const open = todos.filter((todo) => !todo.done).length;
+    sandboxView.render(todos.map((todo, i) =>
+        `<li id="todo-${i}"><input type="checkbox" id="done-${i}"${todo.done ? ' checked' : ''}> <span id="text-${i}"></span></li>`).join(''), 'list');
+    todos.forEach((todo, i) => sandboxView.text(`text-${i}`, todo.text)); // text, never markup: nothing to escape
+    sandboxView.text('count', `${open} open`);
+
+    // an image the app makes: drawn in the worker, written as a file, shown by its path
+    const canvas = new OffscreenCanvas(60, 8);
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#ddd';
+    context.fillRect(0, 0, 60, 8);
+    context.fillStyle = '#2a7';
+    context.fillRect(0, 0, 60 * (todos.length - open) / Math.max(1, todos.length), 8);
+    await sandboxFiles.write('progress.png', await canvas.convertToBlob({ type: 'image/png' }));
+    sandboxView.render('<img src="progress.png" alt="progress" width="60" height="8">', 'badge');
+}
+
+// host -> app
+bridge.expose('load', (saved) => { todos = saved; return show(); });
+bridge.expose('push', (batch) => { todos.push(...batch); return show(); });
+
+// user -> app -> host
+sandboxView.on('submit', 'add', (event) => {
+    const text = event.form.find(([name]) => name === 'text')[1].trim().slice(0, 200);
+    if (text === '') return;
+    todos.push({ text, done: false });
+    sandboxView.set('new', { value: '' });
+    show().then(() => bridge.call('save', todos));
+});
+sandboxView.on('change', 'list', (event) => {
+    todos[Number(event.ids[0].slice('done-'.length))].done = event.target.checked;
+    show().then(() => bridge.call('save', todos));
+});
+```
+<!-- generated:end -->
+
+### Host to app: data, commands and a stream
+
+The app publishes methods with `bridge.expose()` and the host calls them with `sandbox.call(name, ...args)`: `load` hands
+it the saved state, `push` a batch of todos. A call made while the sandbox is loading is queued and sent when it is ready,
+which is why `mountTodoApp` can call `load` right after `setConfig()`.
+
+- **A stream is `push(batch)` called at the host's own pace.** Await each call (`pushAll`): it resolves when the app's
+  method returns, so return the app's work (`return show()`) and the next batch goes out only after the app took the
+  last. A handler that renders a lot is slowed by [the view's budgets](#a-the-long-run-bound), and awaiting is what keeps
+  the host from queuing faster than the app can show.
+- **Arguments and results are copied** (structured clone, not transferred): at most `RPC_MAX_BYTES` (33 MiB) a message, 256
+  calls in flight per side, 30 s to answer unless `callWithTimeout()` says otherwise. Your calls to the app are not counted
+  by [`callLimits`](#calllimits); the app's calls to you are (1000 a second and 64 MiB by default, its guest writes
+  included). The refusals are the [`RpcErrorCode`s](#calls-rpcerrorcode) of [`call()`](#callmethod-args).
+
+### App to host
+
+The host publishes methods with `sandbox.expose()` and the app calls them with `bridge.call(name, ...args)` (`save` above).
+
+**Security note for embedders: an exposed method runs with your page's full rights, and its arguments are the app's data.**
+
+- **Validate every argument**: its type, its length and the shape of what it holds, as `save` does, and keep a copy of what
+  you expect (spread or a new object), not the object you were given.
+- **Never pass the app's text to a sink that reads it as code or as an address**: not `innerHTML`, `eval`, `new Function`,
+  `window.open`, `location` or a link `href`. Show it with `textContent`. When the app has to open a URL, expose
+  one method with the guard of the [`openExternal` example](#sandboxview-strict-mode) (parse it with `new URL()`, admit
+  `https:` and an exact list of origins, open the parsed `href`).
+- **Never expose a generic proxy**: no `fetch(url)`, no `get(key)`/`set(key, value)` over `localStorage` or IndexedDB, no
+  `run(name, ...args)` dispatcher. Each method does one thing the app needs, to a destination you fixed (this app's own
+  storage key, a listed endpoint), at a size you capped. Sealed mode has no network, so what you expose is the app's only
+  way out: a proxy hands it your page's network, cookies and storage.
+- A throw reaches the app as `HANDLER_ERROR` with the message you threw: put nothing in it you would not tell the app.
+
+### Saving the app's state
+
+Two routes, and the host decides what is kept in both:
+
+- **An exposed `save` method** (the example): the app sends its state as plain data and the host validates and stores it
+  wherever it keeps apps (`localStorage` here), and hands it back with the next `load`. The rule above applies.
+- **Guest writes**: with `guestWrites: true` the app writes files with `sandboxFiles.write()`, the host sees them in
+  `listGuestWrites()` (and `fileswritten`), and `commitGuestWrites(paths)` makes the ones it accepts registered files for the
+  next build, where the app reads them with `sandboxFiles.text()`. Treat what the app wrote as the app's data, its
+  path and type as well as its bytes: check the size, parse it in a `try`, check its shape, show it with `textContent`.
+  Only inert types commit without `{ code: true }`; leave code out for an app's data
+  ([Guest writes](#guest-writes)).
+
+### Images the app makes
+
+The view shows the **raster images the app wrote** (PNG, JPEG, GIF, WebP or AVIF, never SVG), by path, with no rebuild:
+`progress.png` above is drawn on an `OffscreenCanvas` in the worker, written with `sandboxFiles.write()` (it needs
+`guestWrites: true`) and named in the next `render()`. A later write to the path replaces the image. The view has no
+`<canvas>`, so the pixels are made in the worker, or the host sends bytes with `call()` and the app writes them. Registered
+images are fixed at the build; see [Guest writes](#guest-writes) for what the view shows.
+
+The app cannot `fetch()` its own files either: sealed mode's `connect-src` is `'none'`, so `fetch(sandboxFiles.url(path))` is
+refused. Read them with `sandboxFiles.read()` or `text()`, which make no request.
+
+### Input
+
+`sandboxView.on(type, id, handler)` delivers the user's input to the app: the example reads a `submit` (the form's fields
+arrive in `event.form`) and a `change` (the checkbox), and clears the field with `sandboxView.set('new', { value: '' })`.
+For drag and drop, sliders, gestures and virtual lists use the pointer, wheel and scroll events with the `pointerCapture`,
+`rect` and `preventDefault` options, and answer with `set(id, { css, scroll })`: [Pointer, wheel, scroll and focus
+input](#sandboxview-strict-mode) describes them, and [research 23](research/23_view_input/README.md) measures them.
+
+### What a sealed app cannot do
+
+| It cannot | The way out |
+| :--- | :--- |
+| Reach the network: `fetch`, `XMLHttpRequest`, `WebSocket`, an `<img>` or a font from a URL | `mode: 'strict'` with [`origins`](#origins) or [`fetchBridge`](#fetchbridge), or have the host fetch and pass the data with `call()`, or register it as a file |
+| Run a `<script>` or a handler in `html` | put the code in `entry` |
+| Use a `<canvas>`, SVG animation, SVG filters, `contenteditable`, popovers | draw with `OffscreenCanvas` and write a raster image; inline `<svg>` for static vector graphics; `<textarea>` or `<input>` for editing; CSS animations with [`allowAnimations`](#allowanimations-and-allowautoplay) |
+| Use WebAssembly (`WebAssembly` is removed from the worker, [research 24](research/24_sealed_mode/README.md)) | write the code in JavaScript, or run the module in your page and pass the results with `call()` |
+| Open a link or a window | an exposed method with the `openExternal` guard |
 
 ---
 

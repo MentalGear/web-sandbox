@@ -24,6 +24,8 @@ const REGIONS: Record<string, string[]> = {
         // rendered from the TSDoc of the public API (tools/docgen/extractors/api.ts)
         'api-define', 'api-element', 'api-methods', 'api-reactions', 'api-events', 'api-sandbox-log', 'api-violation', 'api-fetch-record',
         'api-fetch-bridge', 'api-call-limits', 'api-exports-values', 'api-exports-types',
+        // the files of examples/sealed-app/, quoted as they are (tools/docgen/extractors/examples.ts)
+        'example:sealed-app-html', 'example:sealed-app-css', 'example:sealed-app-host', 'example:sealed-app-guest',
     ],
     'docs/ADR-005-strict-mode.md': ['adr005-ports', 'adr005-init-view'],
     'docs/THREAT-MODEL.md': ['cookie-facts', 'host-site-facts', 'cookie-carriers', 'connect-facts', 'inherited-context', 'engine-ledger'],
