@@ -378,6 +378,33 @@ describe('set({ css }): the closed list of style properties and its limits', () 
         expect(sent()).toEqual([{ type: 'VIEW_SET', id: 't', css: { transform: 'translate(1px, 2px)', opacity: null, '--x': '3' } }]);
     });
 
+    it('the keys of the css object are read once (BD4:LIM-1): a Proxy cannot answer a short list to the count and a long one to the copy', () => {
+        const { view, sent, render } = startPrelude();
+        const answering = (lists: string[][]) => {
+            let asked = 0;
+            const proxy = new Proxy({}, {
+                ownKeys: () => lists[Math.min(asked++, lists.length - 1)]!,
+                getOwnPropertyDescriptor: () => ({ value: '1', enumerable: true, configurable: true }),
+                get: () => '1',
+            });
+            return { proxy, asked: () => asked };
+        };
+        const longer = Array.from({ length: 20000 }, (_, i) => '--p' + i);
+        const short = answering([['--p0'], longer]);
+        view.set('t', { css: short.proxy });
+        expect(short.asked()).toBe(1);
+        expect(sent()).toEqual([{ type: 'VIEW_SET', id: 't', css: { '--p0': '1' } }]); // the one answer, in the count and in the copy
+        const over = answering([longer.slice(0, VIEW_SET_STYLE_LIMITS.maxProperties + 1), ['--p0']]);
+        expect(() => view.set('u', { css: over.proxy })).toThrow(RangeError);
+        expect(over.asked()).toBe(1);
+        expect(sent().length).toBe(1);
+        const exact = answering([longer.slice(0, VIEW_SET_STYLE_LIMITS.maxProperties), longer]);
+        view.set('v', { css: exact.proxy });
+        render.deliver({ type: 'VIEW_ACK' }); // the first set was in flight: the next one goes out
+        expect(exact.asked()).toBe(1);
+        expect(Object.keys((sent()[1] as { css: object }).css).length).toBe(VIEW_SET_STYLE_LIMITS.maxProperties);
+    });
+
     it('consecutive sets of one id merge their css key by key, unless together they would name more than maxProperties', () => {
         const { view, sent, render } = startPrelude();
         view.set('a', { value: 'x' }); // in flight

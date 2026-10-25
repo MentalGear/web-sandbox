@@ -3355,11 +3355,14 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         enqueue({ slot: 'content#' + id, kind: 'text', message: { type: 'VIEW_TEXT', into: id, text: value } });
     };
     // An object of the guest's, as an object of its own enumerable fields, each read once, with no prototype; each key
-    // must be one of `keys`, and its value pass `check` (which throws), or the call throws `what`'s TypeError.
-    const fieldsOf = (value: unknown, what: string, keys: string, check: (key: string, field: unknown) => void) => {
+    // must be one of `keys`, and its value pass `check` (which throws), or the call throws `what`'s TypeError. Its keys
+    // are read once too (BD4:LIM-1): the count against `most` and the copy are made on the same list, so a Proxy cannot
+    // answer a short one to the count and a long one to the copy.
+    const fieldsOf = (value: unknown, what: string, keys: string, check: (key: string, field: unknown) => void, most?: number) => {
         if (value === null || typeof value !== 'object' || isArray(value)) throw new TypeErrorConstructor(what + ' must be an object: { ' + keys + ' }');
         const out: Record<string, unknown> = setPrototype({}, null);
         const own = keysOf(value);
+        if (most !== undefined && own.length > most) throw new RangeErrorConstructor(what + ' names more than ' + most + ' properties');
         for (let i = 0; i < own.length; i++) {
             const field = (value as Record<string, unknown>)[own[i]!];
             check(own[i]!, field);
@@ -3377,16 +3380,13 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     // at most maxValue characters. The view checks all of it again.
     const codeAt = (text: string, index: number) => apply(charCodeAt, text, [index]) as number;
     const cssOf = (value: unknown) => {
-        if (value !== null && typeof value === 'object' && !isArray(value) && keysOf(value).length > options.style.maxProperties) {
-            throw new RangeErrorConstructor('sandboxView.set: css names more than ' + options.style.maxProperties + ' properties');
-        }
         return fieldsOf(value, 'sandboxView.set: css', 'property: string | null', (key, field) => {
             if (!styleProperty(key, options.style.properties, options.style.maxValue, codeAt)) {
                 throw new TypeErrorConstructor('sandboxView.set: css cannot set "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the properties are ' + apply(join, options.style.properties, [', ']));
             }
             if (field !== null && typeof field !== 'string') throw new TypeErrorConstructor('sandboxView.set: css["' + key + '"] must be a string, or null to remove it');
             if (typeof field === 'string' && field.length > options.style.maxValue) throw new RangeErrorConstructor('sandboxView.set: css["' + key + '"] is longer than ' + options.style.maxValue + ' characters');
-        });
+        }, options.style.maxProperties);
     };
     // A form control's value or checked state, focus, an element's scroll position or inline style (R1:R4-5; research
     // 23). Each own enumerable field of `fields` is read once, and only these are allowed, each of its one type; what is
