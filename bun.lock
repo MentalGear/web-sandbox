@@ -19,6 +19,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "playwright-core@1.58.1": "patches/playwright-core@1.58.1.patch",
+  },
   "packages": {
     "@acemir/cssom": ["@acemir/cssom@0.9.31", "", {}, "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA=="],
 
