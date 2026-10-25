@@ -75,6 +75,7 @@ The whole picture, on one page, with the realms, channels, frames and lifecycle 
 *   **`src/lib/in-sandbox-view.ts`**, **`src/lib/csp/script-hash.ts`**: Strict mode: the view's hashed bootstrap and renderer, the worker's prelude (`sandboxView`), and the synchronous SHA-256 that admits the bootstrap.
 *   **`src/lib/presets.ts`**: The scenarios both the Playground and the regression specs run: one definition per attack (payload, rules, research folder).
 *   **`vite.config.ts`**: The dev server for the playground and the e2e harness.
+*   **`examples/sealed-app`**: The app of the API reference's "Building an app in sealed mode": its files are quoted by the docs and run by `test/e2e/sealed-app.spec.ts`.
 *   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
 *   **`docs/research`**: Security findings, each with a Playwright reproduction that guards its mitigation.
 
@@ -92,6 +93,10 @@ sandbox.load('<h1>Hello</h1>');     // sealed mode, the default: shown, no scrip
 either without `mode: 'strict'` is refused, and the sandbox terminates with the reason ``origins and fetchBridge open
 the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``. An embed written when strict mode
 was the default: [Migrating to sealed as the default](docs/API.md#migrating-to-sealed-as-the-default).
+
+**Building an app that your page drives?** Saved HTML and CSS plus the app's JavaScript, with your page as its only input
+and output: [Building an app in sealed mode](docs/API.md#building-an-app-in-sealed-mode), with a runnable example in
+[`examples/sealed-app/`](examples/sealed-app).
 
 Importing the module registers nothing, so you choose the tag name. The element is a block by default; give it a
 height. The package is private and not published yet ([D1](docs/BACKLOG.md#bl-d1)), so `import … from 'web-sandbox'`
