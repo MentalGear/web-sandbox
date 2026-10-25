@@ -250,7 +250,7 @@ describe('the element ends the sandbox on a refusal, by its own table', () => {
     });
 
     it('listens in every mode: a strict build installs the listener too, and announces nothing', () => {
-        expect(host).toContain('this._listenForAnnouncement(iframe, prepared.bridgeFrame, prepared.strictInit === null);');
+        expect(host).toContain('this._listenForAnnouncement(iframe, prepared.network ? prepared.network.bridgeFrame : null, prepared.strictInit === null);');
         expect(host).toContain('if (!announces || !guestWindow || event.source !== guestWindow) return;');
     });
 });

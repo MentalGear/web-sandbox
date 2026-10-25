@@ -32,6 +32,16 @@ export type ContextEngine = (typeof CONTEXT_ENGINES)[number];
 export const NEUTRALISATIONS = ['check', 'construct', 'credentialless', 'refuse', 'warn', 'reason', 'documented'] as const;
 export type Neutralisation = (typeof NEUTRALISATIONS)[number];
 
+/**
+ * What a row is in sealed mode, strict mode with no network (docs/research/24_sealed_mode): its sandbox documents are
+ * strict mode's, so it still inherits the row (`remains`), inherits less of it (`reduced`), or the row cannot apply
+ * (`not-applicable`) because sealed mode makes no request (`no-network`) or has no guest document (`no-guest-document`).
+ */
+export type SealedStanding =
+    | { readonly standing: 'remains'; readonly note?: string }
+    | { readonly standing: 'reduced'; readonly note: string }
+    | { readonly standing: 'not-applicable'; readonly because: 'no-network' | 'no-guest-document'; readonly note: string };
+
 export interface InheritedContextRow {
     /** What is inherited (the host page's state and the channel it reaches the sandbox by). */
     readonly channel: string;
@@ -47,6 +57,8 @@ export interface InheritedContextRow {
     readonly environmentChecks?: readonly EnvironmentCheckId[];
     /** Test files (repository-relative) that keep it closed: a unit test or an e2e spec. */
     readonly tests: readonly string[];
+    /** What it is in sealed mode (see {@link SealedStanding}); every row says. */
+    readonly sealed: SealedStanding;
 }
 
 const ALL = CONTEXT_ENGINES;
@@ -62,6 +74,7 @@ export const INHERITED_CONTEXT = {
         by: ['reason', 'documented'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts'],
+        sealed: { standing: 'remains', note: "the view's bootstrap, by its hash" },
     },
     cspWorker: {
         channel: "The host page's CSP `worker-src` (and `script-src`, `child-src`, `default-src` as its fallbacks)",
@@ -70,6 +83,7 @@ export const INHERITED_CONTEXT = {
         by: ['reason', 'documented'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts'],
+        sealed: { standing: 'remains' },
     },
     cspStyle: {
         channel: "The host page's CSP `style-src` (and its fallbacks)",
@@ -78,6 +92,7 @@ export const INHERITED_CONTEXT = {
         by: ['warn', 'documented'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts'],
+        sealed: { standing: 'remains' },
     },
     cspBaseUri: {
         channel: "The host page's CSP `base-uri`, and with it the document's base URL (a refused `<base>` leaves the host page's URL)",
@@ -87,6 +102,7 @@ export const INHERITED_CONTEXT = {
         engines: ALL,
         environmentChecks: ['base'],
         tests: ['test/e2e/environment-check.spec.ts', 'test/unit/environment-check.test.ts', 'test/unit/environment-gate.test.ts'],
+        sealed: { standing: 'remains', note: "defence in depth: the view's policy admits no network source, so a wrong base can load nothing" },
     },
     cspFetch: {
         channel: "The host page's CSP fetch directives (`img-src`, `connect-src`, `font-src`, `media-src`, `default-src`, `frame-src`): a copy narrows `origins`, in some engines and not in others (connect-facts.ts)",
@@ -94,7 +110,8 @@ export const INHERITED_CONTEXT = {
         how: "`connect-src` (else `default-src`) is neutralised by the library, uniformly, from the page's policy as the embedder gives it (`hostContentSecurityPolicy`) and from nothing else: every origin of `origins.connect` and `fetchBridge.allow` that the given policy refuses is dropped, with a warning, before the guest's and the bridge's policies are written, on every engine; without the option both lists are dropped, with one warning that says what to pass, so the library never guesses the page's policy (host-connect.ts, hostReach); `false` says the page sends none, and keeps the lists, and a policy the page does send is then applied by the browser alone, per engine (connect-facts.ts); a `wss://` entry is kept only beside its `https://` twin. The guest's `fetch()`, `XMLHttpRequest` and `WebSocket` then admit exactly the sources of the guest policy's `connect-src` (the bootstrap's request gate, S74), refuse anything else before the browser sees it, the same way on every engine, and report it as a `violation` of the library's own, so a refusal is reported on an engine that raises no report in a worker (WebKit); the browser's policy stays underneath, and a redirect it refuses is reported per engine. No policy of the library carries `upgrade-insecure-requests` (the engines disagree on what it does to the http: form of a listed https: origin, and one sent it in cleartext), so every engine refuses that form; a host page that sends the directive itself is inherited and is the embedder's choice. A policy text the parser does not understand admits nothing. The other fetch directives narrow in the browser, where the engine applies the inherited list, and are documented under `origins` and in the host-page policy section; a policy list only narrows (CSP3 intersects the lists), so the sandbox's own policy is never weakened",
         by: ['refuse', 'documented'],
         engines: ALL,
-        tests: ['test/unit/host-connect.test.ts', 'test/unit/host-policy-source.test.ts', 'test/unit/host.test.ts', 'test/unit/connect-facts.test.ts', 'test/e2e/connect-uniform.spec.ts', 'test/e2e/no-plaintext.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/unit/policy-guarantees.test.ts', 'test/unit/request-gate.test.ts', 'test/e2e/request-gate.spec.ts'],
+        tests: ['test/unit/host-connect.test.ts', 'test/unit/host-policy-source.test.ts', 'test/unit/host.test.ts', 'test/unit/connect-facts.test.ts', 'test/e2e/connect-uniform.spec.ts', 'test/e2e/no-plaintext.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/unit/policy-guarantees.test.ts', 'test/unit/request-gate.test.ts', 'test/e2e/request-gate.spec.ts', 'test/unit/sealed-build.test.ts'],
+        sealed: { standing: 'reduced', note: "no origin is narrowed and no `connect-src` is read: the view's policy has no network source and the request gate admits nothing. Left: the page's `img-src`, `font-src`, `media-src` and `style-src` must admit `blob:` for registered files of that kind, or those loads are refused in the view and reported as `violation`" },
     },
     trustedTypesRequirement: {
         channel: "The host page's `require-trusted-types-for 'script'` and its `trusted-types` names",
@@ -103,6 +120,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'reason', 'refuse'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/trusted-types-uniform.spec.ts', 'test/e2e/directive-matrix.spec.ts', 'test/unit/host-trusted-types.test.ts'],
+        sealed: { standing: 'remains', note: '`hostContentSecurityPolicy` serves only this in sealed mode' },
     },
     trustedTypesDefault: {
         channel: "The host page's Trusted Types default policy (host code that runs inside a library sink)",
@@ -111,6 +129,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'reason'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/trusted-types-uniform.spec.ts'],
+        sealed: { standing: 'remains' },
     },
     coep: {
         channel: "The host page's Cross-Origin-Embedder-Policy and cross-origin isolation (`require-corp`, `credentialless`; COOP)",
@@ -120,6 +139,7 @@ export const INHERITED_CONTEXT = {
         engines: ['chromium', 'firefox', 'webkit'],
         environmentChecks: ['isolated'],
         tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/realistic-host.spec.ts', 'test/e2e/directive-matrix.spec.ts', 'test/unit/environment-check.test.ts', 'test/unit/environment-gate.test.ts'],
+        sealed: { standing: 'remains', note: "`crossOriginIsolated` is the one value of the host page's that sealed mode reads, only to refuse" },
     },
     referrer: {
         channel: "The host page's URL as a referrer, and the engines' own referrer exceptions for same-site targets",
@@ -128,6 +148,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'documented'],
         engines: ALL,
         tests: ['test/e2e/host-url.spec.ts'],
+        sealed: { standing: 'not-applicable', because: 'no-network', note: 'no request leaves; the `no-referrer` settings stay' },
     },
     ancestorOrigins: {
         channel: '`location.ancestorOrigins`: the host origin, shown to a document nested in the host page',
@@ -136,6 +157,7 @@ export const INHERITED_CONTEXT = {
         by: ['documented'],
         engines: ['chromium', 'webkit'],
         tests: ['test/e2e/host-url.spec.ts'],
+        sealed: { standing: 'not-applicable', because: 'no-guest-document', note: 'cooperative mode only' },
     },
     documentOrigin: {
         channel: "The document's origin, URL and storage: the library's own text, which the host page's `script-src` admits, runs wherever it is copied",
@@ -145,6 +167,7 @@ export const INHERITED_CONTEXT = {
         engines: ALL,
         environmentChecks: ['origin', 'url'],
         tests: ['test/e2e/environment-check.spec.ts', 'test/unit/environment-check.test.ts', 'test/unit/environment-gate.test.ts', 'test/e2e/security.spec.ts'],
+        sealed: { standing: 'remains' },
     },
     cookies: {
         channel: "The host site's cookies: a request of a sandbox document is made for the host page's site, so a cookie the browser attaches by site (SameSite=None; on some engines Lax and Strict) rides on it; likewise the user's other ambient credentials for the origin, cached HTTP authentication and a TLS client certificate (AMBIENT_CREDENTIALS, not measured)",
@@ -153,6 +176,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'credentialless', 'refuse', 'warn', 'documented'],
         engines: ALL,
         tests: ['test/e2e/cookies.spec.ts', 'test/e2e/request-gate.spec.ts', 'test/e2e/view-credentials.spec.ts', 'test/e2e/host-site.spec.ts', 'test/e2e/host-site-layouts.spec.ts', 'test/unit/view-credentials.test.ts', 'test/unit/cookie-facts.test.ts', 'test/unit/request-gate.test.ts', 'test/unit/host-site.test.ts', 'test/unit/host.test.ts', 'test/unit/config-schema.test.ts', 'test/unit/host-origin-wiring.test.ts', 'test/e2e/fetch-bridge.spec.ts'],
+        sealed: { standing: 'not-applicable', because: 'no-network', note: "no request leaves, and the host page's site is never read; the wrapper stays `credentialless`" },
     },
     serviceWorker: {
         channel: "The host page's Service Worker (a cache-first one answers from the app's cache)",
@@ -161,6 +185,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct'],
         engines: ALL,
         tests: ['test/e2e/fetch-bridge-isolation.spec.ts', 'test/e2e/security.spec.ts'],
+        sealed: { standing: 'not-applicable', because: 'no-network', note: 'no request and no bridge frame' },
     },
     hostRealmGlobals: {
         channel: "The host realm's globals and prototypes that the library's host code uses (`fetch`, `console`, built-ins)",
@@ -169,6 +194,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct'],
         engines: ALL,
         tests: ['test/e2e/fetch-bridge-isolation.spec.ts', 'test/unit/bootstrap-capture-and-measure.test.ts', 'test/unit/guest-realm-hardening.test.ts'],
+        sealed: { standing: 'remains', note: "host code reads guest data through captured intrinsics; the bridge's half does not apply" },
     },
     permissionsPolicy: {
         channel: "The host page's Permissions-Policy and the frame's `allow` attribute",
@@ -177,6 +203,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct'],
         engines: ALL,
         tests: ['test/e2e/capability-presets.spec.ts', 'test/unit/host.test.ts'],
+        sealed: { standing: 'remains', note: 'no feature is delegated, as in strict mode' },
     },
     uiSurfaces: {
         channel: "The browser's shared UI surfaces: focus, the clipboard, history, top-level navigation, the host window as a `postMessage` target",
@@ -185,6 +212,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'documented'],
         engines: ALL,
         tests: ['test/e2e/guest-realm-hardening.spec.ts', 'test/e2e/strict.spec.ts'],
+        sealed: { standing: 'not-applicable', because: 'no-guest-document', note: "cooperative and worker mode only; the view's focus rule (`set({ focus })`) stays" },
     },
     eventDispatch: {
         channel: 'Events the browser dispatches synchronously into the host page when a frame is removed (focus, blur, pagehide)',
@@ -193,6 +221,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct'],
         engines: ALL,
         tests: ['test/e2e/teardown-reentry.spec.ts', 'test/unit/teardown-reentry.test.ts'],
+        sealed: { standing: 'remains' },
     },
     thread: {
         channel: "The host page's thread and process: the strict view and the cooperative frame can share them",
@@ -201,6 +230,7 @@ export const INHERITED_CONTEXT = {
         by: ['documented'],
         engines: ALL,
         tests: ['test/e2e/view-bound.spec.ts', 'test/unit/view-bound.test.ts'],
+        sealed: { standing: 'remains', note: "the view shares the host page's thread as strict mode's does" },
     },
 } as const satisfies Record<string, InheritedContextRow>;
 

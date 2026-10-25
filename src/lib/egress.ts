@@ -59,7 +59,12 @@ export type EgressOwner = 'guest-script' | 'worker-bootstrap' | 'view' | 'bridge
  */
 export type EgressHandling = 'relayed' | 'cancelled' | 'budgeted' | 'capped' | 'removed' | 'unreachable' | 'unheard' | 'own';
 
-export type EgressMode = 'strict' | 'worker' | 'cooperative';
+/**
+ * The modes, the table's columns: a row lists those whose environments have its surface. Sealed mode's environment is
+ * strict mode's with no network (docs/research/24_sealed_mode), so it has every surface of strict mode's but the fetch
+ * bridge's frame, which it never builds.
+ */
+export type EgressMode = 'strict' | 'sealed' | 'worker' | 'cooperative';
 
 export interface EgressRow {
     readonly realm: EgressRealm;
@@ -133,15 +138,20 @@ export const REPORTED_EVENT_TYPES: readonly string[] = ['error', 'unhandledrejec
 const UNCAUGHT_BOUND = `UNCAUGHT_PER_SECOND (${UNCAUGHT_PER_SECOND}) and UNCAUGHT_CHARACTERS_PER_SECOND (${UNCAUGHT_CHARACTERS_PER_SECOND}) in any one second, with the other uncaught errors and rejections; past either the sandbox ends`;
 const RELAY_BOUND = 'one guest line each, through the console relay: LOG_EVENTS_PER_SECOND lines and 4 MiB per second, cut at LOG_MAX_STRING';
 const N1 = 'test/e2e/error-cost-and-queued-calls.spec.ts (N-1); test/unit/egress.test.ts';
-const WORKER_MODES: readonly EgressMode[] = ['strict', 'worker'];
+const ALL_MODES: readonly EgressMode[] = ['strict', 'sealed', 'worker', 'cooperative'];
+// the modes of the strict view and its worker
+const VIEW_MODES: readonly EgressMode[] = ['strict', 'sealed'];
+const WORKER_MODES: readonly EgressMode[] = ['strict', 'sealed', 'worker'];
+// the modes that take `fetchBridge`, and so may have the bridge's frame: every mode but sealed
+const NETWORK_MODES: readonly EgressMode[] = ['strict', 'worker', 'cooperative'];
 
 const own: EgressRow[] = [
     // ---- the guest's worker (worker and strict mode): its global's own surfaces, as the allowlist leaves them
     { realm: 'worker', surface: 'error', modes: ['worker'], owner: 'guest-script', handling: ['relayed', 'cancelled', 'budgeted'],
         bound: `${RELAY_BOUND}; cancelled once the port is attached, so it never reaches the Worker object; ${UNCAUGHT_BOUND}`, test: `${N1}; test/e2e/worker-port-and-view-cost.spec.ts (M-1's class)` },
-    { realm: 'worker', surface: 'error', modes: ['strict'], owner: 'guest-script', handling: ['budgeted'],
+    { realm: 'worker', surface: 'error', modes: VIEW_MODES, owner: 'guest-script', handling: ['budgeted'],
         bound: `${UNCAUGHT_BOUND}; relayed and cancelled by the strict prelude (the view's row)`, test: N1 },
-    { realm: 'worker', surface: 'error', modes: ['strict'], owner: 'view', handling: ['relayed', 'cancelled'],
+    { realm: 'worker', surface: 'error', modes: VIEW_MODES, owner: 'view', handling: ['relayed', 'cancelled'],
         bound: 'the strict prelude (in-sandbox-view.ts): the entry\'s own error ends the sandbox; a later one is cancelled and relayed as a guest line', test: 'test/e2e/worker-port-and-view-cost.spec.ts (M-1\'s class)' },
     { realm: 'worker', surface: 'unhandledrejection', modes: WORKER_MODES, owner: 'guest-script', handling: ['relayed', 'cancelled', 'budgeted'],
         bound: `${RELAY_BOUND}; cancelled once relayed (Chromium then reports nothing to the page; Firefox reports it all the same, hence the budget); ${UNCAUGHT_BOUND}`, test: N1 },
@@ -151,7 +161,7 @@ const own: EgressRow[] = [
         bound: 'one VIOLATION frame each, at most VIOLATION_EVENT_LIMIT per environment (the element counts them again)', test: 'src/lib/in-sandbox-script.test.ts (S5); test/e2e/violations.spec.ts' },
     { realm: 'worker', surface: 'message', modes: ['worker'], owner: 'guest-script', handling: ['own'],
         bound: 'the one INIT_PORT: only the frame that made the worker can post to it, and only the library\'s frame does', test: 'test/unit/guest-realm-hardening.test.ts (B1)' },
-    { realm: 'worker', surface: 'message', modes: ['strict'], owner: 'view', handling: ['own'],
+    { realm: 'worker', surface: 'message', modes: VIEW_MODES, owner: 'view', handling: ['own'],
         bound: 'the one INIT_WORKER: only the view posts to the worker (the strict prelude)', test: 'test/e2e/strict-entry-scope-and-links.spec.ts' },
     { realm: 'worker', surface: 'messageerror', modes: WORKER_MODES, owner: 'guest-script', handling: ['unreachable'],
         bound: 'no listener; only the library\'s frame or view posts to the worker, its own messages', test: 'test/e2e/egress.spec.ts' },
@@ -165,7 +175,7 @@ const own: EgressRow[] = [
     // ---- the Worker object its parent holds
     { realm: 'worker-object', surface: 'error', modes: ['worker'], owner: 'worker-bootstrap', handling: ['cancelled'],
         bound: 'before the worker started, its one refusal; after, none arrives: the worker cancels every error once its port is attached (the worker\'s row)', test: 'test/e2e/worker-port-and-view-cost.spec.ts (M-1\'s class)' },
-    { realm: 'worker-object', surface: 'error', modes: ['strict'], owner: 'view', handling: ['relayed', 'capped'],
+    { realm: 'worker-object', surface: 'error', modes: VIEW_MODES, owner: 'view', handling: ['relayed', 'capped'],
         bound: 'the entry\'s own error ends the sandbox; a later one only the view can describe is cut and rate-limited in the view (guestText)', test: 'test/e2e/worker-port-and-view-cost.spec.ts (M-5)' },
     { realm: 'worker-object', surface: 'message', modes: WORKER_MODES, owner: 'worker-bootstrap', handling: ['removed'],
         bound: 'the worker\'s postMessage is gone (worker-globals.ts); worker mode\'s frame hears one WORKER_STARTED and then nothing', test: 'test/e2e/worker-port-and-view-cost.spec.ts (M-1)' },
@@ -173,9 +183,9 @@ const own: EgressRow[] = [
         bound: 'the worker\'s postMessage is gone (worker-globals.ts)', test: 'test/e2e/worker-port-and-view-cost.spec.ts (M-1)' },
 
     // ---- the library's port, the host's end
-    { realm: 'port', surface: 'message', modes: ['strict', 'worker', 'cooperative'], owner: 'host', handling: ['relayed', 'budgeted', 'capped'],
+    { realm: 'port', surface: 'message', modes: ALL_MODES, owner: 'host', handling: ['relayed', 'budgeted', 'capped'],
         bound: 'the logic port: only the bootstrap posts on it, through its chokepoints: log lines (LOG_EVENTS_PER_SECOND), calls (callLimits), violations (VIOLATION_EVENT_LIMIT), heights (AUTO_RESIZE_MAX_UPDATES_PER_SECOND), PONG, the budget of uncaught errors; strict mode\'s view port: only the view posts on it, its own frames, bounded in the view (guestText, VIOLATION_EVENT_LIMIT per directive, heights, a first overrun\'s notice at most once per 9 s of its debt and one host line per environment); the fetch bridge\'s port: only the bridge\'s frame posts on it, answering the host\'s own frames (one check-in, one head a request, one chunk a pull, MAX_RESPONSE_HEAD and fetchBridge.maxBytes checked before posting)', test: 'test/unit/relay-and-rpc-budgets.test.ts; test/e2e/worker-port-and-view-cost.spec.ts (M-6, M-5); test/e2e/fetch-bridge-isolation.spec.ts' },
-    { realm: 'port', surface: 'messageerror', modes: ['strict', 'worker', 'cooperative'], owner: 'host', handling: ['unreachable'],
+    { realm: 'port', surface: 'messageerror', modes: ALL_MODES, owner: 'host', handling: ['unreachable'],
         bound: 'only the bootstrap posts on the port, frames it built from clones, which deserialize', test: 'test/e2e/egress.spec.ts' },
 
     // ---- cooperative mode's guest document: the guest's own realm on the host page's thread (README, cooperative-mode limits)
@@ -191,55 +201,55 @@ const own: EgressRow[] = [
         bound: 'the guest\'s own document on the host page\'s thread: same-thread execution is a cooperative-mode limit (README)', test: 'README (cooperative-mode limits)' },
 
     // ---- the strict view: what it renders, and its own listeners (owner: the view, in-sandbox-view.ts)
-    { realm: 'view', surface: 'securitypolicyviolation', modes: ['strict'], owner: 'view', handling: ['relayed', 'capped'],
+    { realm: 'view', surface: 'securitypolicyviolation', modes: VIEW_MODES, owner: 'view', handling: ['relayed', 'capped'],
         bound: 'one VIOLATION frame each, at most VIOLATION_EVENT_LIMIT per directive', test: 'test/e2e/violations.spec.ts' },
-    { realm: 'view', surface: 'resource loads', modes: ['strict'], owner: 'view', handling: ['budgeted'],
+    { realm: 'view', surface: 'resource loads', modes: VIEW_MODES, owner: 'view', handling: ['budgeted'],
         bound: 'VIEW_MAX_URLS and VIEW_URLS_PER_SECOND', test: 'test/e2e/worker-port-and-view-cost.spec.ts (M-2)' },
-    { realm: 'view', surface: 'rendering', modes: ['strict'], owner: 'view', handling: ['budgeted'],
+    { realm: 'view', surface: 'rendering', modes: VIEW_MODES, owner: 'view', handling: ['budgeted'],
         bound: 'the view\'s budgets: VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_ELEMENTS, VIEW_MAX_CHARACTERS; one operation: the second past VIEW_MAX_OPERATION_MS within VIEW_OVERRUN_WINDOW_MS ends the sandbox (S72)', test: 'test/e2e/view-budget.spec.ts; test/e2e/view-bound.spec.ts (b)' },
-    { realm: 'view', surface: 'click', modes: ['strict'], owner: 'view', handling: ['cancelled', 'relayed'],
+    { realm: 'view', surface: 'click', modes: VIEW_MODES, owner: 'view', handling: ['cancelled', 'relayed'],
         bound: 'a link\'s navigation cancelled; forwarded to sandboxView.on within VIEW_EVENT_LIMITS', test: 'test/e2e/strict-events.spec.ts' },
-    { realm: 'view', surface: 'auxclick', modes: ['strict'], owner: 'view', handling: ['cancelled'],
+    { realm: 'view', surface: 'auxclick', modes: VIEW_MODES, owner: 'view', handling: ['cancelled'],
         bound: 'a link\'s navigation cancelled', test: 'test/e2e/strict-events.spec.ts' },
-    { realm: 'view', surface: 'submit', modes: ['strict'], owner: 'view', handling: ['cancelled', 'relayed'],
+    { realm: 'view', surface: 'submit', modes: VIEW_MODES, owner: 'view', handling: ['cancelled', 'relayed'],
         bound: 'cancelled; forwarded to sandboxView.on within VIEW_EVENT_LIMITS', test: 'test/e2e/strict-events.spec.ts' },
-    { realm: 'view', surface: 'input', modes: ['strict'], owner: 'view', handling: ['relayed'],
+    { realm: 'view', surface: 'input', modes: VIEW_MODES, owner: 'view', handling: ['relayed'],
         bound: 'forwarded to sandboxView.on within VIEW_EVENT_LIMITS', test: 'test/e2e/strict-events.spec.ts' },
-    { realm: 'view', surface: 'change', modes: ['strict'], owner: 'view', handling: ['relayed'],
+    { realm: 'view', surface: 'change', modes: VIEW_MODES, owner: 'view', handling: ['relayed'],
         bound: 'forwarded to sandboxView.on within VIEW_EVENT_LIMITS', test: 'test/e2e/strict-events.spec.ts' },
-    { realm: 'view', surface: 'keydown', modes: ['strict'], owner: 'view', handling: ['relayed'],
+    { realm: 'view', surface: 'keydown', modes: VIEW_MODES, owner: 'view', handling: ['relayed'],
         bound: 'forwarded to sandboxView.on within VIEW_EVENT_LIMITS', test: 'test/e2e/strict-events.spec.ts' },
-    { realm: 'view', surface: 'pointerdown', modes: ['strict'], owner: 'view', handling: ['relayed'],
+    { realm: 'view', surface: 'pointerdown', modes: VIEW_MODES, owner: 'view', handling: ['relayed'],
         bound: 'forwarded to sandboxView.on within VIEW_EVENT_LIMITS, its coordinates clamped to the view; its time charged to VIEW_APPLY_MS_PER_SECOND', test: 'test/e2e/strict-pointer-events.spec.ts' },
-    { realm: 'view', surface: 'pointerup', modes: ['strict'], owner: 'view', handling: ['relayed'],
+    { realm: 'view', surface: 'pointerup', modes: VIEW_MODES, owner: 'view', handling: ['relayed'],
         bound: 'forwarded to sandboxView.on within VIEW_EVENT_LIMITS, its coordinates clamped to the view; its time charged to VIEW_APPLY_MS_PER_SECOND', test: 'test/e2e/strict-pointer-events.spec.ts' },
-    { realm: 'view', surface: 'pointercancel', modes: ['strict'], owner: 'view', handling: ['relayed'],
+    { realm: 'view', surface: 'pointercancel', modes: VIEW_MODES, owner: 'view', handling: ['relayed'],
         bound: 'forwarded to sandboxView.on within VIEW_EVENT_LIMITS, its coordinates clamped to the view; its time charged to VIEW_APPLY_MS_PER_SECOND', test: 'test/e2e/strict-pointer-events.spec.ts' },
-    { realm: 'view', surface: 'pointermove', modes: ['strict'], owner: 'view', handling: ['relayed'],
+    { realm: 'view', surface: 'pointermove', modes: VIEW_MODES, owner: 'view', handling: ['relayed'],
         bound: 'coalesced per pointer, at most one frame a frame and VIEW_INPUT_IN_FLIGHT unacknowledged; outside the view only during a press that began in it, clamped to its edge; its time charged to VIEW_APPLY_MS_PER_SECOND', test: 'test/e2e/strict-pointer-events.spec.ts; test/unit/view-input.test.ts' },
-    { realm: 'view', surface: 'wheel', modes: ['strict'], owner: 'view', handling: ['relayed', 'cancelled'],
+    { realm: 'view', surface: 'wheel', modes: VIEW_MODES, owner: 'view', handling: ['relayed', 'cancelled'],
         bound: 'coalesced per element and unit, its deltas summed, at most one frame a frame and VIEW_INPUT_IN_FLIGHT unacknowledged, by a passive listener; its default cancelled only inside an element a preventDefault option names, by a listener there only while one does; its time charged to VIEW_APPLY_MS_PER_SECOND', test: 'test/e2e/strict-scroll-and-wheel.spec.ts; test/unit/view-input.test.ts' },
-    { realm: 'view', surface: 'scroll', modes: ['strict'], owner: 'view', handling: ['relayed'],
+    { realm: 'view', surface: 'scroll', modes: VIEW_MODES, owner: 'view', handling: ['relayed'],
         bound: 'coalesced per scrolled element, at most one frame a frame and VIEW_INPUT_IN_FLIGHT unacknowledged, so a guest that answers its own scroll (set({ scroll })) loops at most once a frame; its time charged to VIEW_APPLY_MS_PER_SECOND', test: 'test/e2e/strict-scroll-and-wheel.spec.ts; test/unit/view-input.test.ts' },
-    { realm: 'view', surface: 'focusin', modes: ['strict'], owner: 'view', handling: ['relayed'],
+    { realm: 'view', surface: 'focusin', modes: VIEW_MODES, owner: 'view', handling: ['relayed'],
         bound: 'forwarded to sandboxView.on within VIEW_EVENT_LIMITS, without relatedTarget; its time charged to VIEW_APPLY_MS_PER_SECOND', test: 'test/e2e/strict-focus-events.spec.ts' },
-    { realm: 'view', surface: 'focusout', modes: ['strict'], owner: 'view', handling: ['relayed'],
+    { realm: 'view', surface: 'focusout', modes: VIEW_MODES, owner: 'view', handling: ['relayed'],
         bound: 'forwarded to sandboxView.on within VIEW_EVENT_LIMITS, without relatedTarget; its time charged to VIEW_APPLY_MS_PER_SECOND', test: 'test/e2e/strict-focus-events.spec.ts' },
-    { realm: 'view', surface: 'dragstart', modes: ['strict'], owner: 'view', handling: ['cancelled'],
+    { realm: 'view', surface: 'dragstart', modes: VIEW_MODES, owner: 'view', handling: ['cancelled'],
         bound: 'cancelled inside an element the view captured a pointer to (pointerCapture), until its release; never forwarded', test: 'test/e2e/strict-drag-and-slider.spec.ts' },
-    { realm: 'view', surface: 'selectstart', modes: ['strict'], owner: 'view', handling: ['cancelled'],
+    { realm: 'view', surface: 'selectstart', modes: VIEW_MODES, owner: 'view', handling: ['cancelled'],
         bound: 'cancelled inside an element the view captured a pointer to (pointerCapture), until its release; never forwarded', test: 'test/e2e/strict-drag-and-slider.spec.ts' },
-    { realm: 'view', surface: 'message', modes: ['strict'], owner: 'view', handling: ['own'],
+    { realm: 'view', surface: 'message', modes: VIEW_MODES, owner: 'view', handling: ['own'],
         bound: 'the one INIT_VIEW, from the host page; the guest has no window to post from', test: 'test/e2e/strict-entry-scope-and-links.spec.ts' },
 
     // ---- the fetch bridge's frame: no guest code or markup, and no handle of the guest's on it (BD1:ISO-1)
-    { realm: 'bridge-frame', surface: 'message', modes: ['strict', 'worker', 'cooperative'], owner: 'bridge-frame', handling: ['own'],
+    { realm: 'bridge-frame', surface: 'message', modes: NETWORK_MODES, owner: 'bridge-frame', handling: ['own'],
         bound: 'the one BRIDGE_INIT, from the host page (its parent); the guest has no window to post from', test: 'test/e2e/fetch-bridge-isolation.spec.ts' },
 
     // ---- the host page's window, and the element's frame in it
-    { realm: 'host', surface: 'load', modes: ['strict', 'worker', 'cooperative'], owner: 'host', handling: ['own'],
+    { realm: 'host', surface: 'load', modes: ALL_MODES, owner: 'host', handling: ['own'],
         bound: 'the wrapper frame\'s load: it loads once; a guest that navigates or reloads it ends the sandbox at the second', test: 'test/unit/fetch-and-csp-guarantees.test.ts; test/e2e/lifecycle.spec.ts' },
-    { realm: 'host', surface: 'message', modes: ['strict', 'worker', 'cooperative'], owner: 'host', handling: ['own'],
+    { realm: 'host', surface: 'message', modes: ALL_MODES, owner: 'host', handling: ['own'],
         bound: 'the element takes the guest frame\'s one announcement; anything else a cooperative guest posts to the host window is the host page\'s to read (a cooperative-mode limit: messages to the host window), and strict and worker mode run no guest code in a window', test: 'test/unit/fetch-and-csp-guarantees.test.ts (CB1)' },
 ];
 
@@ -250,10 +260,10 @@ const windowRows: EgressRow[] = [];
 for (const type of WINDOW_EVENT_TYPES) {
     windowRows.push({ realm: 'frame', surface: type, modes: ['worker'], owner: 'worker-bootstrap', handling: ['unreachable'],
         bound: 'worker mode\'s frame holds no guest code and no guest markup, and the worker cannot reach its window', test: 'test/e2e/egress.spec.ts' });
-    if (type !== 'message') windowRows.push({ realm: 'bridge-frame', surface: type, modes: ['strict', 'worker', 'cooperative'], owner: 'bridge-frame', handling: ['unreachable'],
+    if (type !== 'message') windowRows.push({ realm: 'bridge-frame', surface: type, modes: NETWORK_MODES, owner: 'bridge-frame', handling: ['unreachable'],
         bound: 'the fetch bridge\'s frame holds no guest code and no guest markup, and the guest has no handle on its window', test: 'test/unit/structural.test.ts (BD1:ISO-1)' });
     if (heardInView.has(type)) continue;
-    windowRows.push({ realm: 'view', surface: type, modes: ['strict'], owner: 'view', handling: ['unheard'],
+    windowRows.push({ realm: 'view', surface: type, modes: VIEW_MODES, owner: 'view', handling: ['unheard'],
         bound: 'no listener of the library in the view; what the guest renders to raise it is bounded by the view\'s budgets (the rendering row)', test: 'test/e2e/egress.spec.ts' });
 }
 
@@ -319,6 +329,11 @@ export interface ChannelBudget {
     readonly time: string;
     /** The bound on what it costs the host page: a share, a cap or a constant, or that the columns above are the bound. */
     readonly cost: string;
+    /**
+     * What the channel reaches of the network in sealed mode, which has none (docs/research/24_sealed_mode): `none`, and
+     * why where it is not plain, or that the channel is not one of sealed mode's.
+     */
+    readonly sealed: `none${string}` | 'not a channel of sealed mode';
     readonly test: string;
 }
 
@@ -331,6 +346,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: '{LOG_MAX_BYTES} a line, measured by both ends, placeholders included; {LOG_BYTES_PER_SECOND} a second, by the guest; a string argument cut at {LOG_MAX_STRING} characters',
         time: 'none of its own: one event a line',
         cost: 'none beyond the count and the bytes',
+        sealed: 'none: the lines reach the host page only',
         test: 'test/unit/relay-and-rpc-budgets.test.ts (R3-3); test/unit/structural.test.ts' },
     { channel: "Uncaught errors and unhandled rejections of the guest's worker, which the browser reports (worker and strict mode)",
         surfaces: [['worker', 'error'], ['worker', 'unhandledrejection'], ['worker', 'rejectionhandled']],
@@ -338,6 +354,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: '{UNCAUGHT_CHARACTERS_PER_SECOND} characters of their names and messages in any second; past it the sandbox ends',
         time: 'none of its own: the count and the characters',
         cost: "Firefox reports each on the host page's thread, cancelled or not: bounded by the count and the characters, and past them the sandbox ends; one report is not bounded, since the browser makes it before the sandbox can end",
+        sealed: 'none',
         test: 'test/e2e/error-cost-and-queued-calls.spec.ts (N-1); test/unit/egress.test.ts' },
     { channel: "Calls the guest makes (`bridge.call`), to the embedder's methods",
         surfaces: [['port', 'message']],
@@ -345,6 +362,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: '{RPC_MAX_BYTES} a call, its whole frame measured by both ends; `callLimits.maxBytesPerSecond` a second, by default {GUEST_CALL_BYTES_PER_SECOND}; {RPC_MAX_INBOUND_BYTES} of arguments running at once; a method name of at most {MAX_NAME_LENGTH} characters',
         time: "none of its own: the embedder's methods run as long as they take",
         cost: 'none beyond the count and the bytes',
+        sealed: "none of the library's: the embedder's methods are the guest's only way out, so they are all it can reach",
         test: 'test/unit/rpc-bounds-and-call-limits.test.ts (M-2, C-1); test/unit/config-schema.test.ts; test/unit/rate-limit.prop.test.ts' },
     { channel: "Answers to the host's calls (`bridge.expose`)",
         surfaces: [['port', 'message']],
@@ -352,6 +370,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: '{RPC_MAX_BYTES} an answer, measured by both ends; an error text cut at {MAX_TEXT_LENGTH} characters by both ends',
         time: "the host's call timeout (`callWithTimeout`; by default {DEFAULT_TIMEOUT_MS} ms)",
         cost: "none beyond the host's pending calls and the bytes",
+        sealed: 'none',
         test: 'test/unit/rpc-bounds-and-call-limits.test.ts (C-1); test/unit/structural.test.ts' },
     { channel: 'Guest writes (`sandboxFiles.write`, `remove`)',
         surfaces: [['port', 'message']],
@@ -359,6 +378,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: '{GUEST_WRITE_BYTES_PER_SECOND} in any second; what is kept, at most {MAX_TOTAL_BYTES} with the registered files',
         time: 'none of its own: the count and the bytes',
         cost: 'none beyond the count and the bytes',
+        sealed: 'none: the host keeps them',
         test: 'test/unit/guest-writes.test.ts; test/e2e/guest-writes.spec.ts' },
     { channel: "`sandboxFetch()`: a request the host decides and the bridge's frame makes, on the guest's behalf",
         surfaces: [['port', 'message']],
@@ -366,13 +386,15 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: '`fetchBridge.maxBytes` a response, at most {MAX_MAX_BYTES}; its status text and headers at most {MAX_RESPONSE_HEAD} characters together',
         time: '`fetchBridge.timeoutMs` a request, at most {MAX_TIMEOUT_MS} ms',
         cost: "none beyond the count, the bytes and the time: each request is one fetch of the bridge's frame (an opaque origin: no Service Worker, no wrapper of the host page's), its body crossing to the host page one chunk at a time, as the host reads it",
-        test: 'src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts; test/e2e/fetch-bridge-isolation.spec.ts' },
+        sealed: 'none: `sandboxFetch()` rejects in the guest with `FETCH_NOT_ALLOWED` and sends nothing; no bridge frame is built',
+        test: 'src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts; test/e2e/fetch-bridge-isolation.spec.ts; test/unit/sealed-build.test.ts' },
     { channel: 'CSP violation reports, to `violation`',
         surfaces: [['port', 'message'], ['worker', 'securitypolicyviolation'], ['cooperative', 'securitypolicyviolation'], ['view', 'securitypolicyviolation']],
         count: '{VIOLATION_EVENT_LIMIT} events an environment (strict mode: per source, and per directive for the view)',
         bytes: 'each string cut at {VIOLATION_MAX_STRING} characters before it is posted, by the bootstrap and by the view, and again by the host on receipt',
         time: 'none of its own: the count',
         cost: 'none beyond the count',
+        sealed: "none: every request the guest tries is refused and reported here, the request gate's refusals included",
         test: 'src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts' },
     { channel: "Content heights (`autoResize`), to the frame's height",
         surfaces: [['port', 'message']],
@@ -380,6 +402,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: 'a number, at most {AUTO_RESIZE_MAX_HEIGHT} px',
         time: "none of its own: one relayout of the host page's frame a change",
         cost: "a cap: {AUTO_RESIZE_MAX_UPDATES_PER_SECOND} relayouts of the host page's frame a second",
+        sealed: 'none',
         test: 'src/lib/auto-resize.test.ts; test/e2e/auto-resize.spec.ts' },
     { channel: "Liveness answers (PONG, VIEW_PONG), to the host's probes",
         surfaces: [['port', 'message']],
@@ -387,6 +410,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: 'a number',
         time: '{VIEW_LIVENESS_TIMEOUT_MS} ms for the view to answer; {EXECUTION_TIMEOUT_GRACE_MS} ms past a deadline for the worker (`workerExecutionTimeout`)',
         cost: "none: the library's own",
+        sealed: 'none',
         test: 'src/lib/watchdog.test.ts; test/e2e/watchdog.spec.ts' },
     { channel: "Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log`",
         surfaces: [['worker-object', 'error']],
@@ -394,6 +418,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: 'each cut at {VIEW_OPTIONS.guestText.maxLength} characters in the view, before it is posted; each uncaught one counted whole against {UNCAUGHT_CHARACTERS_PER_SECOND} characters in any second, as the worker counts the ones it sees (WebKit mutes those of a revoked script there); past it the sandbox ends',
         time: 'none of its own: one line each',
         cost: 'none beyond the count and the bytes',
+        sealed: 'none',
         test: 'test/unit/rpc-bounds-and-call-limits.test.ts (C-4); test/e2e/worker-port-and-view-cost.spec.ts (M-5)' },
     { channel: "Strict: the view's operations (`sandboxView.render`, `text`, `set`)",
         surfaces: [['view', 'rendering']],
@@ -401,6 +426,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: '{VIEW_RENDER_MAX_LENGTH} characters an operation, a style value {VIEW_SET_STYLE_LIMITS.maxValue}; {VIEW_RENDER_CHARACTERS_PER_SECOND} a second; {VIEW_MAX_CHARACTERS} in the body',
         time: '{VIEW_APPLY_MS_PER_SECOND} ms a second on average, each operation charged in full; the second operation past {VIEW_MAX_OPERATION_MS} ms within {VIEW_OVERRUN_WINDOW_MS} ms ends the sandbox',
         cost: `a share: at most {VIEW_APPLY_MS_PER_SECOND} ms of each second, averaged; ${VIEW_COST}`,
+        sealed: 'none',
         test: 'test/e2e/view-bound.spec.ts; test/e2e/view-budget.spec.ts; test/unit/view-budget.prop.test.ts; test/unit/view-input.test.ts (set({ css }))' },
     { channel: "Strict: the view's loads (URL attributes, CSS, and what the browser reports)",
         surfaces: [['view', 'resource loads']],
@@ -408,13 +434,15 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: "what the policy's origins serve: no budget of the library's",
         time: 'none of its own: the rate',
         cost: `a rate: at most {VIEW_URLS_PER_SECOND} loads a second; ${VIEW_COST}`,
-        test: 'test/e2e/worker-port-and-view-cost.spec.ts (M-2); test/e2e/strict-view-budget.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts' },
+        sealed: "none: `blob:` loads of registered files and guest writes only; the view's policy has no network source, and the renderer drops every network URL before the browser sees it",
+        test: 'test/e2e/worker-port-and-view-cost.spec.ts (M-2); test/e2e/strict-view-budget.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts; test/unit/sealed-build.test.ts' },
     { channel: "Strict: the view's events, to the guest's `sandboxView.on` handlers",
         surfaces: [['view', 'click'], ['view', 'submit'], ['view', 'input'], ['view', 'change'], ['view', 'keydown'], ['view', 'pointerdown'], ['view', 'pointerup'], ['view', 'pointercancel'], ['view', 'pointermove'], ['view', 'wheel'], ['view', 'scroll'], ['view', 'focusin'], ['view', 'focusout']],
         count: 'of the types a handler listens to: the discrete ones as the user raises them; pointer moves, wheel and scroll events coalesced to one per pointer or element, sent at most once per animation frame while fewer than {VIEW_INPUT_IN_FLIGHT} frames are unacknowledged; {VIEW_EVENT_LIMITS.maxIds} ids and {VIEW_EVENT_LIMITS.maxFields} form fields a detail',
         bytes: 'each string cut at {VIEW_EVENT_LIMITS.maxString} characters, all of one frame at {VIEW_EVENT_LIMITS.maxTotal}; the rest numbers and constants',
         time: 'the event path charged to the view\'s {VIEW_APPLY_MS_PER_SECOND} ms a second; continuous events wait while that budget is in debt',
         cost: `within the view's share: at most {VIEW_APPLY_MS_PER_SECOND} ms of each second, averaged, with its operations; ${VIEW_COST}`,
+        sealed: 'none',
         test: 'test/e2e/strict-events.spec.ts; test/e2e/strict-pointer-events.spec.ts; test/e2e/strict-scroll-and-wheel.spec.ts; test/e2e/strict-focus-events.spec.ts; test/unit/view-input.test.ts' },
     { channel: "Strict: the view's overrun notices (VIEW_FIRST_OVERRUN, VIEW_OVERRUN), to `sandbox-log` and `terminated`",
         surfaces: [['port', 'message']],
@@ -422,6 +450,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: 'none: no field',
         time: 'none of its own: the count',
         cost: `a stall past {VIEW_MAX_OPERATION_MS} ms at most once per {VIEW_OVERRUN_WINDOW_MS} ms beyond the first; ${VIEW_COST}`,
+        sealed: 'none',
         test: 'test/unit/strict-view-budget.test.ts (the repeated-overrun rule); test/e2e/view-bound.spec.ts' },
     { channel: "Cooperative: the guest's own document",
         surfaces: [['cooperative', 'every other event of the guest document']],
@@ -429,6 +458,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: 'none',
         time: 'none: one loop can freeze the host page ([Modes](#modes))',
         cost: 'unbounded: a cooperative-mode limit',
+        sealed: 'not a channel of sealed mode',
         test: 'README (cooperative-mode limits)' },
 ] as ChannelBudget[]).map(row => Object.freeze(row)));
 
@@ -441,7 +471,7 @@ export function budgetsTable(values: Readonly<Record<string, number>>): string {
         if (!(name in values)) throw new Error(`budgetsTable: no value for ${name}`);
         return `\`${name}\` (${values[name]})`;
     }).replace(/\|/g, '\\|');
-    const lines = ['| Channel | Count | Bytes | Time | Bound on the cost to the host page | Test |', '| :--- | :--- | :--- | :--- | :--- | :--- |'];
-    for (const row of CHANNEL_BUDGETS) lines.push(`| ${[row.channel, row.count, row.bytes, row.time, row.cost, row.test].map(cell).join(' | ')} |`);
+    const lines = ['| Channel | Count | Bytes | Time | Bound on the cost to the host page | Network in sealed mode | Test |', '| :--- | :--- | :--- | :--- | :--- | :--- | :--- |'];
+    for (const row of CHANNEL_BUDGETS) lines.push(`| ${[row.channel, row.count, row.bytes, row.time, row.cost, row.sealed, row.test].map(cell).join(' | ')} |`);
     return lines.join('\n');
 }

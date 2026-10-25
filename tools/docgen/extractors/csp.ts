@@ -1,5 +1,5 @@
-/** docs/API.md's two guest policies, as the generator makes them with no origins and no files. */
-import { cooperativePolicy, strictViewPolicy } from '../../../src/lib/csp/csp-generator';
+/** The guest policies of each mode, as the generator makes them with no origins and no files. */
+import { cooperativePolicy, sealedViewPolicy, strictViewPolicy } from '../../../src/lib/csp/csp-generator';
 import { NO_ORIGINS } from '../../../src/lib/csp/origins';
 import { signatureOf, type Item } from '../engine';
 import type { Extractor } from './markdown';
@@ -8,10 +8,11 @@ const WIDTH = 114;
 const input = { origins: NO_ORIGINS, fileKinds: new Set<never>(), scriptUnsafe: false };
 const HASH = `'sha256-${'A'.repeat(43)}='`;
 
-/** The policy of each mode: the strict one names the bootstrap's hash by a placeholder. */
+/** The policy of each mode: the strict and the sealed view's name the bootstrap's hash by a placeholder. */
 const policies = () => ({
     cooperative: cooperativePolicy(input),
     strict: strictViewPolicy({ ...input, bootstrapHash: HASH }).replace(HASH, "'sha256-<bootstrap>'"),
+    sealed: sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: HASH, scriptUnsafe: false }).replace(HASH, "'sha256-<bootstrap>'"),
 });
 
 /** A policy as a fenced block: its directives filled into lines of at most WIDTH characters. */
@@ -30,6 +31,7 @@ function block(policy: string): string {
 const items = (): Item[] => [
     { id: 'csp:cooperative', signature: signatureOf(policies().cooperative), render: () => block(policies().cooperative) },
     { id: 'csp:strict', signature: signatureOf(policies().strict), render: () => block(policies().strict) },
+    { id: 'csp:sealed', signature: signatureOf(policies().sealed), render: () => block(policies().sealed) },
 ];
 
 export const csp: Extractor = {
@@ -37,5 +39,6 @@ export const csp: Extractor = {
     regions: {
         'csp-cooperative': () => items()[0]!.render(),
         'csp-strict': () => items()[1]!.render(),
+        'csp-sealed': () => items()[2]!.render(),
     },
 };

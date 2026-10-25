@@ -4,8 +4,9 @@
 `origins` or `fetchBridge` (research 22). If the default mode had no network at all, what would leave its code, what
 would its policies be, and could it still run an app the host drives from outside, with WebAssembly?
 
-**Answer.** Decided by the owner on 2026-10-24, **partly built** (step 1 below): `mode: 'sealed'` is an opt-in mode with
-its type, its schema rule and its view policy; strict is still the default. The decision:
+**Answer.** Decided by the owner on 2026-10-24, **partly built** (steps 1 and 2 below): `mode: 'sealed'` is an opt-in
+mode with its type, its schema rule, its view policy and a build path of its own that reaches no network code; strict is
+still the default. The decision:
 
 - **A new mode, `mode: 'sealed'`, becomes the default**, and the review board's scope. It is strict with no network: the
   same view, worker, renderer and bootstrap, with a view policy whose every fetch directive is `blob:` or `'none'` and
@@ -29,8 +30,8 @@ The measurements are in `measure.spec.ts` (below); §1 and §2 follow from the c
 | Step | Content | State |
 | :---: | :--- | :--- |
 | 0 | This note, `measure.spec.ts`, the ledger row corrected | done |
-| 1 | The type and the schema: `SealedSandboxConfig`, `NetworkSandboxOptions`, `CONFIG_SCHEMA` modes, the refusal and its reason, `sealedViewPolicy`. Sealed is opt-in (`mode: 'sealed'`); the default is still strict | done; a sealed build runs on strict's path with no `origins`, no fetch bridge and no host-policy narrowing |
-| 2 | The sealed build path: `_prepareStrictFrame` with no network, no host-site call in `setConfig()`, no bridge, an empty gate list, `sandboxFetch` refusing in the guest's realm | not built |
+| 1 | The type and the schema: `SealedSandboxConfig`, `NetworkSandboxOptions`, `CONFIG_SCHEMA` modes, the refusal and its reason, `sealedViewPolicy`. Sealed is opt-in (`mode: 'sealed'`); the default is still strict | done |
+| 2 | The sealed build path: strict's view with no network, no host-site call in `setConfig()`, no bridge, an empty gate list, `sandboxFetch` refusing in the guest's realm; the sealed column of the egress table and of `INHERITED_CONTEXT` (T4, T5, T6, T9) | done: [ARCHITECTURE](../../../ARCHITECTURE.md#sealed-mode-strict-mode-with-no-network), `test/unit/sealed-build.test.ts` |
 | 3 | The no-network e2e on all three engines (a listener that must see nothing) and the property suite in sealed | not built |
 | 4 | Sealed becomes the default: the codemod over tests and presets, README, API.md, THREAT-MODEL, ARCHITECTURE, an ADR, the playground, the brief for the next board pass | not built |
 | 5 | Driven from outside, docs: the app recipe, the stream pattern, the guest-write route for images, and the `openExternal` example fixed and run by a spec | not built |

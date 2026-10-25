@@ -18,14 +18,15 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
 that is one fixed template per mode, to which the embedder adds only exact origins ([ADR-007](docs/ADR-007-typed-origins.md)).
-What differs between the three modes is which realm the guest's code runs in:
+What differs between the modes is which realm the guest's code runs in, and whether it has a network:
 
 - **strict** (the default): in a worker. The frame around it, the view, runs one script, the library's own, admitted by its
   hash, and draws what the worker renders. No guest script ever runs in a document.
+- **sealed**: strict mode's view and worker, with no network ([below](#sealed-mode-strict-mode-with-no-network)). Opt-in.
 - **cooperative**: in the guest document, for content that cooperates, within a frozen list of documented limits.
 - **worker**: in a worker spawned by a frame with no guest markup. Frozen, to be folded into strict mode.
 
-In every mode, with `fetchBridge`, the element adds one more frame of its own beside the wrapper: the **bridge frame**,
+In every mode but sealed, with `fetchBridge`, the element adds one more frame of its own beside the wrapper: the **bridge frame**,
 hidden, with an opaque origin and no guest code, which makes each request the host decided, so no Service Worker or
 `fetch` wrapper of the host page applies to it ([ADR-006](docs/ADR-006-fetch-bridge.md)).
 
@@ -89,6 +90,43 @@ bounded: [API.md](docs/API.md#the-views-cost-to-the-host-page)). The host talks 
 the worker's with `watchdogTimeout`. The guest can therefore draw but not script, and a flood of drawing is bounded where
 it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render path,
 [ADR-002](docs/ADR-002-host-guest-broker.md).
+
+## Sealed mode: strict mode with no network
+
+<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e555ebd6070c7 -->
+
+Sealed mode (`mode: 'sealed'`, opt-in) is strict mode's view and worker with no network
+([research 24](docs/research/24_sealed_mode/README.md)). It is not strict mode with its network options left empty: the
+sealed path never reaches the code that would read or open a network, so there is nothing to leave empty.
+
+- **The config.** `origins` and `fetchBridge` are not sealed options: a sealed config that names either is refused whole,
+  with its reason, and their rules never run in sealed mode (`readIn`, `src/lib/config-schema.ts`). Those two rules are
+  the only ones that read the host page (its origin and its site, from `src/lib/host-site.ts`, through `readHostPage` in
+  `src/host.ts`, which `normaliseConfig` calls only when such a rule asks), so a sealed `setConfig()` reads nothing of it.
+- **The build.** `_prepareBuild` turns to sealed mode's own path, `_prepareSealedFrame`, before anything of the network
+  is asked: no `_reach` (the host page's policy is applied to nothing), no bridge frame, no request-gate list. The view
+  and its worker are strict mode's (`_prepareViewFrame`), under `sealedViewPolicy`, whose input has no field an origin
+  could come from (below: with no files; registered files and guest writes add `blob:` for their kind of load, and
+  `connect-src` stays `'none'`).
+- **The worker.** Its bootstrap gets an empty request-gate list and `sealed`: `fetch`, `XMLHttpRequest` and `WebSocket`
+  refuse every request and report it as a `violation`, and `sandboxFetch()` rejects in the guest with
+  `FETCH_NOT_ALLOWED` and sends nothing to the host.
+- **The view.** `INIT_VIEW` carries no origins, so the renderer keeps no network URL; what it shows loads from `blob:`.
+- **The host page.** The one value of the page's a sealed build reads is `crossOriginIsolated`, only to refuse (as in
+  every mode); `hostContentSecurityPolicy` serves only Trusted Types where the browser has none. Which inherited channels
+  remain in sealed mode is the sealed column of the [host page's context](docs/THREAT-MODEL.md#the-host-pages-context),
+  and what each channel of guest activity reaches of the network, the sealed column of [Budgets](docs/API.md#budgets).
+
+`test/unit/sealed-build.test.ts` holds this by construction and by run: the call graph of the sealed path reaches none of
+the network code, the host page is never asked, and each check has strict mode with a network as its positive control.
+
+<!-- generated:begin csp-sealed -->
+```
+default-src 'none'; script-src 'sha256-<bootstrap>'; script-src-attr 'none'; style-src 'unsafe-inline';
+img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none';
+object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
+```
+<!-- generated:end -->
 
 ## Channels and frames
 
@@ -269,12 +307,14 @@ stateDiagram-v2
 
 ## Budgets
 
-<!-- describes: budgets:channels sig:f458 -->
+<!-- describes: budgets:channels sig:70c7 -->
 
 Everything the guest can make the host page, the view or the network do goes through a **channel**, and every channel has
 a bound in count, bytes and time. The surfaces a guest can reach are listed once (the egress table), each with how it is
-handled; the bounds are listed once per channel (`CHANNEL_BUDGETS`), each naming the constants behind it in the limits
-registry; a test fails on a surface that relays, budgets or caps and belongs to no channel. A bound that depends on the
+handled and the modes that have it (sealed mode has every surface of strict mode's but the bridge frame's); the bounds
+are listed once per channel (`CHANNEL_BUDGETS`), each naming the constants behind it in the limits registry, and what it
+reaches of the network in sealed mode, which is nothing; a test fails on a surface that relays, budgets or caps and
+belongs to no channel. A bound that depends on the
 platform (the view shares the host page's thread on Firefox, WebKit and Android) is stated as a bound, with the embedder's
 way out: `terminate()`, or removing the element. One gap is open (owner, 2026-10-21: backlogged, not
 mitigated now): on desktop Chromium the view's liveness ping ends a healthy sandbox on one long stall
