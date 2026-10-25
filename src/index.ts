@@ -6,9 +6,11 @@ export { WebSandbox, defineWebSandbox, EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_
 export type {
     CallLimits,
     CooperativeSandboxConfig,
+    NetworkSandboxOptions,
     SandboxConfig,
     SandboxConfigOptions,
     SandboxState,
+    SealedSandboxConfig,
     StrictSandboxConfig,
     WebSandboxEventMap,
     WorkerSandboxConfig,

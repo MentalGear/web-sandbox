@@ -140,8 +140,8 @@ export const COOKIE_CARRIERS = {
     },
 } as const satisfies Record<string, CookieCarrier>;
 
-/** A mode in which a request can carry a cookie: never strict mode (STRICT_COOKIE_CARRIERS). */
-export type CookieCarrierMode = Exclude<SandboxMode, 'strict'>;
+/** A mode in which a request can carry a cookie: never strict mode (STRICT_COOKIE_CARRIERS), never sealed mode (no network). */
+export type CookieCarrierMode = Exclude<SandboxMode, 'strict' | 'sealed'>;
 
 export interface CookieCarrier {
     /** The request, as the table of the docs names it. */

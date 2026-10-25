@@ -130,9 +130,43 @@ export function admitGuestCall(budget: Readonly<CallBudget>, calls: CallWindows,
 // ---- The whole configuration (S67)
 
 /** The execution modes. Anything else is refused: the sandbox does not start (AR:A4). */
-export const SANDBOX_MODES = ['strict', 'cooperative', 'worker'] as const;
+export const SANDBOX_MODES = ['strict', 'sealed', 'cooperative', 'worker'] as const;
 export type SandboxMode = (typeof SANDBOX_MODES)[number];
 export const isSandboxMode = (mode: unknown): mode is SandboxMode => (SANDBOX_MODES as readonly unknown[]).includes(mode);
+
+/**
+ * The modes whose guest code runs in a worker that strict mode's view spawns (ADR-005): strict, and sealed, which is
+ * strict with no network (docs/research/24_sealed_mode). They share the view, its worker, the renderer and the bootstrap.
+ */
+export const STRICT_VIEW_MODES = ['strict', 'sealed'] as const satisfies readonly SandboxMode[];
+export const hasStrictView = (mode: unknown): boolean => (STRICT_VIEW_MODES as readonly unknown[]).includes(mode);
+
+/** The modes that take the options that open the network, `origins` and `fetchBridge`: every mode but sealed. */
+export const NETWORK_MODES = ['strict', 'cooperative', 'worker'] as const satisfies readonly SandboxMode[];
+
+/** The options that open the network, which sealed mode does not have. */
+export const NETWORK_OPTIONS = ['origins', 'fetchBridge'] as const;
+
+/**
+ * A config refused with a reason of the library's own (TERMINATION_REASONS), not "could not be used": the element's
+ * refusal is that text alone (host.ts, _configure).
+ */
+export class ConfigRefusal extends Error {
+    constructor(readonly reason: string) {
+        super(reason);
+        this.name = 'ConfigRefusal';
+    }
+}
+
+/**
+ * A sealed config that names `origins` or `fetchBridge` (with any value but `undefined`) is refused whole, with its
+ * reason (`sealedNetwork`), never read as another mode and never stripped. An option outside its modes is otherwise
+ * ignored with a warning; these two would open the network the mode does not have, so silence would be the wrong failure.
+ */
+export function sealedNetworkRefusal(mode: unknown, source: Record<string, unknown>): ConfigRefusal | null {
+    if (mode !== 'sealed') return null;
+    return NETWORK_OPTIONS.some(name => ownField(source, name) !== undefined) ? new ConfigRefusal(reasonText('sealedNetwork')) : null;
+}
 
 // Old names of modes: refused like any other value that is not a mode, never an alias (nothing is published, so no
 // config needs one), and the refusal names the new one.
@@ -244,7 +278,7 @@ export interface OptionRule {
 }
 
 const ALL_MODES = SANDBOX_MODES;
-const notStrict = (mode: unknown) => mode !== 'strict';
+const noStrictView = (mode: unknown) => !hasStrictView(mode);
 const asList = <T>(value: T[] | undefined): T[] => value ?? [];
 
 /** Only a literal true enables a switch: each one is interpolated into a bootstrap as a literal. */
@@ -257,7 +291,7 @@ const delay = ({ given }: OptionInput) => watchdogBudget(given);
 const viewSwitch = (name: ViewSwitch) => ({ given, mode, warn }: OptionInput): boolean => {
     if (given === undefined) return VIEW_SWITCHES[name];
     if (typeof given === 'boolean') return given;
-    if (mode === 'strict') warn(`[Sandbox] ${name} must be a boolean; ${shown(given)} was taken as false: ${VIEW_SWITCH_OFF[name]}.`);
+    if (hasStrictView(mode)) warn(`[Sandbox] ${name} must be a boolean; ${shown(given)} was taken as false: ${VIEW_SWITCH_OFF[name]}.`);
     return false;
 };
 
@@ -366,16 +400,16 @@ export const CONFIG_SCHEMA = {
     capabilities: {
         default: [], documented: '`[]`', modes: ALL_MODES,
         // strict mode's view always has its own flags (STRICT_VIEW_FLAGS), so listing one of them there is not dropped
-        read: ({ given, mode, warn }) => asList(filterCapabilities(given, ((mode ?? 'strict') === 'strict' ? STRICT_CAPABILITIES : SAFE_CAPABILITIES) as readonly SafeCapability[], 'capabilities', warn)),
+        read: ({ given, mode, warn }) => asList(filterCapabilities(given, (hasStrictView(mode ?? 'strict') ? STRICT_CAPABILITIES : SAFE_CAPABILITIES) as readonly SafeCapability[], 'capabilities', warn)),
     },
     unsafeCapabilities: {
-        default: [], documented: '`[]`', modes: ['cooperative', 'worker'], ignoredIn: (mode) => mode === 'strict',
+        default: [], documented: '`[]`', modes: ['cooperative', 'worker'], ignoredIn: hasStrictView,
         read: ({ given, warn }) => asList(filterCapabilities(given, UNSAFE_CAPABILITIES, 'unsafeCapabilities', warn)),
         notice: (_, read) => (read as string[]).map(capability => `[Sandbox] unsafe capability "${capability}" is enabled: it lets guest content act outside the sandbox.`),
-        ignoredWarning: (_, read) => ((read as string[]).length > 0 ? `[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: ${(read as string[]).join(', ')}.` : null),
+        ignoredWarning: ({ mode }, read) => ((read as string[]).length > 0 ? `[Sandbox] unsafeCapabilities are not available in ${mode as string} mode and were dropped: ${(read as string[]).join(', ')}.` : null),
     },
     html: {
-        default: '', documented: "`''`", modes: ['strict', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
+        default: '', documented: "`''`", modes: ['strict', 'sealed', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
         // a string or nothing (R1:R1-3): anything else is dropped with a warning, never refuses the config
         read: ({ given, present, warn }) => {
             if (typeof given === 'string') return given;
@@ -383,9 +417,11 @@ export const CONFIG_SCHEMA = {
             return '';
         },
     },
+    // Not in sealed mode, which has no network: a sealed config that names it is refused before any option is read
+    // (sealedNetworkRefusal), so in sealed mode it is never read, and neither is the host page's origin.
     fetchBridge: {
-        default: null, documented: 'off', modes: ALL_MODES,
-        read: ({ given, warn, context }) => toFetchPolicy(given, warn, context.hostOrigin),
+        default: null, documented: 'off', modes: NETWORK_MODES, ignoredIn: (mode) => mode === 'sealed',
+        read: ({ given, mode, warn, context }) => (mode === 'sealed' ? null : toFetchPolicy(given, warn, context.hostOrigin)),
     },
     callLimits: {
         default: DEFAULT_CALL_BUDGET, documented: `${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes / 1048576} MiB per second`, modes: ALL_MODES,
@@ -396,10 +432,11 @@ export const CONFIG_SCHEMA = {
     // configured the removed Service-Worker hub (ADR-004)
     virtualFilesUrl: { removed: '[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).' },
     origins: {
-        default: NO_ORIGINS, documented: 'none', modes: ALL_MODES,
+        default: NO_ORIGINS, documented: 'none', modes: NETWORK_MODES, ignoredIn: (mode) => mode === 'sealed',
         // parsed for the mode the build will have, the default included, so strict mode drops `scripts` whether the
-        // config names it or not; a value that cannot be read refuses the config (origins.ts)
-        read: ({ given, mode, warn, context }) => limitHostReach(parseOrigins(given, mode, warn), context, warn, mode),
+        // config names it or not; a value that cannot be read refuses the config (origins.ts). Never read in sealed
+        // mode, as fetchBridge.
+        read: ({ given, mode, warn, context }) => (mode === 'sealed' ? NO_ORIGINS : limitHostReach(parseOrigins(given, mode, warn), context, warn, mode)),
     },
     hostContentSecurityPolicy: {
         default: undefined, documented: 'none: `origins.connect` and `fetchBridge.allow` are dropped', modes: ALL_MODES,
@@ -411,25 +448,25 @@ export const CONFIG_SCHEMA = {
         },
     },
     autoResize: {
-        default: false, documented: '`false`', modes: ['strict', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
+        default: false, documented: '`false`', modes: ['strict', 'sealed', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
         read: literalTrue,
         ignoredWarning: (_, read) => (read === true ? '[Sandbox] autoResize has no effect in worker mode: a worker has no document to measure.' : null),
     },
     entry: {
-        default: undefined, documented: 'none', modes: ['strict'], ignoredIn: notStrict,
+        default: undefined, documented: 'none', modes: STRICT_VIEW_MODES, ignoredIn: noStrictView,
         // a registered path or nothing: it is looked up in each build's snapshot
         read: ({ given }) => (typeof given === 'string' ? given : undefined),
-        ignoredWarning: (_, read) => (read ? '[Sandbox] "entry" is used only in strict mode and was ignored.' : null),
+        ignoredWarning: (_, read) => (read ? '[Sandbox] "entry" is used only in strict and sealed mode and was ignored.' : null),
     },
     allowAnimations: {
-        default: VIEW_SWITCHES.allowAnimations, documented: '`false`', modes: ['strict'], ignoredIn: notStrict,
+        default: VIEW_SWITCHES.allowAnimations, documented: '`false`', modes: STRICT_VIEW_MODES, ignoredIn: noStrictView,
         read: viewSwitch('allowAnimations'),
-        ignoredWarning: ({ given }) => (given !== undefined ? '[Sandbox] "allowAnimations" is used only in strict mode and was ignored.' : null),
+        ignoredWarning: ({ given }) => (given !== undefined ? '[Sandbox] "allowAnimations" is used only in strict and sealed mode and was ignored.' : null),
     },
     allowAutoplay: {
-        default: VIEW_SWITCHES.allowAutoplay, documented: '`false`', modes: ['strict'], ignoredIn: notStrict,
+        default: VIEW_SWITCHES.allowAutoplay, documented: '`false`', modes: STRICT_VIEW_MODES, ignoredIn: noStrictView,
         read: viewSwitch('allowAutoplay'),
-        ignoredWarning: ({ given }) => (given !== undefined ? '[Sandbox] "allowAutoplay" is used only in strict mode and was ignored.' : null),
+        ignoredWarning: ({ given }) => (given !== undefined ? '[Sandbox] "allowAutoplay" is used only in strict and sealed mode and was ignored.' : null),
     },
     scriptUnsafe: {
         default: false, documented: '`false`', modes: ALL_MODES,
@@ -438,7 +475,7 @@ export const CONFIG_SCHEMA = {
         notice: (_, read) => (read === true ? ["[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content."] : []),
     },
     // not in cooperative mode: the guest document can share the host's thread, so no timer could fire meanwhile
-    workerExecutionTimeout: { default: 0, documented: '`0` (off)', modes: ['worker', 'strict'], ignoredIn: (mode) => mode === 'cooperative', read: delay },
+    workerExecutionTimeout: { default: 0, documented: '`0` (off)', modes: ['strict', 'sealed', 'worker'], ignoredIn: (mode) => mode === 'cooperative', read: delay },
     watchdogTimeout: { default: 0, documented: '`0` (off)', modes: ALL_MODES, read: delay },
     guestWrites: { default: false, documented: '`false`', modes: ALL_MODES, read: literalTrue },
 } satisfies Record<string, OptionRule>;
@@ -480,6 +517,8 @@ export function normaliseConfig(copy: unknown, context: NormaliseContext): Norma
         return { given: ownField(source, name), present, mode, context, warn };
     };
     const mode = RULES.mode.read!(inputOf('mode', undefined));
+    const sealedNetwork = sealedNetworkRefusal(mode, source);
+    if (sealedNetwork !== null) return { value: null, warnings, refusal: sealedNetwork };
     const values = Object.create(null) as Record<OptionName, unknown>;
     try {
         for (const name of SCHEMA_NAMES) {
@@ -558,17 +597,21 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
             && (config.hostContentSecurityPolicy === undefined || config.hostContentSecurityPolicy === false || typeof config.hostContentSecurityPolicy === 'string'),
     },
     {
-        name: 'capabilities are only those the mode allows (strict: its view flags too); unsafeCapabilities only unsafe ones',
-        holds: ({ config }) => config.capabilities.every(capability => (((config.mode ?? 'strict') === 'strict' ? STRICT_CAPABILITIES : SAFE_CAPABILITIES) as readonly string[]).includes(capability))
+        name: 'capabilities are only those the mode allows (strict and sealed: the view flags too); unsafeCapabilities only unsafe ones',
+        holds: ({ config }) => config.capabilities.every(capability => ((hasStrictView(config.mode ?? 'strict') ? STRICT_CAPABILITIES : SAFE_CAPABILITIES) as readonly string[]).includes(capability))
             && config.unsafeCapabilities.every(capability => (UNSAFE_CAPABILITIES as readonly string[]).includes(capability)),
     },
     {
-        name: 'an option outside its modes holds its default (entry, allowAnimations, allowAutoplay outside strict; unsafeCapabilities in strict; html and autoResize in worker; workerExecutionTimeout in cooperative)',
+        name: 'an option outside its modes holds its default (entry, allowAnimations, allowAutoplay outside strict and sealed; unsafeCapabilities in strict and sealed; html and autoResize in worker; workerExecutionTimeout in cooperative)',
         holds: ({ config }) => CONFIG_OPTIONS.every(name => PARSED_APART.includes(name) || !ignoredIn(name, config.mode) || sameValue((config as unknown as Record<string, unknown>)[name], RULES[name].default)),
     },
     {
         name: 'a mode the element does not know warns, and every build refuses it',
         holds: ({ config }, warnings) => isSandboxMode(config.mode) || (unknownModeReason(config.mode) !== null && warnings.some(message => message.startsWith(`[Sandbox] mode ${describeMode(config.mode)} is not one of`))),
+    },
+    {
+        name: 'a sealed config opens no network: no origin and no fetch bridge',
+        holds: ({ config, origins, fetchPolicy }) => config.mode !== 'sealed' || (fetchPolicy === null && ORIGIN_KINDS.every(kind => origins[kind].length === 0)),
     },
     ...CALL_INVARIANTS.map(({ name, holds }): ConfigInvariant => ({ name: `callLimits: ${name}`, holds: ({ callBudget }) => holds(callBudget) })),
     {

@@ -206,8 +206,8 @@ describe('the configuration: allowAnimations and allowAutoplay', () => {
         el.setConfig({ mode: 'worker', allowAnimations: 'x', allowAutoplay: true });
         el.setConfig({ mode: 'cooperative', allowAnimations: undefined });
         expect(warnings()).toEqual([
-            '[Sandbox] "allowAnimations" is used only in strict mode and was ignored.',
-            '[Sandbox] "allowAutoplay" is used only in strict mode and was ignored.',
+            '[Sandbox] "allowAnimations" is used only in strict and sealed mode and was ignored.',
+            '[Sandbox] "allowAutoplay" is used only in strict and sealed mode and was ignored.',
         ]);
     });
 
