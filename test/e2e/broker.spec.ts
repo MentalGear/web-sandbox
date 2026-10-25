@@ -1,4 +1,5 @@
 import { test, expect, type CallOutcome } from './fixture';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * β — the bidirectional RPC broker (backlog B1), exercised across BOTH real realms (iframe and
@@ -9,7 +10,7 @@ import { test, expect, type CallOutcome } from './fixture';
  * The one case proving the call path needs no eval (scriptUnsafe:false) lives at the bottom.
  */
 
-const MODES = ['cooperative', 'worker', 'strict'] as const;
+const MODES = ['cooperative', 'worker', ...VIEW_MODES] as const;
 
 // The host's own refusal texts (src/host.ts). A guest can produce the very same text; the code tells them apart.
 const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.';

@@ -3,6 +3,7 @@ import { test, expect, type SandboxDriver } from './fixture';
 import { waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { busyShare, describeShare, floodControl, interleavedShare, pausableFlood } from './host-share';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * Findings of R5 where the browser decides, on Chromium, Firefox and WebKit. Each names its class
@@ -116,31 +117,33 @@ test.describe('L-1 (L): queued calls are posted only when the build is ready', (
     // the queue is flushed at `ready`, not at the load. The window's place differs per run and engine, so the call
     // is made with several timeouts, one build each, and every call that timed out before its build's `ready` is checked;
     // a call that timed out after `ready` had been posted may run (it is not in the queue).
-    test("strict mode, the owner's repro: a call that times out before `ready` never runs, at any timeout", async ({ sandbox, page, browserName }) => {
-        test.setTimeout(90000);
-        await sandbox.registerFiles({ 'main.js': `bridge.expose('m', (text) => console.log('L1 ' + text));` });
-        const cases: { timeout: number; outcome: string; beforeReady: boolean }[] = [];
-        for (const timeout of [5, 20, 40, 60, 80, 100, 130, 160, 200, 300]) {
-            cases.push(await page.evaluate(async (timeout) => {
-                const el = document.querySelector('web-sandbox') as any;
-                const html = '<p>' + 'x'.repeat(880000) + '</p><p>' + timeout + '</p>';
-                let readyAt = Infinity;
-                const ready = new Promise(resolve => el.addEventListener('ready', () => { readyAt = performance.now(); resolve(null); }, { once: true }));
-                el.setConfig({ entry: 'main.js', html });
-                let settledAt = 0;
-                const outcome = await el.callWithTimeout(timeout, 'm', 'ran ' + timeout).then(() => 'resolved', (e: any) => e.code).finally(() => { settledAt = performance.now(); });
-                await ready;
-                await el.callWithTimeout(5000, 'm', 'ready ' + timeout); // the positive control; the guest has run what it was sent
-                return { timeout, outcome, beforeReady: settledAt < readyAt };
-            }, timeout));
-        }
-        await page.waitForTimeout(300);
-        const lines = new Set((await sandbox.logs()).filter(line => line.startsWith('L1 ')));
-        const timedOutBeforeReady = cases.filter(entry => entry.outcome === 'TIMEOUT' && entry.beforeReady);
-        console.log(`MEASURED ${browserName} L-1: ${timedOutBeforeReady.length} of ${cases.length} calls timed out before ready; ran anyway: ${JSON.stringify(timedOutBeforeReady.filter(entry => lines.has('L1 ran ' + entry.timeout)).map(entry => entry.timeout))}`);
-        expect(timedOutBeforeReady.length, 'at least one call timed out before ready').toBeGreaterThan(0);
-        for (const entry of timedOutBeforeReady) expect(lines.has('L1 ran ' + entry.timeout), `the call with timeout ${entry.timeout} ran`).toBe(false);
-        for (const entry of cases) expect(lines.has('L1 ready ' + entry.timeout), 'the call after ready ran').toBe(true);
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test("the owner's repro: a call that times out before `ready` never runs, at any timeout", async ({ sandbox, page, browserName }) => {
+            test.setTimeout(90000);
+            await sandbox.registerFiles({ 'main.js': `bridge.expose('m', (text) => console.log('L1 ' + text));` });
+            const cases: { timeout: number; outcome: string; beforeReady: boolean }[] = [];
+            for (const timeout of [5, 20, 40, 60, 80, 100, 130, 160, 200, 300]) {
+                cases.push(await page.evaluate(async ({ timeout, mode }) => {
+                    const el = document.querySelector('web-sandbox') as any;
+                    const html = '<p>' + 'x'.repeat(880000) + '</p><p>' + timeout + '</p>';
+                    let readyAt = Infinity;
+                    const ready = new Promise(resolve => el.addEventListener('ready', () => { readyAt = performance.now(); resolve(null); }, { once: true }));
+                    el.setConfig({ mode, entry: 'main.js', html });
+                    let settledAt = 0;
+                    const outcome = await el.callWithTimeout(timeout, 'm', 'ran ' + timeout).then(() => 'resolved', (e: any) => e.code).finally(() => { settledAt = performance.now(); });
+                    await ready;
+                    await el.callWithTimeout(5000, 'm', 'ready ' + timeout); // the positive control; the guest has run what it was sent
+                    return { timeout, outcome, beforeReady: settledAt < readyAt };
+                }, { timeout, mode }));
+            }
+            await page.waitForTimeout(300);
+            const lines = new Set((await sandbox.logs()).filter(line => line.startsWith('L1 ')));
+            const timedOutBeforeReady = cases.filter(entry => entry.outcome === 'TIMEOUT' && entry.beforeReady);
+            console.log(`MEASURED ${browserName} L-1: ${timedOutBeforeReady.length} of ${cases.length} calls timed out before ready; ran anyway: ${JSON.stringify(timedOutBeforeReady.filter(entry => lines.has('L1 ran ' + entry.timeout)).map(entry => entry.timeout))}`);
+            expect(timedOutBeforeReady.length, 'at least one call timed out before ready').toBeGreaterThan(0);
+            for (const entry of timedOutBeforeReady) expect(lines.has('L1 ran ' + entry.timeout), `the call with timeout ${entry.timeout} ran`).toBe(false);
+            for (const entry of cases) expect(lines.has('L1 ready ' + entry.timeout), 'the call after ready ran').toBe(true);
+        });
     });
 });
 
@@ -176,15 +179,17 @@ test.describe('N-4 (D): the view shows what the guest sees', () => {
     // An <img> by id, read in the view from outside: its natural size once it loaded, and what its src attribute holds.
     const image = (id: string) => `(() => { const i = document.getElementById('${id}'); return i && (i.complete || !/^blob:/.test(i.getAttribute('src'))) ? { size: i.naturalWidth + 'x' + i.naturalHeight, src: i.getAttribute('src') } : null; })()`;
 
-    test('a registered image the host unregistered after the build, then removed by the guest, names nothing in the view; another registered image still shows (positive control)', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.registerFiles({ 'pic.png': { base64: png(3, 5) }, 'kept.png': { base64: png(7, 4) } })).toBe('ok');
-        expect(await sandbox.mount({ mode: 'strict', guestWrites: true, scriptUnsafe: true })).toBe('ready');
-        await page.evaluate(() => (document.querySelector('web-sandbox') as any).unregisterFiles(['pic.png']));
-        const removed = await sandbox.inGuest(`await sandboxFiles.remove('pic.png'); sandboxView.render('<img id="pic" src="pic.png"><img id="kept" src="kept.png"><p id="done">done</p>'); return sandboxFiles.list();`);
-        expect(removed).toEqual(['kept.png']);
-        await waitInView(page, browserName, `!!document.getElementById('done')`, 8000);
-        expect((await waitInView<{ size: string }>(page, browserName, image('kept'), 8000)).size).toBe('7x4');
-        expect(await waitInView(page, browserName, image('pic'), 8000)).toEqual({ size: '0x0', src: 'pic.png' });
-        expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).listGuestWrites())).toEqual([]);
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('a registered image the host unregistered after the build, then removed by the guest, names nothing in the view; another registered image still shows (positive control)', async ({ sandbox, page, browserName }) => {
+            expect(await sandbox.registerFiles({ 'pic.png': { base64: png(3, 5) }, 'kept.png': { base64: png(7, 4) } })).toBe('ok');
+            expect(await sandbox.mount({ mode, guestWrites: true, scriptUnsafe: true })).toBe('ready');
+            await page.evaluate(() => (document.querySelector('web-sandbox') as any).unregisterFiles(['pic.png']));
+            const removed = await sandbox.inGuest(`await sandboxFiles.remove('pic.png'); sandboxView.render('<img id="pic" src="pic.png"><img id="kept" src="kept.png"><p id="done">done</p>'); return sandboxFiles.list();`);
+            expect(removed).toEqual(['kept.png']);
+            await waitInView(page, browserName, `!!document.getElementById('done')`, 8000);
+            expect((await waitInView<{ size: string }>(page, browserName, image('kept'), 8000)).size).toBe('7x4');
+            expect(await waitInView(page, browserName, image('pic'), 8000)).toEqual({ size: '0x0', src: 'pic.png' });
+            expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).listGuestWrites())).toEqual([]);
+        });
     });
 });

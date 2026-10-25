@@ -2,6 +2,7 @@ import dgram from 'node:dgram';
 import type { AddressInfo } from 'node:net';
 import { test, expect, type SandboxDriver } from './fixture';
 import { inFrames, waitInView } from './strict-view';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * Backlog S13: WebRTC. ICE gathering sends UDP to STUN/TURN servers that no CSP directive governs
@@ -123,35 +124,37 @@ test('residual: a frame the guest creates keeps RTCPeerConnection, and its ICE t
 
 // ---- 4. strict mode -----------------------------------------------------------------------------------
 
-test('strict mode: no peer connection in the worker; a rendered frame carrying the ICE probe is absent, nothing runs, no UDP leaves (control: the same probe in a frame a cooperative guest creates)', async ({ sandbox, page, browserName }) => {
-    test.setTimeout(60000);
-    const udp = dgram.createSocket('udp4');
-    let packets = 0;
-    udp.on('message', () => packets++);
-    await new Promise<void>(resolve => udp.bind(0, '127.0.0.1', resolve));
-    const port = (udp.address() as AddressInfo).port;
-    try {
-        expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
-        expect(await sandbox.inGuest(`return { pc: typeof RTCPeerConnection, names: ${PEER_CONNECTION_NAMES} }`)).toEqual({ pc: 'undefined', names: [] });
+for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test('no peer connection in the worker; a rendered frame carrying the ICE probe is absent, nothing runs, no UDP leaves (control: the same probe in a frame a cooperative guest creates)', async ({ sandbox, page, browserName }) => {
+        test.setTimeout(60000);
+        const udp = dgram.createSocket('udp4');
+        let packets = 0;
+        udp.on('message', () => packets++);
+        await new Promise<void>(resolve => udp.bind(0, '127.0.0.1', resolve));
+        const port = (udp.address() as AddressInfo).port;
+        try {
+            expect(await sandbox.mount({ mode })).toBe('ready');
+            expect(await sandbox.inGuest(`return { pc: typeof RTCPeerConnection, names: ${PEER_CONNECTION_NAMES} }`)).toEqual({ pc: 'undefined', names: [] });
 
-        const probe = `<script>(${iceProbe(port)})(r => (globalThis.__ran = globalThis.__ran || []).push('ice ' + r.candidates.length))</script>`;
-        const html = `<iframe srcdoc="${probe.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"></iframe><iframe sandbox="allow-scripts" srcdoc="${probe.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"></iframe>${probe}<p id="done">done</p>`;
-        await sandbox.run(`sandboxView.render(${JSON.stringify(html)})`);
-        await waitInView(page, browserName, `!!document.getElementById('done')`);
-        await page.waitForTimeout(4000); // the probe would report after 3 s
+            const probe = `<script>(${iceProbe(port)})(r => (globalThis.__ran = globalThis.__ran || []).push('ice ' + r.candidates.length))</script>`;
+            const html = `<iframe srcdoc="${probe.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"></iframe><iframe sandbox="allow-scripts" srcdoc="${probe.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"></iframe>${probe}<p id="done">done</p>`;
+            await sandbox.run(`sandboxView.render(${JSON.stringify(html)})`);
+            await waitInView(page, browserName, `!!document.getElementById('done')`);
+            await page.waitForTimeout(4000); // the probe would report after 3 s
 
-        const frames = await inFrames<string[]>(page, browserName, '(globalThis.__ran || [])');
-        expect(frames.map(f => f.path)).toEqual(['main', 'main/wrapper', 'main/wrapper/view']); // no frame was created
-        expect(frames.flatMap(f => (f.value === 'no-context' ? [] : f.value))).toEqual([]);
-        const strictPackets = packets;
-        expect(strictPackets).toBe(0);
+            const frames = await inFrames<string[]>(page, browserName, '(globalThis.__ran || [])');
+            expect(frames.map(f => f.path)).toEqual(['main', 'main/wrapper', 'main/wrapper/view']); // no frame was created
+            expect(frames.flatMap(f => (f.value === 'no-context' ? [] : f.value))).toEqual([]);
+            const strictPackets = packets;
+            expect(strictPackets).toBe(0);
 
-        // control: the same probe in a frame a cooperative guest creates, which strict mode is there to close
-        const control = await nestedProbe(sandbox, port, () => packets);
-        expect(control.nested.pc).toBe('function');
-        // the listener hears the control's ICE, so the silence above is evidence (where the browser sends any at all)
-        packetsMeasurable(browserName, control.packets, `control candidates ${JSON.stringify(control.nested.candidates)}`);
-    } finally {
-        udp.close();
-    }
+            // control: the same probe in a frame a cooperative guest creates, which strict mode is there to close
+            const control = await nestedProbe(sandbox, port, () => packets);
+            expect(control.nested.pc).toBe('function');
+            // the listener hears the control's ICE, so the silence above is evidence (where the browser sends any at all)
+            packetsMeasurable(browserName, control.packets, `control candidates ${JSON.stringify(control.nested.candidates)}`);
+        } finally {
+            udp.close();
+        }
+    });
 });
