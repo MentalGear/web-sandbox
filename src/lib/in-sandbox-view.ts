@@ -289,7 +289,7 @@ export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'
  * The continuous event types (research 23): the view coalesces them in its input outbox (viewInputOutbox), at most one
  * entry per pointer, or per element, the latest winning, and sends what it holds at most once per animation frame,
  * while no batch is unacknowledged (VIEW_INPUT_IN_FLIGHT). Every other type of VIEW_EVENT_TYPES is discrete: posted at
- * once, as the user raises it, behind what the outbox held.
+ * once, as it is raised, behind what the outbox held.
  */
 export const VIEW_CONTINUOUS_EVENT_TYPES = ['pointermove', 'wheel', 'scroll'] as const;
 
@@ -298,7 +298,9 @@ export const VIEW_CONTINUOUS_EVENT_TYPES = ['pointermove', 'wheel', 'scroll'] as
  * each batch with VIEW_EVENT_ACK once the handlers it dispatched to have returned, and the view sends the continuous
  * events it coalesced (VIEW_CONTINUOUS_EVENT_TYPES) only while fewer than this many are unacknowledged: a guest whose
  * handler blocks gets the latest state when it returns, and neither the worker's queue nor the host page's thread grows
- * with a stuck guest. A discrete event is posted at once, whatever is in flight: it is bounded by the user's own input.
+ * with a stuck guest. A discrete event is posted at once, whatever is in flight. The user's own input bounds it, except
+ * `focusin` and `focusout`, which the guest raises too with `set({ focus })` (applySet), one `set` a flush, each
+ * charged to the time budget (BD4:LIM-4).
  */
 export const VIEW_INPUT_IN_FLIGHT = 1;
 
@@ -1681,10 +1683,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // Pointer input (research 23): numbers and constants only, never a string of the guest's. Coordinates are clamped to
     // the view's box: a press that began in the view goes on delivering moves over the host page until it is released,
     // in every engine, with or without capture, so a move outside the box is forwarded only while a press that began
-    // here is held (a button down), and clamped to the edge; nothing of the host page's own input ever reaches the
-    // view. No tilt, twist, contact size, coalesced or predicted point lists, and no relatedTarget (focusin and focusout
-    // say which of the view's elements gained or lost focus, never where it went or came from).
-    // Flow control: discrete events are posted at once, as the user raises them; continuous ones
+    // here is held (a button down), and clamped to the edge, with the modifier keys held (as any iframe's document gets
+    // them with those moves); no keystroke, coordinate or element of the host page's reaches the view. No tilt, twist,
+    // contact size, coalesced or predicted point lists, and no relatedTarget (focusin and focusout say which of the
+    // view's elements gained or lost focus, never where it went or came from; a focusout with no focusin after it says
+    // that focus left the view, as a window's blur does to any iframe; BD4:NEW-1).
+    // Flow control: discrete events are posted at once, as they are raised (the user's, and the guest's focus moves);
+    // continuous ones
     // (VIEW_CONTINUOUS_EVENT_TYPES) wait in the input outbox (viewInputOutbox), coalesced, and go at most once per
     // animation frame (a timer stands in where frames are throttled, as for the flush), while no frame is
     // unacknowledged (VIEW_INPUT_IN_FLIGHT: the worker's prelude answers each VIEW_EVENT with VIEW_EVENT_ACK) and the time
