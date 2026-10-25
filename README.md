@@ -104,7 +104,8 @@ the browser ([Host page policy](docs/API.md#host-page-policy)). `bun run dev` se
 page's Content-Security-Policy, Trusted Types and Cross-Origin-Embedder-Policy. A host policy that refuses what the
 sandbox needs ends the build with a reason that names it; what to allow, per mode, is in
 [API.md](docs/API.md#host-page-policy). Cooperative and worker mode need `'unsafe-inline'` in your `script-src`, which
-browsers ignore next to a hash or a nonce: they cost a page its own nonce- or hash-based script policy, so prefer sealed mode (the default) or strict mode.
+browsers ignore next to a hash or a nonce: they cost a page its own nonce- or hash-based script policy, so prefer sealed
+mode (the default) or strict mode.
 
 ### Modes
 
@@ -116,9 +117,9 @@ browsers ignore next to a hash or a nonce: they cost a page its own nonce- or ha
 | `worker` | a worker inside a hidden frame; no markup, code through `execute()` | headless code; frozen, to be folded into strict mode |
 
 In sealed and strict mode `html` (and `load()`) is the initial view: its `<script>` elements and `on…` handlers never
-run, and the element says so once (`sealed mode (the default) runs no script in html; …`, or `strict mode …`). Put the code in a registered file
-named by `entry`, or choose `mode: 'cooperative'`. `mode: 'iframe'` is not a mode: it starts nothing,
-and the `terminated` reason names `'cooperative'`.
+run, and the element says so once (`sealed mode (the default) runs no script in html; …`, or `strict mode …`). Put the
+code in a registered file named by `entry`, or choose `mode: 'cooperative'`. `mode: 'iframe'` is not a mode: it starts
+nothing, and the `terminated` reason names `'cooperative'`.
 
 **The guest reaches nothing by default.** Sealed mode has no network at all. In strict mode, list the exact origins it
 may load each kind from in `origins` (`connect`, `images`, `styles`, `fonts`, `media`, `scripts`); everything else in
@@ -383,8 +384,7 @@ Why it is built this way: [ADR-002](docs/ADR-002-host-guest-broker.md).
 ## Fetch bridge
 
 By default the guest reaches no network at all (sealed mode, `connect-src 'none'`). With `fetchBridge` (strict,
-cooperative and worker mode), the guest gets
-`sandboxFetch(url, init)`: the **host** decides each request under a fixed discipline and logs it, and a hidden
+cooperative and worker mode), the guest gets `sandboxFetch(url, init)`: the **host** decides each request under a fixed discipline and logs it, and a hidden
 frame of the library's, with an opaque origin of its own, makes it. The guest policy does not change: direct `fetch`
 and `WebSocket` stay refused unless `origins.connect` lists them (and in strict mode `WebSocket` stays refused).
 
