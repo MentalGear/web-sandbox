@@ -63,7 +63,10 @@ for (const type of ['pagehide', 'visibilitychange']) window.addEventListener(typ
 // ---- the app's Service Worker (cache-first for its API) -------------------------------------------------------------
 w.hostServiceWorker = { registered: false, controlled: false };
 if (params.get('sw') !== '0' && 'serviceWorker' in navigator && appPolicy) {
-    try {
+    // This module's top-level awaits hold the page's load event, which page.goto() waits for: the whole Service Worker
+    // setup is bounded, so a worker that never becomes ready (WebKit, once, on an isolated page in CI) ends the wait
+    // with an error a spec reads (serviceWorker()), not with the page never loading.
+    const setup = (async () => {
         const controlled = new Promise<void>(resolve => {
             if (navigator.serviceWorker.controller) resolve();
             navigator.serviceWorker.addEventListener('controllerchange', () => resolve());
@@ -74,9 +77,9 @@ if (params.get('sw') !== '0' && 'serviceWorker' in navigator && appPolicy) {
         await navigator.serviceWorker.ready;
         await controlled;
         w.hostServiceWorker.controlled = !!navigator.serviceWorker.controller;
-    } catch (error) {
-        w.hostServiceWorker.error = String(error);
-    }
+    })().catch((error) => { w.hostServiceWorker.error = String(error); });
+    const bound = new Promise<'timeout'>(resolve => setTimeout(() => resolve('timeout'), 5000));
+    if (await Promise.race([setup, bound]) === 'timeout') w.hostServiceWorker.error = 'the Service Worker was not ready within 5 s';
 }
 
 // ---- the element and the events the specs read ------------------------------------------------------------------------
