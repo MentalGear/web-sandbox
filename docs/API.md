@@ -1336,12 +1336,28 @@ reference to it stays as written and loads nothing. Show vector graphics as inli
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
 `about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and
 Enter still reach `sandboxView.on`, and the browser's own actions on it (copy link address, open in a new tab,
-drag) carry no URL of the guest's. To open external URLs, expose a host method and call it from a click handler:
+drag) carry no URL of the guest's. To open external URLs, expose a host method and call it from a click handler. The
+address is the guest's text, so parse it, allow only `https:` and the exact origins you list, and open the parsed `href`,
+never the text (a `javascript:` or `data:` URL given to `window.open` runs in or takes over your page, and
+`https://example.com@evil.example` is another host):
 
 ```js
-sandbox.expose('openExternal', (url) => { if (allowed(url)) window.open(url, '_blank', 'noopener'); });
+const OPENABLE = new Set(['https://example.com']); // the origins you mean to open, exactly
+function openable(text) {
+    if (typeof text !== 'string' || text.length > 2048) return null;
+    let url;
+    try { url = new URL(text); } catch { return null; }
+    return url.protocol === 'https:' && OPENABLE.has(url.origin) ? url.href : null;
+}
+sandbox.expose('openExternal', (text) => {
+    const href = openable(text);
+    if (href === null) throw new Error('openExternal: address not allowed');
+    window.open(href, '_blank', 'noopener');
+});
 // in the worker: sandboxView.on('click', 'docs', () => bridge.call('openExternal', 'https://example.com/docs'));
 ```
+
+`test/unit/attacker-text-docs.test.ts` runs this snippet as written against hostile addresses.
 
 An event handler receives:
 
