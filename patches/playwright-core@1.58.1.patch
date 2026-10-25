@@ -1,0 +1,14 @@
+diff --git a/lib/server/frames.js b/lib/server/frames.js
+index cf5e6c02d776193811f241fffbdae24295d2bc7e..5e9856cbc4594f2ea43c02c0ade1979e837185f5 100644
+--- a/lib/server/frames.js
++++ b/lib/server/frames.js
+@@ -155,6 +155,9 @@ class FrameManager {
+   }
+   frameCommittedNewDocumentNavigation(frameId, url, name, documentId, initial) {
+     const frame = this._frames.get(frameId);
++    // web-sandbox patch (docs/BACKLOG.md S86): Firefox's driver can report a commit before the frame's attach.
++    if (!frame)
++      return;
+     this.removeChildFramesRecursively(frame);
+     this.clearWebSockets(frame);
+     frame._url = url;
