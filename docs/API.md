@@ -129,8 +129,8 @@ does) is under [`setConfig()`](#setconfigconfig) below.
 | `origins` | `SandboxOrigins` | none | strict, cooperative, worker (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. Not in sealed mode: a sealed config that names it is refused. See [below](#origins). |
 | `hostContentSecurityPolicy` | `string \| false` | none: `origins.connect` and `fetchBridge.allow` are dropped | all | Your page's Content-Security-Policy as text (one or more policies, as a header or `<meta>` carries them), so that the library drops the `origins.connect` and `fetchBridge.allow` entries it refuses, on every engine; `false` when your page sends none. Left out, every `origins.connect` and `fetchBridge.allow` entry is dropped, with one warning: the library never asks the page for its policy. A browser without Trusted Types (Firefox) applies your page's `require-trusted-types-for` and `trusted-types` only from the text you pass ([Trusted Types without the browser](#trusted-types-without-the-browser)). See [Host page policy](#host-page-policy). |
 | `entry` | `string` | none | strict, sealed | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
-| `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in strict, sealed and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
-| `workerExecutionTimeout` | `number` (ms) | `0` (off) | strict, sealed, worker | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
+| `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off, with a warning unless it is `0`. Bounds a looping guest in strict, sealed and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
+| `workerExecutionTimeout` | `number` (ms) | `0` (off) | strict, sealed, worker | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off, with a warning unless it is `0`. |
 | `autoResize` | `boolean` | `false` | strict, sealed, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | strict, cooperative, worker | Opens [`sandboxFetch()`](#sandboxfetch); the host decides each request, and a hidden frame with an opaque origin makes it (the target sees `Origin: null`). A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). Not in sealed mode: a sealed config that names it is refused. [ADR-006](ADR-006-fetch-bridge.md) |
 | `callLimits` | `CallLimits` | 1000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
@@ -1336,12 +1336,28 @@ reference to it stays as written and loads nothing. Show vector graphics as inli
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
 `about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and
 Enter still reach `sandboxView.on`, and the browser's own actions on it (copy link address, open in a new tab,
-drag) carry no URL of the guest's. To open external URLs, expose a host method and call it from a click handler:
+drag) carry no URL of the guest's. To open external URLs, expose a host method and call it from a click handler. The
+address is the guest's text, so parse it, allow only `https:` and the exact origins you list, and open the parsed `href`,
+never the text (a `javascript:` or `data:` URL given to `window.open` runs in or takes over your page, and
+`https://example.com@evil.example` is another host):
 
 ```js
-sandbox.expose('openExternal', (url) => { if (allowed(url)) window.open(url, '_blank', 'noopener'); });
+const OPENABLE = new Set(['https://example.com']); // the origins you mean to open, exactly
+function openable(text) {
+    if (typeof text !== 'string' || text.length > 2048) return null;
+    let url;
+    try { url = new URL(text); } catch { return null; }
+    return url.protocol === 'https:' && OPENABLE.has(url.origin) ? url.href : null;
+}
+sandbox.expose('openExternal', (text) => {
+    const href = openable(text);
+    if (href === null) throw new Error('openExternal: address not allowed');
+    window.open(href, '_blank', 'noopener');
+});
 // in the worker: sandboxView.on('click', 'docs', () => bridge.call('openExternal', 'https://example.com/docs'));
 ```
+
+`test/unit/attacker-text-docs.test.ts` runs this snippet as written against hostile addresses.
 
 An event handler receives:
 
@@ -1378,8 +1394,12 @@ the view, gestures, custom sliders and virtual lists, all of it guest code in th
 - **Only the view's own, trusted events**, as numbers and constants besides the target's strings. Pointer coordinates
   are in the view's CSS px, rounded to 0.1 and clamped to its box: a press that begins in the view goes on delivering
   moves over your page until it is released, in every browser, so a move outside the view is forwarded only while such a
-  press is held, at the view's edge. Nothing of your page's own input reaches the guest. `focusin` and `focusout` say
-  which of the view's elements gained or lost focus, never where it went (no `relatedTarget`).
+  press is held, at the view's edge, with the modifier keys held, as any iframe's document receives them. Nothing else of
+  your page's own input reaches the guest: no keystroke, no coordinate past the edge, no element of yours. `focusin` and
+  `focusout` say which of the view's elements gained or lost focus, never where it went (no `relatedTarget`), so a
+  `focusout` with no `focusin` after it tells the guest that focus left the view, as the `blur` of a window tells an
+  iframe. The guest can raise them itself: `set(id, { focus: true })` moves focus while the view has it, one `set` a
+  flush, charged to the view's time budget.
 - **Continuous events are coalesced**: `pointermove` per pointer, `wheel` per element and unit (its deltas summed),
   `scroll` per scrolled element (its position and extent read when it is sent), the latest winning, `coalesced` counting
   the raw events. The view sends what it holds at most once per animation frame, and only once the worker has
@@ -1392,7 +1412,11 @@ the view, gestures, custom sliders and virtual lists, all of it guest code in th
   the moves and the release keep naming the element in `ids` after the pointer leaves it (a slider's thumb, a drag), and
   cancels a native drag or a text selection inside it until the release.
 - **`rect`**: the worker cannot read layout, so the view gives a handler that asks its element's rectangle,
-  `rect: { x, y, width, height }` in view CSS px, read once per frame of events.
+  `rect: { x, y, width, height }` in view CSS px, read once per frame of events. Layout also tells the guest the view's
+  rendering environment: a `@media` rule in its CSS changes an element's size, and `rect` or `set({ scroll })` reads it,
+  so the guest can learn the colour scheme, reduced motion, contrast, forced colours, pointer, hover and resolution media
+  features of the view's document, as an opaque iframe does with `matchMedia`. A worker has no `matchMedia`, `screen` or
+  `devicePixelRatio` of its own.
 - **`preventDefault`**: the view cancels the wheel's default (scrolling) inside the element, or anywhere with `null`.
   While such a subscription exists, scrolling over the sandbox waits for the view's thread, as over any frame with a
   wheel listener that is not passive.
@@ -1583,7 +1607,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log` | `LOG_EVENTS_PER_SECOND` (1000) a second, counted in the view | each cut at `VIEW_OPTIONS.guestText.maxLength` (2048) characters in the view, before it is posted; each uncaught one counted whole against `UNCAUGHT_CHARACTERS_PER_SECOND` (1048576) characters in any second, as the worker counts the ones it sees (WebKit mutes those of a revoked script there); past it the sandbox ends | none of its own: one line each | none beyond the count and the bytes | none | test/unit/rpc-bounds-and-call-limits.test.ts (C-4); test/e2e/worker-port-and-view-cost.spec.ts (M-5) |
 | Strict: the view's operations (`sandboxView.render`, `text`, `set`) | one at a time; the body holds at most `VIEW_MAX_ELEMENTS` (50000) elements, `VIEW_MAX_DEPTH` (256) deep; a set names at most `VIEW_SET_STYLE_LIMITS.maxProperties` (16) style properties | `VIEW_RENDER_MAX_LENGTH` (262144) characters an operation, a style value `VIEW_SET_STYLE_LIMITS.maxValue` (1024); `VIEW_RENDER_CHARACTERS_PER_SECOND` (1048576) a second; `VIEW_MAX_CHARACTERS` (1048576) in the body | `VIEW_APPLY_MS_PER_SECOND` (200) ms a second on average, each operation charged in full; the second operation past `VIEW_MAX_OPERATION_MS` (2000) ms within `VIEW_OVERRUN_WINDOW_MS` (300000) ms ends the sandbox | a share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none | test/e2e/view-bound.spec.ts; test/e2e/view-budget.spec.ts; test/unit/view-budget.prop.test.ts; test/unit/view-input.test.ts (set({ css })) |
 | Strict: the view's loads (URL attributes, CSS, and what the browser reports) | `VIEW_URLS_PER_SECOND` (200) a second, each charged before it can start; `VIEW_MAX_URLS` (1000) URL attributes in the body; `VIEW_MAX_DISTINCT_URLS` (10000) distinct URLs over the view's life | what the policy's origins serve: no budget of the library's | none of its own: the rate | a rate: at most `VIEW_URLS_PER_SECOND` (200) loads a second; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none: `blob:` loads of registered files and guest writes only; the view's policy has no network source, and the renderer drops every network URL before the browser sees it | test/e2e/worker-port-and-view-cost.spec.ts (M-2); test/e2e/strict-view-budget.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts; test/unit/sealed-build.test.ts |
-| Strict: the view's events, to the guest's `sandboxView.on` handlers | of the types a handler listens to: the discrete ones as the user raises them; pointer moves, wheel and scroll events coalesced to one per pointer or element, sent at most once per animation frame while fewer than `VIEW_INPUT_IN_FLIGHT` (1) frames are unacknowledged; `VIEW_EVENT_LIMITS.maxIds` (32) ids and `VIEW_EVENT_LIMITS.maxFields` (1000) form fields a detail | each string cut at `VIEW_EVENT_LIMITS.maxString` (65536) characters, all of one frame at `VIEW_EVENT_LIMITS.maxTotal` (262144); the rest numbers and constants | the event path charged to the view's `VIEW_APPLY_MS_PER_SECOND` (200) ms a second; continuous events wait while that budget is in debt | within the view's share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged, with its operations; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none | test/e2e/strict-events.spec.ts; test/e2e/strict-pointer-events.spec.ts; test/e2e/strict-scroll-and-wheel.spec.ts; test/e2e/strict-focus-events.spec.ts; test/unit/view-input.test.ts |
+| Strict: the view's events, to the guest's `sandboxView.on` handlers | of the types a handler listens to: the discrete ones as they are raised (by the user; `focusin` and `focusout` also by the guest's `set({ focus })`, one `set` a flush); pointer moves, wheel and scroll events coalesced to one per pointer or element, sent at most once per animation frame while fewer than `VIEW_INPUT_IN_FLIGHT` (1) frames are unacknowledged; `VIEW_EVENT_LIMITS.maxIds` (32) ids and `VIEW_EVENT_LIMITS.maxFields` (1000) form fields a detail | each string cut at `VIEW_EVENT_LIMITS.maxString` (65536) characters, all of one frame at `VIEW_EVENT_LIMITS.maxTotal` (262144); the rest numbers and constants | the event path charged to the view's `VIEW_APPLY_MS_PER_SECOND` (200) ms a second; continuous events wait while that budget is in debt | within the view's share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged, with its operations; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none | test/e2e/strict-events.spec.ts; test/e2e/strict-pointer-events.spec.ts; test/e2e/strict-scroll-and-wheel.spec.ts; test/e2e/strict-focus-events.spec.ts; test/unit/view-input.test.ts |
 | Strict: the view's overrun notices (VIEW_FIRST_OVERRUN, VIEW_OVERRUN), to `sandbox-log` and `terminated` | a first overrun's at most once per 9 s of its debt, and one host line an environment; the second ends the sandbox | none: no field | none of its own: the count | a stall past `VIEW_MAX_OPERATION_MS` (2000) ms at most once per `VIEW_OVERRUN_WINDOW_MS` (300000) ms beyond the first; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none | test/unit/strict-view-budget.test.ts (the repeated-overrun rule); test/e2e/view-bound.spec.ts |
 | Cooperative: the guest's own document | none: the guest runs on the host page's thread wherever the engine puts its frame there | none | none: one loop can freeze the host page ([Modes](#modes)) | unbounded: a cooperative-mode limit | not a channel of sealed mode | README (cooperative-mode limits) |
 <!-- generated:end -->
@@ -1592,7 +1616,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 counts and bytes above bound); and where the view shares the host page's thread it cannot run during a stall of the view
 ([(b)](#b-the-single-operation-bound)).
 
-<!-- describes: budgets sig:1bb7 -->
+<!-- describes: budgets sig:6403 -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;

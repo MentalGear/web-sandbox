@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,5 +78,56 @@ describe('a guest-written path is attacker text: a valid path can end a single-q
         template.innerHTML = html;
         const attributes = [...template.content.firstElementChild!.attributes].map(attribute => attribute.name);
         expect(attributes, 'the path added an attribute').toContain('onclick');
+    });
+});
+
+describe("the docs' openExternal example runs as written, and opens only an address of a listed https origin (BD4:NEW-2)", () => {
+    // The example passes the guest's string to window.open, the sink the attacker-text rule forbids for a raw string, so its
+    // guard is code the docs ship. The snippet is taken from docs/API.md and run with a stub for `sandbox` and `window`.
+    const snippet = (() => {
+        const block = [...read('docs/API.md').matchAll(/```js\n([^]*?)```/g)].map(match => match[1]!).find(code => code.includes("sandbox.expose('openExternal'"));
+        expect(block, 'the openExternal example is a js block of docs/API.md').toBeDefined();
+        return block!;
+    })();
+
+    function run(code = snippet) {
+        let handler: ((text: unknown) => void) | undefined;
+        const sandbox = { expose: (name: string, fn: (text: unknown) => void) => { expect(name).toBe('openExternal'); handler = fn; } };
+        const open = vi.fn();
+        new Function('sandbox', 'window', code.replace(/^\/\/ in the worker:.*$/m, ''))(sandbox, { open });
+        return { call: (text: unknown) => { try { handler!(text); return 'opened'; } catch (error) { return (error as Error).message; } }, open };
+    }
+
+    it('opens an address of a listed origin: the parsed href, in a new tab, with noopener', () => {
+        const { call, open } = run();
+        expect(call('https://example.com/docs?a=1#b')).toBe('opened');
+        expect(call('HTTPS://EXAMPLE.COM/x')).toBe('opened');
+        expect(call('https://example.com\\@evil.example/')).toBe('opened'); // the URL parser reads a backslash as a slash: host example.com
+        expect(open.mock.calls).toEqual([
+            ['https://example.com/docs?a=1#b', '_blank', 'noopener'],
+            ['https://example.com/x', '_blank', 'noopener'],
+            ['https://example.com/@evil.example/', '_blank', 'noopener'], // the parsed address, not the guest's text
+        ]);
+    });
+
+    it('refuses everything else, and window.open is never called', () => {
+        const { call, open } = run();
+        const hostile: unknown[] = [
+            "javascript:alert('x')", ' JaVaScRiPt:alert(1)', 'java\nscript:alert(1)', 'data:text/html,<script>1</script>', 'blob:https://example.com/x', 'file:///etc/passwd',
+            'http://example.com/', 'https://example.com@evil.example/', 'https://example.com.evil.example/', 'https://evil.example/https://example.com/',
+            'https://example.com:8443/', 'https://sub.example.com/', '//example.com/', 'example.com', '/docs', '', 'https://', 'https://example.com/' + 'a'.repeat(2048),
+            5, null, undefined, {}, ['https://example.com/'], { toString: () => 'https://example.com/' },
+        ];
+        for (const text of hostile) expect(call(text), String(text).slice(0, 40)).toBe('openExternal: address not allowed');
+        expect(open).not.toHaveBeenCalled();
+    });
+
+    it('the protocol check holds on its own: with plain-http, javascript: and opaque origins on the list, only https: opens', () => {
+        const widened = snippet.replace("new Set(['https://example.com'])", "new Set(['https://example.com', 'http://example.com', 'null'])");
+        expect(widened).not.toBe(snippet);
+        const { call, open } = run(widened);
+        for (const text of ['http://example.com/', 'javascript:alert(1)', 'data:,x', 'blob:null/x']) expect(call(text), text).toBe('openExternal: address not allowed');
+        expect(open).not.toHaveBeenCalled();
+        expect(call('https://example.com/')).toBe('opened');
     });
 });

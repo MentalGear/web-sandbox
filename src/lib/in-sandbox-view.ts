@@ -289,7 +289,7 @@ export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'
  * The continuous event types (research 23): the view coalesces them in its input outbox (viewInputOutbox), at most one
  * entry per pointer, or per element, the latest winning, and sends what it holds at most once per animation frame,
  * while no batch is unacknowledged (VIEW_INPUT_IN_FLIGHT). Every other type of VIEW_EVENT_TYPES is discrete: posted at
- * once, as the user raises it, behind what the outbox held.
+ * once, as it is raised, behind what the outbox held.
  */
 export const VIEW_CONTINUOUS_EVENT_TYPES = ['pointermove', 'wheel', 'scroll'] as const;
 
@@ -298,7 +298,9 @@ export const VIEW_CONTINUOUS_EVENT_TYPES = ['pointermove', 'wheel', 'scroll'] as
  * each batch with VIEW_EVENT_ACK once the handlers it dispatched to have returned, and the view sends the continuous
  * events it coalesced (VIEW_CONTINUOUS_EVENT_TYPES) only while fewer than this many are unacknowledged: a guest whose
  * handler blocks gets the latest state when it returns, and neither the worker's queue nor the host page's thread grows
- * with a stuck guest. A discrete event is posted at once, whatever is in flight: it is bounded by the user's own input.
+ * with a stuck guest. A discrete event is posted at once, whatever is in flight. The user's own input bounds it, except
+ * `focusin` and `focusout`, which the guest raises too with `set({ focus })` (applySet), one `set` a flush, each
+ * charged to the time budget (BD4:LIM-4).
  */
 export const VIEW_INPUT_IN_FLIGHT = 1;
 
@@ -1681,10 +1683,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // Pointer input (research 23): numbers and constants only, never a string of the guest's. Coordinates are clamped to
     // the view's box: a press that began in the view goes on delivering moves over the host page until it is released,
     // in every engine, with or without capture, so a move outside the box is forwarded only while a press that began
-    // here is held (a button down), and clamped to the edge; nothing of the host page's own input ever reaches the
-    // view. No tilt, twist, contact size, coalesced or predicted point lists, and no relatedTarget (focusin and focusout
-    // say which of the view's elements gained or lost focus, never where it went or came from).
-    // Flow control: discrete events are posted at once, as the user raises them; continuous ones
+    // here is held (a button down), and clamped to the edge, with the modifier keys held (as any iframe's document gets
+    // them with those moves); no keystroke, coordinate or element of the host page's reaches the view. No tilt, twist,
+    // contact size, coalesced or predicted point lists, and no relatedTarget (focusin and focusout say which of the
+    // view's elements gained or lost focus, never where it went or came from; a focusout with no focusin after it says
+    // that focus left the view, as a window's blur does to any iframe; BD4:NEW-1).
+    // Flow control: discrete events are posted at once, as they are raised (the user's, and the guest's focus moves);
+    // continuous ones
     // (VIEW_CONTINUOUS_EVENT_TYPES) wait in the input outbox (viewInputOutbox), coalesced, and go at most once per
     // animation frame (a timer stands in where frames are throttled, as for the flush), while no frame is
     // unacknowledged (VIEW_INPUT_IN_FLIGHT: the worker's prelude answers each VIEW_EVENT with VIEW_EVENT_ACK) and the time
@@ -3355,11 +3360,14 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         enqueue({ slot: 'content#' + id, kind: 'text', message: { type: 'VIEW_TEXT', into: id, text: value } });
     };
     // An object of the guest's, as an object of its own enumerable fields, each read once, with no prototype; each key
-    // must be one of `keys`, and its value pass `check` (which throws), or the call throws `what`'s TypeError.
-    const fieldsOf = (value: unknown, what: string, keys: string, check: (key: string, field: unknown) => void) => {
+    // must be one of `keys`, and its value pass `check` (which throws), or the call throws `what`'s TypeError. Its keys
+    // are read once too (BD4:LIM-1): the count against `most` and the copy are made on the same list, so a Proxy cannot
+    // answer a short one to the count and a long one to the copy.
+    const fieldsOf = (value: unknown, what: string, keys: string, check: (key: string, field: unknown) => void, most?: number) => {
         if (value === null || typeof value !== 'object' || isArray(value)) throw new TypeErrorConstructor(what + ' must be an object: { ' + keys + ' }');
         const out: Record<string, unknown> = setPrototype({}, null);
         const own = keysOf(value);
+        if (most !== undefined && own.length > most) throw new RangeErrorConstructor(what + ' names more than ' + most + ' properties');
         for (let i = 0; i < own.length; i++) {
             const field = (value as Record<string, unknown>)[own[i]!];
             check(own[i]!, field);
@@ -3377,16 +3385,13 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     // at most maxValue characters. The view checks all of it again.
     const codeAt = (text: string, index: number) => apply(charCodeAt, text, [index]) as number;
     const cssOf = (value: unknown) => {
-        if (value !== null && typeof value === 'object' && !isArray(value) && keysOf(value).length > options.style.maxProperties) {
-            throw new RangeErrorConstructor('sandboxView.set: css names more than ' + options.style.maxProperties + ' properties');
-        }
         return fieldsOf(value, 'sandboxView.set: css', 'property: string | null', (key, field) => {
             if (!styleProperty(key, options.style.properties, options.style.maxValue, codeAt)) {
                 throw new TypeErrorConstructor('sandboxView.set: css cannot set "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the properties are ' + apply(join, options.style.properties, [', ']));
             }
             if (field !== null && typeof field !== 'string') throw new TypeErrorConstructor('sandboxView.set: css["' + key + '"] must be a string, or null to remove it');
             if (typeof field === 'string' && field.length > options.style.maxValue) throw new RangeErrorConstructor('sandboxView.set: css["' + key + '"] is longer than ' + options.style.maxValue + ' characters');
-        });
+        }, options.style.maxProperties);
     };
     // A form control's value or checked state, focus, an element's scroll position or inline style (R1:R4-5; research
     // 23). Each own enumerable field of `fields` is read once, and only these are allowed, each of its one type; what is

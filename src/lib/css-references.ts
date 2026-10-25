@@ -330,6 +330,10 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
     let preludeName = ''; // the at-keyword of the prelude in progress
     // The previous significant token was an accepted `url(` function: its first token is the argument, of this kind.
     let urlArgument: CssReference['kind'] | null = null;
+    // The stack depth inside the first token of an @import prelude when that token is a function other than `url(`
+    // (`src("…")`, CSS Values 4's other <url>; no engine loads it in an @import today, BD4:TST-6), 0 otherwise. Network
+    // scope reads every string and url token inside it as the stylesheet it names, over-approximating as the scan does.
+    let importArgument = 0;
 
     // An absolute http: or https: URL, read as the URL parser reads it: outer C0 controls and spaces stripped, tabs and
     // newlines removed, the scheme ASCII case-insensitive. Relative URLs resolve to nothing in the strict view's documents
@@ -347,9 +351,11 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
 
         const firstOfImport = prelude === 'import' && stack.length === preludeDepth;
         if (firstOfImport) prelude = 'skip'; // only the first token of an @import prelude names a file
-        const accepted = prelude === 'none' || firstOfImport;
+        if (importArgument > 0 && stack.length < importArgument) importArgument = 0;
+        const inImportArgument = network && importArgument > 0;
+        const accepted = prelude === 'none' || firstOfImport || inImportArgument;
         // what a reference made by this token loads: a stylesheet for @import, a font inside @font-face, else an image
-        const kind: CssReference['kind'] = firstOfImport ? 'style' : inFontFace() ? 'font' : 'image';
+        const kind: CssReference['kind'] = firstOfImport || inImportArgument ? 'style' : inFontFace() ? 'font' : 'image';
 
         switch (token.type) {
             case 'string':
@@ -363,6 +369,7 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
             case 'function':
                 stack.push({ closer: ')', imageSet: IMAGE_SET.indexOf(token.name) >= 0, fontFace: false });
                 if (token.name === 'url' && accepted) urlArgument = kind;
+                else if (firstOfImport) importArgument = stack.length;
                 break;
             case 'at-keyword':
                 // at block level only: top level, or directly inside a block (nested at-rules)

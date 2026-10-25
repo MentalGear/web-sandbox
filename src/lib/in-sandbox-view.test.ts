@@ -105,10 +105,11 @@ describe('the renderer: file references, blob: URLs (A8), referrer and ping (A1)
             '<div id="styled" style="background:url(blob:null/logo)"></div>',
             '<img id="srcset" srcset="blob:null/logo 1x">',
             '<p id="data" data-x="see blob:null/logo">p</p>',
+            '<p id="tabbed" data-x="see bl\tob:null/logo" data-y="b\nl\rob:null/logo">p</p>', // the URL parser removes a tab and a newline (BD4:TST-7)
         ].join(''), files);
         const has = (id: string, attribute: string) => fragment.getElementById(id)!.hasAttribute(attribute);
         expect(fragment.getElementById('minted')!.getAttribute('src')).toBe('blob:null/logo');
-        expect([has('foreign', 'src'), has('spaced', 'src'), has('upper', 'src'), has('styled', 'style'), has('srcset', 'srcset'), has('data', 'data-x')]).toEqual(Array(6).fill(false));
+        expect([has('foreign', 'src'), has('spaced', 'src'), has('upper', 'src'), has('styled', 'style'), has('srcset', 'srcset'), has('data', 'data-x'), has('tabbed', 'data-x'), has('tabbed', 'data-y')]).toEqual(Array(8).fill(false));
         expect(fragment.getElementById('anchor')!.getAttribute('href')).toBe(INERT_HREF); // a link's href is the constant (S24)
     });
 
