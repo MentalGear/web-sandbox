@@ -3146,7 +3146,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 decide(refused);
             };
             try {
-                url = URL.createObjectURL(new Blob(['postMessage(0)'], { type: 'text/javascript' }));
+                url = URL.createObjectURL(new Blob(["'use strict';postMessage(0)"], { type: 'text/javascript' })); // strict, as every source of the library's (STRICT_DIRECTIVE)
                 trusted((value) => { probeWorker = new Worker(value as string); }, url, 'createScriptURL');
             } catch {
                 done(true);
@@ -3773,13 +3773,23 @@ let warnedSourcesHash = false;
 export const BRIDGE_ROLE = 'fetch-bridge';
 
 /**
+ * The directive every source the library generates for a sandbox realm starts with (BD5:CHL-3, class G): its code is
+ * strict-mode code, so V8's structured stack traces (`Error.prepareStackTrace`, a global the guest sets) give guest code
+ * no library function or receiver through `CallSite.getFunction()` and `getThis()`. A source that also carries guest code
+ * (strict mode's worker: the entry) has it at the head of the function its library code runs in, so the guest's own
+ * code keeps the semantics it was written for. test/unit/bootstrap-builds.test.ts checks every generated source.
+ */
+export const STRICT_DIRECTIVE = "'use strict';";
+
+/**
  * The environment gate (S74, environment-check.ts): `body` wrapped so that it runs only in the document the library
- * built. The gate is the one statement of the text it starts: the check first, given the expected values as one literal,
- * `host` (the expression for the host page's window, which a refusal is posted to) and whether to stop the document's
- * parser on a refusal; everything else of the bootstrap is inside the block.
+ * built. After the strict directive ({@link STRICT_DIRECTIVE}), the gate is the one statement of the text it starts: the
+ * check first, given the expected values as one literal, `host` (the expression for the host page's window, which a
+ * refusal is posted to) and whether to stop the document's parser on a refusal; everything else of the bootstrap is
+ * inside the block.
  */
 export function environmentGate(host: string, stopParsing: boolean, body: string): string {
-    return `if ((${checkSandboxEnvironment.toString()})(${JSON.stringify(ENVIRONMENT_EXPECTED)}, ${host}, ${stopParsing}) === null) {${body}}`;
+    return `${STRICT_DIRECTIVE}if ((${checkSandboxEnvironment.toString()})(${JSON.stringify(ENVIRONMENT_EXPECTED)}, ${host}, ${stopParsing}) === null) {${body}}`;
 }
 
 /**

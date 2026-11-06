@@ -360,6 +360,14 @@ export const ENGINE_DIFFERENCES = {
         why: "Event timing of the engine. Teardown is re-entrancy-safe either way (the spec asserts the nested build stood)",
         tests: [`${E2E}teardown-reentry.spec.ts`],
     },
+    'structured-stack-traces': {
+        what: "Whether the engine consults `Error.prepareStackTrace`, a global guest code sets, and hands it `CallSite`s whose `getFunction()` is a function on the stack",
+        chromium: 'Consults it (V8): a `CallSite` gives every sloppy-mode function on the stack, and none of a strict-mode frame or below it',
+        firefox: 'Does not consult it: `new Error().stack` stays a string',
+        webkit: 'Does not consult it: `new Error().stack` stays a string',
+        why: "The engine's API. Every source the library generates for a sandbox realm is strict-mode code (`STRICT_DIRECTIVE`, BD5:CHL-3), so on V8 too guest code finds only its own functions there",
+        tests: [`${E2E}strict.spec.ts`],
+    },
     'view-frame-access': {
         what: "How the suite reads the strict view's frames (the suite, not the library)",
         chromium: "Through the DevTools protocol: the view may be out of process, which Playwright links unreliably; the accessibility role is checked from HTML-AAM facts",

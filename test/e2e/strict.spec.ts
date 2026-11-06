@@ -270,6 +270,48 @@ test.describe('G2 the worker', () => {
             await page.waitForFunction(() => (window as any).strictReport !== undefined);
             expect(await page.evaluate(() => (window as any).strictReport)).toEqual({ eval: 'EvalError', fn: 'EvalError', wasm: 'undefined', worker: 'undefined' });
         });
+
+        // BD5:CHL-3 (class G): V8 hands Error.prepareStackTrace, a global the guest sets, CallSites whose getFunction() is any
+        // sloppy-mode function on the stack. The library's code in the worker is strict-mode code (STRICT_DIRECTIVE), so a
+        // guest handler called by the prelude (sandboxView.on) or by the broker (an exposed method) finds only its own
+        // functions there; with the prelude sloppy it found the prelude's dispatch and onRenderMessage, and the broker's
+        // request callback, and could release the prelude's next queued operation without the view's acknowledgement.
+        test("structured stack traces give guest code none of the library's functions, from a handler the prelude calls or a method the broker calls", async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({ 'main.js': `
+                Error.prepareStackTrace = (error, sites) => sites;
+                const own = [];
+                const grab = (label) => {
+                    const sites = new Error().stack;
+                    if (!Array.isArray(sites)) return console.log(label + ' ' + JSON.stringify({ api: false, frames: 0, foreign: [] }));
+                    const found = sites.map((site) => { try { return site.getFunction(); } catch (e) { return undefined; } }).filter((f) => typeof f === 'function');
+                    console.log(label + ' ' + JSON.stringify({ api: true, frames: sites.length, foreign: found.filter((f) => !own.includes(f)).map((f) => f.name || '?') }));
+                };
+                own.push(grab);
+                const method = () => { grab('RPC'); return 1; };
+                own.push(method);
+                bridge.expose('probe', method);
+                sandboxView.render('<button id="b" style="width:200px;height:60px">b</button>');
+                const handler = () => { grab('EVENT'); };
+                own.push(handler);
+                sandboxView.on('click', 'b', handler);
+                console.log('ENTRY-RAN');` });
+            expect(await sandbox.mount(inMode(mode, { scriptUnsafe: false, entry: 'main.js' }))).toBe('ready');
+            await sandbox.waitForLog('ENTRY-RAN');
+            await waitInView(page, browserName, `!!document.getElementById('b')`);
+            await page.evaluate(() => (document.querySelector('web-sandbox') as any).call('probe'));
+            const rpc = JSON.parse((await sandbox.waitForLog('RPC ')).replace(/^.*?RPC /, ''));
+            await clickInSandbox(page, 20, 20);
+            const event = JSON.parse((await sandbox.waitForLog('EVENT ')).replace(/^.*?EVENT /, ''));
+            expect({ rpc: rpc.foreign, event: event.foreign }, 'no library function is reachable through a CallSite').toEqual({ rpc: [], event: [] });
+            // ledger: structured-stack-traces
+            const hook = browserName === 'chromium';
+            expect({ rpc: rpc.api, event: event.api }, 'the engine consults Error.prepareStackTrace (V8)').toEqual({ rpc: hook, event: hook });
+            if (hook) {
+                // the positive control: the guest's functions ran below library frames, where a sloppy one would be found
+                expect(rpc.frames, 'the exposed method ran below library frames').toBeGreaterThan(2);
+                expect(event.frames, 'the handler ran below library frames').toBeGreaterThan(2);
+            }
+        });
     });
 
     test('the worker has no importScripts, and fetch obeys connect-src: refused off the list, allowed to it (positive control)', async ({ sandbox }) => {
