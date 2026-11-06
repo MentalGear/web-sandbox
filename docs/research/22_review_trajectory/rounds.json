@@ -588,5 +588,59 @@
   "notes": "Result: not clean (5 data findings reach strict; 0 of 2). The evaluation rule triggered a second time: the count rose again (4 to 5) and the highs sit in #71's code. Owner, 2026-10-24: strict mode loses its cookie carriers (#75: no WebSocket, no withoutCors) and its policy read (#76); the same-site rule refuses when it cannot decide (#78); sealed mode becomes the default and the board's scope, and data findings that reach only strict's network opt-ins stop counting against a clean pass (D5). LIM-2 and TST-4 were findings of the exception that #75 removed.",
   "unrated": 0,
   "unsplit_low_or_info": 0
+ },
+ {
+  "seq": 14,
+  "id": "BD5",
+  "name": "S74 review board, pass 5",
+  "source": "BOARD-PASS-5-2026-10-25.md",
+  "date": "2026-10-25",
+  "commit": "7f227db",
+  "reviewers": 6,
+  "verifiers": 3,
+  "reviewers_detail": "ISO, CHL, LIM, DOC, TST, NEW; 3 verifiers (ISO-1; NEW-1, LIM-1, LIM-2 and DOC-1; DOC-2 and DOC-3, with CHL-1 and CHL-2 handed on by the coordinator). ISO-2, CHL-3, LIM-3, DOC-5 to DOC-9, TST-1 to TST-6, NEW-2 to NEW-4 have no verdict (DOC-5 was re-rated by the coordinator).",
+  "total_findings": 24,
+  "critical": 0,
+  "high": 1,
+  "medium": 7,
+  "low": 16,
+  "info": 0,
+  "severity_basis": "As verified, without the duplicates and merges. Reviewer ratings were high 2 / medium 9 / low 16 (27 findings). Changes: NEW-1 high to medium; DOC-1 medium to low, merged with LIM-2; CHL-1 folded into DOC-3; DOC-4 (medium) is a duplicate of NEW-1 and not counted again. DOC-5 stays medium, but its effect was raised by the coordinator from availability-only to data. An unverified finding keeps the reviewer's rating. High: ISO-1 (WebKit only). Medium: NEW-1, LIM-1, DOC-2, DOC-3, CHL-2, DOC-5, NEW-2.",
+  "data_affecting": 10,
+  "availability_only": 1,
+  "no_data_effect": 13,
+  "effect_basis": "STATED by the verdicts for the 8 verified: ISO-1 (host state: the origin's permission grants), NEW-1 (the app's data leaves in a listed origin's URL, docs-led), LIM-1 (host bytes outside the view), LIM-2 with DOC-1 (host data in an engine's error text), DOC-2 (script in the host page's origin when a reason is shown as markup), DOC-3 with CHL-1 (the next app reads and writes the first app's state), CHL-2 (script in the host's origin from an object URL of the app's bytes), DOC-5 (the app's module in the host page). DOC-6 and DOC-7 are the DOC reviewer's low docs gaps, labelled data and unverified, counted as data; without them the count is 8. Availability-only: LIM-3. ISO-2 and CHL-3 have no data effect as filed.",
+  "data_ids": [
+   "ISO-1",
+   "NEW-1",
+   "LIM-1",
+   "LIM-2",
+   "DOC-2",
+   "DOC-3",
+   "CHL-2",
+   "DOC-5",
+   "DOC-6",
+   "DOC-7"
+  ],
+  "availability_ids": [
+   "LIM-3"
+  ],
+  "data_reaching_strict": null,
+  "data_reaching_strict_of": null,
+  "strict_basis": "Not counted for this round. From BD5 the board's scope is sealed mode (D5, 2026-10-24), and a finding that reaches only strict's network opt-ins does not count; none of the BD5 findings needs `origins` or `fetchBridge`.",
+  "data_reaching_scope": 10,
+  "data_reaching_scope_of": 10,
+  "scope": "sealed",
+  "scope_basis": "The board's scope changed with this round: BD1 to BD4 count the data findings that reach strict mode (default configuration, `origins`, `fetchBridge`); BD5 counts the data findings that reach sealed mode, the default, with its own opt-ins (`guestWrites` among them). All 10 do. The two counts are not the same population (sealed has no network and a recipe of its own), so the BD5 value is not a continuation of the strict series; 8 of the 10 are verified.",
+  "dominant_classes": [
+   "P",
+   "A",
+   "G",
+   "docs"
+  ],
+  "class_basis": "Reviewer and verifier classes: LIM-1 and LIM-2 with DOC-1 P (what crosses is not what the API shows), ISO-1 A (the host page's context a sandbox document inherits), DOC-2 C, CHL-3 G. NEW-1, DOC-3 with CHL-1, CHL-2, DOC-5, DOC-6 and DOC-7 are docs gaps with no code class: what the recipe tells the embedder to do with what the app hands back. Six of the ten sit in the recipe and example that #84 added.",
+  "notes": "Result: not clean (10 data findings reach sealed; 0 of 2). The evaluation rule triggered in its second form: most findings sit in code the previous round added (the sealed-app recipe and example, #84). The class moved from 'the library predicts host-page state' to 'the host to app API hands over more than intended'. Sealed mode's isolation held: no request reached a listener on any engine under about 45 mutants and 172 extra constructs, no forged frame, and one host-state read (ISO-1, WebKit permissions). Fixed by construction where the library could (#86: views compacted, only the embedder's words from a failed host method, `unexpose()`; #87: no `permissions`/`storage` in the worker, strict-mode generated sources, no echo in reasons, messages) and in the docs where only the embedder can (the pass-5 docs and test batch).",
+  "unrated": 0,
+  "unsplit_low_or_info": 0
  }
 ]

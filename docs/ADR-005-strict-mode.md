@@ -235,7 +235,7 @@ refused if it contains any, or anything that would end or re-enter the script el
   turns it off. The browser's own actions on a link — "copy link address", "open in new tab", dragging — need no page event,
   so the view cannot cancel them, and they would carry the guest's URL; with the constant they carry none. The worker never had the URL
   (event details carry ids), so routing is unchanged, and an embedder who wants links that leave the sandbox exposes a host
-  method (`openExternal(url)`) that the worker calls on click. `about:blank#` is absolute, so it means the same in any
+  method (`openExternal(key)`, which maps a key to an address the host holds) that the worker calls on click. `about:blank#` is absolute, so it means the same in any
   document; every engine reports it unchanged as the link's URL and its drag data; and opening it loads the empty
   `about:blank`, no request. `#` resolves to the same only through the view's inherited `about:blank` base; `""` differs per
   engine; `about:invalid` and `javascript:` differ per engine; `data:,` opens a document. Removing `href` or rewriting to a

@@ -1995,7 +1995,7 @@ driver's events for a new frame, so the patch now holds every frame-keyed event 
 committed, aborted, same-document, load and DOMContentLoaded, execution context created) for a frame not yet attached, at
 most 64 a frame, replays them in order at its attach, and drops them at its detach; `FrameManager`'s early return stays
 as a second line. The newest release, 1.64.1, still has the unguarded lookup and the dropping, so an upgrade does not
-remove it (the Playwright upgrade in the backlog redoes the patch for the version it moves to). `test/unit/playwright-patch.test.ts`
+remove it ([S88](../../BACKLOG.md#s88) redoes the patch for the version it moves to). `test/unit/playwright-patch.test.ts`
 pins it: events before an attach are held and replayed in order, a context before an attach is held and not dropped, a
 known frame's events go through at once and a detach drops what was held (all three fail without the holding), an
 unknown frame's commit does not throw, and the patch names the installed version. The case was neither retried nor

@@ -17,7 +17,10 @@ import { clickInSandbox, inView, waitInView } from './strict-view';
  *      image follows its state (a new write the host can list);
  *   4. the stored state loads into the next mount (the host is the app's only storage);
  *   5. another app on the same element, after `unexpose()` and `unregisterFiles()`, reaches none of the first app's methods
- *      and files, and cannot tell a removed method from one that never existed.
+ *      and files, and cannot tell a removed method from one that never existed;
+ *   6. a second, hostile bundle mounted through the same host.js after stop() is handed none of the first app's state or
+ *      files, and its save leaves the first app's key alone (the state is keyed by the embedder's app id);
+ *   7. the app stops adding at the host's limit, and a save the host refuses is shown, not lost silently.
  * Evidence is read outside the guest: the view's DOM (strict-view.ts), the host's store, `listGuestWrites()`.
  */
 
@@ -34,12 +37,12 @@ async function mountApp(page: Page, saved: object[] | null) {
     });
     await page.evaluate(async ({ bundle, saved }) => {
         const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
-        const data = new Map<string, string>(saved === null ? [] : [['todos', JSON.stringify(saved)]]);
+        const data = new Map<string, string>(saved === null ? [] : [['todos:todo-app', JSON.stringify(saved)]]);
         (window as any).store = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => void data.set(key, value), data };
-        await mountTodoApp(document.querySelector('web-sandbox'), { bundle, store: (window as any).store });
+        (window as any).stopApp = await mountTodoApp(document.querySelector('web-sandbox'), { bundle, appId: 'todo-app', store: (window as any).store });
     }, { bundle: BUNDLE, saved });
 }
-const saved = (page: Page) => page.evaluate(() => JSON.parse((window as any).store.data.get('todos') ?? 'null'));
+const saved = (page: Page) => page.evaluate(() => JSON.parse((window as any).store.data.get('todos:todo-app') ?? 'null'));
 const writes = (page: Page) => page.evaluate(() => (document.querySelector('web-sandbox') as any).listGuestWrites().map((w: any) => ({ path: w.path, type: w.type, bytes: Array.from(w.content as Uint8Array).join(',') })));
 
 /** The view's list as text, and the facts about its images. */
@@ -156,5 +159,62 @@ test.describe('the sealed app of the docs', () => {
         expect(probe.onSame).toEqual(probe.onFresh); // a removed method reads as one that never existed
         expect(probe.files).toEqual(['b.js']);
         expect(await saved(page)).toEqual([{ text: 'milk', done: false }]); // the first app's state, untouched
+    });
+
+    // The state is the embedder's, kept per app (BD5:CHL-1): the key carries the app's id, and stop() clears the element.
+    test("a second, hostile bundle mounted through the same host.js after stop() gets none of the first app's state or files, and its save leaves the first app's key alone", async ({ sandbox, page, browserName }) => {
+        void sandbox; // the fixture opens the harness page
+        await mountApp(page, [{ text: 'call bank, PIN 4711', done: false }]);
+        await waitInView(page, browserName, `document.getElementById('text-0')?.textContent === 'call bank, PIN 4711'`);
+        const hostile = `(async () => {
+            const out = { state: null, files: null, save: null };
+            bridge.expose('load', async (saved) => {
+                out.state = saved;
+                try { out.files = await sandboxFiles.text('state.json'); } catch (e) { out.files = e.code; }
+                try { out.save = { ok: await bridge.call('save', [{ text: 'overwritten by B', done: true }]) }; } catch (e) { out.save = { code: e.code }; }
+                await bridge.call('report', out);
+            });
+        })();`;
+        await page.route(`${ORIGIN}/bundle-b/*`, (route) => {
+            const name = path.basename(new URL(route.request().url()).pathname);
+            return route.fulfill(name === 'app.js' ? { body: hostile, contentType: 'text/javascript' } : { body: readFileSync(path.join(EXAMPLE, name)), contentType: TYPES[path.extname(name)] });
+        });
+        const report = await page.evaluate(async ({ bundle }) => {
+            const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
+            const sandbox = document.querySelector('web-sandbox') as any;
+            sandbox.registerFiles({ 'state.json': '{"secret":"first app"}' }); // what the first app committed
+            (window as any).stopApp();
+            const reported = new Promise((resolve) => sandbox.expose('report', resolve));
+            await mountTodoApp(sandbox, { bundle, appId: 'bundle-b', store: (window as any).store });
+            return reported;
+        }, { bundle: '/bundle-b' });
+        expect(report).toEqual({ state: [], files: 'NOT_FOUND', save: {} });
+        const keys = await page.evaluate(() => Object.fromEntries((window as any).store.data));
+        expect(keys).toEqual({
+            'todos:todo-app': JSON.stringify([{ text: 'call bank, PIN 4711', done: false }]),
+            'todos:bundle-b': JSON.stringify([{ text: 'overwritten by B', done: true }]),
+        });
+    });
+
+    test('the app stops adding at the host\'s limit, and a save the host refuses is shown in the view', async ({ sandbox, page, browserName }) => {
+        test.setTimeout(240000);
+        void sandbox; // the fixture opens the harness page
+        await mountApp(page, Array.from({ length: 1000 }, (_, n) => ({ text: `t${n}`, done: false })));
+        await waitInView(page, browserName, `document.getElementById('count')?.textContent === '1000 open'`, 90000);
+        const input = await waitInView<{ x: number; y: number }>(page, browserName, `(() => { const r = document.getElementById('new').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+        await clickInSandbox(page, input.x, input.y);
+        await waitInView(page, browserName, `document.hasFocus() && document.activeElement.id === 'new'`);
+        await page.keyboard.insertText('one too many');
+        await page.keyboard.press('Enter');
+        await waitInView(page, browserName, `document.getElementById('count').textContent === 'the list is full (1000 todos)'`, 30000);
+        expect(await saved(page)).toHaveLength(1000); // nothing was added, nothing lost
+        // a push past the limit puts 1001 in the app; the next save is refused by the host, and the app says so
+        await page.evaluate(() => (document.querySelector('web-sandbox') as any).call('push', [{ text: 'over', done: false }]));
+        await waitInView(page, browserName, `document.getElementById('count').textContent === '1001 open' && !!document.getElementById('done-0')`, 90000);
+        const box = await waitInView<{ x: number; y: number }>(page, browserName, `(() => { const r = document.getElementById('done-0').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+        await clickInSandbox(page, box.x, box.y);
+        await waitInView(page, browserName, `document.getElementById('count').textContent.startsWith('not saved: save: expected at most 1000 todos')`, 90000);
+        expect(await saved(page)).toHaveLength(1000);
+        expect(await page.evaluate(() => (window as any).sandboxTerminations)).toEqual([]);
     });
 });

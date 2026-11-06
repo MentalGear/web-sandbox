@@ -28,6 +28,8 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S83](#s83) | ⏳ open (P2 · S) · high (reviewer; medium by the availability rule) | A rejected `Symbol` or `BigInt` is counted as 0 characters by the uncaught budget; on Firefox the host page stalls (S74 board BD3:LIM-1, an incomplete part of the fix of BD1:LIM-1) |
 | [S84](#s84) | ⏳ open (P2 · S) · medium | The strict view's `VIEW_LISTEN` has no flow control: an `on()`/`off()` loop is uncounted (S74 board BD4:LIM-3; availability only) |
 | [S85](#s85) | ⏳ open (P3 · S) · low | The strict view's input outbox scans every slot on each event (S74 board BD4:LIM-5; availability only) |
+| [S87](#s87) | ⏳ open (P3 · S) · low | A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time (S74 board BD5:LIM-3; availability only) |
+| [S88](#s88) | ⏳ open (P2 · S) · low (test tooling) | Upgrade Playwright for Ubuntu 26.04 runners, redo the S86 driver patch, then unpin CI from `ubuntu-24.04` |
 | [D1](#bl-d1) | 🟡 ready except the licence | An installable package; waits for H5's `LICENSE` |
 | [H5](#bl-h5) | 🟡 partly done | Missing repo basics: the `LICENSE` is the owner's choice |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
@@ -367,10 +369,11 @@ cites its findings by ID (`BD3:`).
 #### Trajectory
 
 The data findings of every round since the first review, as the coordinator counts them: a data finding is a confirmed
-one that leaks or can manipulate data (the board's rule, applied to the earlier rounds afterwards), and the last column
-is the count of those that reach strict mode. Highs are as the verifiers confirmed them. There were no criticals.
+one that leaks or can manipulate data (the board's rule, applied to the earlier rounds afterwards), and the
+"reaching the scope" column is the count of those that reach the board's scope: strict mode up to BD4, sealed mode from
+BD5 (D5). Highs are as the verifiers confirmed them. There were no criticals.
 
-| Round | Date | Data findings | Reaching strict | High |
+| Round | Date | Data findings | Reaching the scope | High |
 | :--- | :--- | ---: | ---: | ---: |
 | R1 | 2026-10-15 | 1 | 0 | 0 |
 | R2 | 2026-10-15 | 0 | 0 | 2 |
@@ -381,6 +384,7 @@ is the count of those that reach strict mode. Highs are as the verifiers confirm
 | BD2 | 2026-10-21 | 5 | 3 | 3 |
 | BD3 | 2026-10-23 | 5 | 4 | 4 |
 | BD4 | 2026-10-24 | 5 | 5 | 3 |
+| BD5 | 2026-10-25 | 10 | 10 (sealed) | 1 |
 
 The full counts per round, the analysis and the coordinator's evaluation after each pass are in
 [research 22](research/22_review_trajectory/README.md).
@@ -416,11 +420,27 @@ verifiers' verdicts and how each finding was resolved are kept in
 above leave it, but data findings that reach only its opt-ins (`origins`, `fetchBridge`) no longer count against a clean
 pass: they are fixed or documented. Sealed mode, strict with no network at all ([research 24](research/24_sealed_mode/README.md),
 [ADR-008](ADR-008-sealed-mode.md)), is the default: a config that names no `mode` is sealed, and one with no `mode` that
-names `origins` or `fetchBridge` is refused with a reason that names `mode: 'strict'`. **Pass 5 reviews sealed mode, the
-new default**, at its default configuration with its own opt-ins (`allowAnimations`, `allowAutoplay`, `guestWrites`,
-`autoResize`, `watchdogTimeout`, `workerExecutionTimeout`, `capabilities`, `callLimits`; `scriptUnsafe` stays out of
-scope), and it is the first pass of the new scope. Strict mode's network options are a second tier: a finding there is
-fixed or documented as a limit of those options, and does not count against the pass.
+names `origins` or `fetchBridge` is refused with a reason that names `mode: 'strict'`. Strict mode's network options are a
+second tier: a finding there is fixed or documented as a limit of those options, and does not count against the pass.
+
+**Pass 5 (2026-10-25, main 7f227db)**, the first pass of the new scope, reviewed sealed mode at its default and with its
+own opt-ins (`allowAnimations`, `allowAutoplay`, `guestWrites`, `autoResize`, `watchdogTimeout`,
+`workerExecutionTimeout`, `capabilities`, `callLimits`; `scriptUnsafe` out of scope). **It was not clean** (0 of 2): 10
+data findings reach sealed mode, 1 of them high (BD5:ISO-1: a sealed guest on WebKit read the host origin's permission grants
+through `navigator.permissions`) and 7 medium or low ones that the verifiers confirmed (BD5:NEW-1, BD5:LIM-1, BD5:DOC-2,
+BD5:DOC-3 with BD5:CHL-1, BD5:CHL-2, BD5:DOC-5, BD5:LIM-2 with BD5:DOC-1), plus 2 unverified lows (BD5:DOC-6, BD5:DOC-7).
+Sealed mode's isolation held: no network on any engine under mutation testing and 172 extra constructs, no forged frame.
+The findings are where the host to app API hands over more than intended and where the docs' recipe (#84) leads the
+embedder into a leak, so the evaluation rule triggered in its second form. Fixed: a typed-array view crosses with its own
+bytes, only the embedder's words reach the app from a failed host method, and `unexpose(names?)` (#86); the worker has no
+`permissions` or `storage`, every generated source is strict-mode code, a reason never quotes the entry or the mode, and
+the messages name the mode and the fix (#87); the recipe, the example and the docs, and the test pins (the pass-5 docs and
+test batch that archives the pass). The availability finding BD5:LIM-3 is [S87](#s87). The reports, the verdicts and how
+each finding was resolved are kept in [BOARD-PASS-5-2026-10-25.md](archive/reviews/BOARD-PASS-5-2026-10-25.md); each item
+cites its findings by ID (`BD5:`).
+
+**Pass 6 reviews sealed mode again** (same scope), on `main` after #86, #87 and the batch: the two consecutive clean passes
+that clear the board start there.
 
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 
@@ -677,6 +697,39 @@ burst is a host stall larger than one apply of the same elements. Availability o
 **Fix, by construction.** Key the slots with a `Map` on (type, key, unit) that keeps insertion order, so `put` is O(1). Unit
 test: 10 000 puts with distinct keys complete within a bound that a linear scan misses, and the outbox's order and
 coalescing are unchanged (the existing property test).
+
+### <a id="s87"></a>S87 · A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time — ⏳ **open** (P3 · S · low, availability only)
+
+*S74 board BD5:LIM-3, rated low by the reviewer; read from the code, no reproduction, no verdict.* Class E-cpu.
+Availability only: no data moves, and `terminate()` or removing the element ends it (CONTRIBUTING.md, "Availability
+findings").
+
+**Path.** `list()` in `src/lib/guest-writes.ts` returns `content: file.bytes.slice()` for every pending write, and
+`GUEST_WRITES_PER_SECOND = 100` bounds the events. An app keeps one 8 MiB write pending, then writes tiny new paths, 100 a
+second: that stays within both rates, since the byte window is 8 MiB a second. An embedder that answers each `fileswritten`
+with `listGuestWrites()` (the README's snippet puts the two side by side) copies about 8 MiB per event, up to about 800 MiB a
+second on the host thread, and leaves the garbage.
+
+**Fix, by construction** (a new public name or option, so it needs the owner's approval first). Give `listGuestWrites()` a
+`paths` filter, or return entries without `content` by default and offer a read of one write; bound the copying per second
+with the write rate; state the cost in the docs of `fileswritten`. Unit test: with one 8 MiB write pending, a hundred
+`list()` calls that ask for the new path copy a bounded number of bytes.
+
+### <a id="s88"></a>S88 · Upgrade Playwright for Ubuntu 26.04 runners and unpin CI — ⏳ **open** (P2 · S · low, test tooling)
+
+*Not a finding.* CI has been pinned to `ubuntu-24.04` since #86 (`.github/workflows/ci.yml`), because `ubuntu-latest` became
+26.04 on 2026-11-06 and Playwright 1.58.1 refuses to install its browsers there, so every e2e job failed before a test
+ran. A fixed image is what every green run used; the move to a newer one is a step of its own, with the Playwright upgrade it
+needs.
+
+**Do.** Upgrade `@playwright/test` and `playwright` to a release that installs on Ubuntu 26.04. Redo the S86 driver patch
+for the new version: `patches/playwright-core@1.58.1.patch` names the version it patches, and `test/unit/playwright-patch.test.ts`
+fails when an upgrade drops it. Playwright 1.64.1 still has the unguarded lookup in
+`FrameManager.frameCommittedNewDocumentNavigation`, and `FFPage` still drops a frame's events that come before its attach,
+so both parts of the patch are needed again (rename it, rebase its hunks, update the `patchedDependencies` entry in
+`package.json`). Then run the three engines in full, and unpin the workflows from
+`ubuntu-24.04`. Check that the e2e suite's engine-specific expectations (the ledger rows measured on Chromium 145, Firefox
+146 and WebKit 26) still hold on the new browsers, and re-measure the ones that do not.
 
 ---
 

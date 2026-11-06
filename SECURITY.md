@@ -11,8 +11,8 @@ vulnerability reporting on in the repository's settings; until it is on, the **R
 missing, and a report waits for the owner to enable it rather than going public.
 
 Please include:
-- the mode (`strict`, `worker` or `cooperative`) and the configuration that matters (`origins`, `capabilities`,
-  `fetchBridge`, `allowAnimations`, and so on);
+- the mode (`sealed`, the default, or `strict`, `worker` or `cooperative`) and the configuration that matters (`origins`,
+  `capabilities`, `fetchBridge`, `guestWrites`, `allowAnimations`, and so on);
 - the engine and its version (for example Chromium 127, Firefox 146, WebKit/Safari), and the operating system if the
   behavior differs by platform;
 - a reproduction: the smallest guest code or markup, and the host page setup, that shows it.
