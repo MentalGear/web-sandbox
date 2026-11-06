@@ -15,7 +15,9 @@ import { clickInSandbox, inView, waitInView } from './strict-view';
  *   2. host -> app: `call('load')` and a stream of `push(batch)` calls, each awaited, arrive in order and are all shown;
  *   3. user -> app -> host: typing and Enter, and a checkbox, reach the host's `save` as validated data, and the app's
  *      image follows its state (a new write the host can list);
- *   4. the stored state loads into the next mount (the host is the app's only storage).
+ *   4. the stored state loads into the next mount (the host is the app's only storage);
+ *   5. another app on the same element, after `unexpose()` and `unregisterFiles()`, reaches none of the first app's methods
+ *      and files, and cannot tell a removed method from one that never existed.
  * Evidence is read outside the guest: the view's DOM (strict-view.ts), the host's store, `listGuestWrites()`.
  */
 
@@ -110,5 +112,48 @@ test.describe('the sealed app of the docs', () => {
         await mountApp(page, await saved(page)); // the next mount: the stored state
         await waitInView(page, browserName, `document.getElementById('text-1')?.textContent === 'eggs' && document.getElementById('count').textContent === '1 open'`);
         expect(await inView(page, browserName, LIST)).toEqual(['[x] milk', '[ ] eggs']);
+    });
+
+    // Methods and files belong to the element, not to the app (BD5:DOC-3): after unexpose() and unregisterFiles(), another
+    // app on the same element reaches neither the first app's `save` nor its files, and what it is told about `save` is
+    // exactly what an app on a new element, where `save` never existed, is told.
+    test("another app on the same element, after unexpose() and unregisterFiles(): the first app's method and files are gone, as on a new element", async ({ sandbox, page, browserName }) => {
+        void sandbox; // the fixture opens the harness page
+        await mountApp(page, [{ text: 'milk', done: false }]);
+        await waitInView(page, browserName, `document.getElementById('text-0')?.textContent === 'milk'`);
+        const probe = await page.evaluate(async () => {
+            // app B: calls the first app's `save` and a name no one exposed, and reads the first app's stylesheet
+            const appB = `(async () => {
+                const out = {};
+                for (const name of ['save', 'never-exposed']) {
+                    try { out[name] = { resolved: await bridge.call(name, [{ text: 'by B', done: true }]) }; }
+                    catch (e) { out[name] = { code: e.code, message: e.message }; }
+                }
+                try { out.file = await sandboxFiles.text('app.css'); } catch (e) { out.file = e.code; }
+                await bridge.call('report', out);
+            })();`;
+            const run = (element: any) => new Promise(resolve => {
+                element.expose('report', resolve);
+                element.registerFiles({ 'b.js': appB });
+                element.setConfig({ entry: 'b.js' });
+            });
+            const same = document.querySelector('web-sandbox') as any;
+            same.unexpose();
+            same.unregisterFiles();
+            const onSame = await run(same);
+            const fresh = document.createElement('web-sandbox') as any;
+            fresh.id = 'fresh';
+            document.body.appendChild(fresh);
+            const onFresh = await run(fresh);
+            return { onSame, onFresh, files: same.listFiles().map((file: { path: string }) => file.path) };
+        });
+        expect(probe.onSame).toEqual({
+            save: { code: 'UNKNOWN_METHOD', message: 'unknown method: save' },
+            'never-exposed': { code: 'UNKNOWN_METHOD', message: 'unknown method: never-exposed' },
+            file: 'NOT_FOUND',
+        });
+        expect(probe.onSame).toEqual(probe.onFresh); // a removed method reads as one that never existed
+        expect(probe.files).toEqual(['b.js']);
+        expect(await saved(page)).toEqual([{ text: 'milk', done: false }]); // the first app's state, untouched
     });
 });

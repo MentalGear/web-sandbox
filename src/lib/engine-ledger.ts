@@ -200,6 +200,14 @@ export const ENGINE_DIFFERENCES = {
         why: "Chromium normalises the type before the library sees the object. Up to 65 535 characters every engine builds the same Blob, and the measure refuses a type over `BLOB_TYPE_MAX_LENGTH` on all of them",
         tests: [`${E2E}exact-budget.spec.ts`],
     },
+    'shared-memory-view-clone': {
+        what: "A typed array over a `SharedArrayBuffer` (a shared `WebAssembly.Memory`'s buffer) in a call or a result, on a page that is not cross-origin isolated",
+        chromium: "Structured clone refuses it: `ARGS_NOT_TRANSFERABLE` or `RESULT_NOT_TRANSFERABLE`",
+        firefox: "Structured clone refuses it: `ARGS_NOT_TRANSFERABLE` or `RESULT_NOT_TRANSFERABLE`",
+        webkit: "Structured clone copies it into a plain `ArrayBuffer` of the whole memory (64 KiB a page), not shared: the broker then sends the view's own bytes, as for any view",
+        why: "Each engine's structured clone of shared memory without isolation. No engine shares the memory with the other side, and no engine sends bytes the view does not show: the broker's snapshot carries each view's own bytes only (rpc.ts, compactViews)",
+        tests: [`${E2E}rpc-what-crosses.spec.ts`],
+    },
     'unresolved-import-events': {
         what: "A stylesheet `@import` or a `srcset` that cannot resolve: the events, and what the CSSOM shows",
         chromium: "The link fires `error`; the import rule's sheet is unreadable (`SecurityError`); the `<img>` fires `error`",

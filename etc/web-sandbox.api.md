@@ -321,6 +321,7 @@ export class WebSandbox extends HTMLElement {
     setConfig(config: SandboxConfig): void;
     get state(): SandboxState;
     terminate(reason?: string): void;
+    unexpose(names?: string | readonly string[]): void;
     unregisterFiles(paths?: string[]): void;
 }
 

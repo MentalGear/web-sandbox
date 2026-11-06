@@ -76,7 +76,7 @@ const body = (member: ApiMember, where = member.path): string => [member.doc.sum
 // ---- Regions
 
 /** The order the page presents the element's methods in; a method it does not name follows, by name. */
-export const METHOD_ORDER = ['setConfig', 'load', 'reset', 'terminate', 'execute', 'expose', 'call', 'callWithTimeout', 'registerFiles', 'unregisterFiles', 'listFiles', 'listGuestWrites', 'commitGuestWrites'];
+export const METHOD_ORDER = ['setConfig', 'load', 'reset', 'terminate', 'execute', 'expose', 'unexpose', 'call', 'callWithTimeout', 'registerFiles', 'unregisterFiles', 'listFiles', 'listGuestWrites', 'commitGuestWrites'];
 
 /** Things a doc says that a value holds, rendered after the method's own text. */
 const APPENDICES: Readonly<Record<string, () => string>> = {
