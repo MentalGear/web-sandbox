@@ -35,7 +35,8 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
    path of its own (`_prepareSealedFrame`) that reaches no host-site, host-policy, origin-parsing or bridge code; the
    request gate's list is empty, so every `fetch`, `XMLHttpRequest` and `WebSocket` is refused and reported, on every
    engine; there is no bridge frame; `sandboxFetch()` stays defined and rejects with `FETCH_NOT_ALLOWED` in the guest's
-   realm. The config schema runs no rule of a network option for a sealed config, so it reads nothing of the host page.
+   realm and sends nothing. (The host's reserved `sandbox:fetch` method stays registered, as before any build, and a guest
+   can call it with `bridge.call`; with no bridge in a sealed build it refuses `FETCH_NOT_ALLOWED` and makes no request.) The config schema runs no rule of a network option for a sealed config, so it reads nothing of the host page.
 2. **A sealed config that names a network option is refused.** `origins` or `fetchBridge`, with any value but
    `undefined`, with `mode: 'sealed'` written or with no `mode`, refuses the whole config: nothing of it is applied, and
    the sandbox terminates with the reason ``origins and fetchBridge open the network, which sealed mode (the default)

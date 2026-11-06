@@ -2400,7 +2400,8 @@ export class WebSandbox extends ElementBase {
         this._listenForAnnouncement(iframe, prepared.network ? prepared.network.bridgeFrame : null, prepared.strictInit === null);
         this.shadowRoot!.appendChild(iframe);
         // The bridge's frame after the wrapper, which stays the shadow root's first. A sealed build has no network: no
-        // bridge, and the reserved method refuses, as before the first build (its guest's sandboxFetch() never calls it).
+        // bridge, and the reserved method refuses, as before the first build (its guest's sandboxFetch() never calls it; a guest's
+        // own bridge.call('sandbox:fetch') does, and is refused here, test/e2e/sealed.spec.ts).
         if (prepared.network) this._startFetchBridge(prepared.network);
         else this._exposeFetch(null);
     }

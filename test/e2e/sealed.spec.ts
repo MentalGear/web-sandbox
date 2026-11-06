@@ -49,7 +49,7 @@ test.describe('sealed mode', () => {
         expect(await sandbox.state()).toBe('ready');
     });
 
-    test('no network: a guest fetch is refused and reported by the request gate, sandboxFetch() is FETCH_NOT_ALLOWED from the guest itself (nothing reaches the host), and the listener sees nothing; strict mode with the listener in origins reaches it, and its sandboxFetch() asks the host (positive control)', async ({ sandbox, page }) => {
+    test('no network: a guest fetch is refused and reported by the request gate, sandboxFetch() is FETCH_NOT_ALLOWED from the guest itself (nothing reaches the host), a raw bridge.call of sandbox:fetch reaches the host and is refused, and the listener sees nothing; strict mode with the listener in origins reaches it, and its sandboxFetch() asks the host (positive control)', async ({ sandbox, page }) => {
         const probe = (path: string) => `
             const fetched = await fetch('${recorder.allowed}${path}').then(() => 'sent', (e) => e.name);
             const bridged = await sandboxFetch('${recorder.allowed}${path}-bridge').then(() => 'sent', (e) => e.code);
@@ -72,11 +72,18 @@ test.describe('sealed mode', () => {
         await sandbox.page.waitForTimeout(500);
         expect(recorder.paths('allowed')).toEqual([]);
         expect(await hostFetches()).toBe(0);
+        // the guest can call the reserved method itself (BD5:TST-5): sandboxFetch() sends nothing, but bridge.call('sandbox:fetch') reaches
+        // the host's handler, which has no bridge in a sealed build and refuses it, and the listener still sees nothing
+        const raw = await sandbox.inGuest(`return await bridge.call('sandbox:fetch', { url: '${recorder.allowed}/sealed-raw', method: 'POST', body: 'x' }).then(() => 'sent', (e) => e.code);`);
+        expect(raw).toBe('FETCH_NOT_ALLOWED');
+        expect(await hostFetches()).toBe(1);
+        await sandbox.page.waitForTimeout(500);
+        expect(recorder.paths('allowed')).toEqual([]);
 
         expect(await sandbox.mount({ mode: 'strict', origins: { connect: [recorder.allowed] } })).toBe('ready');
         expect(await sandbox.inGuest(probe('/strict'))).toEqual({ fetched: 'sent', bridged: 'FETCH_NOT_ALLOWED' });
         await recorder.waitFor('allowed', '/strict');
-        expect(await hostFetches()).toBe(1); // without fetchBridge the host refuses it
+        expect(await hostFetches()).toBe(2); // without fetchBridge the host refuses it (a new environment: its count goes on from the raw call)
     });
 
     test('a sealed config that names origins is refused: terminated with the reason, and a sealed config without it builds again', async ({ sandbox, page }) => {

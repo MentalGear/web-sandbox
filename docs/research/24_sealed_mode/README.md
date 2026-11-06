@@ -45,7 +45,7 @@ engines.
 | D1 | A config with no `mode` that names `origins` or `fetchBridge` is refused, with the reason of the API. |
 | D2 | No WebAssembly in sealed v1; an `allowWebAssembly` opt-in later (§3.3). |
 | D3 | New public names: `SealedSandboxConfig` and `NetworkSandboxOptions` (the interface that carries `fetchBridge` for strict, cooperative and worker). |
-| D4 | `sandboxFetch` exists in sealed and rejects with `FETCH_NOT_ALLOWED` in the guest's realm; no host handler exists. |
+| D4 | `sandboxFetch` exists in sealed and rejects with `FETCH_NOT_ALLOWED` in the guest's realm and sends nothing; the host's reserved method has no bridge and refuses a raw `bridge.call('sandbox:fetch')` the same way. |
 | D5 | Data findings that reach only strict's network opt-ins do not count against a clean pass; they are fixed or documented as limits of those opt-ins. |
 | D6 | The served-document mode ([research 20](../20_served_document_mode/README.md)) is shelved: sealed answers research 22's trigger for the default. |
 | D7 | The 8 MiB file quota stays for v1. |
