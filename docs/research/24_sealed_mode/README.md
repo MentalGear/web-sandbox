@@ -69,9 +69,10 @@ view's budgets and input.
 
 - **Promises.** "The guest reaches the network only through `origins` or the fetch bridge" becomes "no network at all".
   The two cookie promises are N/A (nothing leaves). Every other promise of the threat model holds unchanged.
-- **Inherited context** (`INHERITED_CONTEXT`, 18 rows): 5 rows are N/A in sealed (`referrer`, `ancestorOrigins`, `cookies`,
-  `serviceWorker`, `uiSurfaces`), 1 is reduced (`cspFetch`: no origin to narrow, only `blob:` for registered files), 12
-  remain. Every remaining row either fails closed with a reason or is availability. None moves data.
+- **Inherited context** (`INHERITED_CONTEXT`, 19 rows): 5 rows are N/A in sealed (`referrer`, `ancestorOrigins`, `cookies`,
+  `serviceWorker`, `uiSurfaces`), 1 is reduced (`cspFetch`: no origin to narrow, only `blob:` for registered files), 13
+  remain. Every remaining row either fails closed with a reason, is availability, or is closed by construction
+  (`permissionState`: the worker has no permission API). None moves data.
 - **Engine ledger.** `cookies`, `connect-src`, `redirect-refusal-outcome`, `referrer-on-requests`, `secure-cookie-over-http`,
   `service-worker-control` and every cooperative-only row leave sealed's scope.
 - **Findings.** Of the 20 data findings of BD1 to BD4, 14 need `origins` or `fetchBridge`, 3 reach only cooperative or

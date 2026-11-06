@@ -85,7 +85,7 @@ test.describe('W1: a committed inert file is never a script of the next build', 
                 s.addEventListener('terminated', (e: CustomEvent) => resolve(e.detail.reason), { once: true });
                 s.setConfig({ mode, entry: 'app.js' });
             }), mode);
-            expect(reason).toBe('the guest entry "app.js" is not a registered JavaScript file');
+            expect(reason).toBe('the guest entry is not a registered JavaScript file');
             expect(await sandbox.mount({ mode, entry: 'ok.js' })).toBe('ready');
             await expect.poll(() => marks(sandbox), { timeout: 8000 }).toEqual(['ok']);
         });

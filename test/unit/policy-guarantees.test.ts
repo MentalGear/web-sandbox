@@ -121,7 +121,7 @@ describe('A4: an unknown mode fails closed', () => {
         expect(reasons).toHaveLength(0); // not inside the call (R1:R3-2)
         await settled();
         expect(reasons).toHaveLength(1);
-        expect(reasons[0]).toMatch(/^unknown mode /);
+        expect(reasons[0]).toBe('unknown mode: not strict, sealed, cooperative or worker');
         el.reset();
         el.load('<p>x</p>');
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
@@ -141,12 +141,12 @@ describe('A4: an unknown mode fails closed', () => {
         el.reset();
         await settled();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
-        expect(reasons).toEqual([`unknown mode "iframe" ('iframe' was renamed 'cooperative')`, `unknown mode "iframe" ('iframe' was renamed 'cooperative')`]);
+        expect(reasons).toEqual([`unknown mode: not strict, sealed, cooperative or worker ('iframe' was renamed 'cooperative')`, `unknown mode: not strict, sealed, cooperative or worker ('iframe' was renamed 'cooperative')`]);
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.startsWith('[Sandbox] mode "iframe" is not one of strict, sealed, cooperative, worker (\'iframe\' was renamed \'cooperative\')'))).toHaveLength(1);
         // only that old name gets the note, never one the prototype chain answers
         el.setConfig({ mode: 'toString' });
         await settled();
-        expect(reasons.at(-1)).toBe('unknown mode "toString"');
+        expect(reasons.at(-1)).toBe('unknown mode: not strict, sealed, cooperative or worker');
         el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
         expect([el.state, wrapperOf(el) !== null]).toEqual(['loading', true]);
     });

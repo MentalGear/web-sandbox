@@ -290,9 +290,12 @@ export const FRAMES = {
         },
     },
     VIEW_ACK: {
-        purpose: "The view applied a flush of operations: the worker's next one may go. What it refused, by name.",
+        purpose: "The view applied a flush of operations: the worker's next one may go. What it refused, by name, and what an applied render dropped (BD5:NEW-3).",
         routes: [{ channel: 'render-port', from: ['view'], to: ['strict-worker'] }],
-        fields: { refused: { bound: 'constant', how: 'names from a fixed list (VIEW_MAX_ELEMENTS …)' } },
+        fields: {
+            refused: { bound: 'constant', how: 'names from a fixed list (VIEW_MAX_ELEMENTS …)' },
+            dropped: { bound: 'constant', how: "at most 'script' and 'reference' (RenderContext.dropped), once each" },
+        },
     },
     VIEW_EVENT: {
         purpose: 'Events of the types the worker listens to, as details, in the order they were raised: a discrete one behind the continuous ones the view coalesced before it, or those alone (at most one such frame unacknowledged, VIEW_INPUT_IN_FLIGHT).',

@@ -307,7 +307,7 @@ describe("L-3: one rule for every 'terminated': a rebuild from its listener that
         el.registerFiles({ 'agent.js': 'void 0' });
         el.setConfig({ mode: 'strict', entry: 'agent.js' });
         el.unregisterFiles(['agent.js']);
-        const reason = 'the guest entry "agent.js" is not a registered JavaScript file';
+        const reason = 'the guest entry is not a registered JavaScript file';
         const heard: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => { heard.push(e.detail.reason); el.reset(); });
         el.terminate(reason);
@@ -322,7 +322,7 @@ describe("L-3: one rule for every 'terminated': a rebuild from its listener that
         el.setConfig({ mode: 'strict', entry: 'agent.js' });
         const heard: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => { heard.push(e.detail.reason); el.reset(); }, { once: true });
-        el.terminate('the guest entry "agent.js" is not a registered JavaScript file');
+        el.terminate('the guest entry is not a registered JavaScript file');
         await settle();
         expect(el.state).toBe('loading');
         expect(heard).toHaveLength(1);

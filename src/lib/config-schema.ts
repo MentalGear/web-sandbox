@@ -34,7 +34,7 @@ import { RPC_MAX_BYTES, type BudgetRefusal } from './rpc';
 import { MAX_TOTAL_BYTES } from './files';
 import { defineData, hasOwnField, ownField, type Complete, type Holds } from './utils';
 import { watchdogBudget } from './watchdog';
-import { reasonText } from './reasons';
+import { fixedDetail, reasonText, type LibraryDetail } from './reasons';
 
 /** The per-second budget of the calls the guest makes, per environment: what both ends count. */
 export interface CallBudget {
@@ -170,20 +170,20 @@ export function sealedNetworkRefusal(mode: unknown, source: Record<string, unkno
 }
 
 // Old names of modes: refused like any other value that is not a mode, never an alias (nothing is published, so no
-// config needs one), and the refusal names the new one.
-const RENAMED_MODES: Readonly<Record<string, SandboxMode>> = Object.freeze({ iframe: 'cooperative' });
+// config needs one), and the refusal names the new one: a note of the library's own for each old name, so the reason
+// carries the library's text and never the configured value (BD5:DOC-2).
+const RENAMED_MODES: Readonly<Record<string, LibraryDetail>> = Object.freeze({ iframe: fixedDetail(" ('iframe' was renamed 'cooperative')") });
 
 /** " ('iframe' was renamed 'cooperative')" for an old name of a mode, else ''. */
-export function renamedModeNote(mode: unknown): string {
-    if (typeof mode !== 'string' || !Object.hasOwn(RENAMED_MODES, mode)) return '';
-    return ` ('${mode}' was renamed '${RENAMED_MODES[mode]}')`;
+export function renamedModeNote(mode: unknown): LibraryDetail {
+    return typeof mode === 'string' && Object.hasOwn(RENAMED_MODES, mode) ? RENAMED_MODES[mode]! : fixedDetail('');
 }
 
-/** A mode as a warning or a reason shows it: a string, clamped, or its type. */
+/** A mode as a warning shows it (a reason never does: BD5:DOC-2): a string, clamped, or its type. */
 export const describeMode = (mode: unknown): string => (typeof mode === 'string' ? JSON.stringify(mode.slice(0, 32)) : `of type ${mode === null ? 'null' : typeof mode}`);
 
 /** Why no environment is built for a mode that is not one (the build's refusal, _buildRefusal), or null. */
-export const unknownModeReason = (mode: unknown): string | null => (isSandboxMode(mode) ? null : reasonText('unknownMode', `${describeMode(mode)}${renamedModeNote(mode)}`));
+export const unknownModeReason = (mode: unknown): string | null => (isSandboxMode(mode) ? null : reasonText('unknownMode', renamedModeNote(mode)));
 
 // The sandbox flags of strict mode's view, always (why: host.ts, at its import): listing one of them in `capabilities`
 // there asks for nothing more, so it is kept, not dropped.

@@ -6,7 +6,7 @@ import { checkSandboxEnvironment, ENVIRONMENT_CHECKS, ENVIRONMENT_EXPECTED, ENVI
 import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { BRIDGE_POLICY_START } from '@src/lib/frame-documents';
 import { prepareBridgeFrame } from '@src/lib/bridge-frame';
-import { BRIDGE_ROLE, environmentGate, viewBootstrapSource, viewBootstrapText, VIEW_OPTIONS } from '@src/lib/in-sandbox-view';
+import { BRIDGE_ROLE, environmentGate, STRICT_DIRECTIVE, viewBootstrapSource, viewBootstrapText, VIEW_OPTIONS } from '@src/lib/in-sandbox-view';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { runBootstrap, type SandboxEnvironmentRecord } from './sandbox-environment';
 
@@ -44,12 +44,12 @@ const WORKER = { mode: 'worker' };
 // ---- the first statement
 
 /**
- * The gate of a bootstrap's text and what is wrong with where it stands. It is the first statement (the text starts with
- * it, inside the hashed bootstrap's own function for that one) and the only one: its block closes at the end of the
+ * The gate of a bootstrap's text and what is wrong with where it stands. It is the first statement after the strict
+ * directive (the text starts with them, inside the hashed bootstrap's own function for that one) and the only one: its block closes at the end of the
  * bootstrap, so everything else is inside it. `host` and `stop` are the arguments after the table's values.
  */
 function gateOf(text: string, shape: 'script' | 'function'): { problems: string[]; host: string | null; stop: string | null } {
-    const open = shape === 'function' ? '(function () {' : '';
+    const open = (shape === 'function' ? '(function () {' : '') + STRICT_DIRECTIVE;
     const check = `if ((${checkSandboxEnvironment.toString()})(${JSON.stringify(ENVIRONMENT_EXPECTED)}, `;
     const none = (problem: string) => ({ problems: [problem], host: null, stop: null });
     if (!text.startsWith(open + check)) return none('the check is not the first statement, or is not given the rows in their order');
@@ -79,7 +79,7 @@ const gateProblems = (text: string, shape: 'script' | 'function') => gateOf(text
 
 describe('the check is the first statement of each bootstrap, and everything else is inside its block', () => {
     it('the gate is the text environmentGate() builds, around a body', () => {
-        expect(environmentGate('parent.parent', true, 'void 0;')).toBe(`if ((${checkSandboxEnvironment.toString()})(${JSON.stringify(ENVIRONMENT_EXPECTED)}, parent.parent, true) === null) {void 0;}`);
+        expect(environmentGate('parent.parent', true, 'void 0;')).toBe(`'use strict';if ((${checkSandboxEnvironment.toString()})(${JSON.stringify(ENVIRONMENT_EXPECTED)}, parent.parent, true) === null) {void 0;}`);
     });
 
     it('the hashed bootstrap (the view and the bridge frame): the gate is the one statement of its function', () => {

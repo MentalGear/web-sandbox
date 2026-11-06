@@ -200,7 +200,7 @@ describe('sandboxFiles.write() and remove(): guest writes, the guest side (backl
     it('both exist in every environment; without the write call (guestWrites off) they reject FILES_NOT_ALLOWED and send nothing', async () => {
         for (const writeFiles of [undefined, null]) {
             const api = installWith(SNAPSHOT, writeFiles);
-            const notAllowed = { isError: true, code: 'FILES_NOT_ALLOWED', keys: ['code'], message: '[sandboxFiles] FILES_NOT_ALLOWED: guest writes are off' };
+            const notAllowed = { isError: true, code: 'FILES_NOT_ALLOWED', keys: ['code'], message: '[sandboxFiles] FILES_NOT_ALLOWED: guest writes are off (the embedder turns them on with guestWrites: true)' };
             await expect(api.write('a.txt', 'x').catch(shape)).resolves.toEqual(notAllowed);
             await expect(api.remove('kept.txt').catch(shape)).resolves.toEqual(notAllowed);
             expect(api.list()).toEqual(['kept.txt']);

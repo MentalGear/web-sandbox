@@ -77,7 +77,8 @@ async function startPrelude(maxRender = 20) {
     w.listeners.message(new FakeMessageEvent({ data: { type: 'INIT_WORKER' }, ports: [new FakePort(), render] }));
     const sent = () => render.posted.filter(frame => frame.type !== 'VIEW_STARTED' && frame.type !== 'VIEW_LISTEN');
     const ack = (refused?: string[]) => render.deliver(refused ? { type: 'VIEW_ACK', refused } : { type: 'VIEW_ACK' });
-    return { view: w.sandboxView, sent, ack, lines };
+    const ackDropped = (dropped: string[]) => render.deliver({ type: 'VIEW_ACK', dropped });
+    return { view: w.sandboxView, sent, ack, ackDropped, lines };
 }
 
 describe('R4-5: sandboxView.text() and sandboxView.set() in the worker', () => {
@@ -148,6 +149,22 @@ describe('R4-5: sandboxView.text() and sandboxView.set() in the worker', () => {
             '[Sandbox] sandboxView.text: the view refused it: the view would hold more than 1000 characters; nothing of it was applied.',
             "[Sandbox] sandboxView.set: the view refused focus: the user's focus is not in the sandbox (they last interacted with the host page, or the window is not focused); the rest was applied.",
             '[Sandbox] sandboxView.render: the view refused a render: the view would hold more than 100 elements; nothing of it was applied.',
+        ]);
+    });
+
+    // BD5:NEW-3: a render's dropped <script> and its reference to a file the view does not show were silent, while the
+    // element's html notice says it of `html`. The view's acknowledgement names them, and the prelude logs one line per render.
+    it("say in the guest's log, once per render, what an applied render dropped: its scripts, and references to files the view does not show", async () => {
+        const { view, ackDropped, lines } = await startPrelude();
+        for (let i = 0; i < 4; i++) view.render('<p>', 'c' + i);
+        ackDropped(['script']);
+        ackDropped(['reference']);
+        ackDropped(['script', 'reference']);
+        ackDropped(['other', 'x', 'y']);
+        expect(lines).toEqual([
+            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker).',
+            '[Sandbox] sandboxView.render: a reference that names no file the view shows was kept as written and loads nothing (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
+            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was kept as written and loads nothing (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
         ]);
     });
 });
