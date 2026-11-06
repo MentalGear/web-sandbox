@@ -129,7 +129,7 @@ describe('review C2: the worker source runs the entry in its own scope, after th
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount({ mode: 'strict', entry: 'main.js' }, { 'main.js': 'function Worker() {} var x = 1;' });
         const source: string = el._strictInit?.workerSource ?? el._getStrictWorkerSource([], 'function Worker() {} var x = 1;');
-        expect(source.startsWith('(function (g) {(function assertEntryScoped(')).toBe(true);
+        expect(source.startsWith("(function (g) {'use strict';(function assertEntryScoped(")).toBe(true);
         expect(source).toMatch(/\}\)\(this\);\n\(function \(\) \{\nfunction Worker\(\) \{\} var x = 1;\n\}\)\.call\(this\);\n__sandboxEntryRan_[0-9a-f]{32}\(\);\n$/);
     });
 

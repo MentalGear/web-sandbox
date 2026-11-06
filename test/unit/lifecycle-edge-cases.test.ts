@@ -182,7 +182,7 @@ describe("L-4: a 'terminated' listener that builds again to the same answer hear
             });
             el.setConfig(config);
             for (let i = 0; i < 20; i++) await task();
-            expect(events).toEqual(['terminated: the guest entry "missing.js" is not a registered JavaScript file']);
+            expect(events).toEqual(['terminated: the guest entry is not a registered JavaScript file']);
             expect(el.state).toBe('terminated');
         });
     }

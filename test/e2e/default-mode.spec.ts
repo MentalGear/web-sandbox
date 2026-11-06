@@ -127,7 +127,7 @@ test.describe('sealed is the default mode; strict is named', () => {
             s.addEventListener('terminated', (e: CustomEvent) => resolve(e.detail.reason), { once: true });
             s.setConfig({ mode: 'iframe', capabilities: ['allow-scripts'] });
         }));
-        expect(reason).toBe(`unknown mode "iframe" ('iframe' was renamed 'cooperative')`);
+        expect(reason).toBe(`unknown mode: not strict, sealed, cooperative or worker ('iframe' was renamed 'cooperative')`);
         expect(await sandbox.state()).toBe('terminated');
         expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).shadowRoot.querySelectorAll('iframe').length)).toBe(0);
     });

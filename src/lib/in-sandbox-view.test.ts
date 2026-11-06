@@ -25,6 +25,32 @@ function sanitize(html: string, files: Record<string, string> = {}, origins: Rec
     sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
     return template.content;
 }
+/** What the renderer noted it dropped (RenderContext.dropped, BD5:NEW-3), for `html` with registered `files`. */
+function droppedBy(html: string, files: Record<string, string> = {}) {
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const minted = new Set(Object.values(files));
+    const context: RenderContext = { target: 'body', animating: RENDER_RULES.still.known, origins: {}, refused: [], urls: 0, loads: [], dropped: [] };
+    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
+    return context.dropped;
+}
+
+describe('BD5:NEW-3: the renderer notes, once each, the scripts it dropped and the references it left as written', () => {
+    it('a <script> (HTML or SVG) is noted as script; a reference to a path the view shows no file for (an SVG, an unregistered path) as reference', () => {
+        expect(droppedBy('<script>x()</script><p>a</p>')).toEqual(['script']);
+        expect(droppedBy('<svg><script>x()</script></svg><script>y()</script>')).toEqual(['script']);
+        expect(droppedBy('<img src="pic.svg" alt="">')).toEqual(['reference']);
+        expect(droppedBy('<img src="missing.png"><img src="/also/missing.png">')).toEqual(['reference']);
+        expect(droppedBy('<script></script><img src="pic.svg">')).toEqual(['script', 'reference']);
+    });
+
+    it('nothing is noted for what the view shows, for a network URL (reported as a violation instead), or for markup without either', () => {
+        expect(droppedBy('<img src="logo.png">', { 'logo.png': 'blob:null/1' })).toEqual([]);
+        expect(droppedBy('<img src="https://example.com/a.png"><img src="data:image/png;base64,AAAA">')).toEqual([]);
+        expect(droppedBy('<p>text</p><svg><circle r="1"></circle></svg>')).toEqual([]);
+    });
+});
+
 const serialise = (fragment: DocumentFragment) => {
     const div = document.createElement('div');
     div.append(fragment.cloneNode(true)); // the test's own copy, after the renderer ran

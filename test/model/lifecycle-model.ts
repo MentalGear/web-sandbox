@@ -154,8 +154,8 @@ export function refusalOf(desc: ConfigDesc): string | null {
 }
 
 export function unknownModeReason(mode: string | number): string {
-    const shown = typeof mode === 'string' ? JSON.stringify(mode.slice(0, 32)) : `of type ${typeof mode}`;
-    return `unknown mode ${shown}${mode === 'iframe' ? " ('iframe' was renamed 'cooperative')" : ''}`;
+    // the reason names the problem, never the configured value (BD5:DOC-2)
+    return `unknown mode: not strict, sealed, cooperative or worker${mode === 'iframe' ? " ('iframe' was renamed 'cooperative')" : ''}`;
 }
 
 // ---- the model -------------------------------------------------------------------------------------------------
@@ -297,7 +297,7 @@ export class LifecycleModel {
         const cfg = this.cfg;
         if (cfg && cfg.kind === 'unknownMode') return unknownModeReason(cfg.mode);
         if (cfg && cfg.kind === 'valid' && cfg.mode === 'strict' && cfg.entry) {
-            if (!(cfg.entry in this.files) || !cfg.entry.endsWith('.js')) return `the guest entry "${cfg.entry}" is not a registered JavaScript file`;
+            if (!(cfg.entry in this.files) || !cfg.entry.endsWith('.js')) return 'the guest entry is not a registered JavaScript file';
         }
         return null;
     }

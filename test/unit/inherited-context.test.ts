@@ -18,7 +18,7 @@ describe('INHERITED_CONTEXT', () => {
     it('has the channels the class review inventoried', () => {
         expect(Object.keys(INHERITED_CONTEXT)).toEqual([
             'cspScript', 'cspWorker', 'cspStyle', 'cspBaseUri', 'cspFetch', 'trustedTypesRequirement', 'trustedTypesDefault', 'coep',
-            'referrer', 'ancestorOrigins', 'documentOrigin', 'cookies', 'serviceWorker', 'hostRealmGlobals', 'permissionsPolicy',
+            'referrer', 'ancestorOrigins', 'documentOrigin', 'cookies', 'serviceWorker', 'hostRealmGlobals', 'permissionsPolicy', 'permissionState',
             'uiSurfaces', 'eventDispatch', 'thread',
         ]);
     });
