@@ -10,7 +10,9 @@ permissions:
 
 jobs:
   unit:
-    runs-on: ubuntu-latest
+    # a fixed image, not ubuntu-latest: Playwright supports a release of Ubuntu only from a version on, and a moving image
+    # turned every e2e job red on 2026-11-06 (ubuntu-latest became 26.04, which Playwright 1.58.1 does not install on)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -25,7 +27,7 @@ jobs:
       - run: ./scripts/smoke-package.sh
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # a run takes about 25 minutes; a stuck one ends here instead of at GitHub's 6 hours, with its log
     timeout-minutes: 50
     strategy:
