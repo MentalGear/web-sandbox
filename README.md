@@ -353,15 +353,21 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
 *   **Only exposed methods can be called.** Any other name, built-in ones like `toString` or
     `__proto__` included, rejects with `unknown method`. Exposing a name again replaces its handler.
 *   **Values are copied, not shared.** Arguments and results are copied the way `structuredClone`
-    copies, so they must be cloneable data; a function or a DOM node fails that one call at once.
+    copies, so they must be cloneable data; a function or a DOM node fails that one call at once. A typed
+    array or `DataView` carries its own bytes only: `heap.subarray(a, b)` arrives over a buffer of `b - a`
+    bytes, never the rest of `heap`.
 *   **Treat a handler's arguments as untrusted input.** They are plain data, but the other side
     chose them: validate before use, and copy objects with spread (`{ ...arg }`) rather than
     `Object.assign`, which turns an own `__proto__` key into a prototype change.
 *   **Every call times out** after 30 seconds by default. `callWithTimeout(ms, method, ...args)`
     sets a different limit for one call; `0` turns it off. A call made while loading that times out
     before the guest is ready never runs.
-*   **Host methods belong to the element**, so they survive `reset()`, `load()` and `setConfig()`. Guest
+*   **Host methods belong to the element**, so they survive `reset()`, `load()` and `setConfig()`, until
+    `unexpose()` removes them (before another app runs on the element). Guest
     methods belong to one frame: a new frame starts with none until its own code exposes them.
+*   **A host method's failure tells the guest only what you wrote.** The message of a plain `Error` or a thrown
+    string reaches the guest; any other throw (an engine's `TypeError`, a `JSON.parse` error) arrives as
+    `the method failed (<name>)`, and its text goes to your console.
 *   **A reset settles every pending call.** When `reset()`, `load()` or `setConfig()` recreates the
     frame, the element is removed, or the sandbox is terminated, pending calls reject; calls made
     after termination reject at once.

@@ -48,8 +48,19 @@
  * Because the clamp never yields a local-only code, nothing the other side sends can make a rejection
  * look like one of the local side's own: a response that claims `code: 'TERMINATED'`, or carries the
  * exact termination text, rejects with code HANDLER_ERROR. For the
- * reported codes the message stays the other side's text verbatim, up to MAX_TEXT_LENGTH characters (a handler's
- * throw rejects with its original message) — the code, not the text, is the part a caller can branch on.
+ * reported codes the message stays the other side's text verbatim, up to MAX_TEXT_LENGTH characters — the code, not the
+ * text, is the part a caller can branch on.
+ *
+ * What a refusal's text carries (BD5:LIM-2, BD5:DOC-1; class P, what crosses is what the API shows). A refusal this
+ * function makes itself has a fixed text of its own, never an engine's: a result structured clone cannot carry is
+ * answered "result is not transferable: …" with no part of the clone's error, which on Chromium quotes the source of
+ * the function it could not clone. A handler's throw is reported with its text as is on the guest's broker (the guest's
+ * text, which the host receives as the guest's data). On the host's broker (`reportWithheld`) the text crosses by an
+ * allow-list: a thrown string, or the message of an error whose prototype is exactly this realm's Error.prototype (a plain
+ * `new Error(text)`, the embedder's own words). Any other throw, an engine's TypeError, SyntaxError or DOMException, a
+ * subclass, an error of another realm, an object, is reported as `the method failed (<name>)`, its name checked as the
+ * element's errorName checks one (FR:F3), because an engine's message quotes the data it was handling. The text withheld
+ * goes to `reportWithheld`, the host's console.
  * `code` is a plain own property rather than an Error subclass: a subclass would be a module-scope
  * class this function cannot close over (see above), and a property reads the same in every realm.
  *
@@ -116,9 +127,11 @@ export type RpcFrame = (
  *
  * Reported by the other side (the message is its text; any other reported value reads as `HANDLER_ERROR`):
  * - `UNKNOWN_METHOD`: no method of that name is exposed there.
- * - `HANDLER_ERROR`: the handler threw or rejected.
- * - `RESULT_NOT_TRANSFERABLE`: the handler's return value cannot be structured-cloned, or an answer arrived past
- *   `RPC_MAX_BYTES`.
+ * - `HANDLER_ERROR`: the handler threw or rejected. A guest handler's text arrives as it is. A host handler's text is
+ *   the message of a plain `Error` or a thrown string; any other throw arrives as `the method failed (<name>)` (see
+ *   `expose()`).
+ * - `RESULT_NOT_TRANSFERABLE`: the handler's return value cannot be structured-cloned (a fixed text, never the clone's
+ *   error), or an answer arrived past `RPC_MAX_BYTES`.
  * - `BUSY`: the other side already has {@link MAX_INBOUND_IN_FLIGHT} of your calls (or `RPC_MAX_INBOUND_BYTES` of their
  *   arguments) in flight on this channel, and nothing ran; worth retrying once earlier calls settle. The guest's calls are also
  *   refused `BUSY` past the per-second budget of `callLimits` (R3:M-2), by the host on receipt and, before anything is
@@ -219,6 +232,14 @@ export interface BrokerOptions {
     // function that does so through this broker's builder, so no RPC frame is made anywhere else (R3:C-1); it is never part
     // of the returned object, so guest code never holds it.
     takeBusyRefusal?: (refuse: (request: unknown, reason: string) => void) => void;
+    // The host's broker only (BD5:LIM-2): a handler's error text crosses by the allow-list of the header, and every text the
+    // broker withholds (an engine's error from a handler, or from the clone or the post of a result) is handed here with
+    // the method's name and the refusal the other side received instead. The guest's broker forwards its handlers' texts.
+    reportWithheld?: (method: string, refusal: string, text: string) => void;
+    // The host's broker only (BD5:DOC-3): given, once, the function that removes one exposed method, or every one when
+    // called with no name; reserved names are never removed. Like takeBusyRefusal it is never part of the returned object,
+    // which the guest's bootstrap publishes as `bridge`.
+    takeUnexpose?: (unexpose: (name?: string) => void) => void;
 }
 
 /** Why a call budget refuses a guest call: retryable (BUSY), or never carried (ARGS_NOT_TRANSFERABLE). */
@@ -290,6 +311,38 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const slice = String.prototype.slice;
     const setTimer = setTimeout;
     const clearTimer = clearTimeout;
+    // What compactViews (below; BD5:LIM-1) reads and makes: the containers a view can sit in, the fields of a typed array
+    // and of a DataView through the platform's own getters, and the constructors of the copies. Never `slice`, which looks
+    // up the realm's `Symbol.species`.
+    const getOwn = Object.getOwnPropertyDescriptor;
+    const protoOf = Object.getPrototypeOf;
+    const keysOf = Object.keys;
+    const ObjectPrototype = Object.prototype;
+    const ErrorPrototype = Error.prototype;
+    const mapClear = Map.prototype.clear;
+    const mapSize = getOwn(Map.prototype, 'size')!.get!;
+    const SetConstructor = Set;
+    const setHas = Set.prototype.has;
+    const setAdd = Set.prototype.add;
+    const setClear = Set.prototype.clear;
+    const setForEach = Set.prototype.forEach;
+    const setSize = getOwn(Set.prototype, 'size')!.get!;
+    const ArrayBufferConstructor = ArrayBuffer;
+    const bufferLength = getOwn(ArrayBuffer.prototype, 'byteLength')!.get!;
+    const TypedArrayPrototype = protoOf(Uint8Array.prototype);
+    const typedArrayName = getOwn(TypedArrayPrototype, Symbol.toStringTag)!.get!;
+    const typedArrayBuffer = getOwn(TypedArrayPrototype, 'buffer')!.get!;
+    const typedArrayOffset = getOwn(TypedArrayPrototype, 'byteOffset')!.get!;
+    const typedArrayLength = getOwn(TypedArrayPrototype, 'byteLength')!.get!;
+    const typedArraySet = TypedArrayPrototype.set;
+    const DataViewConstructor = DataView;
+    const dataViewBuffer = getOwn(DataView.prototype, 'buffer')!.get!;
+    const dataViewOffset = getOwn(DataView.prototype, 'byteOffset')!.get!;
+    const dataViewLength = getOwn(DataView.prototype, 'byteLength')!.get!;
+    const Uint8ArrayConstructor = Uint8Array;
+    // Every typed array kind, by the name its getter of Symbol.toStringTag gives; Float16Array where the engine has it.
+    const VIEW_NAMES = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array', 'Float16Array'];
+    const VIEW_TYPES: readonly unknown[] = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array, (globalThis as { Float16Array?: unknown }).Float16Array];
     // Declared INSIDE the function so it survives stringification into the guest. A call whose
     // handler never answers would otherwise hang forever; 30s is generous for a local same-process
     // port yet still bounds an unresponsive other side.
@@ -302,10 +355,14 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const admitOutboundOption = options.admitOutbound;
     const admitInboundOption = options.admitInbound;
     const takeBusyRefusalOption = options.takeBusyRefusal;
+    const reportWithheldOption = options.reportWithheld;
+    const takeUnexposeOption = options.takeUnexpose;
     const sizeOf = typeof sizeOfOption === 'function' ? sizeOfOption : null;
     const admitOutbound = typeof admitOutboundOption === 'function' ? admitOutboundOption : null;
     const admitInbound = typeof admitInboundOption === 'function' ? admitInboundOption : null;
     const takeBusyRefusal = typeof takeBusyRefusalOption === 'function' ? takeBusyRefusalOption : null;
+    const reportWithheld = typeof reportWithheldOption === 'function' ? reportWithheldOption : null;
+    const takeUnexpose = typeof takeUnexposeOption === 'function' ? takeUnexposeOption : null;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     // Mirrors the exported RESERVED_METHOD_PREFIX: declared here to survive stringification, and typed by it, so the two
@@ -323,6 +380,9 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const MAX_TEXT_LENGTH: LimitValue<'MAX_TEXT_LENGTH'> = 65536;
     const CUT_MARKER = ` [… cut at ${MAX_TEXT_LENGTH} characters]`;
     const UNKNOWN_ERROR = 'unknown error';
+    // The texts of the refusals of a result (BD5:DOC-1): fixed, never the engine's error.
+    const NOT_CLONEABLE = 'result is not transferable: it holds a value structured clone cannot carry';
+    const NOT_POSTED = 'result is not transferable: it could not be posted';
     // The bytes of a value by the snapshot measure; a kind the measure does not know is written to `unsupported` (R3:C-3).
     const bytesOf = (value: unknown, limit: number, buffers?: unknown[], unsupported?: { kind: string }) => (sizeOf ? sizeOf(value, limit, buffers, unsupported) : 0);
     // Mirrors MAX_TIMER_DELAY (long-timer.ts; a test keeps them equal), for the same reason. A call's timeout is the
@@ -404,6 +464,112 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // What a measure past the budget says (R3:C-3): the kind the measure did not know, if that is why, else the budget.
     const pastBudget = (holder: string, unsupported: { kind: string }, larger: string) => (unsupported.kind ? `${holder} an unsupported value: ${unsupported.kind}` : larger);
 
+    // A value's own reading through a captured getter, or undefined where the getter refuses it (not that kind).
+    const brand = (read: (this: unknown) => unknown, value: unknown): unknown => {
+        try {
+            return apply(read, value, []);
+        } catch {
+            return undefined;
+        }
+    };
+
+    // ---- What crosses is what the value shows (BD5:LIM-1; class P). Structured clone copies a typed array or a DataView
+    // with its WHOLE buffer, so `heap.subarray(ptr, ptr + 3)` would hand the other side every byte of `heap`. In the
+    // snapshot a call or a result posts (after clone, before the measure, so what is measured is what is posted), every
+    // view that does not cover its whole buffer is replaced by a view of the same kind over a fresh buffer that holds
+    // exactly its bytes; a view that covers its buffer stays as it is, uncopied. The walk reaches every place a snapshot
+    // can hold a view: the elements and own keys of arrays and plain objects, Map keys and values, and Set members (the
+    // measure's own allow-list of containers, structured-size.ts). One copy per view object: a view referenced twice stays
+    // one object; two views that shared a buffer arrive with a buffer each. A view of a SharedArrayBuffer is left alone,
+    // and the measure refuses it as it refuses any SharedArrayBuffer. The copies together are at most MAX_BYTES (past that,
+    // null: the value is over the byte budget, `unsupported` untouched), and a typed array kind this realm cannot make
+    // again is named in `unsupported` (null too). The snapshot is this function's own fresh graph, rewritten in place.
+    function compactViews(root: unknown, unsupported: { kind: string }): { value: unknown } | null {
+        const copies = mapOf<object, object>();
+        const walked = construct(SetConstructor, []) as Set<unknown>;
+        const stack: object[] = setPrototype([], null);
+        let copied = 0;
+        let refused = false;
+        // What to post in place of `item`: its compact copy for a partial view, else `item`, a container queued to be walked.
+        const replace = (item: unknown): unknown => {
+            if (refused || item === null || typeof item !== 'object') return item;
+            const known = get(copies, item);
+            if (known !== undefined) return known;
+            const name = brand(typedArrayName, item);
+            const buffer = typeof name === 'string' ? brand(typedArrayBuffer, item) : brand(dataViewBuffer, item);
+            if (buffer === undefined) {
+                if (!apply(setHas, walked, [item])) {
+                    apply(setAdd, walked, [item]);
+                    stack[stack.length] = item as object;
+                }
+                return item;
+            }
+            const whole = brand(bufferLength, buffer);
+            if (typeof whole !== 'number') return item; // a SharedArrayBuffer's view: the measure refuses it
+            const offset = brand(typeof name === 'string' ? typedArrayOffset : dataViewOffset, item) as number;
+            const length = brand(typeof name === 'string' ? typedArrayLength : dataViewLength, item) as number;
+            if (offset === 0 && length === whole) return item;
+            let make: unknown = DataViewConstructor;
+            if (typeof name === 'string') {
+                make = undefined;
+                for (let i = 0; i < VIEW_NAMES.length; i++) if (VIEW_NAMES[i] === name) make = VIEW_TYPES[i];
+            }
+            if (typeof make !== 'function') {
+                unsupported.kind = typeof name === 'string' ? name : 'DataView';
+                refused = true;
+                return item;
+            }
+            if (copied + length > MAX_BYTES) {
+                refused = true;
+                return item;
+            }
+            copied += length;
+            const bytes = construct(ArrayBufferConstructor, [length]);
+            apply(typedArraySet, construct(Uint8ArrayConstructor, [bytes]), [construct(Uint8ArrayConstructor, [buffer, offset, length])]);
+            const copy = construct(make as new (bytes: ArrayBuffer) => object, [bytes]);
+            set(copies, item, copy);
+            return copy;
+        };
+        const replaced = replace(root);
+        while (stack.length > 0 && !refused) {
+            const object = stack[stack.length - 1]!;
+            stack.length = stack.length - 1;
+            if (isArray(object) || protoOf(object) === ObjectPrototype) {
+                const keys = keysOf(object);
+                for (let i = 0; i < keys.length; i++) {
+                    const key = keys[i]!;
+                    const value = (object as Record<string, unknown>)[key];
+                    const next = replace(value);
+                    if (next !== value) defineOwn(object, key, { value: next, writable: true, enumerable: true, configurable: true });
+                }
+                continue;
+            }
+            const isMap = typeof brand(mapSize, object) === 'number';
+            if (!isMap && typeof brand(setSize, object) !== 'number') continue; // a leaf: a Date, a Blob, an ArrayBuffer, …
+            // A Map or a Set is rebuilt in its order when one of its keys, values or members changed.
+            const entries: unknown[] = setPrototype([], null);
+            let changed = false;
+            const keep = (value: unknown) => {
+                const next = replace(value);
+                if (next !== value) changed = true;
+                entries[entries.length] = next;
+            };
+            if (isMap) {
+                apply(mapForEach, object, [(value: unknown, key: unknown) => {
+                    keep(key);
+                    keep(value);
+                }]);
+            } else {
+                apply(setForEach, object, [(value: unknown) => keep(value)]);
+            }
+            if (!changed || refused) continue;
+            apply(isMap ? mapClear : setClear, object, []);
+            if (isMap) for (let i = 0; i < entries.length; i += 2) apply(mapSet, object, [entries[i], entries[i + 1]]);
+            else for (let i = 0; i < entries.length; i++) apply(setAdd, object, [entries[i]]);
+        }
+        return refused ? null : { value: replaced };
+    }
+
     // ---- The one builder of RPC frames (R3:C-1; see the header). Each takes parts already bounded: `id` is our counter or
     // passed isId, `method` was checked against MAX_NAME_LENGTH by request(), `args` and `value` are snapshots whose frame
     // the caller measures before posting it, `code` is one of our constants; `error` is cut here.
@@ -451,6 +617,57 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             return cutText(typeof message === 'string' ? message : error);
         } catch {
             return UNKNOWN_ERROR;
+        }
+    }
+
+    // The name of what a handler threw, as the element's errorName gives one (host.ts; FR:F3): a short identifier, else
+    // "Error"; a primitive by its type. The name is read once, and a name that throws is "Error".
+    const ERROR_NAME_MAX_LENGTH = 64;
+    function errorName(error: unknown): string {
+        if (error === null) return 'null';
+        if (typeof error !== 'object' && typeof error !== 'function') return typeof error;
+        let name: unknown;
+        try {
+            name = (error as { name?: unknown }).name;
+        } catch {
+            return 'Error';
+        }
+        if (typeof name !== 'string') return 'Error';
+        const length = name.length;
+        if (length < 1 || length > ERROR_NAME_MAX_LENGTH) return 'Error';
+        for (let i = 0; i < length; i++) {
+            const c = name[i]!;
+            const letter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+            if (!letter && (i === 0 || c < '0' || c > '9')) return 'Error';
+        }
+        return name;
+    }
+
+    // The text of a handler's refusal (BD5:LIM-2; see the header). Without reportWithheld (the guest's broker), the
+    // handler's own text. With it (the host's), only what the embedder wrote crosses: a thrown string, or the message of a
+    // plain Error of this realm; any other throw is named, and its text goes to reportWithheld.
+    function handlerErrorText(method: string, error: unknown): string {
+        if (!reportWithheld || typeof error === 'string') return errorMessage(error);
+        let plain = false;
+        try {
+            plain = typeof error === 'object' && error !== null && protoOf(error) === ErrorPrototype;
+        } catch {
+            plain = false; // a Proxy whose getPrototypeOf throws
+        }
+        if (plain) return errorMessage(error);
+        const name = errorName(error);
+        const refusal = `the method failed (${name})`;
+        withhold(method, refusal, `${name}: ${errorMessage(error)}`);
+        return refusal;
+    }
+
+    // Hands a text the other side does not receive to reportWithheld, which never takes the broker down.
+    function withhold(method: string, refusal: string, text: string): void {
+        if (!reportWithheld) return;
+        try {
+            reportWithheld(method, refusal, text);
+        } catch {
+            // the host's console threw: nothing else to do
         }
     }
 
@@ -523,32 +740,37 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     }
 
     // Answers a request with its handler's result (R2:C-3): a snapshot of it is taken first, with the
-    // captured structuredClone, measured, and posted; the live value is read once, by that clone. Measuring the live
+    // captured structuredClone, its partial views compacted (compactViews, BD5:LIM-1), measured, and posted; the live
+    // value is read once, by that clone. Measuring the live
     // value and posting it let a getter answer the measure small and the post large. A value structured clone cannot
     // carry (a function, a DOM node, a Symbol) is answered with an error frame — a string error always clones — so the
-    // caller fails promptly. The snapshot is posted with its ArrayBuffers transferred where the transport
+    // caller fails promptly. Its text is the broker's own (BD5:DOC-1): the clone's error can quote the value, and the
+    // host's reportWithheld receives it instead. The snapshot is posted with its ArrayBuffers transferred where the transport
     // takes a transfer list (the host's, `transferResults`), so a large binary result is copied once, by the snapshot,
     // and not again by the post; its strings are copied twice, which the budget bounds. What is measured is the whole
     // frame that is posted (R3:C-1).
-    function sendResult(respond: RpcSend, id: RpcId, value: unknown): void {
+    function sendResult(respond: RpcSend, id: RpcId, method: string, value: unknown): void {
         let snapshot: unknown;
         try {
             snapshot = clone(value);
         } catch (error) {
-            respond(refusalFrame(id, `result is not transferable: ${errorMessage(error)}`, CODE.RESULT_NOT_TRANSFERABLE));
+            withhold(method, NOT_CLONEABLE, errorMessage(error));
+            respond(refusalFrame(id, NOT_CLONEABLE, CODE.RESULT_NOT_TRANSFERABLE));
             return;
         }
-        const frame = resultFrame(id, snapshot);
-        const buffers: unknown[] | undefined = transferResults ? [] : undefined;
         const unsupported = { kind: '' };
-        if (bytesOf(frame, MAX_BYTES, buffers, unsupported) > MAX_BYTES) {
+        const compacted = compactViews(snapshot, unsupported);
+        const frame = resultFrame(id, compacted === null ? snapshot : compacted.value);
+        const buffers: unknown[] | undefined = transferResults ? [] : undefined;
+        if (compacted === null || bytesOf(frame, MAX_BYTES, buffers, unsupported) > MAX_BYTES) {
             respond(refusalFrame(id, pastBudget('the result holds', unsupported, `result is larger than the RPC byte budget (${MAX_BYTES})`), CODE.RESULT_NOT_TRANSFERABLE));
             return;
         }
         try {
             respond(frame, buffers as Transferable[] | undefined);
         } catch (error) {
-            respond(refusalFrame(id, `result is not transferable: ${errorMessage(error)}`, CODE.RESULT_NOT_TRANSFERABLE));
+            withhold(method, NOT_POSTED, errorMessage(error));
+            respond(refusalFrame(id, NOT_POSTED, CODE.RESULT_NOT_TRANSFERABLE));
         }
     }
 
@@ -630,11 +852,11 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         };
         const succeeded = (value: unknown) => {
             release();
-            sendResult(respond, id, value);
+            sendResult(respond, id, name, value);
         };
         const failed = (error: unknown) => {
             release();
-            respond(refusalFrame(id, errorMessage(error), handlerErrorCode(error, reserved)));
+            respond(refusalFrame(id, handlerErrorText(name, error), handlerErrorCode(error, reserved)));
         };
 
         // We CALL a pre-registered function reference with the cloned args — we never eval / new Function
@@ -707,6 +929,19 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         set(registry, name, fn);
     }
 
+    // Removes an exposed method, or every one with no name (BD5:DOC-3): a call that arrives after it is answered
+    // UNKNOWN_METHOD, as for a name never exposed; a call that already arrived runs on (its handler was looked up when it
+    // arrived). Reserved names are never removed. Handed out by takeUnexpose only, never in the returned object.
+    function unexpose(name?: string): void {
+        if (name === undefined) {
+            apply(mapClear, registry, []);
+            return;
+        }
+        if (typeof name !== 'string' || isReservedName(name)) return;
+        remove(registry, name);
+    }
+    if (takeUnexpose) takeUnexpose(unexpose);
+
     function exposeReserved(name: string, fn: RpcMethod): void {
         if (typeof name !== 'string' || typeof fn !== 'function' || !isReservedName(name)) return;
         set(reservedRegistry, name, fn);
@@ -730,11 +965,13 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         } catch (error) {
             return apply(rejected, PromiseConstructor, [localRefusal(CODE.ARGS_NOT_TRANSFERABLE, `RPC arguments are not transferable: ${errorMessage(error)}`)]) as Promise<unknown>;
         }
-        // The byte budget (R1:R3-3), taken of the whole frame that will be sent (R3:C-1): past it, nothing is sent.
-        const id = ++nextId;
-        const frame = requestFrame(id, method, sendableArgs);
+        // Each partial view in them carries its own bytes only (BD5:LIM-1, compactViews). The byte budget (R1:R3-3),
+        // taken of the whole frame that will be sent (R3:C-1), after that: past it, nothing is sent.
         const unsupported = { kind: '' };
-        const bytes = bytesOf(frame, MAX_BYTES, undefined, unsupported);
+        const compacted = compactViews(sendableArgs, unsupported);
+        const id = ++nextId;
+        const frame = requestFrame(id, method, compacted === null ? sendableArgs : compacted.value as unknown[]);
+        const bytes = compacted === null ? Infinity : bytesOf(frame, MAX_BYTES, undefined, unsupported);
         if (bytes > MAX_BYTES) {
             return apply(rejected, PromiseConstructor, [localRefusal(CODE.ARGS_NOT_TRANSFERABLE, pastBudget('RPC arguments hold', unsupported, `RPC arguments are larger than the RPC byte budget (${MAX_BYTES})`))]) as Promise<unknown>;
         }

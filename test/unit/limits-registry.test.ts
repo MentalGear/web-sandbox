@@ -45,6 +45,7 @@ const INTERNAL: Readonly<Record<string, string>> = {
     'src/lib/rpc.ts:MAX_IN_FLIGHT': "a mirror of MAX_INBOUND_IN_FLIGHT in the stringified broker (api-docs.test.ts keeps it equal)",
     'src/lib/rpc.ts:MAX_BYTES': 'a mirror of RPC_MAX_BYTES in the stringified broker',
     'src/lib/rpc.ts:MAX_INBOUND_BYTES': 'a mirror of RPC_MAX_INBOUND_BYTES in the stringified broker',
+    'src/lib/rpc.ts:ERROR_NAME_MAX_LENGTH': "the longest name a host handler's withheld throw is reported by, the bound of the element's errorName (host.ts, FR:F3) in the stringified broker: a longer name reads \"Error\"",
     'src/lib/rpc.ts:MAX_TIMER_DELAY': "a mirror of the platform's longest timer delay in the stringified broker (a test keeps it equal to long-timer.ts)",
     'src/lib/watchdog.ts:TICKS_PER_BUDGET': "the watchdog's check granularity, not a bound on the guest",
 };
