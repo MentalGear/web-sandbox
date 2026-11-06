@@ -232,7 +232,7 @@ export class FakeElement implements LifecycleHost {
         const entry = this.config.entry;
         if (!hasStrictView(this.config.mode) || typeof entry !== 'string' || entry === '') return null;
         if (entry in this.files && isJavaScriptType(mimeTypeFor(entry))) return null;
-        return `the guest entry "${entry.slice(0, 256)}" is not a registered JavaScript file`;
+        return 'the guest entry is not a registered JavaScript file';
     }
 
     // host.ts, `_prepareBuild`: a frame the element does not hold yet

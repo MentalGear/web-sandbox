@@ -90,7 +90,7 @@ describe('with no files: the policy is unchanged, and the document differs only 
         // the worker keeps only the allowlisted globals first (VR:V1), then the comms script and files,
         // in a function whose second argument is the postMessage the allowlist took (R4:M-1)
         const globals = `(${keepOnlyWorkerGlobals.toString()})(this, ${toInlineScriptLiteral(WORKER_GLOBALS)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)})`;
-        const source = `(function (g, postToFrame) {${comms(true, 'worker', 'postToFrame')}${EMPTY_FILES}})(this, ${globals});`;
+        const source = `'use strict';(function (g, postToFrame) {${comms(true, 'worker', 'postToFrame')}${EMPTY_FILES}})(this, ${globals});`;
         const bootstrap = gated(`(${workerBootstrap.toString()})(${JSON.stringify(source).replaceAll('<', '\\u003c')}, "web-sandbox");`, false); // the Trusted Types policy name (R1:R3-1)
         expect(wrapperOf(el)).toBe(buildWrapperDocument(buildGuestDocument({ csp: UNSAFE_POLICY, bootstrapScript: bootstrap, content: '' }), 'allow-scripts'));
     });

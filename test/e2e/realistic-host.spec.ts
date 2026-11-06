@@ -2,7 +2,7 @@ import { test, expect, ORIGIN } from './fixture';
 import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { waitInView, inFrames } from './strict-view';
 import {
-    RealisticHost, covering, guestBattery, startSiblingApi, cookieNames, hitsNamed, HOST_COOKIES, HOST_TOKEN,
+    RealisticHost, covering, guestBattery, startSiblingApi, cookieNames, hitsNamed, HOST_BASE, HOST_COOKIES, HOST_TOKEN,
     type Directives,
 } from './realistic-host';
 import type { Page } from '@playwright/test';
@@ -120,6 +120,29 @@ test.describe('the view modes: sealed (the default) and strict', () => {
             expect((await host.sandbox.terminations()).map(entry => entry.reason), covering('thread', 'with the reason the host gave')).toEqual([TERMINATED_BY_HOST]);
             expect(await page.evaluate(() => 1 + 1), covering('thread', 'the host page answers')).toBe(2);
             expect(await host.hostFetch('after'), covering('thread', "and its own API works after the sandbox ended")).toMatchObject({ status: 200 });
+        });
+
+        // BD5:ISO-1 (class A): WebKit answered the guest worker's navigator.permissions.query() with the host origin's grants.
+        // The worker has no permission API at all, on every engine; the host page's own read is the positive control.
+        test("the host origin's permission grants: the host page reads them, and the guest's worker has no permission API to read them with", async ({ sandbox, page, context }) => {
+            await context.grantPermissions(['geolocation', 'notifications'], { origin: new URL(HOST_BASE).origin });
+            const host = await RealisticHost.open(sandbox, { mode });
+            const own = await page.evaluate(() => navigator.permissions.query({ name: 'notifications' }).then(status => status.state));
+            expect(own, "positive control: the host page reads its origin's grant").toBe('granted');
+            const events = await host.embed(mode, {
+                guest: `return {
+                    worker: typeof WorkerGlobalScope, document: typeof document,
+                    permissions: typeof navigator.permissions, inNavigator: 'permissions' in navigator,
+                    Permissions: typeof Permissions, PermissionStatus: typeof PermissionStatus,
+                    storage: typeof navigator.storage, StorageManager: typeof StorageManager,
+                };`,
+            });
+            expect(events).toEqual(READY);
+            expect(await host.guestResult(), covering('permissionState', "the guest's worker finds no navigator.permissions, no Permissions or PermissionStatus, and no storage manager")).toEqual({
+                worker: 'function', document: 'undefined',
+                permissions: 'undefined', inNavigator: false, Permissions: 'undefined', PermissionStatus: 'undefined',
+                storage: 'undefined', StorageManager: 'undefined',
+            });
         });
     });
 

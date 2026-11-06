@@ -223,5 +223,5 @@ docs/API.md and the port table of ADR-005 are built this way.
 
 ## Style
 
-See [`agents.md`](agents.md) for the code style. `bun run format` applies Prettier; `bun run format:check`
+See [`agents.md`](agents.md) for the code style, and [`CLAUDE.md`](CLAUDE.md) for what an agent session loads (the rule for when work gets stuck). `bun run format` applies Prettier; `bun run format:check`
 reports drift (not yet enforced in CI, since most existing files predate the config).

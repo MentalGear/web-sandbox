@@ -210,7 +210,7 @@ export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((requ
     // A file that is there and has no URL (a type the strict view does not show; a path the guest wrote): the same code,
     // since url() has no URL to give, and a message that does not say the file is missing (BD3:NEW-4).
     const noUrl = () => coded('[sandboxFiles] NOT_FOUND: this file has no URL (read() and text() work)', 'NOT_FOUND');
-    const notAllowed = () => coded('[sandboxFiles] FILES_NOT_ALLOWED: guest writes are off', 'FILES_NOT_ALLOWED');
+    const notAllowed = () => coded('[sandboxFiles] FILES_NOT_ALLOWED: guest writes are off (the embedder turns them on with guestWrites: true)', 'FILES_NOT_ALLOWED');
     const lookup = (path: unknown) => {
         const file = typeof path === 'string' ? get(files, path) : undefined;
         if (!file) throw notFound();

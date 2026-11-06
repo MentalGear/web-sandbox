@@ -673,9 +673,13 @@ export function inSandboxScript(
     // WebSocket: the URL resolved, an http(s) one taken as its ws(s) form, as the constructor does; checked; the
     // platform's constructor given the resolved URL. Strict mode has no cookie carrier (COOKIE_CARRIERS, cookie-facts.ts;
     // S74): a handshake carries the cookies the browser attaches by site, so there the gate refuses every WebSocket,
-    // whatever its list says, and never calls the platform's constructor.
+    // whatever its list says, and never calls the platform's constructor. The refusal names the guest's mode: sealed mode
+    // (strict mode's worker with `sealed`) has no network at all (BD5:NEW-4).
     const socketsRefused = mode === 'strict';
-    const socketRefusal = 'refused by the sandbox: strict mode opens no WebSocket';
+    const sealedMode = features?.sealed === true; // read once: sandboxFetch() below refuses on it too
+    const socketRefusal = sealedMode
+        ? 'refused by the sandbox: sealed mode opens no WebSocket (it has no network)'
+        : 'refused by the sandbox: strict mode opens no WebSocket';
     if (typeof NativeWebSocket === 'function' && DOMExceptionConstructor && urlReady) {
         const gatedWebSocket = function WebSocket(this: unknown, url: unknown, protocols?: unknown) {
             if (new.target === undefined) throw construct(TypeErrorConstructor, [NEW_REQUIRED]);
@@ -822,7 +826,7 @@ export function inSandboxScript(
     // the host decides. Except in sealed mode, which has no network (docs/research/24_sealed_mode): there it refuses
     // every request here, with the code the host would give, reads nothing of its arguments and sends nothing, so no
     // request of the guest's reaches the host's reserved method.
-    if (features?.sealed === true) {
+    if (sealedMode) {
         publish('sandboxFetch', () => {
             const refusal = construct(ErrorConstructor, ['[sandboxFetch] FETCH_NOT_ALLOWED: sealed mode has no network']);
             defineOwn(refusal, 'code', { value: 'FETCH_NOT_ALLOWED', writable: true, enumerable: true, configurable: true });
