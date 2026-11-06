@@ -104,7 +104,7 @@ describe("the reducer's properties on fuzzed inputs", () => {
         { buildsHere: true, blocked: null, strict: true, announces: false },
         { buildsHere: true, blocked: null, strict: false, announces: true },
         { buildsHere: true, blocked: null, strict: false, announces: false },
-        { buildsHere: true, blocked: 'unknown mode "Strict"', strict: false, announces: false },
+        { buildsHere: true, blocked: 'unknown mode: not strict, sealed, cooperative or worker', strict: false, announces: false },
         { buildsHere: false, blocked: null, strict: true, announces: false },
     ];
     function inputsFor(state: LcState): LcInput[] {

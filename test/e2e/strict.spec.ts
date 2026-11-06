@@ -461,7 +461,7 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
                 const s = document.querySelector('web-sandbox') as any;
                 s.addEventListener('terminated', (e: CustomEvent) => resolve(e.detail.reason), { once: true });
                 s.setConfig({ mode, entry: 'nope.js' });
-            }), mode)).toBe('the guest entry "nope.js" is not a registered JavaScript file');
+            }), mode)).toBe('the guest entry is not a registered JavaScript file');
         });
     });
 });

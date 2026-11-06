@@ -37,7 +37,7 @@ import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasS
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
 import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from "./lib/environment";
-import { hostLine, reasonText } from "./lib/reasons";
+import { errorName, fixedDetail, hostLine, joinDetails, reasonText } from "./lib/reasons";
 import { ENVIRONMENT_CHECKS, ENVIRONMENT_EXPECTED, ENVIRONMENT_REFUSED_TYPE } from "./lib/environment-check";
 import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type Generation, type LcInput, type LcState, type LifecycleHost, type Notice } from "./lib/lifecycle";
 import { assertEntryScoped, buildViewDocument, entryDoneName, environmentGate, inStrictWorker, STRICT_DIRECTIVE, isStyleProperty, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_SET_STYLE_LIMITS, VIEW_STYLE_PROPERTIES, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
@@ -172,7 +172,7 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions, NetworkSandbo
  * guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
  * URL (such as a link `href`), `eval`, template or `console` format-string sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
  * `+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the
- * library's text.
+ * library's text, which never quotes a value of your configuration, or the text you passed to `terminate()`.
  */
 export interface WebSandboxEventMap extends HTMLElementEventMap {
     /**
@@ -510,7 +510,7 @@ const SEALED_HTML_SCRIPT_WARNING = "[Sandbox] sealed mode (the default) runs no 
 const WORKER_FRAME_REFUSALS: Readonly<Record<string, string>> = Object.freeze(Object.assign(Object.create(null), {
     'worker': reasonText('workerRefused'),
     'trusted-types': reasonText('trustedTypes'),
-    'failed': reasonText('buildFailed', 'Error'),
+    'failed': reasonText('buildFailed', fixedDetail('Error')),
 }));
 
 // The reason each environment check ends the build with (environment-check.ts, S74): the element's own table, by the
@@ -557,26 +557,6 @@ function removeWebAssembly(g: { WebAssembly?: unknown }) {
     if (!('WebAssembly' in g)) return;
     Reflect.deleteProperty(g, 'WebAssembly'); // strict-mode code (STRICT_DIRECTIVE): a failed delete is checked below, not thrown
     if ('WebAssembly' in g) throw new Error('[Sandbox] the worker could not remove WebAssembly');
-}
-
-// What a reason or a host line says about an error the element caught (FR:F3): a fixed
-// text of the element's own plus the error's name, never its message. The message is whatever the thrower put
-// there: Chromium's DataCloneError quotes the source of the function it could not clone, a throwing getter's
-// error carries any text, a guest's error is the guest's text. A reason reaches 'terminated' listeners, the
-// console warning and every log an embedder keeps, so it carries none of that. The name is checked too (a thrown
-// object can name itself anything): a short identifier, else "Error"; a thrown primitive is named by its type.
-// The one rule for every caught error: build failures, unusable configs, an entry that failed (whose text
-// arrives as a 'guest' line instead, the guest's own words labelled as such).
-function errorName(error: unknown): string {
-    if (error === null) return 'null';
-    if (typeof error !== 'object' && typeof error !== 'function') return typeof error;
-    try {
-        const name = (error as { name?: unknown }).name;
-        if (typeof name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(name)) return name;
-    } catch {
-        // a name that throws: named below
-    }
-    return 'Error';
 }
 
 // The first statement of every guest worker's source, worker mode and strict mode (VR:V1): the worker keeps only the allowlisted globals (worker-globals.ts) before any other script of the
@@ -957,7 +937,7 @@ export class WebSandbox extends ElementBase {
             // a refusal with a reason of its own (a sealed config that names a network option) is that reason alone
             if (error instanceof ConfigRefusal) return error.reason;
             // an `origins` of the wrong type names the option, in a fixed text of the library's (BD3:NEW-3)
-            return reasonText('configRefused', errorName(error) + refusalDetail(error));
+            return reasonText('configRefused', joinDetails(errorName(error), refusalDetail(error)));
         }
     }
 
@@ -2006,7 +1986,7 @@ export class WebSandbox extends ElementBase {
         const entry = this._config.entry;
         if (hasStrictView(this._config.mode) && typeof entry === 'string' && entry !== '') {
             const file = this._files.list().find(candidate => candidate.path === entry);
-            if (!file || !isJavaScriptType(file.type)) return reasonText('entryNotRegistered', entry.slice(0, 256));
+            if (!file || !isJavaScriptType(file.type)) return reasonText('entryNotRegistered'); // names the problem, not the entry (BD5:DOC-2)
         }
         return null;
     }

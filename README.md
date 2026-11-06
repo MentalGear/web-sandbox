@@ -244,7 +244,8 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     display. Show it with `textContent`, and never pass it to an HTML (`innerHTML`, `insertAdjacentHTML`), URL (a link
     `href`), `eval`, template or `console` format-string sink (as the first argument of a `console` method it is a
     format string, `%c` styles the line and `%s` takes the next argument: put a fixed text first, as the examples do).
-    (`terminated.reason` is the library's own text.)
+    (`terminated.reason` is the library's own text: it names the problem and never quotes your `entry`, your `mode` or
+    a guest's words; the exception is the text you pass to `terminate()`, which it dispatches as given.)
 *   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`
     code: the element sets both from its own state, so the guest can produce neither.
 

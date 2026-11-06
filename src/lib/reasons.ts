@@ -4,8 +4,12 @@
  * config schema take their texts from here; docs/API.md's reasons table and its host lines are this registry, which
  * test/unit/api-docs.test.ts keeps equal.
  *
- * A text with `…` varies there (an error's name, the entry, the mode, a reason): `reasonText()` and `hostLine()` put the
- * detail in its place, and the type system asks for one exactly where the text has a `…`.
+ * A text with `…` varies there (an error's name, a note of the library's, a reason): `reasonText()` and `hostLine()` put
+ * the detail in its place, and the type system asks for one exactly where the text has a `…`. A reason's detail is a
+ * LibraryDetail, which only the library's own producers make (BD5:DOC-2, class C): an error's name as `errorName()`
+ * filters it, or a fixed text of the library's. A value of the config (the entry, the mode) or of the guest is a plain
+ * string, which does not compile there: a reason names the problem, never the value, so `terminated.reason` is safe to
+ * show as text whatever the configuration came from.
  */
 import { VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS } from './in-sandbox-view';
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
@@ -38,10 +42,10 @@ export const TERMINATION_REASONS = {
     environmentUrl: { text: 'the sandbox document is not an about:srcdoc document: it is not the document the library built', decidedBy: 'host' },
     environmentBase: { text: `the sandbox document's base URL is not about:blank: the host page's Content-Security-Policy must allow the library's <base> (base-uri must include about: or be omitted; ${HOST_PAGE_POLICY})`, decidedBy: 'host' },
     environmentIsolated: { text: `the host page is cross-origin isolated (COOP and COEP); a sandbox does not run there (${HOST_PAGE_POLICY})`, decidedBy: 'host' },
-    entryNotRegistered: { text: 'the guest entry "…" is not a registered JavaScript file', decidedBy: 'host' },
+    entryNotRegistered: { text: 'the guest entry is not a registered JavaScript file', decidedBy: 'host' },
     viewLost: { text: 'the sandbox view stopped responding', decidedBy: 'host' },
     viewOverrun: { text: `the view spent more than ${OVERRUN_MS} ms on one operation twice within ${OVERRUN_MINUTES} minutes`, decidedBy: 'host' },
-    unknownMode: { text: 'unknown mode …', decidedBy: 'config' },
+    unknownMode: { text: 'unknown mode: not strict, sealed, cooperative or worker…', decidedBy: 'config' },
     sealedNetwork: { text: "origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'`", decidedBy: 'config' },
     configRefused: { text: 'the configuration could not be used (…)', decidedBy: 'host' },
     buildFailed: { text: 'the environment could not be built (…)', decidedBy: 'host' },
@@ -70,7 +74,7 @@ export const reasonCauses = () => ({
     entryNotRegistered: 'Strict and sealed mode: `entry` names no registered JavaScript file.',
     viewLost: 'Strict and sealed mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on).',
     viewOverrun: `Strict and sealed mode: an operation of the view (a render, \`text()\` or \`set()\` applied, with its layout and the rendering update that showed it) took longer than ${OVERRUN_MS} ms, measured as the view's time budget measures it, and another one had, at most ${OVERRUN_MINUTES} minutes before it. The first such operation only logs a \`warn\` line (see [\`sandbox-log\`](#sandbox-log--sandboxlog)); see [\`sandboxView\`](#sandboxview-strict-mode).`,
-    unknownMode: "`mode` is not `strict`, `sealed`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`.",
+    unknownMode: "`mode` is not `strict`, `sealed`, `cooperative` or `worker`. For `'iframe'` the reason ends ` ('iframe' was renamed 'cooperative')`; otherwise nothing follows.",
     sealedNetwork: "`mode` is `'sealed'` or left out (sealed mode is the default), and the config names `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set.",
     configRefused: "`setConfig()` got something that is not an object or cannot be cloned (the error's name follows, as in `(DataCloneError)`), an `origins` that is not an object (`(TypeError: origins is not an object)`), or a kind of it that is not a list (`(TypeError: origins.connect is not a list)`, naming the kind).",
     buildFailed: 'Building the frame failed.',
@@ -117,10 +121,58 @@ export const HOST_LINE_OCCASIONS = {
 type Varying<Texts extends Record<string, { readonly text: string }>> = { [K in keyof Texts]: Texts[K]['text'] extends `${string}…${string}` ? K : never }[keyof Texts];
 type Templated = Varying<typeof TERMINATION_REASONS>;
 
-/** The reason `id` gives; one whose text varies takes the detail that goes in place of its `…`. */
+declare const LIBRARY_DETAIL: unique symbol;
+/**
+ * The detail of a reason (BD5:DOC-2): a text the library chose, never a value of the configuration or the guest's. Only
+ * the producers below make one (`errorName`, `fixedDetail`, `joinDetails`); test/unit/reasons.test.ts keeps the cast
+ * that brands it in this file alone, and feeds every templated reason hostile entries, modes and error names.
+ */
+export type LibraryDetail = string & { readonly [LIBRARY_DETAIL]: true };
+
+// the one cast to LibraryDetail (a declaration, so a module that imports this one in a cycle can call it at once)
+function branded(text: string): LibraryDetail {
+    return text as LibraryDetail;
+}
+
+/**
+ * A fixed text of the library's, as a reason's detail: the argument's type must be a literal (or a union of literals,
+ * such as a template over a closed list), so a string read from a configuration or a guest does not compile.
+ */
+export function fixedDetail<const T extends string>(text: string extends T ? never : T): LibraryDetail {
+    return branded(text);
+}
+
+/** Several details, in order, as one. */
+export function joinDetails(...parts: readonly LibraryDetail[]): LibraryDetail {
+    let out = '';
+    for (const part of parts) out += part;
+    return branded(out);
+}
+
+// What a reason or a host line says about an error the element caught (FR:F3): a fixed
+// text of the element's own plus the error's name, never its message. The message is whatever the thrower put
+// there: Chromium's DataCloneError quotes the source of the function it could not clone, a throwing getter's
+// error carries any text, a guest's error is the guest's text. A reason reaches 'terminated' listeners, the
+// console warning and every log an embedder keeps, so it carries none of that. The name is checked too (a thrown
+// object can name itself anything): a short identifier, else "Error"; a thrown primitive is named by its type.
+// The one rule for every caught error: build failures, unusable configs, an entry that failed (whose text
+// arrives as a 'guest' line instead, the guest's own words labelled as such).
+export function errorName(error: unknown): LibraryDetail {
+    if (error === null) return fixedDetail('null');
+    if (typeof error !== 'object' && typeof error !== 'function') return branded(typeof error);
+    try {
+        const name = (error as { name?: unknown }).name;
+        if (typeof name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(name)) return branded(name);
+    } catch {
+        // a name that throws: named below
+    }
+    return fixedDetail('Error');
+}
+
+/** The reason `id` gives; one whose text varies takes the detail, a LibraryDetail, that goes in place of its `…`. */
 export function reasonText(id: Exclude<ReasonId, Templated>): string;
-export function reasonText(id: Templated, detail: string): string;
-export function reasonText(id: ReasonId, detail?: string): string {
+export function reasonText(id: Templated, detail: LibraryDetail): string;
+export function reasonText(id: ReasonId, detail?: LibraryDetail): string {
     return fill(TERMINATION_REASONS[id].text, detail);
 }
 

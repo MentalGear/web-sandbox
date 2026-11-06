@@ -1,5 +1,6 @@
 import { parseOrigin, type Origin, type OriginRules } from "../origin";
 import { defineData, ownField } from "../utils";
+import { fixedDetail, joinDetails, type LibraryDetail } from "../reasons";
 
 /**
  * `origins`: what the embedder may open in the guest policy (ADR-007). One list of exact origins per kind of load,
@@ -115,9 +116,9 @@ export type OriginsOption = 'origins' | OriginKind;
  * that names the option, one for each of them, never the value or the error's message (the one rule for every caught
  * error, host.ts). The reason follows `TypeError: `.
  */
-export const ORIGINS_REFUSAL_TEXT: Readonly<Record<OriginsOption, string>> = Object.freeze({
-    origins: 'origins is not an object',
-    ...(Object.fromEntries(ORIGIN_KINDS.map(kind => [kind, `origins.${kind} is not a list`])) as Record<OriginKind, string>),
+export const ORIGINS_REFUSAL_TEXT: { readonly origins: 'origins is not an object' } & { readonly [K in OriginKind]: `origins.${K} is not a list` } = Object.freeze({
+    origins: 'origins is not an object' as const,
+    ...(Object.fromEntries(ORIGIN_KINDS.map(kind => [kind, `origins.${kind} is not a list`])) as { [K in OriginKind]: `origins.${K} is not a list` }),
 });
 
 /** The TypeError that refuses a config for the type of `option`; the element's reason names it (ORIGINS_REFUSAL_TEXT). */
@@ -132,8 +133,8 @@ export class OriginsTypeError extends TypeError {
  * names the option (BD3:NEW-3); for any other error, nothing. The one rule the element's reason (host.ts) and the
  * reducer's test host apply.
  */
-export function refusalDetail(error: unknown): string {
-    return error instanceof OriginsTypeError ? `: ${ORIGINS_REFUSAL_TEXT[error.option]}` : '';
+export function refusalDetail(error: unknown): LibraryDetail {
+    return error instanceof OriginsTypeError ? joinDetails(fixedDetail(': '), fixedDetail(ORIGINS_REFUSAL_TEXT[error.option])) : fixedDetail('');
 }
 
 /**
