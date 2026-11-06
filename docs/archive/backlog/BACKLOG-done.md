@@ -1986,13 +1986,20 @@ group of its own; `setConfig()` detaches and recreates the sandbox's frames at o
 for a new frame can arrive in that order. `realistic-host.ts` already leaves the harness page for `about:blank` before a
 COOP page for the same class of driver error at navigation; this one is later, at a frame's creation.
 
-**Fixed (2026-10-25)** by the repo's one patch of its test tooling, `patches/playwright-core@1.58.1.patch`
-(`patchedDependencies` in package.json, applied by `bun install`): `frameCommittedNewDocumentNavigation` returns early for
-a frame the manager does not know, whose attach follows. The newest release then, 1.64.1, still has the unguarded lookup,
-so an upgrade does not remove it. `test/unit/playwright-patch.test.ts` pins it: an unknown frame's commit does not throw
-(it fails without the patch), a known frame still commits, and the patch names the installed version, so an upgrade
-that drops it fails there. The case was neither retried nor skipped: it was seen twice in full Firefox runs on the sealed
-default's branch (#83), once in its CI.
+**Fixed** by the repo's one patch of its test tooling, `patches/playwright-core@1.58.1.patch` (`patchedDependencies` in
+package.json, applied by `bun install`). The first version (2026-10-25, #85) only made `frameCommittedNewDocumentNavigation`
+return early for an unknown frame: the crash went, but the same case then failed on Firefox in CI (2026-11-06, #87's first
+run) with the view never reachable, because `FFPage` also drops a frame's execution contexts, load and navigation events
+that come before its attach, so the frame had no context a spec could evaluate in. The root cause is the order of the
+driver's events for a new frame, so the patch now holds every frame-keyed event of `FFPage` (navigation started,
+committed, aborted, same-document, load and DOMContentLoaded, execution context created) for a frame not yet attached, at
+most 64 a frame, replays them in order at its attach, and drops them at its detach; `FrameManager`'s early return stays
+as a second line. The newest release, 1.64.1, still has the unguarded lookup and the dropping, so an upgrade does not
+remove it (the Playwright upgrade in the backlog redoes the patch for the version it moves to). `test/unit/playwright-patch.test.ts`
+pins it: events before an attach are held and replayed in order, a context before an attach is held and not dropped, a
+known frame's events go through at once and a detach drops what was held (all three fail without the holding), an
+unknown frame's commit does not throw, and the patch names the installed version. The case was neither retried nor
+skipped.
 
 ### <a id="t6"></a>T6 · Two CPU-heavy unit tests failed once on a loaded machine — ✅ **done**
 

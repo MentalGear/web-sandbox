@@ -6,11 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * The test tooling's one patch (docs/BACKLOG.md S86): Playwright's Firefox driver can report a frame's navigation commit
- * before the frame's attach (a COOP page whose sandbox frames are recreated under load), and
- * `FrameManager.frameCommittedNewDocumentNavigation` used the frame it did not find, which crashed the test worker. The
- * patch returns early for a frame the manager does not know; its attach follows. This pins that the installed driver
- * carries it, so an upgrade that drops the patch fails here and not, once in a while, in a Firefox run.
+ * The test tooling's one patch (docs/archive/backlog/BACKLOG-done.md, S86): Playwright's Firefox driver can report a
+ * frame's navigation, execution context or load before the frame's attach (a COOP page whose sandbox frames are
+ * recreated under load). Unpatched, `FrameManager.frameCommittedNewDocumentNavigation` uses the frame it does not find,
+ * which crashes the test worker, and `FFPage` drops the frame's contexts, so a spec cannot evaluate in it. The patch
+ * holds each such event in `FFPage` until the frame attaches and replays it then, and `FrameManager` returns early for
+ * an unknown frame. This pins that the installed driver carries it, so an upgrade that drops the patch fails here and
+ * not, once in a while, in a Firefox run.
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -22,7 +24,62 @@ const { FrameManager } = require(path.join(coreDir, 'lib/server/frames.js')) as 
     frameAttached(frameId: string, parentFrameId: string | null): { _url: string };
 } };
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { FFPage } = require(path.join(coreDir, 'lib/server/firefox/ffPage.js')) as { FFPage: { prototype: object } };
+
+type Calls = unknown[][];
+/** An FFPage's event handlers over a recording frame manager, without a browser: what the patch decides is the order. */
+function firefoxPage(known: string[]) {
+    const frames = new Set(known);
+    const calls: Calls = [];
+    const frameManager = {
+        frame: (id: string) => (frames.has(id) ? { id } : null),
+        frameAttached: (id: string, parent: string | null) => { frames.add(id); calls.push(['attached', id, parent]); },
+        frameDetached: (id: string) => { frames.delete(id); calls.push(['detached', id]); },
+        frameCommittedNewDocumentNavigation: (id: string, url: string) => calls.push(['committed', id, url]),
+        frameRequestedNavigation: (id: string) => calls.push(['requested', id]),
+        frameLifecycleEvent: (id: string, event: string) => calls.push(['lifecycle', id, event]),
+    };
+    const page = Object.assign(Object.create(FFPage.prototype), { _page: { frameManager }, _workers: new Map(), _pendingFrameEvents: new Map() }) as Record<string, (params: object) => void>;
+    return { page, calls };
+}
+
 describe('the patched Playwright driver (S86)', () => {
+    it("a frame's navigation and load that come before its attach are held, and replayed in order once it attaches", () => {
+        const { page, calls } = firefoxPage(['main']);
+        page._onNavigationStarted!({ frameId: 'f1', navigationId: 'n1' });
+        page._onNavigationCommitted!({ frameId: 'f1', url: 'about:srcdoc', navigationId: 'n1' });
+        page._onEventFired!({ frameId: 'f1', name: 'load' });
+        expect(calls).toEqual([]);
+        page._onFrameAttached!({ frameId: 'f1', parentFrameId: 'main' });
+        expect(calls).toEqual([['attached', 'f1', 'main'], ['requested', 'f1'], ['committed', 'f1', 'about:srcdoc'], ['lifecycle', 'f1', 'load']]);
+    });
+
+    it("a frame's execution context that comes before its attach is held, not dropped", () => {
+        const { page } = firefoxPage(['main']);
+        let created = 0;
+        const original = page._onExecutionContextCreated!;
+        page._onExecutionContextCreated = function (this: unknown, payload: object) {
+            const queuedBefore = (page as unknown as { _pendingFrameEvents: Map<string, unknown[]> })._pendingFrameEvents.get('f1')?.length ?? 0;
+            original.call(page, payload);
+            const queuedAfter = (page as unknown as { _pendingFrameEvents: Map<string, unknown[]> })._pendingFrameEvents.get('f1')?.length ?? 0;
+            if (queuedAfter === queuedBefore) created++;
+        };
+        page._onExecutionContextCreated({ executionContextId: 'c1', auxData: { frameId: 'f1' } });
+        expect(created, 'held while the frame is unknown').toBe(0);
+        expect((page as unknown as { _pendingFrameEvents: Map<string, unknown[]> })._pendingFrameEvents.get('f1')).toHaveLength(1);
+    });
+
+    it("a known frame's events go through at once, and a detach drops what was held (positive controls)", () => {
+        const { page, calls } = firefoxPage(['main', 'f2']);
+        page._onNavigationCommitted!({ frameId: 'f2', url: 'about:blank', navigationId: 'n2' });
+        expect(calls).toEqual([['committed', 'f2', 'about:blank']]);
+        page._onEventFired!({ frameId: 'gone', name: 'load' });
+        page._onFrameDetached!({ frameId: 'gone' });
+        page._onFrameAttached!({ frameId: 'gone', parentFrameId: 'main' });
+        expect(calls.slice(1)).toEqual([['detached', 'gone'], ['attached', 'gone', 'main']]);
+    });
+
     it('a navigation commit for a frame the manager has not seen attach is ignored, not a crash', () => {
         const manager = new FrameManager({ emit() {}, isClosed: () => false });
         expect(() => manager.frameCommittedNewDocumentNavigation('unknown-frame', 'about:srcdoc', '', 'doc-1', false)).not.toThrow();
