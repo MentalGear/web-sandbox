@@ -81,9 +81,10 @@ describe('a guest-written path is attacker text: a valid path can end a single-q
     });
 });
 
-describe("the docs' openExternal example runs as written, and opens only an address of a listed https origin (BD4:NEW-2)", () => {
-    // The example passes the guest's string to window.open, the sink the attacker-text rule forbids for a raw string, so its
-    // guard is code the docs ship. The snippet is taken from docs/API.md and run with a stub for `sandbox` and `window`.
+describe("the docs' openExternal example opens only an address the host holds, and never one the app gives (BD4:NEW-2, BD5:NEW-1)", () => {
+    // The first example let the app give an address and checked its scheme and origin (BD4:NEW-2); an address that passes
+    // still carries the app's data in its path, query and fragment to a server (BD5:NEW-1). So the app names a key, and the
+    // host's table holds the addresses. The snippet is taken from docs/API.md and run with a stub for `sandbox` and `window`.
     const snippet = (() => {
         const block = [...read('docs/API.md').matchAll(/```js\n([^]*?)```/g)].map(match => match[1]!).find(code => code.includes("sandbox.expose('openExternal'"));
         expect(block, 'the openExternal example is a js block of docs/API.md').toBeDefined();
@@ -98,36 +99,78 @@ describe("the docs' openExternal example runs as written, and opens only an addr
         return { call: (text: unknown) => { try { handler!(text); return 'opened'; } catch (error) { return (error as Error).message; } }, open };
     }
 
-    it('opens an address of a listed origin: the parsed href, in a new tab, with noopener', () => {
+    /** The addresses the snippet holds: what it opens for each key of its table, read by running it. */
+    const table = (() => {
+        const keys = [...snippet.matchAll(/\['([a-z]+)', 'https:\/\/[^']+'\]/g)].map(match => match[1]!);
+        expect(keys.length, 'the table lists its links').toBeGreaterThan(1);
         const { call, open } = run();
-        expect(call('https://example.com/docs?a=1#b')).toBe('opened');
-        expect(call('HTTPS://EXAMPLE.COM/x')).toBe('opened');
-        expect(call('https://example.com\\@evil.example/')).toBe('opened'); // the URL parser reads a backslash as a slash: host example.com
-        expect(open.mock.calls).toEqual([
-            ['https://example.com/docs?a=1#b', '_blank', 'noopener'],
-            ['https://example.com/x', '_blank', 'noopener'],
-            ['https://example.com/@evil.example/', '_blank', 'noopener'], // the parsed address, not the guest's text
-        ]);
+        return new Map(keys.map(key => (call(key), [key, open.mock.calls.at(-1)![0] as string] as const)));
+    })();
+    const ADDRESSES = new Set(table.values());
+
+    it('a listed key opens exactly its fixed address, in a new tab, with noopener', () => {
+        const { call, open } = run();
+        for (const [key, href] of table) expect(call(key), key).toBe('opened');
+        expect(open.mock.calls).toEqual([...table.values()].map(href => [href, '_blank', 'noopener']));
+        expect([...table.values()]).toEqual(['https://example.com/docs', 'https://example.com/help']);
     });
 
-    it('refuses everything else, and window.open is never called', () => {
+    it('whatever the app sends, an address is opened only when it is one of the table\'s: never the app\'s text', () => {
         const { call, open } = run();
+        const keys = [...table.keys()];
         const hostile: unknown[] = [
-            "javascript:alert('x')", ' JaVaScRiPt:alert(1)', 'java\nscript:alert(1)', 'data:text/html,<script>1</script>', 'blob:https://example.com/x', 'file:///etc/passwd',
-            'http://example.com/', 'https://example.com@evil.example/', 'https://example.com.evil.example/', 'https://evil.example/https://example.com/',
-            'https://example.com:8443/', 'https://sub.example.com/', '//example.com/', 'example.com', '/docs', '', 'https://', 'https://example.com/' + 'a'.repeat(2048),
-            5, null, undefined, {}, ['https://example.com/'], { toString: () => 'https://example.com/' },
+            ...keys.flatMap(key => [`${key}?x`, `${key}#x`, `${key}/x`, ` ${key}`, `${key} `, key.toUpperCase(), `${key}\n`]),
+            'https://example.com/docs?x=1', 'https://example.com/docs', 'https://example.com/', 'https://evil.example/', "javascript:alert('x')", 'data:text/html,<script>1</script>',
+            '__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf', '', 'https://', '/docs', '//example.com/docs',
+            5, null, undefined, true, {}, [], [keys[0]], { toString: () => keys[0] }, { [Symbol.toPrimitive]: () => keys[0] }, ...new Array(1000).fill(0).map((_, n) => `k${n * 7919 % 10007}${'x'.repeat(n % 9)}`),
         ];
-        for (const text of hostile) expect(call(text), String(text).slice(0, 40)).toBe('openExternal: address not allowed');
+        for (const text of hostile) expect(call(text), String(typeof text === 'object' ? JSON.stringify(text) : text).slice(0, 40)).toBe('openExternal: unknown link');
         expect(open).not.toHaveBeenCalled();
+        // and over every key too, nothing that is opened is anything but a table value
+        for (const key of keys) call(key);
+        for (const [href] of open.mock.calls) expect(ADDRESSES.has(href as string)).toBe(true);
     });
 
-    it('the protocol check holds on its own: with plain-http, javascript: and opaque origins on the list, only https: opens', () => {
-        const widened = snippet.replace("new Set(['https://example.com'])", "new Set(['https://example.com', 'http://example.com', 'null'])");
-        expect(widened).not.toBe(snippet);
-        const { call, open } = run(widened);
-        for (const text of ['http://example.com/', 'javascript:alert(1)', 'data:,x', 'blob:null/x']) expect(call(text), text).toBe('openExternal: address not allowed');
-        expect(open).not.toHaveBeenCalled();
-        expect(call('https://example.com/')).toBe('opened');
+    it('no href holds any part of the argument that is not already in the table\'s value, and the argument never reaches new URL() or window.open()', () => {
+        const { call, open } = run();
+        const secret = 'SECRET-NOTE customer=alice@example.org';
+        for (const text of [`docs?n=${secret}`, `https://example.com/${secret}`, secret, `docs#${secret}`]) call(text);
+        for (const key of table.keys()) call(`${key}`);
+        for (const [href] of open.mock.calls) expect(String(href)).not.toContain('SECRET');
+        // a source scan: the parameter is only a key into the table
+        const parameter = /sandbox\.expose\('openExternal', \((\w+)\)/.exec(snippet)![1]!;
+        const openCall = /window\.open\([^)]*\)/.exec(snippet)![0];
+        expect(openCall).not.toContain(parameter);
+        expect(snippet).not.toMatch(/new URL\(/);
+        expect(snippet).toMatch(new RegExp(`LINKS\\.get\\(${parameter}\\)`));
+    });
+
+    it('the scan sees the form it forbids: the first example (an address from the app, checked) fails the same tests', () => {
+        const old = `const OPENABLE = new Set(['https://example.com']);
+sandbox.expose('openExternal', (text) => { const url = new URL(text); if (!OPENABLE.has(url.origin)) throw new Error('openExternal: address not allowed'); window.open(url.href, '_blank', 'noopener'); });`;
+        const { call, open } = run(old);
+        expect(call('https://example.com/docs?n=SECRET')).toBe('opened');
+        expect([...open.mock.calls].some(([href]) => !ADDRESSES.has(href as string))).toBe(true);
+        expect(old).toMatch(/new URL\(/);
+    });
+});
+
+describe('the docs name the rule for the guest\'s bytes where the embedder takes them (BD5:CHL-2)', () => {
+    it.each([
+        ['docs/API.md', 'Never make a URL of the app\'s bytes with the app\'s type'],
+        ['docs/API.md', 'The bytes are the guest\'s too, and a URL made of them is a document of your origin'],
+        ['src/lib/guest-writes.ts', 'Never make an object URL of `content` with the'],
+        ['src/host.ts', 'Never make an object URL of them with that type'],
+    ])('%s says: %s', (file, sentence) => {
+        expect(read(file).replace(/\s+/g, ' ').replace(/ \* /g, ' ').replace(/ \/\/ /g, ' ')).toContain(sentence.replace(/\s+/g, ' '));
+    });
+
+    it('the guest-writes section and the recipe tell what to do instead: the sandbox view, an image Blob typed by the host, a download', () => {
+        const api = read('docs/API.md');
+        const section = api.slice(api.indexOf('The bytes are the guest\'s too'), api.indexOf('A committed write\'s type is the guest\'s claim'));
+        for (const word of ['sandbox view', 'image/png', 'signature', '<img>', '<a download>', 'application/octet-stream', 'target="_blank"', '<iframe>', '<object>', 'location']) expect(section, word).toContain(word);
+        const recipe = api.slice(api.indexOf('### Images the app makes'), api.indexOf('### Input'));
+        for (const word of ['createObjectURL', "type: 'image/png'", "'application/octet-stream'", 'link.download']) expect(recipe, word).toContain(word);
+        expect(recipe).not.toMatch(/type: (?:write|w)\.type/);
     });
 });

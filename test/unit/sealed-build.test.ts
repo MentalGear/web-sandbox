@@ -211,6 +211,53 @@ describe('T4: a sealed build wires no network source: its policy, its gate list,
     });
 });
 
+// ---- nothing of the host page's other state is carried into what the guest sees (BD5:TST-2)
+
+describe("a sealed build carries no state of the host page into the worker's features, INIT_VIEW or the view's document", () => {
+    // The scan of host-site.test.ts lists the members of the page a host-side file must not read; a list cannot hold what
+    // nobody thought of. This is the same property from the other side: every kind of state the harness page can hold is
+    // given a marker, and the marker must be in nothing the build hands the guest, whatever read put it there.
+    const MARK = 'HOSTMARK-7f3a91';
+    const poison = () => {
+        document.title = `${MARK}-title`;
+        document.documentElement.lang = `${MARK}-lang`;
+        document.documentElement.setAttribute('data-host', `${MARK}-attribute`);
+        document.body.setAttribute('data-host', `${MARK}-body`);
+        document.head.insertAdjacentHTML('beforeend', `<meta name="description" content="${MARK}-meta"><meta name="viewport" content="${MARK}-viewport"><link rel="canonical" href="https://canonical.example/${MARK}">`);
+        document.body.insertAdjacentHTML('beforeend', `<input id="host-field" value="${MARK}-field"><p id="host-text">${MARK}-text</p>`);
+        window.name = `${MARK}-window-name`;
+        window.history.replaceState({ host: `${MARK}-state` }, '', `#${MARK}-hash`);
+        try { localStorage.setItem('host', `${MARK}-local`); sessionStorage.setItem('host', `${MARK}-session`); } catch { /* a jsdom origin without storage */ }
+        document.cookie = `host=${MARK}-cookie`;
+    };
+
+    /** Everything a sealed build hands the guest, as text: the wrapper and view documents, INIT_VIEW (the worker's source included), each registered file. */
+    const handedOver = (el: any): string => [wrapperOf(el)!.srcdoc, JSON.stringify(el._strictInit), JSON.stringify(el._prepareBuild().strictInit)].join('\n');
+
+    it('markers in the title, the markup, the name, the history, the storage and the cookies appear in none of it, in the default mode and with every option set', async () => {
+        poison();
+        const control = document.title;
+        expect(control).toContain(MARK); // the markers are in the page
+        for (const config of [{ mode: 'sealed' }, {}, SEALED_EVERY]) {
+            const el = await mount();
+            el.registerFiles({ 'main.js': 'void 0', 'a.css': 'p {}' });
+            el.setConfig({ ...config, entry: 'main.js', html: '<p>hello</p>' });
+            expect(el.state, JSON.stringify(config)).toBe('loading');
+            const text = handedOver(el);
+            expect(text.length).toBeGreaterThan(1000); // it reads what the build hands over, not an empty string
+            expect(text, JSON.stringify(config)).not.toContain(MARK);
+            el.remove();
+        }
+    });
+
+    it('the check sees a leak: with the page title put into the features, the marker is found', async () => {
+        poison();
+        const el = await mount();
+        el.setConfig({ mode: 'sealed', html: `<p>${document.title}</p>` }); // the leak the check is for, made by hand
+        expect(handedOver(el)).toContain(MARK);
+    });
+});
+
 // ---- the guest's sandboxFetch() in sealed mode (owner decision D4): refused in the guest, nothing sent
 
 // Event classes as the platform makes them, and a port whose postMessage keeps what it is given (the bootstrap posts

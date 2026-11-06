@@ -1,4 +1,8 @@
 let todos = [];
+const MAX_TODOS = 1000; // the host refuses a longer list (host.js), so the app stops adding at the same number
+
+// a refused save is shown to the user, never left as an unhandled rejection
+const save = () => bridge.call('save', todos).catch((e) => sandboxView.text('count', `not saved: ${e.message}`));
 
 async function show() {
     const open = todos.filter((todo) => !todo.done).length;
@@ -26,11 +30,12 @@ bridge.expose('push', (batch) => { todos.push(...batch); return show(); });
 sandboxView.on('submit', 'add', (event) => {
     const text = event.form.find(([name]) => name === 'text')[1].trim().slice(0, 200);
     if (text === '') return;
+    if (todos.length >= MAX_TODOS) return void sandboxView.text('count', `the list is full (${MAX_TODOS} todos)`);
     todos.push({ text, done: false });
     sandboxView.set('new', { value: '' });
-    show().then(() => bridge.call('save', todos));
+    show().then(save);
 });
 sandboxView.on('change', 'list', (event) => {
     todos[Number(event.ids[0].slice('done-'.length))].done = event.target.checked;
-    show().then(() => bridge.call('save', todos));
+    show().then(save);
 });

@@ -9,7 +9,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixture';
 import type { SandboxConfig } from '@src/host';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
-import { clickInSandbox, waitInView } from './strict-view';
+import { clickInSandbox, inView, waitInView } from './strict-view';
 import { makerCode, makerUrl, SEALED_MAKERS, type Maker, type MakerScheme } from './sealed-makers';
 
 /**
@@ -169,8 +169,45 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
             else if (maker.outcome === 'policy') expect(reports.map(v => v.directive), maker.id).toEqual(browserName === 'webkit' ? [] : ['script-src-elem']);
             else expect(reports, maker.id).toEqual([]);
         }
+        // the renderer's layer, on its own (BD5:TST-4): the browser's policy would refuse the loads and report the same
+        // directive, so the report cannot tell the two apart. What only the renderer does is keep the URL out of the view's
+        // DOM, as an attribute, a style value or a stylesheet rule: no maker the renderer drops names its URL there.
+        const dom = await inView<string>(page, browserName, `document.documentElement.outerHTML + '\\n' + Array.from(document.querySelectorAll('[style]')).map(e => e.getAttribute('style')).join('\\n') + '\\n' + Array.from(document.styleSheets).flatMap(sheet => Array.from(sheet.cssRules).map(rule => rule.cssText)).join('\\n')`);
+        expect(dom.length).toBeGreaterThan(1000);
+        const dropped = SEALED_MAKERS.filter(maker => maker.outcome === 'dropped' && (maker.realm === 'view' || maker.realm === 'set-css'));
+        expect(dropped.length).toBe(17);
+        for (const maker of dropped) {
+            const url = makerUrl({ ...maker, scheme: maker.reportedAs ?? maker.scheme }, listener.origins);
+            expect(dom, `${maker.id}: the renderer keeps its URL out of the view`).not.toMatch(new RegExp(`${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`));
+        }
         // the registered stylesheet: built without its network URLs, said once
         expect(warnings.filter(text => text.includes('registered stylesheet "net.css"') && text.includes('sealed mode has no network'))).toHaveLength(1);
+        expect(await sandbox.state()).toBe('ready');
+    });
+
+    // BD5:TST-6. The renderer drops the schemes that spell a server in a style value (css-references.ts, isNetwork) and the
+    // view's policy refuses every one of them anyway; a function the CSS parser rejects (`image(…)`, `element()`,
+    // `paint()`) is dropped by the engine at parse time and its argument is no URL token, so the renderer leaves its
+    // text, and the policy and the parser are what keep it from loading. This holds each spelling, with the listener
+    // watching, on every engine: the dropped ones are out of the view's DOM, and none reaches the listener.
+    test('a server spelt in other schemes or in functions the parser rejects: dropped by the renderer or refused by the policy, and the listener sees nothing', async ({ sandbox, page, browserName }) => {
+        test.setTimeout(60000);
+        const https = listener.origins.https;
+        const host = new URL(https).host;
+        const dropped = [`ftp://${host}/m/s-ftp`, `wss://${host}/m/s-wss`, `ws://${host}/m/s-ws`, `view-source:${https}/m/s-view-source`, `filesystem:${https}/temporary/m/s-filesystem`, `jar:${https}/m/s-jar.jar!/x`];
+        const left = [`image(${https}/m/f-image)`, `element(#m-nothing)`, `paint(${https}/m/f-paint)`, `cross-fade(url(${https}/m/f-cross-fade), url(${https}/m/f-cross-fade2), 50%)`, `src(${https}/m/f-src)`];
+        const markup = [...dropped.map((url, i) => `<div id="d${i}" style="width:5px;height:5px;background-image:url('${url}')">d</div>`),
+            ...left.map((value, i) => `<div id="f${i}" style="width:5px;height:5px;background-image:${value}">f</div>`), '<p id="s-done">done</p>'].join('');
+        expect(await sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(markup)});` })).toBe('ok');
+        expect(await apply(page, { mode: 'sealed', entry: 'main.js' })).toBe('ready');
+        await waitInView(page, browserName, `!!document.getElementById('s-done')`, 10000);
+        await page.waitForTimeout(1500);
+        expect(listener.hits.map(hit => `${hit.scheme} ${hit.path}`)).toEqual([]);
+        expect(listener.connections).toEqual({ https: 0, http: 0 });
+        const styles = await inView<string[]>(page, browserName, `Array.from(document.querySelectorAll('[style]')).map(e => e.getAttribute('style'))`);
+        if (styles === 'no-context') throw new Error('the view has no context to read');
+        for (const url of dropped) expect(styles.join('\n'), `${url} is out of the view`).not.toContain(url.split('/m/')[1]!.split('!')[0]!.replace(/\.jar$/, ''));
+        expect(styles.length).toBeGreaterThan(5);
         expect(await sandbox.state()).toBe('ready');
     });
 

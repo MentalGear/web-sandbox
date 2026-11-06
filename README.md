@@ -664,7 +664,7 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     invoker commands, `canvas`, SVG `use`/filters/`image`) in rendered markup; files are named by path in
     `src`/`href`/`poster` (not `srcset` or inline styles; a registered stylesheet's own `url()` works), and
     JavaScript files reach only the worker; no modules or `importScripts`; `unsafeCapabilities` and
-    `origins.scripts` are dropped, with a warning if configured. `autoResize` and `fetchBridge` work.
+    `origins.scripts` are dropped, with a warning if configured. `autoResize` works, and so does `fetchBridge` in strict mode (sealed mode has no network, so it refuses it).
 
 Why it is built this way: [ADR-005](docs/ADR-005-strict-mode.md).
 
