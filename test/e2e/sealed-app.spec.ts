@@ -110,8 +110,9 @@ test.describe('the sealed app of the docs', () => {
         await expect.poll(async () => (await writes(page))[0]!.bytes).not.toBe(before); // the image follows the state
 
         await mountApp(page, await saved(page)); // the next mount: the stored state
-        await waitInView(page, browserName, `document.getElementById('text-1')?.textContent === 'eggs' && document.getElementById('count').textContent === '1 open'`);
-        expect(await inView(page, browserName, LIST)).toEqual(['[x] milk', '[ ] eggs']);
+        // The new view's final state, polled: the old view already showed the same texts, and the app renders the list
+        // before it fills each item's text, so a condition the old view met, read once, can catch the new one half-drawn.
+        await expect.poll(() => inView(page, browserName, `[...${LIST}, document.getElementById('count').textContent]`)).toEqual(['[x] milk', '[ ] eggs', '1 open']);
     });
 
     // Methods and files belong to the element, not to the app (BD5:DOC-3): after unexpose() and unregisterFiles(), another
