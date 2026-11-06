@@ -79,7 +79,10 @@ export const INERT_TYPES: ReadonlySet<string> = new Set([
  * files only through `commitGuestWrites()`.
  *
  * @remarks
- * The `path`, the `type` and the `content` are the guest's: attacker text. Show a path or a type with `textContent`, never
+ * The `path`, the `type` and the `content` are the guest's: attacker text. Never make an object URL of `content` with the
+ * guest's `type` (or none) and open it: an SVG or HTML file is then a document of your origin. Show an image in the sandbox
+ * view, or in an `<img>` from a `Blob` you typed `image/png` after checking its signature; offer anything else as a download.
+ * Show a path or a type with `textContent`, never
  * in an HTML, URL, `eval`, template or `console` format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,`
  * and `@`, so one written into a single-quoted attribute can end it and add one).
  */

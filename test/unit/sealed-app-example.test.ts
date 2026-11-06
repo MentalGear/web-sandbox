@@ -13,7 +13,7 @@ import { mountTodoApp, pushAll } from '../../examples/sealed-app/host.js';
 
 const BUNDLE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../examples/sealed-app');
 
-async function mount(saved: string | null = null) {
+async function mount(saved: string | null = null, appId = 'a') {
     vi.stubGlobal('fetch', async (url: string) => {
         const bytes = readFileSync(path.join(BUNDLE, path.basename(url)));
         return { text: async () => bytes.toString('utf8'), arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
@@ -22,16 +22,20 @@ async function mount(saved: string | null = null) {
     const calls: unknown[][] = [];
     const registered: Record<string, unknown>[] = [];
     const configs: Record<string, unknown>[] = [];
+    const log: string[] = [];
     const sandbox = {
         registerFiles: (files: Record<string, unknown>) => registered.push(files),
         expose: (name: string, fn: (...args: unknown[]) => unknown) => methods.set(name, fn),
         setConfig: (config: Record<string, unknown>) => configs.push(config),
+        terminate: () => void log.push('terminate'),
+        unexpose: () => { log.push('unexpose'); methods.clear(); },
+        unregisterFiles: () => void log.push('unregisterFiles'),
         call: async (...args: unknown[]) => { calls.push(args); },
     };
-    const data = new Map<string, string>(saved === null ? [] : [['todos', saved]]);
-    const store = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => void data.set(key, value) };
-    await mountTodoApp(sandbox, { bundle: '/saved-app', store });
-    return { methods, calls, registered, configs, data };
+    const data = new Map<string, string>(saved === null ? [] : [[`todos:${appId}`, saved]]);
+    const store = { getItem: (key: string) => data.get(key) ?? null, setItem: async (key: string, value: string) => void data.set(key, value) };
+    const stop = await mountTodoApp(sandbox, { bundle: '/saved-app', appId, store });
+    return { methods, calls, registered, configs, data, stop, log, store };
 }
 
 describe("the example's host side", () => {
@@ -50,8 +54,8 @@ describe("the example's host side", () => {
     it("save() keeps a copy of what it expects, and nothing the app adds", async () => {
         const { methods, data } = await mount();
         const hostile = JSON.parse('[{"text":"a","done":true,"__proto__":{"polluted":1},"extra":"x"}]');
-        methods.get('save')!(hostile);
-        expect(data.get('todos')).toBe('[{"text":"a","done":true}]');
+        await methods.get('save')!(hostile);
+        expect(data.get('todos:a')).toBe('[{"text":"a","done":true}]');
         expect(({} as any).polluted).toBeUndefined();
     });
 
@@ -65,9 +69,35 @@ describe("the example's host side", () => {
             [{ text: 'a'.repeat(201), done: false }],
             [{ text: 'fine', done: false }, { text: ['a'], done: false }],
         ];
-        for (const value of bad) expect(() => save(value), JSON.stringify(value)?.slice(0, 40)).toThrow(/^save: /);
-        expect(data.has('todos')).toBe(false);
-        expect(() => save(Array.from({ length: 1000 }, () => ({ text: 'a'.repeat(200), done: false })))).not.toThrow();
+        for (const value of bad) await expect(Promise.resolve().then(() => save(value)), JSON.stringify(value)?.slice(0, 40)).rejects.toThrow(/^save: /);
+        expect(data.size).toBe(0);
+        await expect(Promise.resolve(save(Array.from({ length: 1000 }, () => ({ text: 'a'.repeat(200), done: false }))))).resolves.toBeUndefined();
+    });
+
+    it("each app's state is kept under its own id: another appId is handed none of it, and its save leaves the first untouched (BD5:CHL-1)", async () => {
+        const first = await mount(JSON.stringify([{ text: 'PIN 4711', done: false }]), 'a');
+        expect(first.calls).toEqual([['load', [{ text: 'PIN 4711', done: false }]]]);
+        // a second app in the same store, under its own id
+        const calls: unknown[][] = [];
+        const methods = new Map<string, (...args: unknown[]) => unknown>();
+        const sandbox = { registerFiles() {}, expose: (n: string, f: (...a: unknown[]) => unknown) => void methods.set(n, f), setConfig() {}, call: async (...a: unknown[]) => void calls.push(a), terminate() {}, unexpose() {}, unregisterFiles() {} };
+        await mountTodoApp(sandbox, { bundle: '/saved-app', appId: 'b', store: first.store });
+        expect(calls, 'the second app loads nothing of the first').toEqual([['load', []]]);
+        await methods.get('save')!([{ text: 'by b', done: true }]);
+        expect(first.data.get('todos:a')).toBe('[{"text":"PIN 4711","done":false}]');
+        expect(first.data.get('todos:b')).toBe('[{"text":"by b","done":true}]');
+        expect(first.data.has('todos')).toBe(false); // no fixed key
+    });
+
+    it('stop() ends the app and clears the element (terminate, unexpose, unregisterFiles), and a save that started before it writes nothing (BD5:DOC-3)', async () => {
+        const { methods, data, stop, log } = await mount(JSON.stringify([{ text: 'milk', done: false }]));
+        const save = methods.get('save')!;
+        stop();
+        expect(log).toEqual(['terminate', 'unexpose', 'unregisterFiles']);
+        expect(methods.size).toBe(0);
+        // the handler was already running: its write is the embedder's own code, and the flag stops it
+        await save([{ text: 'zombie', done: true }]);
+        expect(data.get('todos:a')).toBe('[{"text":"milk","done":false}]');
     });
 
     it('pushAll() sends the stream in batches, one call after the other', async () => {

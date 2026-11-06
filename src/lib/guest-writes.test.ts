@@ -181,6 +181,34 @@ describe('commit: the full store check, only the given paths, and code needs { c
         expect(writes.commit([], false)).toEqual([]);
     });
 
+    // BD5:DOC-6: commit applies what is pending when it runs. The docs say how to commit what was validated: in one synchronous
+    // task, or from the host's own copy of the bytes.
+    it('commits what is pending now: a write that replaced the validated one between listing and commit is the one committed; the host\'s own copy is exact (BD5:DOC-6)', () => {
+        const { store, write, writes } = setup();
+        write('state.json', '{"ok":true}');
+        const [listed] = writes.list();
+        const validated = (listed as { content: Uint8Array }).content; // the host checked these bytes (and keeps this copy)
+        write('state.json', '{"ok":false,"padding":"later"}'); // the guest wrote again while the host waited
+        expect(writes.commit(['state.json'], false)).toEqual(['state.json']);
+        expect(store.list().map(f => f.size)).toEqual([30]); // the later write: 30 bytes, not the 11 that were checked
+        // the way out the docs give: register the bytes that were validated
+        store.register({ 'state.json': validated });
+        expect(store.list().map(f => f.size)).toEqual([11]);
+    });
+
+    // BD5:DOC-7: the type checked is the write's, not the path's.
+    it('a file named evil.html written with the type image/png commits without { code: true }, and is stored as image/png (BD5:DOC-7)', () => {
+        const { store, writes, write } = setup();
+        write('evil.html', { content: '<script>1</script>', type: 'image/png' });
+        write('x.svg', { content: '<svg/>', type: 'text/plain' });
+        expect(writes.list().map(w => [w.path, w.change === 'write' ? w.type : null])).toEqual([['evil.html', 'image/png'], ['x.svg', 'text/plain']]);
+        expect(writes.commit(['evil.html', 'x.svg'], false)).toEqual(['evil.html', 'x.svg']);
+        expect(store.list().map(f => [f.path, f.type])).toEqual([['evil.html', 'image/png'], ['x.svg', 'text/plain']]);
+        // and the same bytes with the type the name implies need the flag
+        write('real.html', '<script>1</script>');
+        expect(refusal(() => writes.commit(['real.html'], false))).toEqual(refused('FILES_NOT_ALLOWED'));
+    });
+
     it('refused when the host registered more meanwhile: FILES_QUOTA_EXCEEDED, and neither store nor overlay changes', () => {
         const { store, write, writes, state } = setup();
         write('a.png', new Uint8Array(100));
