@@ -725,8 +725,9 @@ needs.
 **Do.** Upgrade `@playwright/test` and `playwright` to a release that installs on Ubuntu 26.04. Redo the S86 driver patch
 for the new version: `patches/playwright-core@1.58.1.patch` names the version it patches, and `test/unit/playwright-patch.test.ts`
 fails when an upgrade drops it. Playwright 1.64.1 still has the unguarded lookup in
-`FrameManager.frameCommittedNewDocumentNavigation`, so the patch is needed again (rename it, rebase its hunk, update the
-`patchedDependencies` entry in `package.json`). Then run the three engines in full, and unpin the workflows from
+`FrameManager.frameCommittedNewDocumentNavigation`, and `FFPage` still drops a frame's events that come before its attach,
+so both parts of the patch are needed again (rename it, rebase its hunks, update the `patchedDependencies` entry in
+`package.json`). Then run the three engines in full, and unpin the workflows from
 `ubuntu-24.04`. Check that the e2e suite's engine-specific expectations (the ledger rows measured on Chromium 145, Firefox
 146 and WebKit 26) still hold on the new browsers, and re-measure the ones that do not.
 
