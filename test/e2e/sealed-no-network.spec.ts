@@ -158,8 +158,16 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         expect(seen).toEqual(Object.fromEntries(workerMakers.map(maker => [maker.id, maker.sees])));
 
         // the reports: the gate's for its makers, the renderer's for every URL it dropped (with its directive)
+        // The view posts each dropped URL's report once it has applied the operation, so the reports are awaited until every
+        // dropped maker has its own, not read once after a fixed wait (a loaded WebKit applied the last set() later).
+        const isReportOf = (maker: Maker) => (v: { blockedURI: string }) => v.blockedURI === makerUrl({ ...maker, scheme: maker.reportedAs ?? maker.scheme }, listener.origins);
+        const droppedMakers = SEALED_MAKERS.filter(maker => maker.outcome === 'dropped');
+        await expect.poll(async () => {
+            const all = await sandbox.violations();
+            return droppedMakers.filter(maker => !all.some(v => isReportOf(maker)(v) && v.directive === maker.directive)).map(maker => maker.id);
+        }, { timeout: 10000 }).toEqual([]);
         const violations = await sandbox.violations();
-        const reported = (maker: Maker) => violations.filter(v => v.blockedURI === makerUrl({ ...maker, scheme: maker.reportedAs ?? maker.scheme }, listener.origins));
+        const reported = (maker: Maker) => violations.filter(isReportOf(maker));
         for (const maker of SEALED_MAKERS) {
             const reports = reported(maker);
             if (maker.outcome === 'gate') expect(reports.map(v => `${v.directive} ${v.sourceFile}`), maker.id).toEqual([`connect-src ${GATE_SOURCE_FILE}`]);
