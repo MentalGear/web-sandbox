@@ -453,7 +453,8 @@ sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.u
 *   `sandboxFetch` is a separate global; `fetch` itself is untouched (assign `globalThis.fetch = sandboxFetch`
     in the guest if you want that). It works in every mode but sealed, where it rejects with `FETCH_NOT_ALLOWED` and
     sends nothing. The name `sandbox:fetch`, like every
-    method name starting with `sandbox:`, is reserved: `expose()` refuses it on both sides.
+    method name starting with `sandbox:`, is reserved: the host's `expose()` refuses it with a warning, and the guest's
+    `bridge.expose()` ignores it (no method is published, and nothing is logged).
 
 Why it is built this way: [ADR-006](docs/ADR-006-fetch-bridge.md).
 

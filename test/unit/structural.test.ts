@@ -162,6 +162,7 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIEW_OVERRUN', 'type', "'VIEW_OVERRUN'"],
     ['VIEW_ACK', 'type', "'VIEW_ACK'"],
     ['VIEW_ACK', 'refused', 'refused'],
+    ['VIEW_ACK', 'dropped', 'dropped'],
     ['RESIZE', 'height', 'height'],
     ['VIEW_PONG', 'type', "'VIEW_PONG'"],
     ['VIEW_PONG', 'n', 'm.n'],

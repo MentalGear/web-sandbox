@@ -745,6 +745,13 @@ export interface RenderContext {
      * took anything out of it (backlog S73: what it can load, counted by cssLoadBound, is at least what is left can).
      */
     css?: string[];
+    /**
+     * Filled by the renderer when given, each at most once (BD5:NEW-3): what it dropped or left inert that the author may
+     * not expect, for the one notice a render gets (the view's acknowledgement carries them, and the worker's prelude
+     * logs one line: inStrictWorker): `script`, a `<script>` (HTML or SVG) removed;
+     * `reference`, a URL attribute that names a path of the sandbox's files and no file the view shows, kept as written.
+     */
+    dropped?: string[];
 }
 
 /**
@@ -896,7 +903,8 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         }
         return true;
     };
-    const resolve = (value: string, kinds: string[]): string | null => {
+    // The path of the sandbox's files a reference names (a URL under the virtual root), or null.
+    const virtualPath = (value: string): string | null => {
         if (/^[\u0000- ]*$/.test(value)) return null;
         let href: string;
         try {
@@ -904,11 +912,20 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         } catch {
             return null;
         }
-        if (href.indexOf(rules.virtualRoot) !== 0) return null;
-        const path = href.slice(rules.virtualRoot.length);
-        if (path.indexOf('?') >= 0 || path.indexOf('#') >= 0) return null;
+        return href.indexOf(rules.virtualRoot) === 0 ? href.slice(rules.virtualRoot.length) : null;
+    };
+    const resolve = (value: string, kinds: string[]): string | null => {
+        const path = virtualPath(value);
+        if (path === null || path.indexOf('?') >= 0 || path.indexOf('#') >= 0) return null;
         const file = fileOf(path);
         return file && admitted(kinds, file.type) ? file.url : null;
+    };
+    // One of RenderContext.dropped's notes, once.
+    const note = (what: string) => {
+        const notes = context.dropped;
+        if (!notes) return;
+        for (let i = 0; i < notes.length; i++) if (notes[i] === what) return;
+        notes[notes.length] = what;
     };
     const isPair = (list: readonly (readonly string[])[], element: string, attribute: string) => {
         for (let i = 0; i < list.length; i++) {
@@ -1193,8 +1210,10 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             for (let r = 0; r < rules.references.length; r++) {
                 const [tag, attribute, kind] = rules.references[r]!;
                 if (tag !== name || !has(element, attribute)) continue;
-                const url = resolve(get(element, attribute) || '', kind === 'link' ? linkKinds : [kind]);
+                const value = get(element, attribute) || '';
+                const url = resolve(value, kind === 'link' ? linkKinds : [kind]);
                 if (url) set(element, attribute, url);
+                else if (virtualPath(value) !== null) note('reference'); // a file the view does not show (SVG …), or none
             }
             if (name === 'link' && !isMinted(get(element, 'href') || '')) return false;
         }
@@ -1303,7 +1322,10 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         let decision = verdict(namespace, name);
         const parentName = run.parent === fragment ? context.target : String(call(localNameOf, run.parent as Element, []));
         if (decision === KEEP && !clean(element, namespace, name, parentName)) decision = REMOVE;
-        if (decision === REMOVE) continue;
+        if (decision === REMOVE) {
+            if (name === 'script') note('script');
+            continue;
+        }
         if (decision === UNWRAP) {
             runs[runs.length] = { parent: run.parent, input: drain(element), index: 0, depth: run.depth, text: run.text, own: false };
             continue;
@@ -2064,6 +2086,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     let work = 0; // characters serialized by the current flush, charged to the budget with it
     let urlWork = 0; // URL-bearing attributes the current flush kept, charged to the load budget with it
     let cssWork = 0; // the loads the CSS the current flush applied can make (cssLoadsOf), prepaid with it
+    let renderDropped: string[] = []; // what the current flush's renders dropped (RenderContext.dropped), for its VIEW_ACK
     const innerHTMLOf = getter(Element.prototype, 'innerHTML');
     const outerHTMLOf = getter(Element.prototype, 'outerHTML');
     const innerLength = (element: Element) => {
@@ -2417,7 +2440,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const ownUrls = target === body ? before.urls : urlsOf(target);
         let depth = 0;
         for (let n = target; n !== body; n = call(parentOf, n, [])) depth++;
-        const context: RenderContext = { target: String(call(localNameOf, target, [])), animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0, loads: [], css: [] };
+        const context: RenderContext = { target: String(call(localNameOf, target, [])), animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0, loads: [], css: [], dropped: [] };
         const room = { elements: options.render.maxElements - (before.elements - ownElements), depth: options.render.maxDepth - depth, urls: options.render.maxUrls - (before.urls - ownUrls) };
         let kept = sanitize(template.content, fileOf, isMinted, dropNetworkCss, options.render, switches, room, context);
         if (inStyle(target)) {
@@ -2445,6 +2468,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         for (let i = 0; i < context.loads.length; i++) renderedLoads.add(context.loads[i]!);
         for (let i = 0; i < fresh.length; i++) distinctLoads.add(fresh[i]!);
         reportAll(context.refused);
+        // what the applied render dropped, for its acknowledgement (BD5:NEW-3): at most two short codes
+        for (let i = 0; i < context.dropped!.length; i++) if (renderDropped.indexOf(context.dropped![i]!) < 0) renderDropped.push(context.dropped![i]!);
         if (bodyCharacters === null) return;
         bodyCharacters = before.characters - ownCharacters + innerLength(target);
         bodyElements = before.elements - ownElements + kept;
@@ -2799,7 +2824,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
         }
         settleOperations(started, inFrame);
-        if (renderPort) renderPort.postMessage(refused.length > 0 ? { type: 'VIEW_ACK', refused } : { type: 'VIEW_ACK' });
+        const dropped = renderDropped;
+        renderDropped = [];
+        if (!renderPort) return;
+        if (refused.length > 0 && dropped.length > 0) renderPort.postMessage({ type: 'VIEW_ACK', refused, dropped });
+        else if (refused.length > 0) renderPort.postMessage({ type: 'VIEW_ACK', refused });
+        else if (dropped.length > 0) renderPort.postMessage({ type: 'VIEW_ACK', dropped });
+        else renderPort.postMessage({ type: 'VIEW_ACK' });
     };
     const schedule = () => {
         if (scheduled || overran) return;
@@ -3196,6 +3227,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 // past the budget, or anything else the renderer refused: the initial view stays empty
             }
             settleOperations(started, false);
+            renderDropped = []; // the initial view's are the element's to say (its html notice), not a render's
         }
         if (data.autoResize === true) startAutoResize();
     }, true);
@@ -3591,6 +3623,22 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
                                 ? 'the view would load more than ' + options.maxDistinctUrls + ' distinct URLs in this environment'
                                 : 'the view would hold more than ' + options.maxElements + ' elements';
                 log('warn', ['[Sandbox] sandboxView.' + kind + ': the view refused ' + (kind === 'render' ? 'a render' : 'it') + ': ' + why + '; nothing of it was applied.']);
+            }
+            // what an applied render dropped (BD5:NEW-3), as the element's html notice says it of `html`: one line per
+            // render at most, in the guest's own log and its budget
+            const dropped = data.dropped;
+            let script = false;
+            let reference = false;
+            for (let i = 0; dropped && i < dropped.length && i < 2; i++) {
+                if (dropped[i] === 'script') script = true;
+                else if (dropped[i] === 'reference') reference = true;
+            }
+            if (script || reference) {
+                log('warn', ['[Sandbox] sandboxView.render: '
+                    + (script ? 'the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker)' : '')
+                    + (script && reference ? '; and ' : '')
+                    + (reference ? 'a reference that names no file the view shows was kept as written and loads nothing (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>)' : '')
+                    + '.']);
             }
             inFlight = null;
             sendNext();

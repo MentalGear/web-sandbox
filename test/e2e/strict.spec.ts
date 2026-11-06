@@ -149,6 +149,23 @@ test.describe('G1 rendered markup', () => {
         });
     });
 
+    // BD5:NEW-3: a render that dropped a <script>, or kept a reference to a file the view does not show, says so in the
+    // guest's log, once per render; a render with neither says nothing.
+    for (const mode of VIEW_MODES) test(`${mode} mode: a render's dropped script and its reference to an SVG file each get one warn line, once per render`, async ({ sandbox, page, browserName }) => {
+        await sandbox.registerFiles({ 'pic.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>' });
+        expect(await sandbox.mount(inMode(mode))).toBe('ready');
+        await render(sandbox, browserName, '<script>void 0</script><img src="pic.svg" alt="">', 'one');
+        await render(sandbox, browserName, '<p>no drop</p>', 'two');
+        await render(sandbox, browserName, '<img src="pic.svg" alt="">', 'three');
+        const notices = async () => (await sandbox.logs()).filter(line => line.includes('[Sandbox] sandboxView.render:'));
+        await expect.poll(async () => (await notices()).length, { message: 'the third render\'s acknowledgement was logged' }).toBe(2);
+        expect(await notices()).toEqual([
+            expect.stringMatching(/the view runs no script, so the <script> elements of this render were dropped .*; and a reference that names no file the view shows was kept as written/),
+            expect.stringMatching(/^(?!.*<script>).*a reference that names no file the view shows was kept as written and loads nothing/),
+        ]);
+        expect(await inView(page, browserName, `document.querySelectorAll('script').length + ' ' + document.querySelector('img').getAttribute('src')`)).toBe('1 pic.svg'); // the bootstrap's own script
+    });
+
     test('positive control for the marker channel: the same inline script in a cooperative-mode sandbox runs and is read from outside', async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ html: `<script>${M('control')}</script>` })).toBe('ready');
         await expect.poll(() => markers(sandbox, browserName)).toEqual(['main/wrapper/view:control']);

@@ -176,7 +176,8 @@ sandbox.setConfig({ mode: 'strict', origins: { connect: ['https://api.example.co
 - <a id="strict-no-websocket"></a>**Strict mode opens no `WebSocket`, on any engine.** A handshake carries the cookies
   the browser attaches by site, which nothing can strip, so in strict mode a `wss://` entry of `connect` is dropped with
   one warning per entry, and the request gate refuses every `new WebSocket()`, a listed origin's too, with a
-  `SecurityError` (`refused by the sandbox: strict mode opens no WebSocket`) and its own
+  `SecurityError` (`refused by the sandbox: strict mode opens no WebSocket`; in sealed mode, which has no network at
+  all, `refused by the sandbox: sealed mode opens no WebSocket (it has no network)`) and its own
   [`violation`](#violation--sandboxviolation) report, as below. What takes its place:
   - **A streamed `fetch()` response.** The worker reads `response.body` as it arrives (`getReader()`), chunk by chunk, on
     every engine (`test/e2e/request-gate.spec.ts`), so a server that pushes events over one long response (server-sent
@@ -1176,7 +1177,7 @@ document by which guest activity can make work on your page's thread is listed, 
 
 | Member | Signature | Description |
 | :--- | :--- | :--- |
-| `expose` | `(name: string, fn: (...args) => unknown) => void` | Publishes a guest method the host calls with `sandbox.call(name, ...)`. Last registration wins; `sandbox:` names, and names longer than 256 characters, are ignored. |
+| `expose` | `(name: string, fn: (...args) => unknown) => void` | Publishes a guest method the host calls with `sandbox.call(name, ...)`. Last registration wins; `sandbox:` names, and names longer than 256 characters, are ignored: nothing is published, and nothing is logged. |
 | `call` | `(method: string, ...args) => Promise<unknown>` | Calls a host method exposed with `sandbox.expose()`. 30 s timeout. At most [`callLimits`](#calllimits) calls in any one second (by default 1000 calls and 64 MiB), per environment: past that a call is refused with `BUSY` and not sent. |
 | `callWithTimeout` | `(timeoutMs: number, method: string, ...args) => Promise<unknown>` | With a timeout for this call; `0` disables it. |
 
@@ -1268,7 +1269,9 @@ The renderer is an allowlist: what it does not list is gone before insertion.
 Any other HTML element is unwrapped (its content takes its place and is checked in turn: `wbr`, `ruby`, `rt` and `rp`
 are, for what their layout costs); a custom element name with a hyphen (`my-card`) is kept as an inert element; `iframe`, `frame`, `frameset`, `object`, `embed`, `applet`,
 `portal`, `fencedframe`, `script`, `noscript`, `noembed`, `noframes`, `template`, `meta`, `base` and `title` go with
-their content.
+their content. A `sandboxView.render()` that dropped a `<script>`, or kept as written a reference that names no file
+the view shows (below), logs one `warn` line in the guest's `sandbox-log` saying which, at most one per render, as
+the element's own notice says it of a script in `html`.
 
 **SVG**: `svg`, `g`, `defs`, `symbol`, `title`, `desc`, `style`, `a`, `rect`, `circle`, `ellipse`, `line`,
 `polyline`, `polygon`, `path`, `text`, `tspan`, `linearGradient`, `radialGradient`, `stop`, `clipPath`, `mask`,
@@ -1340,7 +1343,8 @@ Registered files are named by path in `src`, `href` and `poster`. The view shows
 document: CSS, PNG, JPEG, GIF, WebP, AVIF, APNG, BMP and ICO images, WOFF, WOFF2, TTF and OTF fonts, MP3, WAV, Ogg,
 MP4, FLAC, WebM and AAC audio, MP4, WebM and Ogg video, and WebVTT; and the raster images the guest wrote (see
 [Guest writes](#guest-writes)). Any other file (SVG, HTML, XML, JSON …) is the worker's through `sandboxFiles` only; a
-reference to it stays as written and loads nothing. Show vector graphics as inline `<svg>`.
+reference to it stays as written and loads nothing, and the render that holds it logs one `warn` line saying so. Show
+vector graphics as inline `<svg>`.
 
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
 `about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and

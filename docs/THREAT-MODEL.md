@@ -193,7 +193,7 @@ bridge's requests are `fetch` events
 
 ### Channel integrity
 
-<!-- describes: frames sig:8e10 -->
+<!-- describes: frames sig:cc18 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |

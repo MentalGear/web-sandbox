@@ -133,7 +133,7 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 
 ## Channels and frames
 
-<!-- describes: channels, frames sig:9d128e10 -->
+<!-- describes: channels, frames sig:9d12cc18 -->
 
 Realms talk on channels, and every message on them is a frame of a declared type. A frame is declared once, with the
 channels it may cross, the realms at its ends, and for each field what bounds it. What a frame carries out of a guest
@@ -198,7 +198,7 @@ How a field is bounded:
 | `VIEW_TEXT` | `render-port`: strict-worker → view | `into` (checked), `text` (checked) | sandboxView.text(): an element's text, as one text node. |
 | `VIEW_SET` | `render-port`: strict-worker → view | `id` (checked), `value` (checked), `checked` (not a string), `focus` (not a string), `scroll` (not a string), `css` (checked) | sandboxView.set(): a form control's value or checked state, focus, or an element's scroll position or inline style. |
 | `VIEW_LISTEN` | `render-port`: strict-worker → view | `types` (constant), `marks` (checked) | The event types the worker's sandboxView.on() handlers listen to, and the elements their options name (pointerCapture, rect, preventDefault). |
-| `VIEW_ACK` | `render-port`: view → strict-worker | `refused` (constant) | The view applied a flush of operations: the worker's next one may go. What it refused, by name. |
+| `VIEW_ACK` | `render-port`: view → strict-worker | `refused` (constant), `dropped` (constant) | The view applied a flush of operations: the worker's next one may go. What it refused, by name, and what an applied render dropped (BD5:NEW-3). |
 | `VIEW_EVENT` | `render-port`: view → strict-worker | `details` (cut) | Events of the types the worker listens to, as details, in the order they were raised: a discrete one behind the continuous ones the view coalesced before it, or those alone (at most one such frame unacknowledged, VIEW_INPUT_IN_FLIGHT). |
 | `VIEW_EVENT_ACK` | `render-port`: strict-worker → view | — | The worker's prelude dispatched a VIEW_EVENT and its handlers have returned: the view may send the next continuous events. |
 | `BRIDGE_INIT` | `bridge-init`: host → bridge-frame | `maxBytes` (host) | The host hands the fetch bridge's frame its port, at the frame's load. |

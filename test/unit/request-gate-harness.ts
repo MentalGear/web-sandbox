@@ -52,14 +52,15 @@ export function createGateHarness() {
      * Installs the stand-ins and the gate over `connect`, the list of the policy's connect-src, in `mode` (strict by
      * default). With `sealed`, the copy of fetch on the global object's prototype cannot be deleted.
      */
-    const install = (connect: readonly string[], options: { sealed?: boolean; mode?: 'strict' | 'worker' } = {}) => {
+    // `sealed`: the platform's fetch is a copy that cannot be removed; `sealedMode`: the bootstrap is sealed mode's (features.sealed)
+    const install = (connect: readonly string[], options: { sealed?: boolean; mode?: 'strict' | 'worker'; sealedMode?: boolean } = {}) => {
         g.MessagePort = FakePort;
         Object.defineProperty(globalThis, 'fetch', { value: platformFetch, writable: true, configurable: true });
         Object.defineProperty(prototypeOfGlobal, 'fetch', { value: platformFetch, writable: !options.sealed, configurable: !options.sealed });
         g.XMLHttpRequest = PlatformXMLHttpRequest;
         g.WebSocket = PlatformWebSocket;
         // the port is handed to attach() (no INIT_PORT listener), as the strict prelude does
-        const comms = inSandboxScript(false, options.mode ?? 'strict', { log() {}, info() {}, warn() {}, error() {} } as unknown as Console, createBroker, { externalPort: true, connect: [...connect] });
+        const comms = inSandboxScript(false, options.mode ?? 'strict', { log() {}, info() {}, warn() {}, error() {} } as unknown as Console, createBroker, { externalPort: true, connect: [...connect], ...(options.sealedMode ? { sealed: true } : {}) });
         port = new FakePort();
         comms.attach(port as unknown as MessagePort);
     };
