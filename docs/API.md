@@ -591,7 +591,9 @@ own text. Each text the guest does not receive is written to this page's console
 `console.warn`, once per call.
 
 Methods belong to the element: they survive `reset()`, `load()`,
-`setConfig()` and `terminate()`, until `unexpose()` removes them. Exposing a name again replaces its handler. Names that
+`setConfig()` and `terminate()`, until `unexpose()` removes them. A handler that started keeps running after
+`terminate()`, `reset()` or `setConfig()`: only its answer is dropped. One that writes should check a flag you set
+when you stop the app, right before the write. Exposing a name again replaces its handler. Names that
 start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
 validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
 survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
@@ -648,6 +650,9 @@ Calls a method the guest exposed with `bridge.expose()` and resolves with its re
  new buffer that holds exactly its bytes, and one that covers its whole buffer crosses with that buffer. So
  `heap.subarray(ptr, ptr + n)` sends `n` bytes, never the rest of `heap`. Two views of one buffer arrive with a
  buffer each; one view passed twice arrives as one view.
+- What comes back is the guest's data, a `Blob` or `File` included: its `type` and its bytes are the guest's. Never make an
+ object URL of them with that type (or none) and open it, since an SVG or HTML file is then a document of your origin;
+ see [Guest writes](#guest-writes).
 - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
  `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
  call's timeout.
@@ -788,6 +793,12 @@ from the next build on. Fires `fileschanged` when the files changed.
  name.
 - All checks come first, the quota included (with what module and stylesheet rewrites add, against the files as they
  are now), so a refusal changes neither the files nor the pending list.
+- It commits what is pending now, not what `listGuestWrites()` showed earlier. To commit exactly what you validated, list,
+ validate and commit in one synchronous task (the guest's writes arrive in tasks of their own), or register your own
+ copy of the validated bytes with `registerFiles()` when validating has to wait.
+- The type is the guest's claim, and so is the name: a file named `evil.html` written with the type `image/png`
+ commits without `code`, and the library loads it only as an image. If you store or serve the bytes elsewhere, choose
+ the name and the type yourself.
 - A committed file loads only as what its type is for (see `registerFiles()`): an inert file never runs as a script.
  Committed `text/css` is inert but still CSS: markup of the next build that links it is styled by it.
 
