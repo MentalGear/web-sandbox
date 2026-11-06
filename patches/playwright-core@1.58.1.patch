@@ -1,3 +1,84 @@
+diff --git a/node_modules/playwright-core/.bun-tag-cbe13ca85e9ce56f b/.bun-tag-cbe13ca85e9ce56f
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/lib/server/firefox/ffPage.js b/lib/server/firefox/ffPage.js
+index 7abe49950639574fe34c992976e6967f22464b98..450fd591d0c74a8f380d47015fa42a10b2757c20 100644
+--- a/lib/server/firefox/ffPage.js
++++ b/lib/server/firefox/ffPage.js
+@@ -57,6 +57,9 @@ class FFPage {
+     this.rawMouse = new import_ffInput.RawMouseImpl(session);
+     this.rawTouchscreen = new import_ffInput.RawTouchscreenImpl(session);
+     this._contextIdToContext = /* @__PURE__ */ new Map();
++    // web-sandbox patch (docs/BACKLOG.md S86): Firefox's driver can report a frame's navigation, context or load before the
++    // frame's attach (a COOP page whose frames are recreated under load); those events wait here for the attach, then replay.
++    this._pendingFrameEvents = /* @__PURE__ */ new Map();
+     this._browserContext = browserContext;
+     this._page = new import_page2.Page(this, browserContext);
+     this.rawMouse.setPage(this._page);
+@@ -124,6 +127,8 @@ class FFPage {
+   }
+   _onExecutionContextCreated(payload) {
+     const { executionContextId, auxData } = payload;
++    if (this._deferUntilAttached(auxData.frameId, () => this._onExecutionContextCreated(payload)))
++      return;
+     const frame = this._page.frameManager.frame(auxData.frameId);
+     if (!frame)
+       return;
+@@ -162,13 +167,28 @@ class FFPage {
+     else
+       this._page.frameManager.frameDidPotentiallyRequestNavigation();
+   }
++  _deferUntilAttached(frameId, replay) {
++    if (!frameId || this._page.frameManager.frame(frameId))
++      return false;
++    const queue = this._pendingFrameEvents.get(frameId) || [];
++    if (queue.length < 64)
++      queue.push(replay);
++    this._pendingFrameEvents.set(frameId, queue);
++    return true;
++  }
+   _onNavigationStarted(params) {
++    if (this._deferUntilAttached(params.frameId, () => this._onNavigationStarted(params)))
++      return;
+     this._page.frameManager.frameRequestedNavigation(params.frameId, params.navigationId);
+   }
+   _onNavigationAborted(params) {
++    if (this._deferUntilAttached(params.frameId, () => this._onNavigationAborted(params)))
++      return;
+     this._page.frameManager.frameAbortedNavigation(params.frameId, params.errorText, params.navigationId);
+   }
+   _onNavigationCommitted(params) {
++    if (this._deferUntilAttached(params.frameId, () => this._onNavigationCommitted(params)))
++      return;
+     for (const [workerId, worker] of this._workers) {
+       if (worker.frameId === params.frameId)
+         this._onWorkerDestroyed({ workerId });
+@@ -176,16 +196,25 @@ class FFPage {
+     this._page.frameManager.frameCommittedNewDocumentNavigation(params.frameId, params.url, params.name || "", params.navigationId || "", false);
+   }
+   _onSameDocumentNavigation(params) {
++    if (this._deferUntilAttached(params.frameId, () => this._onSameDocumentNavigation(params)))
++      return;
+     this._page.frameManager.frameCommittedSameDocumentNavigation(params.frameId, params.url);
+   }
+   _onFrameAttached(params) {
+     this._page.frameManager.frameAttached(params.frameId, params.parentFrameId);
++    const queued = this._pendingFrameEvents.get(params.frameId);
++    this._pendingFrameEvents.delete(params.frameId);
++    for (const replay of queued || [])
++      replay();
+   }
+   _onFrameDetached(params) {
++    this._pendingFrameEvents.delete(params.frameId);
+     this._page.frameManager.frameDetached(params.frameId);
+   }
+   _onEventFired(payload) {
+     const { frameId, name } = payload;
++    if (this._deferUntilAttached(frameId, () => this._onEventFired(payload)))
++      return;
+     if (name === "load")
+       this._page.frameManager.frameLifecycleEvent(frameId, "load");
+     if (name === "DOMContentLoaded")
 diff --git a/lib/server/frames.js b/lib/server/frames.js
 index cf5e6c02d776193811f241fffbdae24295d2bc7e..5e9856cbc4594f2ea43c02c0ade1979e837185f5 100644
 --- a/lib/server/frames.js
