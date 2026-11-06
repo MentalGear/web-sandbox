@@ -2,8 +2,9 @@
  * The host page's context, as data (S74, class A): every piece of it that a document of the sandbox can inherit, and for
  * each one how the library neutralises it or that it documents it. A sandbox document is a `srcdoc` frame, so it starts
  * with a copy of its parent's policy container (CSP list, Trusted Types requirement, embedder policy, referrer policy),
- * the base URL, the cookie jar's site, the Service Worker's scope and the browser's shared UI surfaces; the library's
- * host code runs in the host page's realm. A finding that the sandbox "inherited X" is a missing row of this table, so
+ * the base URL, the cookie jar's site, the Service Worker's scope and the browser's shared UI surfaces; an engine may
+ * answer a realm of the sandbox from its per-origin records of the host page (permission grants, BD5:ISO-1); the
+ * library's host code runs in the host page's realm. A finding that the sandbox "inherited X" is a missing row of this table, so
  * the fix adds the row (CONTRIBUTING.md, "Fixing a finding").
  *
  * Values first: this table is the one list. `test/unit/inherited-context.test.ts` fails on a row that names no test
@@ -204,6 +205,15 @@ export const INHERITED_CONTEXT = {
         engines: ALL,
         tests: ['test/e2e/capability-presets.spec.ts', 'test/unit/host.test.ts'],
         sealed: { standing: 'remains', note: 'no feature is delegated, as in strict mode' },
+    },
+    permissionState: {
+        channel: "The browser's per-origin state about the host page: the permissions the user granted its origin (geolocation, notifications, push; camera and microphone read `denied` once any is granted), which an engine may answer a realm of the sandbox from",
+        inheritedBy: "strict, sealed and worker mode: the guest's `blob:` worker (WebKit answered `navigator.permissions.query()` there with the host origin's grants); cooperative mode: the guest document (Chromium and WebKit)",
+        how: "The worker has no permission API: `navigator.permissions`, `Permissions` and `PermissionStatus` are off the allowlist, and so are `navigator.storage` and `StorageManager` (WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS); no API a permission gates exists there. Every kept name that reads browser state keyed to an origin or the profile is classified with its measured answer, the same with and without the host origin's state (WORKER_STATE_READS). Cooperative mode's guest document is a sandboxed frame the library does not prune: there the grants are readable on Chromium and WebKit, a documented cooperative limit",
+        by: ['construct', 'documented'],
+        engines: ['chromium', 'webkit'],
+        tests: ['test/e2e/realistic-host.spec.ts', 'src/lib/worker-globals.test.ts', 'test/e2e/worker-globals-and-termination.spec.ts'],
+        sealed: { standing: 'remains', note: 'closed by construction: the worker has no permission API, and the view runs no guest code' },
     },
     uiSurfaces: {
         channel: "The browser's shared UI surfaces: focus, the clipboard, history, top-level navigation, the host window as a `postMessage` target",

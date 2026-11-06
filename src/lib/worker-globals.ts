@@ -22,7 +22,9 @@
  * Deliberately absent (they request, or exist to): EventSource, WebTransport, WebSocketStream, FontFace and `fonts`,
  * `caches`, Notification (its icon), the Service Worker and Push interfaces, nested Worker and SharedWorker (a realm
  * this prelude never reaches), the RTC interfaces, MediaSource, BackgroundFetch, Reporting. On the navigator:
- * `serviceWorker` and `connection`.
+ * `serviceWorker` and `connection`. Absent too, because an engine answers them from the host page's per-origin state
+ * (WORKER_STATE_READS, below): `Permissions`, `PermissionStatus` and `StorageManager`, and the navigator's `permissions`
+ * and `storage`.
  *
  * Absent too, the worker's own channel to its parent (R4:M-1): `postMessage`, `onmessage` and
  * `onmessageerror`. A dedicated worker's postMessage reaches the Worker object in the document that made it (worker
@@ -68,10 +70,10 @@ export const WORKER_GLOBALS: readonly string[] = [
     'ReadableStreamDefaultController', 'ReadableByteStreamController', 'WritableStream', 'WritableStreamDefaultWriter',
     'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController',
     'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'Crypto', 'CryptoKey', 'SubtleCrypto',
-    // storage of the guest's own opaque origin, locks, permissions, scheduling
+    // storage of the guest's own opaque origin, locks, scheduling (no permissions and no StorageManager: BD5:ISO-1, BD5:ISO-2)
     'IDBCursor', 'IDBCursorWithValue', 'IDBDatabase', 'IDBFactory', 'IDBIndex', 'IDBKeyRange', 'IDBObjectStore',
-    'IDBOpenDBRequest', 'IDBRecord', 'IDBRequest', 'IDBTransaction', 'IDBVersionChangeEvent', 'StorageManager',
-    'Lock', 'LockManager', 'Permissions', 'PermissionStatus', 'MediaCapabilities', 'Scheduler', 'TaskController',
+    'IDBOpenDBRequest', 'IDBRecord', 'IDBRequest', 'IDBTransaction', 'IDBVersionChangeEvent',
+    'Lock', 'LockManager', 'MediaCapabilities', 'Scheduler', 'TaskController',
     'TaskSignal', 'TaskPriorityChangeEvent',
     // performance
     'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure', 'PerformanceObserver',
@@ -97,12 +99,61 @@ export const WORKER_GLOBALS: readonly string[] = [
  */
 export const STRICT_WORKER_GLOBALS: readonly string[] = WORKER_GLOBALS.filter(name => name !== 'importScripts');
 
-/** What guest code may find on the worker's navigator (its prototype's members): no `serviceWorker`, no `connection`. */
+/**
+ * What guest code may find on the worker's navigator (its prototype's members): no `serviceWorker`, no `connection`, no
+ * `permissions` and no `storage` (BD5:ISO-1, BD5:ISO-2: {@link WORKER_STATE_READS}).
+ */
 export const WORKER_NAVIGATOR_MEMBERS: readonly string[] = [
     'appCodeName', 'appName', 'appVersion', 'platform', 'product', 'userAgent', 'language', 'languages',
-    'onLine', 'hardwareConcurrency', 'deviceMemory', 'globalPrivacyControl', 'storage', 'locks', 'permissions',
-    'mediaCapabilities', 'gpu',
+    'onLine', 'hardwareConcurrency', 'deviceMemory', 'globalPrivacyControl', 'locks', 'mediaCapabilities', 'gpu',
 ];
+
+/**
+ * Every name of the allowlists that reads browser state keyed to an origin or to the user's profile, with what it reads
+ * and why the guest learns nothing of the host page from it (S74, class A: INHERITED_CONTEXT.permissionState). The
+ * worker is a `blob:` worker of an opaque origin, but an engine may still answer it from the host page's own record:
+ * WebKit answered `navigator.permissions.query()` there with the host origin's grants (BD5:ISO-1), and Firefox's
+ * `navigator.storage.estimate()` ended the caller's task without settling (BD5:ISO-2). So `navigator.permissions`,
+ * `Permissions`, `PermissionStatus`, `navigator.storage` and `StorageManager` are not listed: no API a permission gates
+ * exists in the worker, and the storage manager stores nothing in an opaque origin.
+ *
+ * Measured in the sealed guest's worker on Chromium, Firefox and WebKit, with the host origin holding permission grants, an
+ * IndexedDB database, a held Web Lock, `localStorage` and a `BroadcastChannel` listener, and without them: each answer
+ * below was the same both ways (BD5:ISO-1).
+ * src/lib/worker-globals.test.ts fails on a name of the allowlists that is neither here nor in its reviewed list of names
+ * that read no such state, so a new one is classified before it ships.
+ */
+export const WORKER_STATE_READS: Readonly<Record<string, string>> = Object.freeze({
+    'indexedDB': "the origin's databases: `open()`, `databases()` and `deleteDatabase()` give a SecurityError in the opaque origin on every engine; the host page's database is not visible",
+    'IDBFactory': "indexedDB's interface: as indexedDB",
+    'navigator.locks': "the origin's Web Locks: `query()` and `request()` give a SecurityError (Firefox, WebKit); absent on Chromium; a lock the host page holds is not visible",
+    'Lock': "navigator.locks's interface: as navigator.locks",
+    'LockManager': "navigator.locks's interface: as navigator.locks",
+    'BroadcastChannel': "the origin's channels: the guest's opaque origin is its own, and a channel of the host page's (or of a plain sandboxed frame's) of the same name never receives or delivers its messages",
+    'navigator.mediaCapabilities': 'what the engine and the device decode: the same answer for any page',
+    'MediaCapabilities': "navigator.mediaCapabilities's interface: as navigator.mediaCapabilities",
+    'navigator.gpu': 'the device: absent from the worker on every engine of the suite',
+    'navigator.deviceMemory': 'the device: absent from the worker on every engine of the suite',
+    'navigator.hardwareConcurrency': 'the device: the same for any page',
+    'navigator.language': "the profile's language: the same for any page",
+    'navigator.languages': "the profile's languages: the same for any page",
+    'Intl': "the profile's locale and time zone: the same for any page",
+    'Date': "the profile's time zone: the same for any page",
+    'Temporal': "the profile's time zone: the same for any page",
+    'navigator.globalPrivacyControl': "the profile's privacy setting (Firefox): the same for any page",
+    'navigator.onLine': 'the device: the same for any page',
+    'navigator.userAgent': 'the browser: the same for any page',
+    'navigator.appVersion': 'the browser: the same for any page',
+    'navigator.platform': 'the browser: the same for any page',
+    'navigator.appCodeName': 'a constant of the platform',
+    'navigator.appName': 'a constant of the platform',
+    'navigator.product': 'a constant of the platform',
+    'origin': "the worker's own origin: `'null'`",
+    'location': "the worker's own URL: `blob:null/<uuid>`",
+    'isSecureContext': "the worker's own context",
+    'crossOriginIsolated': "the worker's own context: false (the element refuses an isolated host page)",
+    'performance': "the worker's own timeline: its own entries only",
+});
 
 /**
  * Deletes every global of the worker that is not in `allowed`, and every member of its navigator's prototype that is

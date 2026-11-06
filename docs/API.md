@@ -1129,7 +1129,7 @@ In the guest, the codes other than `NOT_FOUND` come from the element through the
 
 ## Guest globals
 
-<!-- describes: worker-globals sig:bb00 -->
+<!-- describes: worker-globals sig:9705 -->
 What guest code can use, by mode. Everything here is installed by the library's bootstrap before any guest code
 runs; in cooperative mode that needs `allow-scripts` (the policy always admits it).
 
@@ -1159,7 +1159,10 @@ encoding, streams, `crypto`, `Blob`, `File`, `URL`, `OffscreenCanvas` with 2D an
 origin `indexedDB.open()` rejects with a `SecurityError` on all three engines (measured on Chromium 145, Firefox 146 and
 WebKit 26). Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace`
 and `fonts`, `caches`, `Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC,
-MediaSource and Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`; and the worker's own
+MediaSource and Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`; `navigator.permissions`,
+`Permissions` and `PermissionStatus`, `navigator.storage` and `StorageManager`, which an engine can answer from your
+page's own record (WebKit answered the worker's permission queries with the grants of your page's origin; Firefox's
+`navigator.storage.estimate()` ended the caller's task); and the worker's own
 `postMessage`, `onmessage` and `onmessageerror`: the library's port, with its budgets, is the only way from the worker
 to its parent (worker mode's frame, strict mode's view). Its uncaught errors and unhandled rejections leave it the same
 way, as [`sandbox-log`](#sandbox-log--sandboxlog) lines, within their budget. Every surface of the worker and its parent

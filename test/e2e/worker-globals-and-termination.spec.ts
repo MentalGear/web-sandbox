@@ -97,15 +97,15 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
     // Chromium's secure-context-only names are absent because its opaque-origin (blob:null) worker is not a secure context.
     const ABSENT_GLOBALS: Record<string, string[]> = {
         // ledger: worker-global-set
-        chromium: ['InternalError', 'onoffline', 'ononline', 'CryptoKey', 'SubtleCrypto', 'StorageManager', 'Lock', 'LockManager', 'AudioDecoder', 'AudioEncoder', 'VideoDecoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrack', 'ImageTrackList'],
+        chromium: ['InternalError', 'onoffline', 'ononline', 'CryptoKey', 'SubtleCrypto', 'Lock', 'LockManager', 'AudioDecoder', 'AudioEncoder', 'VideoDecoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrack', 'ImageTrackList'],
         firefox: ['SecurityPolicyViolationEvent', 'QuotaExceededError', 'IDBRecord', 'WebGLObject'],
-        webkit: ['Temporal', 'SuppressedError', 'InternalError', 'DisposableStack', 'AsyncDisposableStack', 'onlanguagechange', 'scheduler', 'QuotaExceededError', 'IDBRecord', 'StorageManager', 'Scheduler', 'TaskController', 'TaskSignal', 'TaskPriorityChangeEvent', 'WebGLObject', 'ImageDecoder', 'ImageTrack', 'ImageTrackList'],
+        webkit: ['Temporal', 'SuppressedError', 'InternalError', 'DisposableStack', 'AsyncDisposableStack', 'onlanguagechange', 'scheduler', 'QuotaExceededError', 'IDBRecord', 'Scheduler', 'TaskController', 'TaskSignal', 'TaskPriorityChangeEvent', 'WebGLObject', 'ImageDecoder', 'ImageTrack', 'ImageTrackList'],
     };
     const ABSENT_NAVIGATOR_MEMBERS: Record<string, string[]> = {
         // ledger: worker-global-set
-        chromium: ['deviceMemory', 'globalPrivacyControl', 'storage', 'locks', 'gpu'],
+        chromium: ['deviceMemory', 'globalPrivacyControl', 'locks', 'gpu'],
         firefox: ['deviceMemory', 'gpu'],
-        webkit: ['deviceMemory', 'globalPrivacyControl', 'storage', 'gpu'],
+        webkit: ['deviceMemory', 'globalPrivacyControl', 'gpu'],
     };
     for (const mode of ['worker', ...VIEW_MODES] as const) {
         test(`${mode} mode: the allowlisted globals and navigator members an engine does not have are exactly the ones the ledger states (worker-global-set); nothing outside the allowlist is present`, async ({ sandbox, browserName }) => {
