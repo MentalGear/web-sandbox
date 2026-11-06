@@ -205,6 +205,7 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         expect(listener.hits.map(hit => `${hit.scheme} ${hit.path}`)).toEqual([]);
         expect(listener.connections).toEqual({ https: 0, http: 0 });
         const styles = await inView<string[]>(page, browserName, `Array.from(document.querySelectorAll('[style]')).map(e => e.getAttribute('style'))`);
+        if (styles === 'no-context') throw new Error('the view has no context to read');
         for (const url of dropped) expect(styles.join('\n'), `${url} is out of the view`).not.toContain(url.split('/m/')[1]!.split('!')[0]!.replace(/\.jar$/, ''));
         expect(styles.length).toBeGreaterThan(5);
         expect(await sandbox.state()).toBe('ready');
