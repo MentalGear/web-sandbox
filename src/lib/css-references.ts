@@ -335,10 +335,14 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
     // scope reads every string and url token inside it as the stylesheet it names, over-approximating as the scan does.
     let importArgument = 0;
 
-    // An absolute http: or https: URL, read as the URL parser reads it: outer C0 controls and spaces stripped, tabs and
-    // newlines removed, the scheme ASCII case-insensitive. Relative URLs resolve to nothing in the strict view's documents
-    // (an about:blank base, or a blob: stylesheet's opaque one), and no other scheme a CSS load takes reaches a server.
-    const isNetwork = (url: string) => /^https?:/i.test(url.replace(/^[\u0000- ]+/, '').replace(/[\t\n\r]/g, ''));
+    // An absolute URL of a scheme that names a server, read as the URL parser reads it: outer C0 controls and spaces
+    // stripped, tabs and newlines removed, the scheme ASCII case-insensitive. http: and https: are what a CSS load takes;
+    // the others are the schemes a URL can wrap or spell a server in (ws:, wss:, ftp:, view-source: and jar: around
+    // another URL, filesystem:), which no engine loads from CSS today and the view's policy would refuse all the same
+    // (BD5:TST-6): dropped here too, so that the claim "CSS keeps no network URL" is the renderer's, not the policy's.
+    // Relative URLs resolve to nothing in the strict view's documents (an about:blank base, or a blob: stylesheet's
+    // opaque one), and blob: and data: URLs name no server.
+    const isNetwork = (url: string) => /^(?:https?|wss?|ftp|view-source|filesystem|jar):/i.test(url.replace(/^[\u0000- ]+/, '').replace(/[\t\n\r]/g, ''));
     const push = (start: number, end: number, url: string, kind: CssReference['kind']) => {
         if (!network || isNetwork(url)) references.push({ start, end, url, kind });
     };
