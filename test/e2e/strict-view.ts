@@ -200,13 +200,26 @@ export async function inView<T = unknown>(page: Page, browserName: string, expre
     return found ? found.value : 'no-context';
 }
 
-/** Polls the view until `expression` is truthy; returns its value. */
+/**
+ * Each frame the driver knows, with its path, URL, whether it is detached and what a 1 s evaluation in it answers (its
+ * readyState, or the error): a 'no-context' failure then says whether the frame was missing or had no context.
+ */
+async function describeFrames(page: Page): Promise<string> {
+    const lines: string[] = [];
+    for (const frame of page.frames()) {
+        const state = await withTimeout(frame.evaluate('document.readyState').then(String, (error: Error) => `error: ${error.message.split('\n')[0]}`), 1000, 'no answer in 1 s');
+        lines.push(`  ${framePath(frame)} ${frame.url().slice(0, 60)}${frame.isDetached() ? ' (detached)' : ''}: ${state}`);
+    }
+    return lines.join('\n');
+}
+
+/** Polls the view until `expression` is truthy; returns its value. On failure, the error lists the frames (describeFrames). */
 export async function waitInView<T = unknown>(page: Page, browserName: string, expression: string, timeout = 5000): Promise<T> {
     const deadline = Date.now() + timeout;
     for (;;) {
         const value = await inView<T>(page, browserName, expression);
         if (value !== 'no-context' && value) return value as T;
-        if (Date.now() > deadline) throw new Error(`the view never satisfied: ${expression} (last: ${JSON.stringify(value)})`);
+        if (Date.now() > deadline) throw new Error(`the view never satisfied: ${expression} (last: ${JSON.stringify(value)})\nthe page's frames:\n${await describeFrames(page)}`);
         await page.waitForTimeout(50);
     }
 }

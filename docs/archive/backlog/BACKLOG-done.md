@@ -1994,10 +1994,16 @@ that come before its attach, so the frame had no context a spec could evaluate i
 driver's events for a new frame, so the patch now holds every frame-keyed event of `FFPage` (navigation started,
 committed, aborted, same-document, load and DOMContentLoaded, execution context created) for a frame not yet attached, at
 most 64 a frame, replays them in order at its attach, and drops them at its detach; `FrameManager`'s early return stays
-as a second line. The newest release, 1.64.1, still has the unguarded lookup and the dropping, so an upgrade does not
+as a second line. The same case failed once more in CI (2026-11-06, #88's first run, "no-context" again): the driver
+reports each content process's frames on its own, so a frame's attach can also come before its parent's, and
+`FrameManager.frameAttached` takes a frame whose parent it does not know for the main frame, which leaves no view in the
+frame tree. The patch holds that attach under the parent's id too, so it replays once the parent attaches, with what
+the frame held; and `waitInView` (test/e2e/strict-view.ts) lists the page's frames when it fails, so a recurrence says
+whether the frame was missing or had no context. The newest release, 1.64.1, still has the unguarded lookup and the dropping, so an upgrade does not
 remove it ([S88](../../BACKLOG.md#s88) redoes the patch for the version it moves to). `test/unit/playwright-patch.test.ts`
-pins it: events before an attach are held and replayed in order, a context before an attach is held and not dropped, a
-known frame's events go through at once and a detach drops what was held (all three fail without the holding), an
+pins it: events before an attach are held and replayed in order, an attach before its parent's is held and replayed
+with them, a context before an attach is held and not dropped, a known frame's events go through at once and a detach
+drops what was held (all four fail without the holding), an
 unknown frame's commit does not throw, and the patch names the installed version. The case was neither retried nor
 skipped.
 

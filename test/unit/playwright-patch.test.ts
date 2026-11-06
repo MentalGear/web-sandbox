@@ -6,12 +6,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * The test tooling's one patch (docs/archive/backlog/BACKLOG-done.md, S86): Playwright's Firefox driver can report a
- * frame's navigation, execution context or load before the frame's attach (a COOP page whose sandbox frames are
- * recreated under load). Unpatched, `FrameManager.frameCommittedNewDocumentNavigation` uses the frame it does not find,
- * which crashes the test worker, and `FFPage` drops the frame's contexts, so a spec cannot evaluate in it. The patch
- * holds each such event in `FFPage` until the frame attaches and replays it then, and `FrameManager` returns early for
- * an unknown frame. This pins that the installed driver carries it, so an upgrade that drops the patch fails here and
+ * The test tooling's one patch (docs/archive/backlog/BACKLOG-done.md, S86): Playwright's Firefox driver reports the
+ * frames of each content process on its own, with no order between processes, so a frame's navigation, execution
+ * context or load can come before the frame's attach, and a frame's attach before its parent's (a COOP page whose
+ * sandbox frames are recreated under load). Unpatched, `FrameManager.frameCommittedNewDocumentNavigation` uses the frame
+ * it does not find, which crashes the test worker; `FFPage` drops the frame's contexts, so a spec cannot evaluate in it;
+ * and `FrameManager.frameAttached` takes a frame whose parent it does not know for the main frame. The patch holds each
+ * event of a frame, and the attach of a frame whose parent has not attached, in `FFPage` until that frame attaches and
+ * replays them in order then, and `FrameManager` returns early for an unknown frame. This pins that the installed driver carries it, so an upgrade that drops the patch fails here and
  * not, once in a while, in a Firefox run.
  */
 
@@ -53,6 +55,15 @@ describe('the patched Playwright driver (S86)', () => {
         expect(calls).toEqual([]);
         page._onFrameAttached!({ frameId: 'f1', parentFrameId: 'main' });
         expect(calls).toEqual([['attached', 'f1', 'main'], ['requested', 'f1'], ['committed', 'f1', 'about:srcdoc'], ['lifecycle', 'f1', 'load']]);
+    });
+
+    it("a frame's attach that comes before its parent's is held, and replayed with what it held once the parent attaches", () => {
+        const { page, calls } = firefoxPage(['main']);
+        page._onFrameAttached!({ frameId: 'view', parentFrameId: 'wrapper' });
+        page._onEventFired!({ frameId: 'view', name: 'load' });
+        expect(calls, 'a child of an unknown parent would otherwise take the main frame\'s place').toEqual([]);
+        page._onFrameAttached!({ frameId: 'wrapper', parentFrameId: 'main' });
+        expect(calls).toEqual([['attached', 'wrapper', 'main'], ['attached', 'view', 'wrapper'], ['lifecycle', 'view', 'load']]);
     });
 
     it("a frame's execution context that comes before its attach is held, not dropped", () => {
