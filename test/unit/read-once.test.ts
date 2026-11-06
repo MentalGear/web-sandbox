@@ -21,6 +21,8 @@ const LIBRARY_VALUES: Record<string, Record<string, string>> = {
         unsupported: 'its own record of what the measure did not know',
         entry: 'its own pending-call record',
         ids: 'its own list',
+        stack: 'its own list (compactViews)',
+        entries: 'its own list (compactViews)',
     },
     inSandboxScript: {
         TRAVERSALS: 'its own constant list',

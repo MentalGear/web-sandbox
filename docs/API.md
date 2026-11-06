@@ -55,7 +55,7 @@ different name of this class, and its `SyntaxError` for a name that is not a val
 
 ## The element
 
-<!-- describes: api:WebSandbox sig:bfdf -->
+<!-- describes: api:WebSandbox sig:7d76 -->
 The element has no observed attributes; everything is set through [`setConfig()`](#setconfigconfig) and the
 other methods. It has one property:
 
@@ -576,12 +576,21 @@ expose(name: string, fn: (...args: any[]) => unknown): void
 ```
 
 Publishes a host method the guest calls with `bridge.call(name, ...args)`. The guest receives the handler's return
-value (awaited if it is a promise). A throw or rejection reaches the guest as `HANDLER_ERROR` with the error's
-message, verbatim up to 65536 characters (a longer one is cut, and ends `[… cut at 65536 characters]`): throw errors
-whose message you would show the guest, or wrap the handler.
+value (awaited if it is a promise), copied: a typed array or `DataView` that covers part of its buffer arrives
+with a buffer that holds exactly its bytes.
+
+What a failure tells the guest: a throw or rejection reaches it as `HANDLER_ERROR`, and its text is
+your own words only. The guest receives the message of a plain `Error` (`throw new Error(text)`, whose prototype is
+this window's `Error.prototype`) or a thrown string, verbatim up to 65536 characters (a longer one is cut, and ends
+`[… cut at 65536 characters]`): put nothing in it you would not show the guest. Any other throw (an engine's
+`TypeError` or `SyntaxError` from `JSON.parse`, a `DOMException`, a subclass of `Error`, an error from another
+window, an object) arrives as `the method failed (<name>)` with its name only, because an engine's message quotes
+the data it was handling. A result that cannot be copied is refused `RESULT_NOT_TRANSFERABLE` with the library's
+own text. Each text the guest does not receive is written to this page's console with
+`console.warn`, once per call.
 
 Methods belong to the element: they survive `reset()`, `load()`,
-`setConfig()` and `terminate()`. Exposing a name again replaces its handler. Names that
+`setConfig()` and `terminate()`, until `unexpose()` removes them. Exposing a name again replaces its handler. Names that
 start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
 validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
 survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
@@ -593,6 +602,28 @@ survives the copy). Guest-controlled text: show it with `textContent`, never in 
 - `fn`: The handler; its arguments come from the guest by structured clone.
 
 **Throws:** A `TypeError` if `name` is not a string or is longer than 256 characters, or `fn` is not a function.
+
+### `unexpose(names?)`
+
+```ts
+unexpose(names?: string | readonly string[]): void
+```
+
+Removes host methods published with `expose()`: the named ones, or every one when `names` is left out. A guest call
+to a removed name is then refused `UNKNOWN_METHOD`, with the same text as a name that was never exposed, so the
+guest cannot tell the two apart.
+
+Use it, with `unregisterFiles()`, before one element runs another app: methods and files belong to the element,
+not to the app it runs. A call that already reached the element runs to completion and is answered;
+only calls that arrive after `unexpose()` are refused. A name that is not exposed is ignored. Names that start with
+`sandbox:` are reserved for the library: they are never removed, and naming one is refused with a warning, as
+`expose()` refuses it.
+
+**Parameters**
+
+- `names`: A method name or a list of names; every host-exposed method when left out.
+
+**Throws:** A `TypeError` if `names` is neither a string nor an array of strings; nothing is removed then.
 
 ### `call(method, ...args)`
 
@@ -611,6 +642,11 @@ Calls a method the guest exposed with `bridge.expose()` and resolves with its re
  `SharedArrayBuffer`) is refused the same way, with a message that names the value rather than the budget; send what
  you need of it instead: an error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole
  message is counted, the method name included, and a name is at most 256 characters (`INVALID_CALL`).
+- A typed array or `DataView` crosses as what it shows, at any depth and in both directions: one that covers part
+ of its buffer (`byteOffset` not 0, or `byteLength` less than its buffer's) arrives as the same kind of view over a
+ new buffer that holds exactly its bytes, and one that covers its whole buffer crosses with that buffer. So
+ `heap.subarray(ptr, ptr + n)` sends `n` bytes, never the rest of `heap`. Two views of one buffer arrive with a
+ buffer each; one view passed twice arrives as one view.
 - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
  `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
  call's timeout.
@@ -1081,8 +1117,8 @@ From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.
 | `SEND_FAILED` | local | The transport threw while sending. | no |
 | `INVALID_CALL` | local | The method name is not a string, or is longer than 256 characters. | no |
 | `UNKNOWN_METHOD` | reported | No method of that name is exposed on the other side. | no |
-| `HANDLER_ERROR` | reported | The handler threw or rejected; the message is its text, at most 65536 characters. | depends on the handler |
-| `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned, measures more than `RPC_MAX_BYTES`, or holds a value the measure does not know (as above). | no |
+| `HANDLER_ERROR` | reported | The handler threw or rejected; the message is its text, at most 65536 characters. A host method's text is the message of a plain `Error` or a thrown string; any other throw is `the method failed (<name>)` (see [`expose()`](#exposename-fn)). | depends on the handler |
+| `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned (the library's text, never the clone's error), measures more than `RPC_MAX_BYTES`, or holds a value the measure does not know (as above). | no |
 | `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls, or 64 MiB of their arguments; the method did not run. Guest calls only: the guest made more calls in the last second than [`callLimits`](#calllimits) allows (by default 1000 calls, or 64 MiB of calls); the guest's `bridge` refuses such a call before sending it, and the element answers one that arrives anyway. | yes |
 
 **Local** codes are set by the side that made the call, from its own state; the other side can never produce
@@ -1635,7 +1671,14 @@ which is why `mountTodoApp` can call `load` right after `setConfig()`.
   last. A handler that renders a lot is slowed by [the view's budgets](#a-the-long-run-bound), and awaiting is what keeps
   the host from queuing faster than the app can show.
 - **Arguments and results are copied** (structured clone, not transferred): at most `RPC_MAX_BYTES` (33 MiB) a message, 256
-  calls in flight per side, 30 s to answer unless `callWithTimeout()` says otherwise. Your calls to the app are not counted
+  calls in flight per side, 30 s to answer unless `callWithTimeout()` says otherwise. A typed array or `DataView` crosses
+  as what it shows, in both directions and at any depth: one that covers part of its buffer (`byteOffset` not 0, or
+  `byteLength` less than its buffer's) arrives as the same kind of view over a new buffer that holds exactly its bytes,
+  and one that covers its whole buffer crosses with that buffer. So a WebAssembly result passed as
+  `HEAPU8.subarray(ptr, ptr + n)` sends `n` bytes, not the module's heap. Two views of one buffer arrive with a buffer
+  each. A view of shared memory (a shared `WebAssembly.Memory`) is refused on Chromium and Firefox, and on WebKit, whose
+  clone copies it into a plain buffer, it crosses with its own bytes like any view
+  ([engine ledger](THREAT-MODEL.md#engine-shared-memory-view-clone)). Your calls to the app are not counted
   by [`callLimits`](#calllimits); the app's calls to you are (1000 a second and 64 MiB by default, its guest writes
   included). The refusals are the [`RpcErrorCode`s](#calls-rpcerrorcode) of [`call()`](#callmethod-args).
 
@@ -1655,7 +1698,16 @@ The host publishes methods with `sandbox.expose()` and the app calls them with `
   `run(name, ...args)` dispatcher. Each method does one thing the app needs, to a destination you fixed (this app's own
   storage key, a listed endpoint), at a size you capped. Sealed mode has no network, so what you expose is the app's only
   way out: a proxy hands it your page's network, cookies and storage.
-- A throw reaches the app as `HANDLER_ERROR` with the message you threw: put nothing in it you would not tell the app.
+- **What a failure tells the app.** A throw or rejection reaches it as `HANDLER_ERROR`. The message of a plain `Error`
+  (`throw new Error(text)`) or a thrown string reaches it as you wrote it: put nothing in it you would not tell the app.
+  Any other throw, such as the `SyntaxError` of a `JSON.parse` of your data, a `TypeError`, a `DOMException` or a
+  subclass of `Error`, reaches it as `the method failed (<name>)`, with no text of its own, because an engine's message
+  quotes the data it was handling. A result that cannot be copied reaches it as `RESULT_NOT_TRANSFERABLE` with the
+  library's text. Each text the app does not receive is written to your page's console (`console.warn`, once per call).
+- **Methods and files belong to the element, not to the app.** They survive `reset()`, `load()` and `setConfig()`, so an
+  app you load next on the same element can call the methods you exposed for the last one and read its files. Give
+  each app its own element, or call `unexpose()` and `unregisterFiles()` before the next app: a method removed so is
+  refused `UNKNOWN_METHOD` as one that was never exposed.
 
 ### Saving the app's state
 
@@ -1776,7 +1828,8 @@ object met again 8. A string costs two bytes a code unit plus 8; a `BigInt` its 
 hexadecimal digits); any other primitive 8. A plain object adds its keys, each like a string, and their values; a `Map`
 16 an entry and its key and value; a `Set` 8 an entry and its value; a `Date` nothing more; a `RegExp` two bytes a character
 of its source plus 24; an array the more of its `length` times 8 and its keys, so a sparse array of 2**32 - 1 slots is past
-every limit; an `ArrayBuffer` its byte length; a typed array or a `DataView` its whole buffer, once; a `Blob` 64 plus its
+every limit; an `ArrayBuffer` its byte length; a typed array or a `DataView` its whole buffer, once (in an RPC message a view
+that covers part of its buffer has already been given a buffer of its own bytes); a `Blob` 64 plus its
 `type` like a string; a `File` that plus its `name` like a string and 8 for `lastModified`. Any other kind (an `Error`, an `ImageData`, a `SharedArrayBuffer`) is refused as
 unsupported. The library's own walks of a delivered value follow its own keys, never an array's `length`. A `Blob` or
 `File` whose `type` is longer than `BLOB_TYPE_MAX_LENGTH` (4096) characters is over every byte budget and is refused as

@@ -786,16 +786,25 @@ export class WebSandbox extends ElementBase {
     // and terminate(), and every environment build takes a snapshot (_prepareBuild). See src/lib/files.ts.
     private _files = new FileStore();
 
+    // The broker's removal of exposed methods (unexpose()), handed out once when it is made: declared before it.
+    private _unexposeMethod: ((name?: string) => void) | null = null;
+
     // One broker lives on the element for its whole life, so host-exposed methods persist across
     // frame recreation (the guest's broker is per-frame and resets with each new frame). Its send only
     // ever carries the host's own requests: it queues them until a port exists, then setupChannel
     // flushes them. Answers to the guest never use it — they go back on the port the request arrived on.
     // Results go back with their snapshot's ArrayBuffers transferred (R2:C-3: rpc.ts, sendResult).
     // A guest's request past its environment's per-second budget is answered BUSY (R3:M-2: _admitGuestCall).
+    // A handler's error text reaches the guest only by the broker's allow-list; what it withholds is written to the
+    // console here, once per call (BD5:LIM-2, BD5:DOC-1: rpc.ts, reportWithheld).
     private _broker = createBroker((frame) => this._postRpc(frame), {
         sizeOf: createSizeOf(),
         transferResults: true,
         admitInbound: (bytes) => this._admitGuestCall(bytes),
+        reportWithheld: (method, refusal, text) => {
+            console.warn(`[Sandbox] the host method "${method.slice(0, 64)}" failed, and the guest received "${refusal}" in place of its error, which was:`, text);
+        },
+        takeUnexpose: (unexpose) => { this._unexposeMethod = unexpose; },
     });
 
     constructor() {
@@ -1234,13 +1243,22 @@ export class WebSandbox extends ElementBase {
 
     /**
      * Publishes a host method the guest calls with `bridge.call(name, ...args)`. The guest receives the handler's return
-     * value (awaited if it is a promise). A throw or rejection reaches the guest as `HANDLER_ERROR` with the error's
-     * message, verbatim up to 65536 characters (a longer one is cut, and ends `[… cut at 65536 characters]`): throw errors
-     * whose message you would show the guest, or wrap the handler.
+     * value (awaited if it is a promise), copied: a typed array or `DataView` that covers part of its buffer arrives
+     * with a buffer that holds exactly its bytes.
      *
      * @remarks
+     * What a failure tells the guest: a throw or rejection reaches it as `HANDLER_ERROR`, and its text is
+     * your own words only. The guest receives the message of a plain `Error` (`throw new Error(text)`, whose prototype is
+     * this window's `Error.prototype`) or a thrown string, verbatim up to 65536 characters (a longer one is cut, and ends
+     * `[… cut at 65536 characters]`): put nothing in it you would not show the guest. Any other throw (an engine's
+     * `TypeError` or `SyntaxError` from `JSON.parse`, a `DOMException`, a subclass of `Error`, an error from another
+     * window, an object) arrives as `the method failed (<name>)` with its name only, because an engine's message quotes
+     * the data it was handling. A result that cannot be copied is refused `RESULT_NOT_TRANSFERABLE` with the library's
+     * own text. Each text the guest does not receive is written to this page's console with
+     * `console.warn`, once per call.
+     *
      * Methods belong to the element: they survive `reset()`, `load()`,
-     * `setConfig()` and `terminate()`. Exposing a name again replaces its handler. Names that
+     * `setConfig()` and `terminate()`, until `unexpose()` removes them. Exposing a name again replaces its handler. Names that
      * start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
      * validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
      * survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
@@ -1266,6 +1284,42 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
+     * Removes host methods published with `expose()`: the named ones, or every one when `names` is left out. A guest call
+     * to a removed name is then refused `UNKNOWN_METHOD`, with the same text as a name that was never exposed, so the
+     * guest cannot tell the two apart.
+     *
+     * @remarks
+     * Use it, with `unregisterFiles()`, before one element runs another app: methods and files belong to the element,
+     * not to the app it runs. A call that already reached the element runs to completion and is answered;
+     * only calls that arrive after `unexpose()` are refused. A name that is not exposed is ignored. Names that start with
+     * `sandbox:` are reserved for the library: they are never removed, and naming one is refused with a warning, as
+     * `expose()` refuses it.
+     *
+     * @param names - A method name or a list of names; every host-exposed method when left out.
+     * @throws A `TypeError` if `names` is neither a string nor an array of strings; nothing is removed then.
+     */
+    unexpose(names?: string | readonly string[]): void {
+        const unexpose = this._unexposeMethod!;
+        if (names === undefined) {
+            unexpose();
+            this._exposedNames.clear();
+            return;
+        }
+        const list: unknown[] = typeof names === 'string' ? [names] : Array.isArray(names) ? [...names] : [names];
+        for (const name of list) {
+            if (typeof name !== 'string') throw new TypeError('[Sandbox] unexpose(): names must be a string or an array of strings');
+        }
+        for (const name of list as string[]) {
+            if (name.startsWith(RESERVED_METHOD_PREFIX)) {
+                console.warn(`[Sandbox] unexpose(): names starting with "${RESERVED_METHOD_PREFIX}" are reserved for the library; "${name.slice(0, 64)}" was not removed.`);
+                continue;
+            }
+            unexpose(name);
+            this._exposedNames.delete(name);
+        }
+    }
+
+    /**
      * Calls a method the guest exposed with `bridge.expose()` and resolves with its result. It works without
      * `scriptUnsafe`: it never evaluates code.
      *
@@ -1278,6 +1332,11 @@ export class WebSandbox extends ElementBase {
      *   `SharedArrayBuffer`) is refused the same way, with a message that names the value rather than the budget; send what
      *   you need of it instead: an error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole
      *   message is counted, the method name included, and a name is at most 256 characters (`INVALID_CALL`).
+     * - A typed array or `DataView` crosses as what it shows, at any depth and in both directions: one that covers part
+     *   of its buffer (`byteOffset` not 0, or `byteLength` less than its buffer's) arrives as the same kind of view over a
+     *   new buffer that holds exactly its bytes, and one that covers its whole buffer crosses with that buffer. So
+     *   `heap.subarray(ptr, ptr + n)` sends `n` bytes, never the rest of `heap`. Two views of one buffer arrive with a
+     *   buffer each; one view passed twice arrives as one view.
      * - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
      *   `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
      *   call's timeout.

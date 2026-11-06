@@ -60,6 +60,12 @@ about it.
   `BUSY` and `ARGS_NOT_TRANSFERABLE` pass through, as the receiver's own constants; any other value, including a local
   code, or none, becomes `HANDLER_ERROR`. The message stays the other side's text verbatim (cut at 65 536 characters):
   it is not trustworthy, and nothing needs to trust it.
+- **What a refusal's text carries is chosen, not inherited.** A refusal the broker makes has a fixed text of its own,
+  never an engine's: a result that cannot be cloned is answered without the clone's error, which on Chromium quotes the
+  function's source. The host's broker sends a handler's text by an allow-list: a thrown string, or the message of an
+  `Error` whose prototype is exactly the host realm's `Error.prototype`; any other throw arrives as
+  `the method failed (<name>)`, because an engine's message quotes the data the handler was handling, and its text goes
+  to the host's console. The guest's broker forwards its handlers' texts, which the host receives as the guest's data.
 - **One field with disjoint groups, not a category code plus a detail code.** The guarantee only needs the groups to
   be disjoint and the clamp to enforce that on receipt; a category on top adds a second field to branch on.
 - **No separate retry field.** Whether to retry follows from the code: only `TIMEOUT` and `BUSY` are worth
@@ -133,7 +139,9 @@ a library code there.
   `createBroker`. Every RPC message is at most `RPC_MAX_BYTES` (33 MiB, the largest fetch bridge body with its
   headers), measured where it is made (a call is refused with `ARGS_NOT_TRANSFERABLE`; a result is answered
   `RESULT_NOT_TRANSFERABLE`) and where it arrives; the calls a broker runs at once hold at most `RPC_MAX_INBOUND_BYTES`
-  (64 MiB) of arguments per channel (`BUSY`). The guest's console relay is the one chokepoint for log lines in every
+  (64 MiB) of arguments per channel (`BUSY`). Before the measure, the snapshot gives each typed array or `DataView` that
+  covers part of its buffer a buffer of exactly its own bytes, so a view never carries bytes it does not show, and what
+  is measured is what is posted. The guest's console relay is the one chokepoint for log lines in every
   mode: it never throws (what clone refuses crosses as a string naming its kind), bounds each line to `LOG_MAX_BYTES`
   and the lines it sends to `LOG_EVENTS_PER_SECOND` and `LOG_BYTES_PER_SECOND` per second, so a flood never reaches
   the host's thread; the host measures every line again.

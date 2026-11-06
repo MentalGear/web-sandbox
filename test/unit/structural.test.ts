@@ -801,3 +801,186 @@ describe("the console relay (in-sandbox-script.ts) against the measure and the h
         expect(roomy.lines()[0]!.args.slice(1)).toEqual([`[Uint8Array: past the log line's byte budget (${LOG_MAX_BYTES})]`, 'kept']);
     });
 });
+
+// ---- What crosses a call is what the value shows (class P; BD5:LIM-1, BD5:LIM-2, BD5:DOC-1)
+
+describe('what the broker posts is what the value shows: every view in a posted snapshot covers its own buffer (class P)', () => {
+    const KINDS = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array, DataView] as const;
+    const SOURCE_BYTES = 256;
+    // A value: a tree of arrays, plain objects, Maps (views as keys too) and Sets, whose leaves are numbers, strings and
+    // views from a pool over three shared buffers, at any offset; a pool index may repeat, so one view object can sit in
+    // several places, and the root may hold itself.
+    type Spec = { leaf: number | string } | { view: number } | { array: Spec[] } | { object: [string, Spec][] } | { map: [Spec, Spec][] } | { set: Spec[] };
+    type Sample = { root: Spec; pool: { source: number; kind: number; start: number; count: number }[]; bytes: Uint8Array; cycle: boolean };
+    const { node } = fc.letrec<{ node: Spec }>(tie => ({
+        node: fc.oneof(
+            { depthSize: 'small' },
+            fc.oneof(fc.integer(), fc.string({ maxLength: 4 })).map(leaf => ({ leaf })),
+            fc.nat(7).map(view => ({ view })),
+            fc.array(tie('node'), { maxLength: 4 }).map(array => ({ array })),
+            fc.array(fc.tuple(fc.string({ maxLength: 3 }), tie('node')), { maxLength: 4 }).map(object => ({ object })),
+            fc.array(fc.tuple(tie('node'), tie('node')), { maxLength: 3 }).map(map => ({ map })),
+            fc.array(tie('node'), { maxLength: 3 }).map(set => ({ set })),
+        ),
+    }));
+    const pool = fc.array(fc.record({ source: fc.nat(2), kind: fc.nat(KINDS.length - 1), start: fc.nat(17), count: fc.nat(8) }), { minLength: 8, maxLength: 8 });
+    const sample: fc.Arbitrary<Sample> = fc.record({ root: node, pool, bytes: fc.uint8Array({ minLength: 3 * SOURCE_BYTES, maxLength: 3 * SOURCE_BYTES }), cycle: fc.boolean() });
+
+    function materialize({ root, pool, bytes, cycle }: Sample): unknown {
+        const sources = [0, 1, 2].map(i => bytes.slice(i * SOURCE_BYTES, (i + 1) * SOURCE_BYTES).buffer);
+        const views = pool.map(({ source, kind, start, count }) => {
+            const Kind = KINDS[kind]!;
+            if (Kind === DataView) return new DataView(sources[source]!, start, count);
+            const Typed = Kind as typeof Uint8Array;
+            return new Typed(sources[source]!, start * Typed.BYTES_PER_ELEMENT, count);
+        });
+        const make = (spec: Spec): unknown => {
+            if ('leaf' in spec) return spec.leaf;
+            if ('view' in spec) return views[spec.view];
+            if ('array' in spec) return spec.array.map(make);
+            if ('object' in spec) return Object.fromEntries(spec.object.map(([key, value]) => [key, make(value)]));
+            if ('map' in spec) return new Map(spec.map.map(([key, value]) => [make(key), make(value)]));
+            return new Set(spec.set.map(make));
+        };
+        const value = make(root);
+        if (cycle && value !== null && typeof value === 'object' && !ArrayBuffer.isView(value)) Object.defineProperty(value, 'self', { value, enumerable: true, writable: true, configurable: true });
+        return value;
+    }
+
+    const tag = (value: unknown) => Object.prototype.toString.call(value);
+    const bytesOf = (view: ArrayBufferView) => [...new Uint8Array(view.buffer, view.byteOffset, view.byteLength)];
+
+    // Walks the value sent and the value posted side by side: what fails, and every buffer a view of the posted value holds.
+    function compare(sent: unknown, posted: unknown): { failures: string[]; buffers: Set<unknown> } {
+        const failures: string[] = [];
+        const buffers = new Set<unknown>();
+        const crossed = new Map<object, unknown>();
+        const walk = (a: unknown, b: unknown, at: string): void => {
+            if (a === null || typeof a !== 'object') {
+                if (!Object.is(a, b)) failures.push(`${at}: ${String(a)} became ${String(b)}`);
+                return;
+            }
+            if (crossed.has(a)) {
+                if (crossed.get(a) !== b) failures.push(`${at}: one object became two`);
+                return;
+            }
+            crossed.set(a, b);
+            if (ArrayBuffer.isView(a)) {
+                const view = b as ArrayBufferView;
+                if (tag(view) !== tag(a)) failures.push(`${at}: a ${tag(a)} became ${tag(view)}`);
+                else if (view.byteOffset !== 0 || view.byteLength !== view.buffer.byteLength) failures.push(`${at}: ${tag(view)} of ${view.byteLength} bytes at ${view.byteOffset} posted with a buffer of ${view.buffer.byteLength}`);
+                else if (bytesOf(view).join() !== bytesOf(a).join()) failures.push(`${at}: other bytes`);
+                buffers.add(view.buffer);
+                return;
+            }
+            if (a instanceof Map) {
+                const left = [...a];
+                const right = [...(b as Map<unknown, unknown>)];
+                if (left.length !== right.length) failures.push(`${at}: a Map of ${left.length} became ${right.length}`);
+                left.forEach(([key, value], i) => {
+                    walk(key, right[i]?.[0], `${at}.key(${i})`);
+                    walk(value, right[i]?.[1], `${at}.get(${i})`);
+                });
+                return;
+            }
+            if (a instanceof Set) {
+                const right = [...(b as Set<unknown>)];
+                [...a].forEach((member, i) => walk(member, right[i], `${at}.member(${i})`));
+                return;
+            }
+            for (const key of Object.keys(a)) walk((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], `${at}.${key}`);
+        };
+        walk(sent, posted, 'value');
+        return { failures, buffers };
+    }
+
+    // The measure the broker is given, recording each frame it measures: the frame posted must be the frame measured last.
+    const recordingMeasure = (measured: unknown[]) => {
+        const measure = createSizeOf();
+        return (frame: unknown, limit: number, buffers?: unknown[], unsupported?: { kind: string }) => {
+            measured.push(frame);
+            return measure(frame, limit, buffers, unsupported);
+        };
+    };
+
+    it('a call: every view in the posted arguments covers its own buffer and holds the bytes of the view sent, one view object stays one, and the frame posted is the frame measured', () => {
+        fc.assert(fc.property(sample, (input) => {
+            const value = materialize(input);
+            const measured: unknown[] = [];
+            const posted: { args: unknown[] }[] = [];
+            const broker = createBroker((frame) => { posted.push(frame as never); }, { timeoutMs: 0, sizeOf: recordingMeasure(measured) });
+            void broker.call('m', value, value);
+            expect(posted).toHaveLength(1);
+            expect(measured.at(-1)).toBe(posted[0]);
+            expect(compare([value, value], posted[0]!.args).failures).toEqual([]);
+        }), { numRuns: 300 });
+    });
+
+    it("a result: the same, and the buffers transferred are exactly those of the posted value's views", async () => {
+        await fc.assert(fc.asyncProperty(sample, async (input) => {
+            const value = materialize(input);
+            const measured: unknown[] = [];
+            const posted: { frame: { value: unknown }; transfer: unknown[] }[] = [];
+            const broker = createBroker(() => {}, { timeoutMs: 0, transferResults: true, sizeOf: recordingMeasure(measured) });
+            broker.expose('m', () => value);
+            broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'm', args: [] }, (frame, transfer) => { posted.push({ frame: frame as never, transfer: transfer ?? [] }); });
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(posted).toHaveLength(1);
+            expect(measured.at(-1)).toBe(posted[0]!.frame);
+            const { failures, buffers } = compare(value, posted[0]!.frame.value);
+            expect(failures).toEqual([]);
+            expect(new Set(posted[0]!.transfer)).toEqual(buffers);
+        }), { numRuns: 300 });
+    });
+
+    // The chokepoint, by source: each builder of a frame that carries a value (requestFrame, resultFrame) is called once,
+    // in request() and in sendResult(), with the value compactViews returned, called before it in that function.
+    it('every frame that carries arguments or a result is built from the value compactViews returned, in the function that compacted it', () => {
+        const tokens = tokenize(createBroker.toString());
+        const calls = (from: number, to: number, name: string) => tokens.flatMap((token, i) => (i > from && i < to && token.text === name && tokens[i + 1]?.kind === SyntaxKind.OpenParenToken && tokens[i - 1]?.kind !== SyntaxKind.FunctionKeyword ? [i] : []));
+        expect([calls(0, tokens.length, 'requestFrame').length, calls(0, tokens.length, 'resultFrame').length]).toEqual([1, 1]);
+        for (const [fn, builder] of [['request', 'requestFrame'], ['sendResult', 'resultFrame']] as const) {
+            const [open, close] = bodyOf(tokens, fn);
+            const [compacting] = calls(open, close, 'compactViews');
+            const [building] = calls(open, close, builder);
+            expect(compacting, fn).toBeDefined();
+            expect(building, fn).toBeGreaterThan(compacting!);
+            let end = building! + 1;
+            for (let depth = 0; ; end++) {
+                if (tokens[end]!.kind === SyntaxKind.OpenParenToken) depth++;
+                if (tokens[end]!.kind === SyntaxKind.CloseParenToken && --depth === 0) break;
+            }
+            expect(tokens.slice(building!, end).map(token => token.text).join(' '), fn).toMatch(/\bcompacted \. value\b/);
+        }
+    });
+
+    // The refusal texts (BD5:LIM-2, BD5:DOC-1): no refusal frame is given an error's text except through handlerErrorText,
+    // the one gate of a handler's throw. An error's text is otherwise read only to withhold it, or for a refusal of this
+    // side's own call (localRefusal), which never crosses.
+    it("no refusal frame carries an error's text except through handlerErrorText's allow-list", () => {
+        const tokens = tokenize(createBroker.toString());
+        const [gateOpen, gateClose] = bodyOf(tokens, 'handlerErrorText');
+        const [definitionOpen, definitionClose] = bodyOf(tokens, 'errorMessage');
+        // the name of the call whose brackets enclose token `at`
+        const enclosing = (at: number): string => {
+            for (let i = at - 1, depth = 0; i >= 0; i--) {
+                const kind = tokens[i]!.kind;
+                if (kind === SyntaxKind.CloseParenToken) depth++;
+                else if (kind === SyntaxKind.OpenParenToken && depth-- === 0) return tokens[i - 1]!.text;
+            }
+            return '';
+        };
+        const isCall = (i: number, name: string) => tokens[i]!.text === name && tokens[i + 1]?.kind === SyntaxKind.OpenParenToken && tokens[i - 1]?.kind !== SyntaxKind.FunctionKeyword;
+        const found: string[] = [];
+        let read = 0;
+        for (let i = 0; i < tokens.length; i++) {
+            if (!isCall(i, 'errorMessage') || (i > gateOpen && i < gateClose) || (i > definitionOpen && i < definitionClose)) continue;
+            read++;
+            const caller = enclosing(i);
+            if (caller !== 'withhold' && caller !== 'localRefusal') found.push(`errorMessage( in ${caller}(`);
+        }
+        expect(found).toEqual([]);
+        expect(read).toBeGreaterThan(2);
+        expect(tokens.flatMap((_, i) => (isCall(i, 'handlerErrorText') ? [enclosing(i)] : []))).toEqual(['refusalFrame']);
+    });
+});
