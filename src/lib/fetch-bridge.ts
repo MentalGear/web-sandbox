@@ -463,11 +463,19 @@ const reportedMethod = (value: unknown): string =>
  */
 const methodOf = (source: Record<string, unknown>): string => (source.method === undefined ? 'GET' : reportedMethod(source.method));
 
+/** Whether `buffer` is shared memory (a SharedArrayBuffer), by its tag: the global is missing where the page is not cross-origin isolated. */
+const isShared = (buffer: unknown): boolean => Object.prototype.toString.call(buffer) === '[object SharedArrayBuffer]';
+
+/**
+ * The body of a request from the guest as bytes or text, or null when it is neither. A view of shared memory is refused
+ * here, by the library: it can change while the request is read. What refuses it otherwise is the platform's Request
+ * constructor, which a newer runtime may stop doing.
+ */
 const toBody = (value: unknown): string | Uint8Array | undefined | null => {
     if (value === undefined || value === null) return undefined;
     if (typeof value === 'string') return value;
     if (value instanceof ArrayBuffer) return new Uint8Array(value);
-    if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    if (ArrayBuffer.isView(value) && !isShared(value.buffer)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
     return null;
 };
 
@@ -529,7 +537,7 @@ export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigi
     if (typeof headers === 'string') return fetchRefusal('FETCH_NOT_ALLOWED', headers);
 
     const body = toBody(source.body);
-    if (body === null) return fetchRefusal('FETCH_NOT_ALLOWED', 'the body must be a string, an ArrayBuffer or a typed array');
+    if (body === null) return fetchRefusal('FETCH_NOT_ALLOWED', 'the body must be a string, an ArrayBuffer or a typed array (not shared memory)');
     if (body !== undefined && (method === 'GET' || method === 'HEAD')) return fetchRefusal('FETCH_NOT_ALLOWED', `a ${method} request has no body`);
     const bodyBytes = typeof body === 'string' ? new TextEncoder().encode(body).byteLength : body?.byteLength ?? 0;
     if (bodyBytes > policy.maxBytes) return fetchRefusal('FETCH_TOO_LARGE', `the request body exceeds ${policy.maxBytes} bytes`);
