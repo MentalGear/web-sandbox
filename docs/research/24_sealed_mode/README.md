@@ -75,7 +75,8 @@ view's budgets and input.
   (`permissionState`: the worker has no permission API). None moves data.
 - **Engine ledger.** `cookies`, `connect-src`, `redirect-refusal-outcome`, `referrer-on-requests`, `secure-cookie-over-http`,
   `service-worker-control` and every cooperative-only row leave sealed's scope.
-- **Findings.** Of the 20 data findings of BD1 to BD4, 14 need `origins` or `fetchBridge`, 3 reach only cooperative or
+- **Findings.** Of the data findings of BD1 to BD4 (18 in [research 22](../22_review_trajectory/README.md), which is the count that
+  stands; this breakdown was made on the reports as filed and sums to 20), 14 need `origins` or `fetchBridge`, 3 reach only cooperative or
   worker mode, 2 reach sealed and are fixed by constructions that hold in every mode (BD2:CHL-1, BD2:ISO-1), and 1 is a
   docs example (BD4:NEW-2, passes guest text to `window.open`). BD2:NEW-1 reaches sealed only as a build refusal.
 
