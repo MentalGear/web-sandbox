@@ -16,11 +16,15 @@ import { clickInSandbox, inView, waitInView } from './strict-view';
  *   3. user -> app -> host: typing and Enter, and a checkbox, reach the host's `save` as validated data, and the app's
  *      image follows its state (a new write the host can list);
  *   4. the stored state loads into the next mount (the host is the app's only storage);
- *   5. another app on the same element, after `unexpose()` and `unregisterFiles()`, reaches none of the first app's methods
+ *   5. another app on the same element (which the recipe no longer does), after `unexpose()` and `unregisterFiles()`, reaches none of the first app's methods
  *      and files, and cannot tell a removed method from one that never existed;
  *   6. a second, hostile bundle mounted through the same host.js after stop() is handed none of the first app's state or
  *      files, and its save leaves the first app's key alone (the state is keyed by the embedder's app id);
- *   7. the app stops adding at the host's limit, and a save the host refuses is shown, not lost silently.
+ *   7. the app stops adding at the host's limit, and a save the host refuses is shown, not lost silently;
+ *   8. an element is one app's for its life (BD6:LIM-2, BD6:CHL-3): every mount makes an element of its own, and stop()
+ *      removes it. The first app's commit of its guest writes after stop(), a late call of one of its host methods, a
+ *      second mount that overlaps a slow first one, and a mount whose load failed each hand the next app none of its
+ *      data, and nothing of the first app runs after stop() or after the failure.
  * Evidence is read outside the guest: the view's DOM (strict-view.ts), the host's store, `listGuestWrites()`.
  */
 
@@ -29,21 +33,40 @@ const EXAMPLE = path.resolve(import.meta.dirname, '../../examples/sealed-app');
 const BUNDLE = '/saved-app';
 const TYPES: Record<string, string> = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.png': 'image/png' };
 
-/** Mounts the bundle through host.js over a store that starts as `saved`; the store is kept on the page as `window.store`. */
+/**
+ * Mounts the bundle through host.js into the container `#apps` over a store that starts as `saved`; the store is kept on
+ * the page as `window.store`, and the mounted app (`{ sandbox, stop }`) as `window.app`. An app that is still running is
+ * stopped first, as an embedder switching apps does: each mount makes its own element. The harness's own element is
+ * removed, so the page holds the apps' elements only.
+ */
 async function mountApp(page: Page, saved: object[] | null) {
-    await page.route(`${ORIGIN}${BUNDLE}/*`, (route) => {
-        const name = path.basename(new URL(route.request().url()).pathname);
-        return route.fulfill({ body: readFileSync(path.join(EXAMPLE, name)), contentType: TYPES[path.extname(name)] });
-    });
+    await routeBundle(page);
     await page.evaluate(async ({ bundle, saved }) => {
         const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
         const data = new Map<string, string>(saved === null ? [] : [['todos:todo-app', JSON.stringify(saved)]]);
         (window as any).store = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => void data.set(key, value), data };
-        (window as any).stopApp = await mountTodoApp(document.querySelector('web-sandbox'), { bundle, appId: 'todo-app', store: (window as any).store });
+        (window as any).app?.stop();
+        const container = document.getElementById('apps') ?? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'apps' }));
+        for (const element of document.querySelectorAll('web-sandbox')) if (!container.contains(element)) element.remove();
+        (window as any).app = await mountTodoApp(container, { bundle, appId: 'todo-app', store: (window as any).store });
     }, { bundle: BUNDLE, saved });
 }
+/** Serves the bundle as the files are (the dev server would turn app.css into a script). */
+async function routeBundle(page: Page) {
+    await page.route(`${ORIGIN}${BUNDLE}/*`, (route) => {
+        const name = path.basename(new URL(route.request().url()).pathname);
+        return route.fulfill({ body: readFileSync(path.join(EXAMPLE, name)), contentType: TYPES[path.extname(name)] });
+    });
+}
+/** Serves a bundle at `/<name>` that is the example's with its `app.js` replaced by `appJs`. */
+async function routeBundleWith(page: Page, name: string, appJs: string) {
+    await page.route(`${ORIGIN}/${name}/*`, (route) => {
+        const file = path.basename(new URL(route.request().url()).pathname);
+        return route.fulfill(file === 'app.js' ? { body: appJs, contentType: 'text/javascript' } : { body: readFileSync(path.join(EXAMPLE, file)), contentType: TYPES[path.extname(file)] });
+    });
+}
 const saved = (page: Page) => page.evaluate(() => JSON.parse((window as any).store.data.get('todos:todo-app') ?? 'null'));
-const writes = (page: Page) => page.evaluate(() => (document.querySelector('web-sandbox') as any).listGuestWrites().map((w: any) => ({ path: w.path, type: w.type, bytes: Array.from(w.content as Uint8Array).join(',') })));
+const writes = (page: Page) => page.evaluate(() => (window as any).app.sandbox.listGuestWrites().map((w: any) => ({ path: w.path, type: w.type, bytes: Array.from(w.content as Uint8Array).join(',') })));
 
 /** The view's list as text, and the facts about its images. */
 const LIST = `Array.from(document.querySelectorAll('#list li')).map(li => (li.querySelector('input').checked ? '[x] ' : '[ ] ') + li.querySelector('span').textContent)`;
@@ -65,7 +88,7 @@ test.describe('the sealed app of the docs', () => {
             { src: expect.stringMatching(/^blob:/), width: 60, height: 8 },  // progress.png, written by the app
         ]);
         expect(await writes(page)).toEqual([{ path: 'progress.png', type: 'image/png', bytes: expect.stringMatching(/^137,80,78,71,/) }]);
-        expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).state)).toBe('ready');
+        expect(await page.evaluate(() => ((window as any).app.sandbox).state)).toBe('ready');
         expect(await page.evaluate(() => (window as any).sandboxViolations)).toEqual([]);
         expect(await page.evaluate(() => (window as any).sandboxTerminations)).toEqual([]);
     });
@@ -76,7 +99,7 @@ test.describe('the sealed app of the docs', () => {
         await waitInView(page, browserName, `document.getElementById('count')?.textContent === '0 open'`);
         const calls = await page.evaluate(async () => {
             const { pushAll } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
-            const sandbox = document.querySelector('web-sandbox') as any;
+            const sandbox = (window as any).app.sandbox as any;
             const sent: number[] = [];
             const call = sandbox.call.bind(sandbox);
             sandbox.call = (method: string, batch: unknown[]) => (sent.push(batch.length), call(method, batch));
@@ -141,7 +164,7 @@ test.describe('the sealed app of the docs', () => {
                 element.registerFiles({ 'b.js': appB });
                 element.setConfig({ entry: 'b.js' });
             });
-            const same = document.querySelector('web-sandbox') as any;
+            const same = (window as any).app.sandbox as any;
             same.unexpose();
             same.unregisterFiles();
             const onSame = await run(same);
@@ -166,34 +189,152 @@ test.describe('the sealed app of the docs', () => {
         void sandbox; // the fixture opens the harness page
         await mountApp(page, [{ text: 'call bank, PIN 4711', done: false }]);
         await waitInView(page, browserName, `document.getElementById('text-0')?.textContent === 'call bank, PIN 4711'`);
+        // B reports what it was handed through its own `save`, the only way out the recipe gives it
         const hostile = `(async () => {
-            const out = { state: null, files: null, save: null };
             bridge.expose('load', async (saved) => {
-                out.state = saved;
-                try { out.files = await sandboxFiles.text('state.json'); } catch (e) { out.files = e.code; }
-                try { out.save = { ok: await bridge.call('save', [{ text: 'overwritten by B', done: true }]) }; } catch (e) { out.save = { code: e.code }; }
-                await bridge.call('report', out);
+                const out = { state: saved, files: sandboxFiles.list() };
+                try { out.stateJson = await sandboxFiles.text('state.json'); } catch (e) { out.stateJson = e.code; }
+                await bridge.call('save', [{ text: JSON.stringify(out), done: true }]);
             });
         })();`;
-        await page.route(`${ORIGIN}/bundle-b/*`, (route) => {
-            const name = path.basename(new URL(route.request().url()).pathname);
-            return route.fulfill(name === 'app.js' ? { body: hostile, contentType: 'text/javascript' } : { body: readFileSync(path.join(EXAMPLE, name)), contentType: TYPES[path.extname(name)] });
-        });
-        const report = await page.evaluate(async ({ bundle }) => {
+        await routeBundleWith(page, 'bundle-b', hostile);
+        const first = await page.evaluate(async ({ bundle }) => {
             const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
-            const sandbox = document.querySelector('web-sandbox') as any;
-            sandbox.registerFiles({ 'state.json': '{"secret":"first app"}' }); // what the first app committed
-            (window as any).stopApp();
-            const reported = new Promise((resolve) => sandbox.expose('report', resolve));
-            await mountTodoApp(sandbox, { bundle, appId: 'bundle-b', store: (window as any).store });
-            return reported;
+            const app = (window as any).app;
+            app.sandbox.registerFiles({ 'state.json': '{"secret":"first app"}' }); // what the first app committed
+            app.stop();
+            (window as any).app = await mountTodoApp(document.getElementById('apps'), { bundle, appId: 'bundle-b', store: (window as any).store });
+            return { distinct: (window as any).app.sandbox !== app.sandbox, firstConnected: app.sandbox.isConnected };
         }, { bundle: '/bundle-b' });
-        expect(report).toEqual({ state: [], files: 'NOT_FOUND', save: {} });
+        expect(first).toEqual({ distinct: true, firstConnected: false });
+        await expect.poll(() => page.evaluate(() => (window as any).store.data.has('todos:bundle-b'))).toBe(true);
         const keys = await page.evaluate(() => Object.fromEntries((window as any).store.data));
-        expect(keys).toEqual({
-            'todos:todo-app': JSON.stringify([{ text: 'call bank, PIN 4711', done: false }]),
-            'todos:bundle-b': JSON.stringify([{ text: 'overwritten by B', done: true }]),
+        expect(JSON.parse(JSON.parse(keys['todos:bundle-b'])[0].text)).toEqual({ state: [], files: ['app.css', 'app.js', 'logo.png'], stateJson: 'NOT_FOUND' }); // none of the first app's state or files
+        expect(keys['todos:todo-app']).toBe(JSON.stringify([{ text: 'call bank, PIN 4711', done: false }])); // the first app's key, untouched
+        expect(Object.keys(keys).sort()).toEqual(['todos:bundle-b', 'todos:todo-app']);
+    });
+
+    // An element is one app's for its life (BD6:LIM-2, BD6:CHL-3): its files, its methods, its pending guest writes and every
+    // handle a host method holds outlive an app that was stopped, so the recipe gives each mount an element of its own. Each
+    // row below is a way the first app (A) could reach the next one (B) on a shared element; B is a recorder that reports
+    // what it was handed through its own `save`, and A's data carries the marker A-PRIVATE.
+    const RECORDER = `const seen = { loads: [], pushes: [] };
+        const report = () => bridge.call('save', [{ text: JSON.stringify({ ...seen, files: sandboxFiles.list() }), done: true }]);
+        bridge.expose('load', (saved) => { seen.loads.push(saved); return report(); });
+        bridge.expose('push', (batch) => { seen.pushes.push(batch); return report(); });`;
+    /** What B's recorder reported last, from the embedder's store. */
+    const recorded = (page: Page) => page.evaluate(() => {
+        const stored = (window as any).store.data.get('todos:bundle-b');
+        return stored === undefined ? null : JSON.parse(JSON.parse(stored)[0].text);
+    });
+    const NOTHING_OF_B = { loads: [[]], pushes: [] as unknown[], files: ['app.css', 'app.js', 'logo.png'] }; // B's own, and no progress.png of A's
+
+    test("a commit of the first app's guest writes after stop() lands on the first app's element only: the next app has none of its files", async ({ sandbox, page, browserName }) => {
+        void sandbox; // the fixture opens the harness page
+        await mountApp(page, [{ text: 'A-PRIVATE', done: false }]);
+        await waitInView(page, browserName, `document.getElementById('badge').querySelector('img')?.naturalWidth === 60`); // A's progress.png is pending
+        await routeBundleWith(page, 'bundle-b', RECORDER);
+        const probe = await page.evaluate(async ({ bundle }) => {
+            const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
+            const a = (window as any).app;
+            const pending = a.sandbox.listGuestWrites().map((w: any) => w.path);
+            a.stop();
+            a.sandbox.commitGuestWrites(pending); // the embedder's commit, after stop()
+            const b = await mountTodoApp(document.getElementById('apps'), { bundle, appId: 'bundle-b', store: (window as any).store });
+            (window as any).app = b;
+            return { pending, aConnected: a.sandbox.isConnected, aState: a.sandbox.state, distinct: a.sandbox !== b.sandbox };
+        }, { bundle: '/bundle-b' });
+        await expect.poll(() => recorded(page)).toEqual(NOTHING_OF_B);
+        expect(probe).toEqual({ pending: ['progress.png'], aConnected: false, aState: expect.stringMatching(/^(idle|terminated)$/), distinct: true });
+    });
+
+    test("a host method of the first app that calls the sandbox after stop() reaches nothing: the next app is sent none of its data", async ({ sandbox, page, browserName }) => {
+        void sandbox; // the fixture opens the harness page
+        await routeBundleWith(page, 'bundle-a', `bridge.expose('load', () => {}); bridge.expose('start', () => { bridge.call('late'); });`);
+        await routeBundleWith(page, 'bundle-b', RECORDER);
+        const outcome = await page.evaluate(async () => {
+            const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
+            const container = document.getElementById('apps') ?? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'apps' }));
+            const store = { data: new Map<string, string>(), getItem(key: string) { return this.data.get(key) ?? null; }, setItem(key: string, value: string) { this.data.set(key, value); } };
+            (window as any).store = store;
+            const a = await mountTodoApp(container, { bundle: '/bundle-a', appId: 'a', store });
+            // a method the embedder added to the app: it waits, then calls the app with the app's private data
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
+            const lateOutcome = new Promise<string>((resolve) => a.sandbox.expose('late', async () => {
+                await gate;
+                resolve(await a.sandbox.call('push', [{ text: 'A-PRIVATE', done: false }]).then(() => 'delivered', (e: any) => `refused: ${e?.code}`));
+            }));
+            await a.sandbox.call('start'); // the app calls `late`, which is now running and waiting
+            a.stop();
+            const b = await mountTodoApp(container, { bundle: '/bundle-b', appId: 'bundle-b', store });
+            (window as any).app = b;
+            release();
+            const late = await lateOutcome;
+            await b.sandbox.call('push', [{ text: 'B-OWN', done: false }]); // after the late call: B's report holds whatever reached it
+            return { late, aConnected: a.sandbox.isConnected, distinct: a.sandbox !== b.sandbox };
         });
+        await expect.poll(() => recorded(page)).toEqual({ ...NOTHING_OF_B, pushes: [[{ text: 'B-OWN', done: false }]] });
+        expect(outcome).toEqual({ late: expect.stringMatching(/^refused: /), aConnected: false, distinct: true });
+    });
+
+    test("two mounts that overlap, the first waiting for a slow store, each have an element of their own: the second is sent none of the first's data", async ({ sandbox, page, browserName }) => {
+        void sandbox; // the fixture opens the harness page
+        await routeBundleWith(page, 'bundle-b', RECORDER);
+        await routeBundle(page);
+        const result = await page.evaluate(async ({ bundle }) => {
+            const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
+            const container = document.body.appendChild(Object.assign(document.createElement('div'), { id: 'apps' }));
+            for (const element of document.querySelectorAll('web-sandbox')) if (!container.contains(element)) element.remove();
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => (release = resolve));
+            const data = new Map<string, string>([['todos:a', JSON.stringify([{ text: 'A-PRIVATE', done: false }])]]);
+            const store = {
+                data,
+                getItem: async (key: string) => { if (key === 'todos:a') await gate; return data.get(key) ?? null; }, // A's read is slow
+                setItem: (key: string, value: string) => void data.set(key, value),
+            };
+            (window as any).store = store;
+            const first = mountTodoApp(container, { bundle: '/saved-app', appId: 'a', store });
+            const b = await mountTodoApp(container, { bundle, appId: 'bundle-b', store }); // while the first is still waiting
+            (window as any).app = b;
+            release();
+            const a = await first;
+            (window as any).first = a;
+            return { elements: container.querySelectorAll('web-sandbox').length, distinct: a.sandbox !== b.sandbox, aState: a.sandbox.state };
+        }, { bundle: '/bundle-b' });
+        // the first app's data reached its own element: its load ran there, and the app drew its image
+        await expect.poll(() => recorded(page)).toEqual(NOTHING_OF_B);
+        await expect.poll(() => page.evaluate(() => (window as any).first.sandbox.listGuestWrites().map((w: any) => w.path))).toEqual(['progress.png']);
+        expect(result).toEqual({ elements: 2, distinct: true, aState: 'ready' });
+    });
+
+    test("a mount whose load fails leaves nothing running: no element, the app's methods unreachable, and the next app is not written to", async ({ sandbox, page, browserName }) => {
+        void sandbox; // the fixture opens the harness page
+        await routeBundleWith(page, 'bundle-a', `bridge.expose('load', () => { throw new Error('load failed'); });
+            bridge.expose('go', () => bridge.call('save', [{ text: 'written by A', done: false }]));`);
+        await routeBundleWith(page, 'bundle-b', RECORDER);
+        const result = await page.evaluate(async () => {
+            const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
+            const container = document.body.appendChild(Object.assign(document.createElement('div'), { id: 'apps' }));
+            for (const element of document.querySelectorAll('web-sandbox')) if (!container.contains(element)) element.remove();
+            const store = { data: new Map<string, string>(), getItem(key: string) { return this.data.get(key) ?? null; }, setItem(key: string, value: string) { this.data.set(key, value); } };
+            (window as any).store = store;
+            const added: any[] = [];
+            new MutationObserver((records) => { for (const record of records) added.push(...record.addedNodes); }).observe(container, { childList: true });
+            let failure = '';
+            try { await mountTodoApp(container, { bundle: '/bundle-a', appId: 'a', store }); } catch (error: any) { failure = String(error?.message); }
+            const elementsAfterFailure = container.querySelectorAll('web-sandbox').length;
+            // the element the failed mount made: what its app could still do
+            const go = await added[0].call('go').then(() => 'delivered', (e: any) => `refused: ${e?.code}`);
+            const storedAfterGo = [...store.data.keys()];
+            (window as any).app = await mountTodoApp(container, { bundle: '/bundle-b', appId: 'bundle-b', store });
+            const goAfterB = await added[0].call('go').then(() => 'delivered', (e: any) => `refused: ${e?.code}`);
+            return { failure, elementsAfterFailure, go, storedAfterGo, goAfterB, keys: [...store.data.keys()] };
+        });
+        expect(result.failure).toContain('load failed');
+        await expect.poll(() => recorded(page)).toEqual(NOTHING_OF_B);
+        expect(result).toEqual({ failure: result.failure, elementsAfterFailure: 0, go: expect.stringMatching(/^refused: /), storedAfterGo: [], goAfterB: expect.stringMatching(/^refused: /), keys: ['todos:bundle-b'] });
     });
 
     test('the app stops adding at the host\'s limit, and a save the host refuses is shown in the view', async ({ sandbox, page, browserName }) => {
@@ -209,7 +350,7 @@ test.describe('the sealed app of the docs', () => {
         await waitInView(page, browserName, `document.getElementById('count').textContent === 'the list is full (1000 todos)'`, 30000);
         expect(await saved(page)).toHaveLength(1000); // nothing was added, nothing lost
         // a push past the limit puts 1001 in the app; the next save is refused by the host, and the app says so
-        await page.evaluate(() => (document.querySelector('web-sandbox') as any).call('push', [{ text: 'over', done: false }]));
+        await page.evaluate(() => ((window as any).app.sandbox as any).call('push', [{ text: 'over', done: false }]));
         await waitInView(page, browserName, `document.getElementById('count').textContent === '1001 open' && !!document.getElementById('done-0')`, 90000);
         const box = await waitInView<{ x: number; y: number }>(page, browserName, `(() => { const r = document.getElementById('done-0').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
         await clickInSandbox(page, box.x, box.y);
