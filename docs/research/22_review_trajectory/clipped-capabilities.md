@@ -2,7 +2,7 @@
 
 Repo state read: `main` at `be0a34a` (docs, ADR-004 to ADR-007, `docs/archive/backlog/BACKLOG-done.md`, `docs/archive/adr/*-history.md`, the review reports).
 
-ID forms follow the board registry: `AR:` adversarial review, `FR:` focused, `BR:` broad, `VR:` verification, `R1:` to `R5:` the numbered rounds, `BD1:` to `BD6:` board passes (`P3:` in the last table is `BD3:`), `S<n>` backlog items. "Opt-in" is whether the embedder can get the old behaviour back with a config option, in a supported mode.
+ID forms follow the board registry: `AR:` adversarial review, `FR:` focused, `BR:` broad, `VR:` verification, `R1:` to `R5:` the numbered rounds, `BD1:` to `BD7:` board passes (`P3:` in the last table is `BD3:`), `S<n>` backlog items. "Opt-in" is whether the embedder can get the old behaviour back with a config option, in a supported mode.
 
 Mode names: strict = the default (worker plus inert view); cooperative = the old `iframe` mode (renamed S48); worker = worker in the frame.
 

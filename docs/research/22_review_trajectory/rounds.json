@@ -688,5 +688,52 @@
   "notes": "Result: not clean (5 data findings reach sealed; 0 of 2). The count fell from 10 (BD5) to 5, on the same sealed basis, so the first condition of the evaluation rule does not hold. The second form triggered for LIM-2 and CHL-3, which sit in the recipe that the previous round rewrote (#88), and for LIM-1, an incomplete part of the pass-5 error-text fix (#86). ISO-1 and ISO-2 are a new channel and not fix-induced: the policy text and reporting endpoints of the inherited CSP list, which INHERITED_CONTEXT had no row for. Sealed mode's no-network property held under a newcomer's attempts (fetch, XHR, WebSocket, remote import, nested worker, beacons, frames, stylesheets and more), and 44 of 45 single-point mutations were caught by the unit suite. Fixed by construction: the guest's worker never reaches a refusing check of the host page's policy (no string run as code, no `import(` in an entry, violation events stopped and blank, the view runs no guest code, #90) and the view applies guest styles through the CSSOM; the library's own refusals carry fixed texts (#89); the recipe gives each app its own element (this pull request).",
   "unrated": 0,
   "unsplit_low_or_info": 0
+ },
+ {
+  "seq": 16,
+  "id": "BD7",
+  "name": "S74 review board, pass 7",
+  "source": "BOARD-PASS-7-2026-11-07.md",
+  "date": "2026-11-07",
+  "commit": "fbc2587",
+  "reviewers": 6,
+  "verifiers": 2,
+  "reviewers_detail": "ISO, CHL, LIM (Opus), DOC, TST (Sonnet), NEW (Haiku); 2 verifiers (ISO-1 and ISO-3; LIM-1, LIM-2 and CHL-2). The other findings have no verdict.",
+  "total_findings": 16,
+  "critical": 0,
+  "high": 3,
+  "medium": 2,
+  "low": 11,
+  "info": 0,
+  "severity_basis": "As verified, without the merge. Reviewer ratings were high 2 / medium 2 / low 13 (17 findings). Changes: ISO-1 medium to high (the guest chooses the scheme that arrives as blocked-uri, and no policy can admit it); CHL-2 low to medium (the library's RpcError texts cross too, on three engines); CHL-1 is the same defect as ISO-2, so it is not counted again. An unverified finding keeps the reviewer's rating. High: LIM-1 (Chromium), ISO-1 (Chromium and Firefox) and LIM-2 (availability, all engines). Medium: CHL-2 and LIM-3 (availability).",
+  "data_affecting": 3,
+  "availability_only": 2,
+  "no_data_effect": 11,
+  "effect_basis": "STATED by the verdicts for the three data findings: LIM-1 (the guest's CSS samples and an absolute <base> URL in the app's html, reported to the host's endpoint and its listeners by the host realm's DOMParser; Chromium), ISO-1 (a guest-chosen scheme as blocked-uri in reports to the host's endpoint, from CSS URLs that are not server URLs; Chromium and Firefox), CHL-2 (the caller's path, a method name or another app's text crossing to the app in a library error a host method lets propagate). Availability-only: LIM-2 (the entry scan is quadratic; verified high under exception 1), LIM-3 (html has no size cap). No data effect: ISO-2 with CHL-1 (latent), ISO-3, LIM-4, LIM-5, DOC-1 to DOC-3, TST-1, TST-2, NEW-1, NEW-2.",
+  "data_ids": [
+   "LIM-1",
+   "ISO-1",
+   "CHL-2"
+  ],
+  "availability_ids": [
+   "LIM-2",
+   "LIM-3"
+  ],
+  "data_reaching_strict": null,
+  "data_reaching_strict_of": null,
+  "strict_basis": "Not counted for this round. The board's scope is sealed mode (D5, 2026-10-24); none of the BD7 findings needs `origins` or `fetchBridge`.",
+  "data_reaching_scope": 3,
+  "data_reaching_scope_of": 3,
+  "scope": "sealed",
+  "scope_basis": "Sealed mode, the default, with its own opt-ins, as for BD5 and BD6. All 3 reach it and all 3 are verified; LIM-1 reaches strict mode too.",
+  "dominant_classes": [
+   "A",
+   "P",
+   "E-cpu"
+  ],
+  "class_basis": "Reviewer and verifier classes: LIM-1 A (the host page's context: the host realm parses guest content under the page's own policy), ISO-1 A with a class B side (the renderer predicts which CSS URLs reach a policy check; markup keeps an allowlist and CSS a denylist), CHL-2 P (what crosses is not what the API shows), LIM-2 and LIM-3 E-cpu (host-thread work on guest content outside a bounding chokepoint).",
+  "notes": "Result: not clean (3 data findings reach sealed; 0 of 2). The count fell from 5 (BD6) to 3, on the same sealed basis, a second fall in a row, so the first condition of the evaluation rule does not hold. The second form triggered for CHL-2 (the library's other errors, left by the fixed-text rule of #89) and for LIM-2, LIM-4 and LIM-5 (the code of #90 and #93). The enumeration of pass 6 held in the guest's realms: the worker's allowlist, the code-from-string refusal, the request gate and the frames found nothing. The findings are at its edges: the host realm's handling of guest content (LIM-1, LIM-2, LIM-3), a denylist of URL schemes in CSS (ISO-1) and the errors the fixed-text rule did not cover (CHL-2). Drift check: the architecture has held since sealed mode, src/ grew from 16.7k to 23.0k lines (+38%) since pass 1 with the largest growth in fix pull requests (#92 +893, #90 +384, #93 +311), and class A came back a fifth pass at a new boundary each time. Fixed by construction in four pull requests (the host-realm passes fix, the crossing-texts fix, the URL-rule fix, the docs fix) and a subtraction pass is planned before pass 8. Open: whether to keep D6 (the served-document mode shelved) with a trigger or switch now, pending the owner's answer.",
+  "unrated": 0,
+  "unsplit_low_or_info": 0
  }
 ]
