@@ -555,7 +555,7 @@ export const SEALED_REACH = {
             linkHref: neutralised(['inertHref'], 'the href is replaced before insertion'),
             ...REQUEST_MAKERS,
             viewApi: neutralised(['baseCheck', 'rendererUrlDrop', 'inertHref'], 'what it renders: its URL attributes and links'),
-            scope: none("the worker's URL and base are its own `blob:` URL, never the document's base (probe: test/e2e/sealed-reach.spec.ts)"),
+            scope: none("the worker's base is its own `blob:` URL, against which no relative URL resolves, never the document's (probe: test/e2e/sealed-reach.spec.ts)"),
         },
     },
     cspFetch: {
@@ -621,7 +621,7 @@ export const SEALED_REACH = {
     coep: {
         rest: 'reads nothing cross-origin isolation changes, and loads nothing an embedder policy checks (a `blob:` load is not cross-origin)',
         cells: {
-            isolation: neutralised(['isolationRefusal'], 'no sandbox runs on an isolated host page: shared memory is absent and `crossOriginIsolated` reads false on every engine (probe)'),
+            isolation: neutralised(['isolationRefusal'], 'no sandbox runs on an isolated host page: shared memory is absent and `crossOriginIsolated` reads false on every engine (probe: test/e2e/sealed-reach.spec.ts)'),
             performance: neutralised(['isolationRefusal'], "no sandbox runs on an isolated host page, so the clock keeps the coarse resolution of a page that is not"),
         },
     },
@@ -644,7 +644,7 @@ export const SEALED_REACH = {
     documentOrigin: {
         rest: 'reads no origin, URL or storage',
         cells: {
-            scope: neutralised(['originCheck'], "it reads the worker's own origin, `'null'`, and its own URL, `blob:null/<uuid>` (probe)"),
+            scope: neutralised(['originCheck'], "it reads the worker's own origin, `'null'`, and its own URL, `blob:null/<uuid>` (probe: test/e2e/sealed-reach.spec.ts)"),
             originStorage: neutralised(['originCheck'], "the opaque origin's own: a database or a lock is refused with a SecurityError, and a channel reaches only the guest's own realms (measured, BD5:ISO-1)"),
         },
     },
