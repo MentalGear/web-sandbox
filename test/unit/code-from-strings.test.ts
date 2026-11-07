@@ -2,7 +2,8 @@ import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { ABSENT_COMPILERS, CODE_FROM_STRING_REFUSAL, CODE_FROM_STRING_SINKS, FUNCTION_KINDS_SOURCE, REFUSED_GLOBALS, REFUSED_TIMERS, refuseCodeFromStrings } from '@src/lib/code-from-strings';
 import { STRICT_WORKER_GLOBALS } from '@src/lib/worker-globals';
-import { inStrictWorker } from '@src/lib/in-sandbox-view';
+import { inStrictWorker, viewBootstrapHash } from '@src/lib/in-sandbox-view';
+import { SEALED_FILE_KINDS, sealedViewPolicy } from '@src/lib/csp/csp-generator';
 
 /**
  * The code-from-string sinks of the guest's worker (code-from-strings.ts; S74, class A: INHERITED_CONTEXT.cspPolicyText,
@@ -157,5 +158,20 @@ describe('the other compilers are absent from the worker', () => {
             expect(name).toBe('WebAssembly');
             expect(prelude).toMatch(/if \(!options\.scriptUnsafe\) remove\(g, ["']WebAssembly["']\)/);
         }
+    });
+});
+
+describe('the view runs no guest code, so no string of the guest\'s runs as code there', () => {
+    // In strict and sealed mode the guest has no script in the view: the view's script-src admits the bootstrap's hash
+    // alone (no 'unsafe-inline', no 'unsafe-eval', script-src-attr 'none'), and the renderer drops every script and handler
+    // before insertion (test/e2e/strict.spec.ts, G1, on every engine). So the sinks the worker refuses have no second home
+    // in the view, and the view's own checks of the host page's policy are of the library's loads and the guest's markup.
+    it("sealed mode's view policy admits the bootstrap's hash and nothing else as script", () => {
+        const hash = viewBootstrapHash();
+        const policy = sealedViewPolicy({ fileKinds: new Set(SEALED_FILE_KINDS), bootstrapHash: hash });
+        const directives = new Map(policy.split('; ').map(part => { const [name, ...sources] = part.split(' '); return [name!, sources]; }));
+        expect(directives.get('script-src')).toEqual([hash]);
+        expect(directives.get('script-src-attr')).toEqual(["'none'"]);
+        expect(policy).not.toContain('unsafe-eval');
     });
 });
