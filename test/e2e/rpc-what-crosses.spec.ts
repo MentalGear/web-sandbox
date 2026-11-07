@@ -8,7 +8,9 @@ import { test, expect } from './fixture';
  *      pattern (`HEAPU8.subarray(ptr, ptr + n)` of a 16 MiB module heap) sends n bytes (BD5:LIM-1);
  *   2. a host method that throws an engine error quoting the host's data, or returns a value clone cannot carry (whose
  *      Chromium error quotes the function's source), gives the app its name or the library's text only; the host's
- *      console has the engine's text (BD5:LIM-2, BD5:DOC-1).
+ *      console has the engine's text (BD5:LIM-2, BD5:DOC-1);
+ *   3. a host method that lets the refusal of its own call() propagate (arguments clone cannot carry: a function, a
+ *      symbol, a getter that throws) gives the app the library's text, never the engine's (BD6:LIM-1).
  * unit tests: test/unit/rpc-what-crosses.test.ts; the property test over the posted snapshot: test/unit/structural.test.ts.
  */
 
@@ -97,6 +99,11 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
             // a result clone cannot carry: on Chromium the clone's error quotes the function's source
             resultFunction: () => ({ user: 'a', refresh() { return 'HOSTSECRET42-in-source'; } }),
             resultNode: () => ({ element: document.body }),
+            // a method that makes its own call() with an argument clone cannot carry, and lets the refusal propagate (BD6:LIM-1)
+            relayFunction: () => s.call('apply', { save() { return `${secret}-inline-token`; } }),
+            relaySymbol: async () => await s.call('apply', Symbol(secret)),
+            relayGetterJson: () => s.call('apply', { get x() { return JSON.parse(secret); } }),
+            relayGetterNull: () => s.call('apply', { get x() { return (null as any)[secret]; } }),
         };
         s.registerFiles({ 'main.js': entry });
         s.expose('labels', () => Object.keys(cases));
@@ -170,7 +177,12 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
         expect(failures[label], label).toEqual({ error: 'RESULT_NOT_TRANSFERABLE', message: 'result is not transferable: it holds a value structured clone cannot carry' });
     }
     // the host's console has each withheld text, with the method's name: the embedder can still debug
-    const withheld = warnings.filter(text => text.startsWith('[Sandbox] the host method "fail" failed'));
+    const withheld = warnings.filter(text => text.startsWith('[Sandbox] "fail" failed'));
     expect(withheld).toHaveLength(11);
     expect(withheld.some(text => text.includes(SECRET))).toBe(true);
+    // a refusal of the host's own call() carries the library's text on every engine; the engine's goes to the console
+    for (const label of ['relayFunction', 'relaySymbol', 'relayGetterJson', 'relayGetterNull']) {
+        expect(failures[label], label).toEqual({ error: 'HANDLER_ERROR', message: 'RPC arguments are not transferable: they hold a value structured clone cannot carry' });
+    }
+    expect(warnings.filter(text => text.startsWith('[Sandbox] "apply" failed'))).toHaveLength(4);
 });
