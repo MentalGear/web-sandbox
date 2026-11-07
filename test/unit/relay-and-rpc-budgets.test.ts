@@ -530,21 +530,16 @@ describe("R3-4: cooperative mode without allow-scripts says once what has no eff
     });
 });
 
-describe('R2-5: worker mode removes WebAssembly unless scriptUnsafe, as strict mode does', () => {
-    it("the worker's source removes it after the globals allowlist, before the comms script; with scriptUnsafe it is kept", async () => {
+describe('R2-5: worker mode has no WebAssembly unless scriptUnsafe, as strict mode', () => {
+    it("the allowlist of the worker's source keeps it only with scriptUnsafe, and runs before the comms script", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         for (const scriptUnsafe of [false, true]) {
             const el = await mountElement({ mode: 'worker', scriptUnsafe });
             const source = el._getWorkerBootstrapScript([]);
-            const removal = source.indexOf('function removeWebAssembly');
-            expect(removal >= 0, String(scriptUnsafe)).toBe(!scriptUnsafe);
-            if (!scriptUnsafe) {
-                // the allowlist runs first, as the argument of the function the rest runs in (R4:M-1), whose
-                // first statement is the removal
-                expect(source.indexOf('(function (g, postToFrame) {(function removeWebAssembly')).toBeGreaterThan(0);
-                expect(source.indexOf('keepOnlyWorkerGlobals')).toBeGreaterThan(source.lastIndexOf('})(this, ('));
-                expect(removal).toBeLessThan(source.indexOf('function inSandboxScript'));
-            }
+            // the allowlist's literal is the one place of the source that can name it
+            expect(source.includes('WebAssembly'), String(scriptUnsafe)).toBe(scriptUnsafe);
+            // the allowlist runs first, as the argument of the function the rest runs in (R4:M-1)
+            expect(source.indexOf('keepOnlyWorkerGlobals')).toBeGreaterThan(source.lastIndexOf('})(this, ('));
             el.remove();
         }
     });

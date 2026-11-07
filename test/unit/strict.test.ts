@@ -133,12 +133,16 @@ describe('review C2: the worker source runs the entry in its own scope, after th
         expect(source).toMatch(/\}\)\(this\);\n\(function \(\) \{\nfunction Worker\(\) \{\} var x = 1;\n\}\)\.call\(this\);\n__sandboxEntryRan_[0-9a-f]{32}\(\);\n$/);
     });
 
-    it("the allowlist the strict worker keeps is STRICT_WORKER_GLOBALS: no importScripts (S74)", async () => {
+    it("the allowlist the strict worker keeps is STRICT_WORKER_GLOBALS: no importScripts (S74), and WebAssembly only with scriptUnsafe (R1:R2-5)", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'strict' });
-        const source: string = el._getStrictWorkerSource([], 'void 0');
-        expect(source).toContain(`(g, ${JSON.stringify(STRICT_WORKER_GLOBALS)}, `);
-        expect(source).not.toContain(`(g, ${JSON.stringify(WORKER_GLOBALS)}, `);
+        for (const scriptUnsafe of [false, true]) {
+            const el = await mount({ mode: 'strict', scriptUnsafe });
+            const source: string = el._getStrictWorkerSource([], 'void 0');
+            expect(source).toContain(`(g, ${JSON.stringify(STRICT_WORKER_GLOBALS.filter(name => scriptUnsafe || name !== 'WebAssembly'))}, `);
+            expect(source).not.toContain(`(g, ${JSON.stringify(WORKER_GLOBALS)}, `);
+            // nothing else of the source names it: the allowlist alone decides whether the worker has it
+            expect(source.includes('WebAssembly'), `scriptUnsafe: ${scriptUnsafe}`).toBe(scriptUnsafe);
+        }
     });
 
     it('broad review ST4: the marker the line after the entry calls has a name drawn per build, which the prelude defines', async () => {

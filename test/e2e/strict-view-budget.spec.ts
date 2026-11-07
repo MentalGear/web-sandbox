@@ -2,7 +2,7 @@ import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { inView, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { cssLoadBound, RENDER_RULES, sanitizeRender, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
-import { cssReferences, withoutNetworkReferences } from '@src/lib/css-references';
+import { cssReferences, keepsUrl, withKeptReferences } from '@src/lib/css-references';
 import { styleMarkup } from '@src/lib/style-markup';
 import { VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
 import { busyOf, busyShare, describeShare, idleBaseline, lag, loadedShare, operationCost, startLag, viewBound } from './host-share';
@@ -175,8 +175,9 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
             const count = (${cssLoadBound.toString()});
             const sanitize = (${sanitizeRender.toString()});
             const scanCss = (${cssReferences.toString()});
-            const dropCss = (${withoutNetworkReferences.toString()});
-            const dropNetworkCss = (css, dropped) => dropCss(css, scanCss, dropped);
+            const keepCss = (${withKeptReferences.toString()});
+            const keepsUrl = (${keepsUrl.toString()});
+            const keptCss = (css, dropped, property) => keepCss(css, scanCss, (url, of, text) => keepsUrl(url, () => false, of, text), dropped, property);
             const encoding = (${styleMarkup.toString()})('wmeasure0001');
             const rules = ${JSON.stringify(RENDER_RULES)};
             const half = ${VIEW_RENDER_MAX_LENGTH / 2};
@@ -211,7 +212,7 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
                 const cleaned = () => {
                     const content = parsed();
                     const context = { target: 'div', animating: [], origins: { images: ['https://a.example'] }, refused: [], urls: 0, loads: [], css: [], sheets: [], markup: encoding };
-                    sanitize(content, () => null, () => false, dropNetworkCss, rules, switches, { elements: 50000, depth: 256, urls: 1000 }, context);
+                    sanitize(content, () => null, () => false, keptCss, rules, switches, { elements: 50000, depth: 256, urls: 1000 }, context);
                     return { content, context };
                 };
                 // what cssLoadsOf does with them: the <style> texts (RenderContext.sheets) and the stylesheet links read, and

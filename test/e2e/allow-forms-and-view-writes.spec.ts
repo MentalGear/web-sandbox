@@ -122,7 +122,7 @@ test.describe('R4-4: the strict view shows the raster images the guest writes, f
             };
             expect(await named([first.src, second.src])).toEqual([null, second.src]);
             const removed = await show(null);
-            expect(removed).toEqual({ size: '0x0', src: 'gen/chart.png' });
+            expect(removed).toEqual({ size: '0x0', src: null }); // a path that names nothing is dropped (the URL rule)
             expect(await named([second.src])).toEqual([null]);
         });
     });
@@ -146,7 +146,8 @@ test.describe('R4-4: the strict view shows the raster images the guest writes, f
             links: document.querySelectorAll('link').length,
             video: document.getElementById('v').getAttribute('src'),
         })`);
-        expect(view).toEqual({ imgs: ['w/a.svg 0', 'w/b.html 0', 'w/c.js 0', 'w/d.png 0'], links: 0, video: 'w/a.svg' });
+        // none of them is a URL the view minted, so the URL rule drops each before insertion: nothing can resolve it
+        expect(view).toEqual({ imgs: ['null 0', 'null 0', 'null 0', 'null 0'], links: 0, video: null });
         expect(recorder.paths('allowed')).toEqual(['/control.svg']);
         expect(recorder.paths('blocked')).toEqual([]);
     });

@@ -21,7 +21,7 @@ import { crossingText, mintError, mintUncodedError } from "./lib/minted-errors";
 import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
-import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
+import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from "./lib/worker-globals";
 import { dynamicImportAt } from "./lib/entry-imports";
 import { CODE_FROM_STRING_REFUSAL, FUNCTION_KINDS_SOURCE, REFUSED_GLOBALS, REFUSED_TIMERS, refuseCodeFromStrings } from "./lib/code-from-strings";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
@@ -576,13 +576,6 @@ function sameData(a: unknown, b: unknown): boolean {
     return true;
 }
 
-// The first statement after the globals allowlist in worker mode's worker unless scriptUnsafe (R1:R2-5). Stringified.
-function removeWebAssembly(g: { WebAssembly?: unknown }) {
-    if (!('WebAssembly' in g)) return;
-    Reflect.deleteProperty(g, 'WebAssembly'); // strict-mode code (STRICT_DIRECTIVE): a failed delete is checked below, not thrown
-    if ('WebAssembly' in g) throw new Error('[Sandbox] the worker could not remove WebAssembly');
-}
-
 // The first statement of every guest worker's source, worker mode and strict mode (VR:V1): the worker keeps only the allowlisted globals (worker-globals.ts) before any other script of the
 // library or the guest runs there, so every request guest code can make goes through an API the policy governs on
 // every engine. `global` is the expression for the global object in that source.
@@ -592,9 +585,9 @@ function removeWebAssembly(g: { WebAssembly?: unknown }) {
 // never lets load anything (S74), and none of the names only a secure context has, whose members removeSecureContextOnly
 // deletes next and whose isSecureContext it pins to false, so its surface is the same whatever the host page's URL and the
 // engine (class A: INHERITED_CONTEXT.secureContext; SECURE_CONTEXT_ONLY).
-const workerGlobalsCall = (global: string, globals: readonly string[] = WORKER_GLOBALS, navigatorMembers: readonly string[] = WORKER_NAVIGATOR_MEMBERS) =>
+const workerGlobalsCall = (global: string, globals: readonly string[], navigatorMembers: readonly string[] = WORKER_NAVIGATOR_MEMBERS) =>
     `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(globals)}, ${toInlineScriptLiteral(navigatorMembers)})`;
-const workerGlobalsStatement = (global: string) => `${workerGlobalsCall(global, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS)};`
+const workerGlobalsStatement = (global: string, scriptUnsafe: boolean) => `${workerGlobalsCall(global, workerGlobalsFor(STRICT_WORKER_GLOBALS, scriptUnsafe), STRICT_WORKER_NAVIGATOR_MEMBERS)};`
     + `(${removeSecureContextOnly.toString()})(${global}, ${toInlineScriptLiteral(SECURE_CONTEXT_ONLY.members)});`;
 
 // The strict prelude's last statement, before the guest's entry, unless scriptUnsafe (code-from-strings.ts; BD6:ISO-1,
@@ -693,16 +686,16 @@ interface ViewNetwork {
     fetchBridge: { timeoutMs: number } | null;
 }
 
-// The warning for a registered stylesheet the view of strict or sealed mode gets without its network URLs, or not at all
-// (files.ts, viewStylesheets): once per element and text, as the build's other warnings about the files (_warnOnce).
-// Sealed mode has no origin to show such a file from, so it names none.
+// The warning for a registered stylesheet the view of strict or sealed mode gets without the URLs it may not keep, or not
+// at all (files.ts, viewStylesheets; keepsUrl): once per element and text, as the build's other warnings about the files
+// (_warnOnce). Sealed mode has no origin to show such a file from, so it names none.
 function viewStylesheetWarning(mode: 'strict' | 'sealed', path: string, urls: readonly string[], unreadable: string | null): string {
     const file = `[Sandbox] ${mode} mode: the registered stylesheet ${JSON.stringify(path.slice(0, 256))}`;
-    if (unreadable !== null) return `${file} gets no URL in the view: ${unreadable}, so the view could not take its network URLs out of it.`;
+    if (unreadable !== null) return `${file} gets no URL in the view: ${unreadable}, so the view could not read the URLs it names.`;
     const first = JSON.stringify(urls[0]!.slice(0, 256));
-    const names = `${file} names ${urls.length === 1 ? 'a network URL' : `${urls.length} network URLs`} (${first}${urls.length > 1 ? ', …' : ''}); the view drops ${urls.length === 1 ? 'it' : 'them'}`;
+    const names = `${file} names ${urls.length === 1 ? 'a URL that is' : `${urls.length} URLs that are`} no registered file (${first}${urls.length > 1 ? ', …' : ''}); the view drops ${urls.length === 1 ? 'it' : 'them'}`;
     if (mode === 'sealed') return `${names}: sealed mode has no network. Register the file instead.`;
-    return `${names}: a load that CSS makes cannot be sent without cookies. Register the file instead, or show it with an element (<img>, <video>) from an origin listed in origins.`;
+    return `${names}: CSS in the view loads registered files only (a load that CSS makes cannot be sent without cookies). Register the file instead, or show it with an element (<img>, <video>) from an origin listed in origins.`;
 }
 
 // The host page as the config's rules about it read it (config-schema.ts, NormaliseContext), read only when such a rule
@@ -748,7 +741,6 @@ export class WebSandbox extends ElementBase {
     private _autoHeight: string | null = null;   // the inline height auto-sizing last wrote on the element
     private _fetchPolicy: FetchPolicy | null = null; // the validated fetchBridge config, or null when off (BL:B5)
     private _origins: OriginPolicy = NO_ORIGINS; // the parsed `origins` (ADR-007), what the guest policy admits
-    private _warnedConfig = new Set<string>();   // the config schema's warnings (normaliseConfig), once each per instance
     private _fetchBridge: EnvironmentFields['_fetchBridge'] = null; // this environment's bridge: its requests end with it
     private _bridgeFrame: EnvironmentFields['_bridgeFrame'] = null; // the frame that makes this environment's bridge requests (BD1:ISO-1)
     private _warnedBridgeFrame = false;      // the bridge's frame did not start, said once per instance
@@ -792,8 +784,7 @@ export class WebSandbox extends ElementBase {
     // What waits for the port while loading, in the order it was issued (R2:L-3): execute() code and the host's own RPC
     // requests (cloned at call time), in one queue, so a call made before an execute() is sent before it.
     private _queue: ({ code: string } | { frame: unknown })[] = [];
-    private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
-    private _warnedStrict = new Set<string>(); // strict-mode warnings of a build (the view's stylesheet, html's scripts), once each per instance
+    private _warned = new Set<string>(); // the warnings said, each once per element and text (_warnOnce)
     private _warnedForeignDocument = false; // inserted into a document of another realm (BR:CB7), once per instance
     private _warnedWrapperStyle = false;    // the host page's style-src refused the wrapper's style (R1:R3-1), once per instance
     // The copy of the last usable setConfig() argument (R1:R3-7), compared as data with the next one; whether nothing else a
@@ -1002,19 +993,12 @@ export class WebSandbox extends ElementBase {
     // a refused config too, up to what refused it; only a config that passed every check is stored, last (FR:F6).
     private _applyConfig(copy: unknown) {
         const { value, warnings, refusal } = normaliseConfig(copy, readHostPage);
-        for (const message of warnings) this._warnConfig(message);
+        for (const message of warnings) this._warnOnce(message);
         if (value === null) throw refusal;
         this._config = value.config;
         this._fetchPolicy = value.fetchPolicy;
         this._origins = value.origins;
         this._callBudget = value.callBudget;
-    }
-
-    // A warning of the config schema: once per element and message.
-    private _warnConfig(message: string) {
-        if (this._warnedConfig.has(message)) return;
-        this._warnedConfig.add(message);
-        console.warn(message);
     }
 
     /**
@@ -1036,7 +1020,7 @@ export class WebSandbox extends ElementBase {
      *   `@import` only `text/css`; `img`, `srcset`, `poster`, icon links and CSS `url()` only `image/*`; `url()` in
      *   `@font-face` and `preload as=font` only `font/*`; `audio`, `video` and `source` only `audio/*` and `video/*`;
      *   `track` only `text/vtt`. A reference to a file of another type stays as written and fails closed, with one
-     *   warning. This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
+     *   warning (strict and sealed mode's view drops it: docs/API.md#the-url-rule). This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
      *   script. Code that passes `sandboxFiles.url()` to a script element or `importScripts()` itself decides what it
      *   loads (Chromium runs such a file whatever its type; Firefox and WebKit refuse it in `importScripts()`).
      * - How the guest names files (markup, module imports, stylesheets) is described in the README's Files section; why:
@@ -1831,7 +1815,7 @@ export class WebSandbox extends ElementBase {
     // VIEW_STILL_STYLE), which a srcdoc document inherits: the view checked, and drops the guest's stylesheets instead, so
     // no guest animation runs either way. Said once per element, with the hash to allow.
     private _warnStillStyleRefused() {
-        this._warnStrictOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or ${scriptHashSource(VIEW_STILL_STYLE)} in style-src (see docs/API.md#host-page-policy).`);
+        this._warnOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or ${scriptHashSource(VIEW_STILL_STYLE)} in style-src (see docs/API.md#host-page-policy).`);
     }
 
     // Flushes what was queued before the build was ready onto its port, in the order it was issued (R2:L-3): execute() code
@@ -2178,12 +2162,11 @@ export class WebSandbox extends ElementBase {
     private _getWorkerBootstrapScript(files: FileSnapshotEntry[], connect: readonly string[]) {
         // the worker keeps only the allowlisted globals (worker-globals.ts), then runs the comms script and builds its
         // own blobs and sandboxFiles from the same literal; the frame only spawns it and forwards the port
-        // No WebAssembly unless scriptUnsafe (R1:R2-5), as in strict mode: WebKit compiles it without
-        // 'wasm-unsafe-eval', so the policy alone does not keep it out. Removed before the comms script, like the globals.
+        // No WebAssembly unless scriptUnsafe (R1:R2-5), as in strict mode: off the allowlist (workerGlobalsFor).
         // The allowlist runs first, as the argument of the function the rest runs in: it returns the worker's postMessage,
         // which it deleted (R4:M-1), and only the comms script is given it, for its one WORKER_STARTED.
-        const noWasm = this._config.scriptUnsafe === true ? '' : `(${removeWebAssembly.toString()})(g);`;
-        const workerSource = `${STRICT_DIRECTIVE}(function (g, postToFrame) {${noWasm}${this._getSandboxCommsScript('worker', files, NO_MARKUP_PLAN, 'postToFrame', connect)}})(this, ${workerGlobalsCall('this')});`;
+        const globals = workerGlobalsFor(WORKER_GLOBALS, this._config.scriptUnsafe === true);
+        const workerSource = `${STRICT_DIRECTIVE}(function (g, postToFrame) {${this._getSandboxCommsScript('worker', files, NO_MARKUP_PLAN, 'postToFrame', connect)}})(this, ${workerGlobalsCall('this', globals)});`;
         return environmentGate('parent.parent', false, `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)}, ${toInlineScriptLiteral(TRUSTED_TYPES_POLICY)});`);
     }
 
@@ -2259,7 +2242,7 @@ export class WebSandbox extends ElementBase {
     // embedder did not give it (hostReach, the one decision; BD4:CHL-1, BD4:CHL-2). The page itself is never asked.
     // Pure of the element's fields: a nested or stale build narrows its own (LM-2).
     private _reach(): NarrowedReach {
-        return hostReach(this._origins, this._fetchPolicy, this._config.hostContentSecurityPolicy, message => this._warnConfig(message));
+        return hostReach(this._origins, this._fetchPolicy, this._config.hostContentSecurityPolicy, message => this._warnOnce(message));
     }
 
     // The host page's Trusted Types directives, where the browser has no Trusted Types to apply them (a browser that has them
@@ -2309,10 +2292,11 @@ export class WebSandbox extends ElementBase {
         this._warnOnce(`[Sandbox] cooperative mode without "allow-scripts" runs no script, the library's own included: ${unused.join(', ')} ${unused.length === 1 ? 'has' : 'have'} no effect. Add "allow-scripts" to capabilities.`);
     }
 
-    // Warnings about the guest's markup come back with every build of the same markup: one each per element.
+    // Every warning a config or a build brings back (the config schema's, the build's about the guest's markup and files,
+    // the view's notes) is said here, each text once per element.
     private _warnOnce(message: string) {
-        if (this._warnedGuestMarkup.has(message)) return;
-        this._warnedGuestMarkup.add(message);
+        if (this._warned.has(message)) return;
+        this._warned.add(message);
         console.warn(message);
     }
 
@@ -2443,7 +2427,7 @@ export class WebSandbox extends ElementBase {
         const html = this._config.html || '<div id="root"></div>';
         const sandboxFlags = this._getSandboxFlags();
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
-        // never a type that opens as a document (BR:ST1); stylesheets without a network URL (S74, files.ts viewStylesheets)
+        // never a type that opens as a document (BR:ST1); stylesheets with only the URLs the view keeps (files.ts viewStylesheets)
         const viewFiles = viewStylesheets(files.filter(candidate => isViewFileType(candidate[1])));
         for (const drop of viewFiles.dropped) this._warnOnce(viewStylesheetWarning(mode, drop.path, drop.urls, drop.unreadable));
         const strictInit: StrictInit = {
@@ -2515,22 +2499,17 @@ export class WebSandbox extends ElementBase {
             : { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [], sealed: true, violationFields: { ...VIOLATION_EVENT_FIELDS } };
         if (network?.fetchBridge) features.fetchBridge = { ...network.fetchBridge };
         if (this._config.guestWrites === true) features.guestWrites = true;
-        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
+        const scriptUnsafe = this._config.scriptUnsafe === true;
+        const options = { maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
         const prelude = `(function (g) {${STRICT_DIRECTIVE}`
             + `(${assertEntryScoped.toString()})(g);`
-            + workerGlobalsStatement('g')
-            + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()});`
+            + workerGlobalsStatement('g', scriptUnsafe)
+            + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}, ${this._config.guestWrites === true ? 'comms.writeFiles' : 'null'}, ${toInlineScriptLiteral(VIEW_FILE_TYPES)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)}, ${isStyleProperty.toString()});`
-            + (options.scriptUnsafe ? '' : refuseCodeFromStringsStatement('g'))
+            + (scriptUnsafe ? '' : refuseCodeFromStringsStatement('g'))
             + '})(this);';
         return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${marker}();\n`;
-    }
-
-    private _warnStrictOnce(message: string) {
-        if (this._warnedStrict.has(message)) return;
-        this._warnedStrict.add(message);
-        console.warn(message);
     }
 
     // Sealed mode is the default and its view is strict mode's, so markup written for cooperative mode reaches that view
@@ -2540,11 +2519,8 @@ export class WebSandbox extends ElementBase {
     // page's realm would check the guest's markup against the host page's policy, and report it (BD7:LIM-1; HOST_PASSES,
     // host-passes.ts).
     private _warnAboutStrictHtml(dropped: unknown) {
-        if (!hasStrictView(this._config.mode)) return;
-        const warning = this._config.mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING;
-        if (this._warnedStrict.has(warning) || !dropsScript(dropped)) return;
-        this._warnedStrict.add(warning);
-        console.warn(warning);
+        if (!hasStrictView(this._config.mode) || !dropsScript(dropped)) return;
+        this._warnOnce(this._config.mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING);
     }
 
     // The view liveness check (ADR-005): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.

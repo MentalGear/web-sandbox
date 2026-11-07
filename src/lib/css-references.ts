@@ -47,6 +47,13 @@ export interface CssReference {
     end: number;
     url: string; // the value, escapes decoded
     kind: 'style' | 'font' | 'image';
+    // the property of the declaration it is in, ASCII lower case; '' where it is in none the tokenizer can name (an
+    // @import, a selector, the start of a block, anything after a closing bracket that matched nothing): what decides
+    // whether a fragment-only URL loads (keepsUrl)
+    property: string;
+    // `loads` scope: a string in no position where CSS reads a string as a URL (a `content`, a font family name, an area
+    // of a grid template, a custom property's value), which the browser reads as text unless var() carries it into one
+    text: boolean;
 }
 
 // The tokens: a type only, so nothing of it is left in the function below, which must close over nothing of this module.
@@ -56,28 +63,40 @@ type Token =
     | { type: 'bad' } // bad-string or bad-url: never a reference
     | { type: 'url'; start: number; end: number; value: string; closed: boolean }
     | { type: 'function'; name: string }
+    | { type: 'ident'; name: string } // as written, escapes decoded
+    | { type: 'colon' }
     | { type: 'at-keyword'; name: string }
     | { type: 'open'; closer: ')' | ']' | '}' }
     | { type: 'close'; char: ')' | ']' | '}' }
     | { type: 'semicolon' }
-    | { type: 'other' }; // ident, hash, number, dimension, percentage, delim, comma, colon, CDO, CDC
+    | { type: 'other' }; // hash, number, dimension, percentage, delim, comma, CDO, CDC
 
 /**
  * Every URL reference in `source` (a stylesheet, the text of a `<style>`, or the declarations of a `style` attribute), in
- * source order, whatever it names. See the top of this file for what counts in `files` scope; `network` scope counts more:
- *   - files    the references that can name a registered file, to be rewritten: only closed tokens (cssUrlReferences);
- *   - network  every token that can make the browser load an http: or https: URL, for strict mode to drop
- *              (withoutNetworkReferences; BD2:ISO-2, docs/research/21_crossorigin_loads/README.md): a url token or a string anywhere outside the prelude of an
- *              at-rule other than @import's (a string in a custom property can reach `image-set()` through var(), and
- *              `src()` and `image()` take strings), and a token cut off by the end of the input too (the tokenizer
- *              returns it, and the browser loads it), whose value is an absolute http: or https: URL. It errs only toward
- *              finding more: a string such as `content: "https://…"` is one.
+ * source order, whatever it names. See the top of this file for what counts in `files` scope; `loads` scope counts more:
+ *   - files  the references that can name a registered file, to be rewritten: only closed tokens (cssUrlReferences);
+ *   - loads  every token that can make the browser load a URL, whatever it names, for the view to keep only what
+ *            keepsUrl allows (withKeptReferences; BD7:ISO-1): a url token or a string anywhere outside the prelude of an
+ *            at-rule other than @import's (a string in a custom property can reach `image-set()` through var(), and
+ *            `src()` and `image()` take strings), and a token cut off by the end of the input too (the tokenizer returns
+ *            it, and the browser loads it). It errs only toward finding more: a string such as `content: "x"` is one.
+ * A string is a URL where CSS reads one as a URL: the argument of `url(`, the first token of an @import prelude, and a
+ * string directly inside `image-set()`, `-webkit-image-set()`, `src()` or `image()`; every other string is `text`, which
+ * the browser reads as a URL only where var() carries it into one of those (keepsUrl keeps such a string unless it
+ * resolves to a URL). So whatever the engine makes of malformed nesting, a string that one reads in a URL position is a
+ * reference here, of one kind or the other.
+ * `property` is the property `source` is the value of (a `set({ css })` value, an SVG presentation attribute), or `''`
+ * for a stylesheet or a declaration list. Each reference carries the property of the declaration it is in, read as the
+ * browser reads a declaration: its first token, where a block starts or after a `;` of that block, is an identifier, and
+ * the next one a `:`. A `{` always starts a block of its own declarations, so a nested rule's selector (`a:hover { … }`)
+ * is never taken for the property of what is inside its block. After a closing bracket that matches nothing open (where
+ * engines may disagree on what is nested in what), no reference has a property.
  *
  * Self-contained: it closes over nothing of this module, and uses no syntax the build compiles into module-scope
  * helpers, because the strict view runs it too, stringified into its bootstrap (realms.ts, STRINGIFIED). Never throws,
  * one linear pass.
  */
-export function cssReferences(source: string, scope: 'files' | 'network'): CssReference[] {
+export function cssReferences(source: string, scope: 'files' | 'loads', property = ''): CssReference[] {
     // Character classes by UTF-16 code unit. At the end of the input a code is NaN, which is in no class.
     const isNewline = (c: number) => c === 0x0a || c === 0x0d || c === 0x0c;
     const isWhitespace = (c: number) => c === 0x20 || c === 0x09 || isNewline(c);
@@ -97,6 +116,7 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
     const BAD: Token = { type: 'bad' };
     const OTHER: Token = { type: 'other' };
     const SEMICOLON: Token = { type: 'semicolon' };
+    const COLON: Token = { type: 'colon' };
 
     // A tokenizer over `source`, one token per call; null at the end. Comments are skipped.
     const tokenizer = () => {
@@ -230,7 +250,7 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
 
         const consumeIdentLike = (): Token => {
             const name = consumeIdentSequence();
-            if (at(i) !== 0x28) return OTHER;
+            if (at(i) !== 0x28) return { type: 'ident', name };
             i++;
             if (name.length === 3 && asciiLower(name) === 'url') {
                 const start = i;
@@ -285,6 +305,7 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
                     case 0x5d: i++; return { type: 'close', char: ']' };
                     case 0x7d: i++; return { type: 'close', char: '}' };
                     case 0x3b: i++; return SEMICOLON;
+                    case 0x3a: i++; return COLON;
                     case 0x2b: case 0x2e: // "+", "."
                         if (startsNumber(i)) return consumeNumeric();
                         i++;
@@ -309,20 +330,21 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
                 }
                 if (isDigit(c)) return consumeNumeric();
                 if (isIdentStart(c)) return consumeIdentLike();
-                i++; // a delim, comma or colon
+                i++; // a delim or a comma
                 return OTHER;
             }
         };
     };
 
     const IMAGE_SET = ['image-set', '-webkit-image-set'];
+    const URL_STRINGS = ['image-set', '-webkit-image-set', 'src', 'image']; // the functions whose strings are URLs
 
     const next = tokenizer();
     const references: CssReference[] = [];
-    const network = scope === 'network';
+    const loads = scope === 'loads';
 
     // Open blocks and functions, innermost last. `fontFace`: the block of an @font-face rule.
-    const stack: { closer: ')' | ']' | '}'; imageSet: boolean; fontFace: boolean }[] = [];
+    const stack: { closer: ')' | ']' | '}'; imageSet: boolean; urlStrings: boolean; fontFace: boolean }[] = [];
     // An at-rule prelude in progress: 'import' until its first token, then 'skip'; 'skip' for any other
     // at-rule. It ends at ";" or "{" at the depth it started, or when its enclosing block closes.
     let prelude: 'none' | 'import' | 'skip' = 'none';
@@ -331,20 +353,39 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
     // The previous significant token was an accepted `url(` function: its first token is the argument, of this kind.
     let urlArgument: CssReference['kind'] | null = null;
     // The stack depth inside the first token of an @import prelude when that token is a function other than `url(`
-    // (`src("…")`, CSS Values 4's other <url>; no engine loads it in an @import today, BD4:TST-6), 0 otherwise. Network
+    // (`src("…")`, CSS Values 4's other <url>; no engine loads it in an @import today, BD4:TST-6), 0 otherwise. Loads
     // scope reads every string and url token inside it as the stylesheet it names, over-approximating as the scan does.
     let importArgument = 0;
 
-    // An absolute URL of a scheme that names a server, read as the URL parser reads it: outer C0 controls and spaces
-    // stripped, tabs and newlines removed, the scheme ASCII case-insensitive. http: and https: are what a CSS load takes;
-    // the others are the schemes a URL can wrap or spell a server in (ws:, wss:, ftp:, view-source: and jar: around
-    // another URL, filesystem:), which no engine loads from CSS today and the view's policy would refuse all the same
-    // (BD5:TST-6): dropped here too, so that the claim "CSS keeps no network URL" is the renderer's, not the policy's.
-    // Relative URLs resolve to nothing in the strict view's documents (an about:blank base, or a blob: stylesheet's
-    // opaque one), and blob: and data: URLs name no server.
-    const isNetwork = (url: string) => /^(?:https?|wss?|ftp|view-source|filesystem|jar):/i.test(url.replace(/^[\u0000- ]+/, '').replace(/[\t\n\r]/g, ''));
-    const push = (start: number, end: number, url: string, kind: CssReference['kind']) => {
-        if (!network || isNetwork(url)) references.push({ start, end, url, kind });
+    // The declaration in progress, at depth `declarationDepth` (the stack's length inside the block it is in): at its
+    // 'start', its 'name' read (`candidate`), its 'value' after the colon (the value of `declared`), or 'other': no
+    // declaration the tokenizer can name (a selector, an at-rule, a stray token). A `source` given as a value is in one.
+    let declaration: 'start' | 'name' | 'value' | 'other' = property === '' ? 'start' : 'value';
+    let declarationDepth = 0;
+    let candidate = '';
+    let declared = asciiLower(property);
+    // A closing bracket matched nothing open: from there on no reference has a property (CssReference.property).
+    let mismatched = false;
+    // A `{` or a `}` starts the declarations of the block the stack is then in.
+    const startDeclarations = () => {
+        declaration = 'start';
+        declarationDepth = stack.length;
+        declared = '';
+    };
+    // The declaration's state after `token`, a token at its depth.
+    const read = (token: Token) => {
+        if (token.type === 'semicolon') return startDeclarations();
+        if (declaration === 'start') {
+            declaration = token.type === 'ident' ? 'name' : 'other';
+            if (token.type === 'ident') candidate = token.name;
+            return;
+        }
+        if (declaration !== 'name') return;
+        declaration = token.type === 'colon' ? 'value' : 'other';
+        if (token.type === 'colon') declared = asciiLower(candidate);
+    };
+    const push = (start: number, end: number, url: string, kind: CssReference['kind'], text: boolean) => {
+        references.push({ start, end, url, kind, property: declaration === 'value' && !mismatched ? declared : '', text });
     };
     const inFontFace = () => stack.some(entry => entry.fontFace);
 
@@ -352,26 +393,29 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
         if (token.type === 'whitespace') continue;
         const argumentKind = urlArgument;
         urlArgument = null;
+        if (stack.length === declarationDepth && token.type !== 'close') read(token);
 
         const firstOfImport = prelude === 'import' && stack.length === preludeDepth;
         if (firstOfImport) prelude = 'skip'; // only the first token of an @import prelude names a file
         if (importArgument > 0 && stack.length < importArgument) importArgument = 0;
-        const inImportArgument = network && importArgument > 0;
+        const inImportArgument = loads && importArgument > 0;
         const accepted = prelude === 'none' || firstOfImport || inImportArgument;
         // what a reference made by this token loads: a stylesheet for @import, a font inside @font-face, else an image
         const kind: CssReference['kind'] = firstOfImport || inImportArgument ? 'style' : inFontFace() ? 'font' : 'image';
 
         switch (token.type) {
-            case 'string':
-                if (!token.closed && !network) break;
-                if (argumentKind !== null) push(token.start, token.end, token.value, argumentKind);
-                else if (accepted && (network || firstOfImport || stack.at(-1)?.imageSet)) push(token.start, token.end, token.value, kind);
+            case 'string': {
+                if (!token.closed && !loads) break;
+                const url = firstOfImport || (loads ? stack.at(-1)?.urlStrings : stack.at(-1)?.imageSet) === true;
+                if (argumentKind !== null) push(token.start, token.end, token.value, argumentKind, false);
+                else if (accepted && (url || loads)) push(token.start, token.end, token.value, kind, !url && !inImportArgument);
                 break;
+            }
             case 'url':
-                if ((token.closed || network) && accepted) push(token.start, token.end, token.value, kind);
+                if ((token.closed || loads) && accepted) push(token.start, token.end, token.value, kind, false);
                 break;
             case 'function':
-                stack.push({ closer: ')', imageSet: IMAGE_SET.indexOf(token.name) >= 0, fontFace: false });
+                stack.push({ closer: ')', imageSet: IMAGE_SET.indexOf(token.name) >= 0, urlStrings: URL_STRINGS.indexOf(token.name) >= 0, fontFace: false });
                 if (token.name === 'url' && accepted) urlArgument = kind;
                 else if (firstOfImport) importArgument = stack.length;
                 break;
@@ -390,48 +434,92 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
                 // the block an at-rule's prelude ends with; it is an @font-face block when that rule was one
                 const opensRule = token.closer === '}' && prelude !== 'none' && stack.length === preludeDepth;
                 if (opensRule) prelude = 'none';
-                stack.push({ closer: token.closer, imageSet: false, fontFace: opensRule && preludeName === 'font-face' });
+                stack.push({ closer: token.closer, imageSet: false, urlStrings: false, fontFace: opensRule && preludeName === 'font-face' });
+                if (token.closer === '}') startDeclarations();
                 break;
             }
-            case 'close':
+            case 'close': {
+                const closesBlock = token.char === '}' && stack.some(entry => entry.closer === '}');
                 if (stack.at(-1)?.closer === token.char) {
                     stack.pop();
-                } else if (token.char === '}' && stack.some(entry => entry.closer === '}')) {
+                } else {
+                    mismatched = true;
                     // a block closes whatever is still open inside it
-                    while (stack.pop()!.closer !== '}') { /* popped */ }
+                    if (closesBlock) while (stack.pop()!.closer !== '}') { /* popped */ }
                 }
                 if (prelude !== 'none' && stack.length < preludeDepth) prelude = 'none';
+                if (closesBlock) startDeclarations(); // a stray `}` is part of the declaration it is in
                 break;
+            }
         }
     }
     return references;
 }
 
 /**
- * `source` without its network references (cssReferences, `network` scope): each becomes the empty CSS string `""`, which
- * loads nothing (`url("")` names no resource), so the text that is left can load no http: or https: URL, whatever the
- * engine (docs/research/21_crossorigin_loads/README.md, BD2:ISO-2: no crossorigin attribute reaches a load CSS makes, so strict mode cannot make one without
- * credentials). Each one dropped is added to `dropped`: its kind of load and its URL as written. `scan` is
- * cssReferences: given, so that this function too closes over nothing and the strict view can run it, stringified
- * (in-sandbox-view.ts, inSandboxView), as the host does for registered stylesheets (host.ts).
+ * The one rule for a URL the guest wrote where the view would load it (BD7:ISO-1; class A, closed by an allowlist): the
+ * renderer's URL attributes, every reference of guest CSS in the view, and every reference of a registered stylesheet the
+ * view gets (files.ts, viewStylesheets). A URL is kept only as one of the allowed cases, never because its scheme is
+ * missing from a list of bad ones:
+ *   - exactly a URL the view minted (`isMinted`): a registered file's `blob:` URL, after the registered-path rewrite;
+ *   - the empty URL, which names nothing and loads nothing (`url("")`, `src=""`): what a dropped reference becomes;
+ *   - a fragment-only URL (`#` first) in a property whose `url()` names an element of the view's own document and loads
+ *     nothing (`property`; Chromium, Firefox and WebKit raise no violation for any of them, measured, whether an element of
+ *     that id exists or not): the SVG paint, clip, mask, filter and marker references. Anywhere else a fragment-only URL
+ *     resolves against the view's `about:blank` base and is loaded as `about:blank#…` (an image, a font, an import, every
+ *     URL attribute of markup), which the host page's inherited policy refuses and Chromium reports to its endpoint;
+ *   - a `text` string (CssReference) that names no URL at all: the URL parser resolves it against no base the view has
+ *     (`about:blank`, and a `blob:` stylesheet's, both with an opaque path), so wherever var() carries it, nothing loads.
+ *     A font family's name, a `content` text and an area of a grid template stay; a text that reads as a URL (`"#"`,
+ *     `"Note: x"`) goes, as any URL would.
+ * Everything else goes, whatever its scheme or spelling: a URL of another scheme is a load the view's policy and the host
+ * page's inherited fetch directives refuse, and the host page's refusal is reported to its endpoint with the scheme whole
+ * (`blocked-uri`), a channel the guest would write into; a relative URL names nothing. `property` is the property of the
+ * declaration (CssReference, ASCII lower case), `''` for every position of markup. An http(s) URL of an origin strict
+ * mode's `origins` lists for an element's load is not this rule's: the renderer keeps it beside it, where an attribute
+ * takes the load's credentials away (sanitizeRender); CSS takes no attribute, so CSS keeps none.
+ *
+ * Self-contained: the view runs it, stringified (in-sandbox-view.ts, inSandboxView).
  */
-export function withoutNetworkReferences(source: string, scan: typeof cssReferences, dropped: [kind: CssReference['kind'], url: string][]): string {
-    const references = scan(source, 'network');
-    if (references.length === 0) return source;
+export function keepsUrl(url: string, isMinted: (url: string) => boolean, property = '', text = false): boolean {
+    if (url === '' || isMinted(url)) return true;
+    const LOCAL_REFERENCES = ['fill', 'stroke', 'clip-path', 'mask', 'mask-image', 'filter', 'marker', 'marker-start', 'marker-mid', 'marker-end'];
+    if (url.charCodeAt(0) === 0x23 && LOCAL_REFERENCES.indexOf(property) >= 0) return true;
+    if (!text) return false;
+    try {
+        new URL(url, 'about:blank');
+        return false;
+    } catch {
+        return true;
+    }
+}
+
+/**
+ * `source` with only the references `keeps` allows (cssReferences, `loads` scope; keepsUrl over the view's minted URLs):
+ * every other one becomes the empty CSS string `""`, which loads nothing (`url("")` names no resource), whatever the
+ * engine. Each one dropped is added to `dropped`: its kind of load and its URL as written. `property` is the property
+ * `source` is the value of, `''` for a stylesheet or a declaration list (cssReferences). `scan` is cssReferences: given,
+ * so that this function too closes over nothing and the strict view can run it, stringified (in-sandbox-view.ts,
+ * inSandboxView), as the host does for registered stylesheets with the same rule (files.ts, viewStylesheets).
+ */
+export function withKeptReferences(source: string, scan: typeof cssReferences, keeps: (url: string, property: string, text: boolean) => boolean, dropped: [kind: CssReference['kind'], url: string][], property: string): string {
+    const references = scan(source, 'loads', property);
     let output = '';
     let at = 0;
     for (let i = 0; i < references.length; i++) {
         const reference = references[i]!;
+        if (keeps(reference.url, reference.property, reference.text)) continue;
         output += source.slice(at, reference.start) + '""';
         at = reference.end;
         dropped[dropped.length] = [reference.kind, reference.url];
     }
-    return output + source.slice(at);
+    return at === 0 ? source : output + source.slice(at);
 }
 
-/** withoutNetworkReferences over cssReferences, as the strict view composes them (host-side callers and the tests). */
-export function dropNetworkCss(source: string, dropped: [kind: string, url: string][]): string {
-    return withoutNetworkReferences(source, cssReferences, dropped as [kind: CssReference['kind'], url: string][]);
+/** withKeptReferences over cssReferences and keepsUrl, as the view composes them (host-side callers and the tests). */
+export function keptCss(source: string, dropped: [kind: string, url: string][], property = '', isMinted: (url: string) => boolean = () => false): string {
+    const keeps = (url: string, of: string, text: boolean) => keepsUrl(url, isMinted, of, text);
+    return withKeptReferences(source, cssReferences, keeps, dropped as [kind: CssReference['kind'], url: string][], property);
 }
 
 /** The references that can name a registered file (`files` scope of cssReferences). */

@@ -149,7 +149,7 @@ test.describe('G1 rendered markup', () => {
         });
     });
 
-    // BD5:NEW-3: a render that dropped a <script>, or kept a reference to a file the view does not show, says so in the
+    // BD5:NEW-3: a render that dropped a <script>, or a reference to a file the view does not show, says so in the
     // guest's log, once per render; a render with neither says nothing.
     for (const mode of VIEW_MODES) test(`${mode} mode: a render's dropped script and its reference to an SVG file each get one warn line, once per render`, async ({ sandbox, page, browserName }) => {
         await sandbox.registerFiles({ 'pic.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>' });
@@ -160,10 +160,10 @@ test.describe('G1 rendered markup', () => {
         const notices = async () => (await sandbox.logs()).filter(line => line.includes('[Sandbox] sandboxView.render:'));
         await expect.poll(async () => (await notices()).length, { message: 'the third render\'s acknowledgement was logged' }).toBe(2);
         expect(await notices()).toEqual([
-            expect.stringMatching(/the view runs no script, so the <script> elements of this render were dropped .*; and a reference that names no file the view shows was kept as written/),
-            expect.stringMatching(/^(?!.*<script>).*a reference that names no file the view shows was kept as written and loads nothing/),
+            expect.stringMatching(/the view runs no script, so the <script> elements of this render were dropped .*; and a reference that names no file the view shows was dropped/),
+            expect.stringMatching(/^(?!.*<script>).*a reference that names no file the view shows was dropped/),
         ]);
-        expect(await inView(page, browserName, `document.querySelectorAll('script').length + ' ' + document.querySelector('img').getAttribute('src')`)).toBe('1 pic.svg'); // the bootstrap's own script
+        expect(await inView(page, browserName, `document.querySelectorAll('script').length + ' ' + document.querySelector('img').getAttribute('src')`)).toBe('1 null'); // the bootstrap's own script; the reference went (keepsUrl)
     });
 
     test('positive control for the marker channel: the same inline script in a cooperative-mode sandbox runs and is read from outside', async ({ sandbox, page, browserName }) => {
@@ -532,7 +532,8 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
                 viewFiles: sandboxFiles.list(),
             })`);
             // the view holds only the files it may show: no JavaScript, no JSON (VIEW_FILE_TYPES, BR:ST1)
-            expect(r).toEqual({ logo: 'blob:null/', sheet: 'blob:null/', styled: '7px', unregistered: 'img/missing.png', viewFiles: ['css/site.css', 'img/logo.png'] });
+            // a path that names no registered file names nothing the view keeps: it goes, and is reported (keepsUrl, BD7:ISO-1)
+            expect(r).toEqual({ logo: 'blob:null/', sheet: 'blob:null/', styled: '7px', unregistered: null, viewFiles: ['css/site.css', 'img/logo.png'] });
             // the worker reads every file; it mints URLs only for the types the view shows (R1:R2-4)
             const worker = await sandbox.inGuest(`let js, jsMessage, gone; try { js = sandboxFiles.url('lib.js'); } catch (error) { js = error.code; jsMessage = error.message; }
                 try { sandboxFiles.url('nothing.js'); } catch (error) { gone = error.message; }
@@ -542,7 +543,7 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
                 list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, js: 'NOT_FOUND', png: 'blob:null/',
                 jsMessage: '[sandboxFiles] NOT_FOUND: this file has no URL (read() and text() work)', gone: '[sandboxFiles] NOT_FOUND: no such file',
             });
-            expect((await sandbox.violations()).filter(v => v.source === 'view')).toEqual([]);
+            expect((await sandbox.violations()).filter(v => v.source === 'view').map(v => [v.directive, v.blockedURI])).toEqual([['img-src', 'img/missing.png']]);
         });
 
         test('A8: a blob: URL the view did not mint is removed from rendered markup, wherever it appears; the policy has blob: only where a registered type needs it, never in script-src', async ({ sandbox, page, browserName }) => {

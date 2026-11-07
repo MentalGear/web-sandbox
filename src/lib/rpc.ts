@@ -381,7 +381,8 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const admitInbound = typeof admitInboundOption === 'function' ? admitInboundOption : null;
     const takeBusyRefusal = typeof takeBusyRefusalOption === 'function' ? takeBusyRefusalOption : null;
     const takeUnexpose = typeof takeUnexposeOption === 'function' ? takeUnexposeOption : null;
-    // The host's group (HostBrokerOptions), each member read once; `isHost` decides the handler texts, whatever a member is.
+    // The host's group (HostBrokerOptions), each member read once; `isHost` decides the handler texts. Its type requires all
+    // three, so a host broker always has the factory and its table, and tells the library's errors from the embedder's.
     const isHost = hostOption !== null && typeof hostOption === 'object';
     const mintOption = isHost ? hostOption.mint : undefined;
     const crossingTextOption = isHost ? hostOption.crossingText : undefined;
@@ -389,9 +390,6 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const mint = typeof mintOption === 'function' ? mintOption : null;
     const crossingText = typeof crossingTextOption === 'function' ? crossingTextOption : null;
     const reportWithheld = typeof reportWithheldOption === 'function' ? reportWithheldOption : null;
-    // A plain Error is the embedder's own only where the library's errors can be told from it: both the factory and its
-    // table are given. A host group without either fails closed, every throw but a string named.
-    const knowsLibraryErrors = mint !== null && crossingText !== null;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     // Mirrors the exported RESERVED_METHOD_PREFIX: declared here to survive stringification, and typed by it, so the two
@@ -683,7 +681,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             withhold(method, fixed, errorMessage(error));
             return fixed;
         }
-        if (knowsLibraryErrors && hasPlainPrototype(error)) return errorMessage(error);
+        if (hasPlainPrototype(error)) return errorMessage(error);
         const name = errorName(error);
         const refusal = `the method failed (${name})`;
         withhold(method, refusal, `${name}: ${errorMessage(error)}`);

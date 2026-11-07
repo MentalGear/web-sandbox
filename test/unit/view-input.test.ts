@@ -3,7 +3,7 @@ import fc from 'fast-check';
 import { cssLoadBound, inSandboxView, inStrictWorker, isStyleProperty, sanitizeRender, VIEW_CONTINUOUS_EVENT_TYPES, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_INPUT_IN_FLIGHT, VIEW_SET_STYLE_LIMITS, VIEW_STYLE_PROPERTIES, VIEW_OPTIONS, viewBudget, viewInputOutbox, type ViewInputEntry, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { styleMarkup } from '@src/lib/style-markup';
-import { cssReferences, withoutNetworkReferences } from '@src/lib/css-references';
+import { cssReferences, keepsUrl, withKeptReferences } from '@src/lib/css-references';
 
 /**
  * Strict mode's pointer, wheel, scroll and focus input (research 23): the view's input outbox as arithmetic (coalescing,
@@ -130,7 +130,7 @@ describe("the view's event path (inSandboxView, run as stringified)", () => {
             constructor() { workers.push({ transfer: [] }); }
             postMessage(_message: unknown, transfer: MessagePort[]) { workers[workers.length - 1]!.transfer = transfer; }
         };
-        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
+        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
         const a = new MessageChannel(), b = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<div id="pad" style="width:100px;height:100px"><span id="inner"></span></div>' }, source: window, ports: [a.port1, b.port1] }));
         const render = workers[0]!.transfer[1]!;
@@ -337,7 +337,7 @@ function startPrelude() {
     const reported: unknown[] = [];
     w.reportError = (error: unknown) => reported.push(error);
     const run = new Function('globalThis', 'EventTarget', 'MessageEvent', 'Event', 'MessagePort', `return (${inStrictWorker.toString()})`)(w, FakeTarget, FakeMessageEvent, FakeEvent, FakePort);
-    run({ attach: () => {}, log: () => {} }, { scriptUnsafe: false, maxRender: 100, maxTarget: 50, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } }, isStyleProperty);
+    run({ attach: () => {}, log: () => {} }, { maxRender: 100, maxTarget: 50, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } }, isStyleProperty);
     const render = new FakePort();
     w.listeners.message(new FakeMessageEvent({ data: { type: 'INIT_WORKER' }, ports: [new FakePort(), render] }));
     const sent = () => render.posted.filter(frame => frame.type !== 'VIEW_STARTED' && frame.type !== 'VIEW_LISTEN' && frame.type !== 'VIEW_EVENT_ACK');
@@ -539,7 +539,7 @@ describe('the view applies set({ css }) and the options (inSandboxView, run as s
             constructor() { workers.push({ transfer: [] }); }
             postMessage(_message: unknown, transfer: MessagePort[]) { workers[workers.length - 1]!.transfer = transfer; }
         };
-        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
+        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
         const a = new MessageChannel(), b = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<div id="t" style="color: red"></div><svg><rect id="r"></rect></svg>' }, source: window, ports: [a.port1, b.port1] }));
         const render = workers[0]!.transfer[1]!;

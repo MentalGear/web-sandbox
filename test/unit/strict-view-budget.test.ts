@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import { runBootstrap } from './sandbox-environment';
-import { dropNetworkCss } from '@src/lib/css-references';
+import { keptCss } from '@src/lib/css-references';
 import { declared, parseAsView } from './view-parse';
 
 /**
@@ -35,7 +35,7 @@ describe("N-2 (class G): the strict prelude's error listener reads the event onl
         };
         const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
         try {
-            run({ attach: () => {}, log: (_level: string, args: unknown[]) => lines.push(args) }, { scriptUnsafe: false, maxRender: 100, maxTarget: 5, maxElements: 100, maxDepth: 10, maxCharacters: 100, maxUrls: 10, entryDoneName: '__testEntryDone', eventTypes: ['click'] });
+            run({ attach: () => {}, log: (_level: string, args: unknown[]) => lines.push(args) }, { maxRender: 100, maxTarget: 5, maxElements: 100, maxDepth: 10, maxCharacters: 100, maxUrls: 10, entryDoneName: '__testEntryDone', eventTypes: ['click'] });
         } finally {
             EventTarget.prototype.addEventListener = add;
         }
@@ -343,7 +343,7 @@ describe('L-2 and N-7 (docs and class P): with allowAnimations false, what happe
         const { template, markup } = parseAsView(styles.map(style => `<p style="${style.replace(/"/g, '&quot;')}"></p>`).join(''));
         const read = vi.spyOn(CSSStyleDeclaration.prototype, 'getPropertyValue');
         try {
-            sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, { animations: false, autoplay: true, stylesheets: true }, undefined, { target: 'body', animating: RENDER_RULES.still.known, origins: {}, refused: [], urls: 0, loads: [], markup });
+            sanitizeRender(template.content, () => null, () => false, keptCss, RENDER_RULES, { animations: false, autoplay: true, stylesheets: true }, undefined, { target: 'body', animating: RENDER_RULES.still.known, origins: {}, refused: [], urls: 0, loads: [], markup });
             // the renderer's reads: of the animation and transition properties only (the engine's own parse of a text can read others)
             return { styles: [...template.content.querySelectorAll('p')].map(p => p.getAttribute('style')), reads: read.mock.calls.filter(([name]) => /animation|transition/.test(String(name))).length };
         } finally {
@@ -388,7 +388,7 @@ describe('L-2 and N-7 (docs and class P): with allowAnimations false, what happe
         const declaresNoAll = ['color: red /* all: unset */', 'font-family: "all: x"', "content: 'x\\' all: y'", '--all: 1', 'ball: 1', 'all-x: 1', 'a\\20ll: 1', 'tall\\3a: x'];
         for (const animations of [true, false]) {
             const { template, markup } = parseAsView([...declaresAll, ...declaresNoAll].map(style => `<p style="${style.replace(/"/g, '&quot;')}"></p>`).join(''));
-            sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, { animations, autoplay: true, stylesheets: true }, undefined, { target: 'body', animating: RENDER_RULES.still.known, origins: {}, refused: [], urls: 0, loads: [], markup });
+            sanitizeRender(template.content, () => null, () => false, keptCss, RENDER_RULES, { animations, autoplay: true, stylesheets: true }, undefined, { target: 'body', animating: RENDER_RULES.still.known, origins: {}, refused: [], urls: 0, loads: [], markup });
             const styles = [...template.content.querySelectorAll('p')].map(p => p.hasAttribute('style'));
             expect(styles.slice(0, declaresAll.length), `animations ${animations}: declares all`).toEqual(declaresAll.map(() => false));
             // what jsdom's CSSOM keeps of the rest (an unknown property it drops): the renderer applied them

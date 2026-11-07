@@ -320,13 +320,13 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
         });
     });
 
-    test('an admitted origin, and a relative URL, are kept; an http: URL of an admitted https: origin is dropped and reported (no policy upgrades it)', async ({ sandbox, page, browserName }) => {
+    test('an admitted origin is kept; a relative URL that names no registered file, and an http: URL of an admitted https: origin, are dropped and reported (no policy upgrades it)', async ({ sandbox, page, browserName }) => {
         await page.route(/^https?:\/\/a\.example(:\d+)?\//, route => route.fulfill({ body: PNG, contentType: 'image/png' })); // never the network
         await mountEntry(sandbox, `sandboxView.render('<img id="a" src="https://a.example/1.png"><img id="b" src="http://a.example/2.png"><img id="c" src="x.png"><img id="d" src="https://a.example:8443/3.png">');`, { origins: { images: ['https://a.example'] } });
         await waitInView(page, browserName, `!!document.getElementById('d')`);
-        expect(await inView(page, browserName, `['a', 'b', 'c', 'd'].map(id => document.getElementById(id).getAttribute('src'))`)).toEqual(['https://a.example/1.png', null, 'x.png', null]);
+        expect(await inView(page, browserName, `['a', 'b', 'c', 'd'].map(id => document.getElementById(id).getAttribute('src'))`)).toEqual(['https://a.example/1.png', null, null, null]);
         await page.waitForTimeout(300);
-        expect((await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI}`).sort()).toEqual(['img-src http://a.example/2.png', 'img-src https://a.example:8443/3.png']);
+        expect((await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI}`).sort()).toEqual(['img-src http://a.example/2.png', 'img-src https://a.example:8443/3.png', 'img-src x.png']);
     });
 
     // A refused source: 6500 <img> per render (R4:M-2), 21–45% busy when each was left to the browser to refuse. An
@@ -362,6 +362,7 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         test(`the view holds at most VIEW_MAX_URLS (${VIEW_MAX_URLS}) URL-bearing attributes: a render past it is refused whole, and said`, async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({ 'x.png': { base64: PNG.toString('base64') } }); // a URL the view mints, so it is kept and counted
             await mountEntry(sandbox, `
                 sandboxView.render('<div id="a"></div><div id="b"></div>');
                 globalThis.fill = (n, into) => sandboxView.render('<img src="x.png">'.repeat(n), into);`, { mode });
@@ -378,6 +379,7 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
         });
 
         test(`the view takes at most VIEW_URLS_PER_SECOND (${VIEW_URLS_PER_SECOND}) URL-bearing attributes per second: the operation after a render past it waits`, async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({ 'x.png': { base64: PNG.toString('base64') } }); // a URL the view mints, so it is kept and counted
             await mountEntry(sandbox, `
                 sandboxView.render('<div id="a"></div><p id="b">0</p>');
                 globalThis.burst = (n) => { sandboxView.render('<img src="x.png">'.repeat(n), 'a'); sandboxView.text('b', String(n)); };`, { mode });

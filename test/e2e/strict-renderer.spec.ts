@@ -91,7 +91,8 @@ test.describe('the renderer is an allowlist', () => {
             unwrapped: [false, false, false],
             kept: [true, true, true, true, false, false, false],
             handlers: 0,
-            r: ['height=5', 'id=r', 'stroke=url(#g)', 'width=5'],
+            // a paint reference keeps only a fragment of the document; any other URL becomes "" (keepsUrl, BD7:ISO-1)
+            r: ['fill=url("")', 'height=5', 'id=r', 'stroke=url(#g)', 'width=5'],
             g: ['id=g', 'x1=0'],
             btn: ['id=btn', 'type=button'],
             pop: ['id=pop'],
@@ -140,7 +141,7 @@ test.describe('the renderer is an allowlist', () => {
                 'svg', 'defs', 'linearGradient', 'stop', 'g', 'path', 'circle', 'text', 'math', 'mfrac', 'mi', 'mn', 'my-card', 'noframes', 'p']);
             expect(read).toMatchObject({
                 n: 'id maxlength name placeholder required type', s: 'id name', c: 'checked id name type', b: 'id name type value', f: 'autocomplete id name',
-                d: 'id open', dl: 'id open', pr: 'id max value', card: 'class data-id id', v: 'controls crossorigin id muted width', icon: 'aria-label height id role viewBox width',
+                d: 'id open', dl: 'id open', pr: 'id max value', card: 'class data-id id', v: 'controls crossorigin disablepictureinpicture disableremoteplayback id muted width', icon: 'aria-label height id role viewBox width',
                 logo: true, styled: 'rgb(0, 0, 255)',
             });
             await expect.poll(() => inView(page, browserName, `document.getElementById('logo').naturalWidth`)).toBe(1);
@@ -204,8 +205,8 @@ test.describe('ST1: nothing the strict view shows opens in a new tab as a docume
             await page.waitForTimeout(500);
             expect(Object.values(opened).filter(outcome => outcome === 'ran')).toEqual([]);
             expect(recorder.paths('blocked')).toEqual([]);
-            // the SVG and the +xml/+html types got no URL: their references stay as written
-            expect(await inView(page, browserName, `[document.getElementById('svg').getAttribute('src'), document.querySelector('video[poster]').getAttribute('poster')]`)).toEqual(['evil.svg', 'evil.svg']);
+            // the SVG and the +xml/+html types got no URL: their references name nothing the view keeps, and go (keepsUrl, BD7:ISO-1)
+            expect(await inView(page, browserName, `[document.getElementById('svg').getAttribute('src'), document.querySelector('video').getAttribute('poster')]`)).toEqual([null, null]);
             await expect.poll(() => inView(page, browserName, `document.getElementById('ok').naturalWidth`)).toBe(1);
         });
     });

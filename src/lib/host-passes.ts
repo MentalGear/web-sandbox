@@ -117,7 +117,7 @@ export const HOST_PASSES = {
         does: "the config schema reads each option by its own rule: `html`'s reads its type and, in strict and sealed mode, its length, and refuses one longer than VIEW_RENDER_MAX_LENGTH before it is stored (htmlRefusal: setConfig() and load() alike)",
         takes: ['html'], modes: ALL, rule: 'pure',
         units: [
-            'src/host.ts#this._configure', 'src/host.ts#this._applyConfig', 'src/host.ts#this._warnConfig', 'src/host.ts#this.load', 'src/host.ts#this._buildContext',
+            'src/host.ts#this._configure', 'src/host.ts#this._applyConfig', 'src/host.ts#this.load', 'src/host.ts#this._buildContext',
             'src/lib/config-schema.ts#normaliseConfig', 'src/lib/config-schema.ts#htmlRefusal', 'src/lib/config-schema.ts#hasStrictView', 'src/lib/config-schema.ts#ignoredIn',
             'src/lib/config-schema.ts#readIn', 'src/lib/config-schema.ts#sealedNetworkRefusal', 'src/lib/config-schema.ts#sealedScriptUnsafeRefusal',
             'src/lib/utils.ts#defineData', 'src/lib/utils.ts#hasOwnField', 'src/lib/utils.ts#ownField',
@@ -153,9 +153,9 @@ export const HOST_PASSES = {
         cost: `linear in the file; ${FILES_CAP}`,
     },
     viewStylesheets: {
-        does: "at a strict or sealed build, every network URL of a registered stylesheet becomes `\"\"` by an edit of the snapshot (viewStylesheets), its slots and its network references read in one walk; the element warns once, naming the file and the first URL, each cut",
+        does: "at a strict or sealed build, every reference of a registered stylesheet the one rule for a URL in the view does not keep becomes `\"\"` by an edit of the snapshot (viewStylesheets, keepsUrl: a registered file's slot stays; BD7:ISO-1), its slots and its references read in one walk; the element warns once, naming the file and the first URL, each cut",
         takes: ['files'], modes: VIEW_MODES, rule: 'pure',
-        units: ['src/lib/files.ts#viewStylesheets', 'src/lib/files.ts#slotRanges', 'src/host.ts#viewStylesheetWarning', 'src/host.ts#this._warnOnce', 'src/lib/in-sandbox-view.ts#isViewFileType'],
+        units: ['src/lib/files.ts#viewStylesheets', 'src/lib/files.ts#slotRanges', 'src/lib/css-references.ts#keepsUrl', 'src/host.ts#viewStylesheetWarning', 'src/host.ts#this._warnOnce', 'src/lib/in-sandbox-view.ts#isViewFileType'],
         cost: `linear in the stylesheets (BD7:LIM-2's class); ${FILES_CAP}`,
     },
     viewBuild: {

@@ -72,7 +72,7 @@ async function startPrelude(maxRender = 20) {
     w.URL = {};
     const lines: string[] = [];
     const run = new Function('globalThis', 'EventTarget', 'MessageEvent', 'Event', 'MessagePort', `return (${inStrictWorker.toString()})`)(w, FakeTarget, FakeMessageEvent, FakeEvent, FakePort);
-    run({ attach: () => {}, log: (_level: string, args: unknown[]) => lines.push(String(args[0])) }, { scriptUnsafe: false, maxRender, maxTarget: 5, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: ['click'] });
+    run({ attach: () => {}, log: (_level: string, args: unknown[]) => lines.push(String(args[0])) }, { maxRender, maxTarget: 5, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: ['click'] });
     const render = new FakePort();
     w.listeners.message(new FakeMessageEvent({ data: { type: 'INIT_WORKER' }, ports: [new FakePort(), render] }));
     const sent = () => render.posted.filter(frame => frame.type !== 'VIEW_STARTED' && frame.type !== 'VIEW_LISTEN');
@@ -163,8 +163,8 @@ describe('R4-5: sandboxView.text() and sandboxView.set() in the worker', () => {
         ackDropped(['other', 'x', 'y']);
         expect(lines).toEqual([
             '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker).',
-            '[Sandbox] sandboxView.render: a reference that names no file the view shows was kept as written and loads nothing (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
-            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was kept as written and loads nothing (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
+            '[Sandbox] sandboxView.render: a reference that names no file the view shows was dropped (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
+            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was dropped (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
         ]);
     });
 
@@ -178,7 +178,7 @@ describe('R4-5: sandboxView.text() and sandboxView.set() in the worker', () => {
         expect(lines).toEqual([
             '[Sandbox] sandboxView.render: the view runs no script, so the on… handlers of this render were dropped (code runs in the entry, in the worker).',
             '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements and on… handlers of this render were dropped (code runs in the entry, in the worker).',
-            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements and on… handlers of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was kept as written and loads nothing (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
+            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements and on… handlers of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was dropped (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
         ]);
     });
 });

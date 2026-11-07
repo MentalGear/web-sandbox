@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { cssLoadBound, inSandboxView, INERT_HREF, isStyleProperty, RENDER_ATTRIBUTES, RENDER_CROSSORIGIN_ELEMENTS, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_OPTIONS, viewBudget, viewInputOutbox, type RenderContext, type RenderSwitches, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { styleMarkup } from '@src/lib/style-markup';
-import { cssReferences, dropNetworkCss, withoutNetworkReferences } from '@src/lib/css-references';
+import { cssReferences, keepsUrl, keptCss, withKeptReferences } from '@src/lib/css-references';
 import { FileStore, viewStylesheets, type FileSnapshotEntry } from '@src/lib/files';
 import { declared, parseAsView } from './view-parse';
 
@@ -22,7 +22,7 @@ function render(html: string, target = 'body', files: Record<string, { url: stri
     const { template, markup } = parseAsView(html);
     const minted = new Set(Object.values(files).map(file => file.url));
     const context: RenderContext = { target, animating: [], origins, refused: [], urls: 0, loads: [], css: [], markup };
-    sanitizeRender(template.content, path => files[path] ?? null, url => minted.has(url), dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
+    sanitizeRender(template.content, path => files[path] ?? null, url => minted.has(url), keptCss, RENDER_RULES, KEEP_ALL, undefined, context);
     return { fragment: template.content, refused: context.refused, css: context.css! };
 }
 
@@ -144,14 +144,14 @@ describe('the renderer makes every load it lets through without credentials, by 
 });
 
 describe('CSS keeps no network URL in the view: style attributes, <style> (HTML and SVG), text() and renders into a style (S74)', () => {
-    it('a style attribute: each network url() and image-set() string becomes "", reported with its directive; the rest stays', () => {
+    it('a style attribute: each url() and image-set() string but a minted one becomes "", reported with its directive; the rest stays', () => {
         const style = `color: red; background: url(${LISTED}/a.png), image-set("${LISTED}/b.png" 1x, 'r.png' 2x); --u: "${LISTED}/c.png"; list-style: url( HTTPS://x.example/d.png )`;
         const { fragment, refused, css } = render(`<p id="p" style="${style.replace(/"/g, '&quot;')}">x</p><p id="q" style="color: blue; background: url(r.png)">y</p>`);
         // what each element's declaration is given (RenderContext.css), and what it holds of it
-        expect(css).toEqual([`color: red; background: url(""), image-set("" 1x, 'r.png' 2x); --u: ""; list-style: url("")`, 'color: blue; background: url(r.png)']); // no network URL: as written
+        expect(css).toEqual([`color: red; background: url(""), image-set("" 1x, "" 2x); --u: ""; list-style: url("")`, 'color: blue; background: url("")']); // a relative URL names nothing: it goes too (BD7:ISO-1)
         expect(fragment.getElementById('p')!.getAttribute('style')).toBe(declared(css[0]!));
         expect(fragment.getElementById('q')!.getAttribute('style')).toBe(declared(css[1]!));
-        expect(refused).toEqual([['img-src', `${LISTED}/a.png`], ['img-src', `${LISTED}/b.png`], ['img-src', `${LISTED}/c.png`], ['img-src', 'https://x.example/d.png']]);
+        expect(refused).toEqual([['img-src', `${LISTED}/a.png`], ['img-src', `${LISTED}/b.png`], ['img-src', 'r.png'], ['img-src', `${LISTED}/c.png`], ['img-src', 'https://x.example/d.png'], ['img-src', 'r.png']]);
     });
 
     it('a <style>: @import, url(), image-set(), @font-face src, escaped and unclosed forms; each reported with its directive', () => {
@@ -205,7 +205,7 @@ describe('no exception to the forced crossorigin: whatever the view is given as 
     const renderWith = (rules: typeof RENDER_RULES, target = 'body') => {
         const { template, markup } = parseAsView(MARKUP);
         const context: RenderContext = { target, animating: [], origins: EVERYTHING, refused: [], urls: 0, loads: [], css: [], markup };
-        sanitizeRender(template.content, () => null, () => false, dropNetworkCss, rules, KEEP_ALL, undefined, context);
+        sanitizeRender(template.content, () => null, () => false, keptCss, rules, KEEP_ALL, undefined, context);
         return { fragment: template.content, context };
     };
 
@@ -220,7 +220,7 @@ describe('no exception to the forced crossorigin: whatever the view is given as 
     });
 
     it('positive control: the same check finds the exceptions a renderer without the rule would leave', () => {
-        const { fragment } = renderWith({ ...RENDER_RULES, crossOrigin: [], networkDropped: [] });
+        const { fragment } = renderWith({ ...RENDER_RULES, forced: [], networkDropped: [] });
         expect(exceptions(fragment)).toEqual([
             'img without the attribute', 'img without the attribute', 'img without the attribute', 'img without the attribute',
             'audio without the attribute', 'video without the attribute', 'poster https://other.example/p.png',
@@ -236,85 +236,78 @@ describe('no exception to the forced crossorigin: whatever the view is given as 
         const without = renderWith(RENDER_RULES);
         const { template, markup } = parseAsView(MARKUP);
         const context: RenderContext = { target: 'body', animating: [], origins: { images: EVERYTHING.images, media: EVERYTHING.media, styles: EVERYTHING.styles, fonts: EVERYTHING.fonts }, refused: [], urls: 0, loads: [], css: [], markup };
-        sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
+        sanitizeRender(template.content, () => null, () => false, keptCss, RENDER_RULES, KEEP_ALL, undefined, context);
         const serialise = (fragment: DocumentFragment) => [...fragment.childNodes].map(node => (node as Element).outerHTML ?? node.textContent).join('');
         expect(serialise(without.fragment)).toBe(serialise(template.content));
         expect(without.context.refused).toEqual(context.refused);
     });
 });
 
-describe('cssReferences, network scope, and withoutNetworkReferences', () => {
-    const network = (css: string) => cssReferences(css, 'network').map(reference => [reference.kind, reference.url]);
-    it('finds every http: and https: token outside a non-@import prelude, closed or cut off by the end, strings anywhere', () => {
-        expect(network(`a{b:url(https://x/1)} c{d:"https://x/2"} @import "http://x/3"; @namespace url(https://x/4); @media (x) { e { f: url(https://x/5 `)).toEqual([
+describe('cssReferences, loads scope, and withKeptReferences (keepsUrl)', () => {
+    const loads = (css: string) => cssReferences(css, 'loads').map(reference => [reference.kind, reference.url]);
+    const kept = (css: string, property = '') => {
+        const dropped: [string, string][] = [];
+        return { css: keptCss(css, dropped, property), dropped: dropped.map(([, url]) => url) };
+    };
+    it('finds every token the browser could load outside a non-@import prelude, whatever it names, closed or cut off by the end, strings anywhere', () => {
+        expect(loads(`a{b:url(https://x/1)} c{d:"https://x/2"} @import "http://x/3"; @namespace url(https://x/4); @media (x) { e { f: url(https://x/5 `)).toEqual([
             ['image', 'https://x/1'], ['image', 'https://x/2'], ['style', 'http://x/3'], ['image', 'https://x/5'],
         ]);
-        expect(network('a{b:url(r.png); c:url(blob:null/x); d:url(data:,x); e:"\t https:x"}')).toEqual([['image', '\t https:x']]);
-        expect(network('a{b:url(https://x/1')).toEqual([['image', 'https://x/1']]);
-        expect(network('a{b:"https://x/1')).toEqual([['image', 'https://x/1']]);
+        expect(loads('a{b:url(r.png); c:url(blob:null/x); d:url(data:,x); e:"\t https:x"}')).toEqual([['image', 'r.png'], ['image', 'blob:null/x'], ['image', 'data:,x'], ['image', '\t https:x']]);
+        expect(loads('a{b:url(https://x/1')).toEqual([['image', 'https://x/1']]);
+        expect(loads('a{b:"zq:x')).toEqual([['image', 'zq:x']]);
     });
 
-    it('withoutNetworkReferences: each becomes "", the rest is as written, and the list says what went', () => {
+    it('withKeptReferences: each reference keepsUrl refuses becomes "", the rest is as written, and the list says what went', () => {
         const dropped: [string, string][] = [];
-        expect(withoutNetworkReferences('a{b:url( https://x/1 ) c:image-set("https://x/2" 1x, url(r.png) 2x)} @import "https://x/3";', cssReferences, dropped as any)).toBe('a{b:url("") c:image-set("" 1x, url(r.png) 2x)} @import "";');
-        expect(dropped).toEqual([['image', 'https://x/1'], ['image', 'https://x/2'], ['style', 'https://x/3']]);
-        expect(withoutNetworkReferences('a{b:url(r.png)}', cssReferences, [])).toBe('a{b:url(r.png)}');
+        const keeps = (url: string, property: string, text: boolean) => keepsUrl(url, minted => minted === 'blob:null/m', property, text);
+        expect(withKeptReferences('a{b:url( https://x/1 ) c:image-set("zq:x" 1x, url(blob:null/m) 2x); fill: url(#g); d: url(#g); content: "zq:y" "Inter" "#"} @import "r.css";', cssReferences, keeps, dropped as any, '')).toBe('a{b:url("") c:image-set("" 1x, url(blob:null/m) 2x); fill: url(#g); d: url(""); content: "" "Inter" ""} @import "";');
+        expect(dropped).toEqual([['image', 'https://x/1'], ['image', 'zq:x'], ['image', '#g'], ['image', 'zq:y'], ['image', '#'], ['style', 'r.css']]);
+        expect(withKeptReferences('a{b:url(blob:null/m); c:url("")}', cssReferences, keeps, [], '')).toBe('a{b:url(blob:null/m); c:url("")}');
     });
 
     it('the files scope is unchanged: closed tokens only, strings only where they name a file', () => {
         expect(cssReferences('a{b:"x.png"; c:url(y.png)} d{e:url(z.png', 'files').map(reference => reference.url)).toEqual(['y.png']);
     });
 
-    // BD4:TST-2: a scheme is read as the URL parser reads it (isNetwork); a tab or newline inside it is removed by that
-    // parser, and the engines load the result (Chromium, Firefox and WebKit each requested these in the S74 board's probe).
-    it('the scheme is read as the URL parser reads it: a tab, newline or carriage return inside it, written raw or as a CSS escape, is still a network URL', () => {
-        expect(network('a{b:"ht\ttps://x/1"}')).toEqual([['image', 'ht\ttps://x/1']]); // a raw tab
-        expect(network('a{b:"h\nttps://x/2"}')).toEqual([]); // a raw newline ends the string badly: no string token, and no load
-        expect(network('a{b:"ht\\9 tps://x/3"}')).toEqual([['image', 'ht\ttps://x/3']]); // \9, \a and \d are a tab, a newline and a CR
-        expect(network('a{b:"ht\\a tps://x/4"}')).toEqual([['image', 'ht\ntps://x/4']]);
-        expect(network('a{b:image-set("h\\d ttps://x/5" 1x)}')).toEqual([['image', 'h\rttps://x/5']]);
-        expect(network('a{b:url("ht\ttp://x/6")}')).toEqual([['image', 'ht\ttp://x/6']]);
-        expect(network('a{b:"\t \u0001HTTPS://x/7"}')).toEqual([['image', '\t \u0001HTTPS://x/7']]); // leading controls and spaces, any case
-        // the same text through the drop: nothing of it is left for the engine to load
-        const dropped: [string, string][] = [];
-        expect(withoutNetworkReferences('a{b:"ht\\9 tps://x/3"}', cssReferences, dropped as any)).toBe('a{b:""}');
-        expect(dropped).toEqual([['image', 'ht\ttps://x/3']]);
-    });
-
-    // BD5:TST-6: the schemes that name a server or wrap a URL that does, as the renderer drops them. blob:, data: and the rest name none.
-    const NETWORK_SCHEMES = /^(?:https?|wss?|ftp|view-source|filesystem|jar):$/;
-
-    it('drops the other schemes that spell a server (ws:, wss:, ftp:, view-source:, filesystem:, jar:) from a style value, and reports each as written (BD5:TST-6)', () => {
-        const dropped: [string, string][] = [];
-        const css = 'a{b:url(ftp://h/1);c:url("wss://h/2");d:url(view-source:https://h/3);e:image-set("filesystem:https://h/temporary/4" 1x);f:url(jar:https://h/5.jar!/x);g:url(ws://h/6);h:url(blob:null/7);i:url(data:,8);j:url(rel.png)}';
-        expect(withoutNetworkReferences(css, cssReferences, dropped as any)).toBe('a{b:url("");c:url("");d:url("");e:image-set("" 1x);f:url("");g:url("");h:url(blob:null/7);i:url(data:,8);j:url(rel.png)}');
-        expect(dropped.map(([, url]) => url)).toEqual(['ftp://h/1', 'wss://h/2', 'view-source:https://h/3', 'filesystem:https://h/temporary/4', 'jar:https://h/5.jar!/x', 'ws://h/6']);
-    });
-
-    it('agrees with the URL parser: a value is a network reference exactly when `new URL(value, "about:blank")` is one of those schemes', () => {
+    // BD4:TST-2, BD5:TST-6, BD7:ISO-1: no scheme is read at all. A reference is kept as one of keepsUrl's cases or goes, so
+    // a tab, newline or carriage return inside a scheme, an escape, leading controls and any letter case change nothing.
+    it('every spelling of every scheme goes, written raw or as a CSS escape: nothing of it is left for the engine to load', () => {
         const values = ['https://x/a', 'HtTpS://x/a', 'ht\ttps://x/a', 'h\nt\rtps://x/a', '\t https://x/a', '\u0001\u0002https://x/a', ' https://x/a ', 'http:x', 'https:/x', 'blob:null/a', 'data:,x', 'javascript:x', 'ftp://x/a', 'x.png', '//x/a', '/x/a', 'ht tps://x/a', 'https\u00a0://x/a', 'https\u0000://x/a',
-            'WSS://x/a', 'ws://x/a', 'wss://x/a', 'ftp://x/a', 'FTP://x/a', 'v\tiew-source:https://x/a', 'view-source:https://x/a', 'filesystem:https://x/temporary/a', 'jar:https://x/a.jar!/b', 'about:blank', 'mailto:x@y'];
+            'WSS://x/a', 'ws://x/a', 'wss://x/a', 'FTP://x/a', 'v\tiew-source:https://x/a', 'view-source:https://x/a', 'filesystem:https://x/temporary/a', 'jar:https://x/a.jar!/b', 'about:blank', 'mailto:x@y', 'tel:1', 'zq7k.v1+a-b:x', 'chrome-extension://a/b', '#x', ' #x'];
         for (const value of values) {
-            const expected = (() => { try { return NETWORK_SCHEMES.test(new URL(value, 'about:blank').protocol); } catch { return false; } })();
             // a raw newline ends a CSS string badly, so every control character is written as a hex escape
-            const escaped = `a{b:"${[...value].map(ch => (ch.charCodeAt(0) < 32 ? `\\${ch.charCodeAt(0).toString(16)} ` : ch === '"' ? '\\"' : ch === '\\' ? '\\\\' : ch)).join('')}"}`;
-            expect(cssReferences(escaped, 'network').length > 0, JSON.stringify(value)).toBe(expected);
+            const escaped = `"${[...value].map(ch => (ch.charCodeAt(0) < 32 ? `\\${ch.charCodeAt(0).toString(16)} ` : ch === '"' ? '\\"' : ch === '\\' ? '\\\\' : ch)).join('')}"`;
+            const named = value.replace(/\u0000/g, '\ufffd');
+            expect(kept(`a{b:url(${escaped})}`), JSON.stringify(value)).toEqual({ css: 'a{b:url("")}', dropped: [named] });
+            expect(kept(`a{b:image-set(${escaped} 1x)}`), JSON.stringify(value)).toEqual({ css: 'a{b:image-set("" 1x)}', dropped: [named] });
+            // as text (a custom property's value, which var() can carry into image-set()): it goes when it resolves to a URL
+            const resolves = (() => { try { return !!new URL(named, 'about:blank'); } catch { return false; } })();
+            expect(kept(`a{--b:${escaped}}`), JSON.stringify(value)).toEqual(resolves ? { css: 'a{--b:""}', dropped: [named] } : { css: `a{--b:${escaped}}`, dropped: [] });
         }
+        // the relative ones the URL parser cannot resolve against the view's base, which text keeps
+        expect(values.filter(value => kept(`a{--b:"${value.replace(/[\u0000-\u001f]/g, '')}"}`).dropped.length === 0)).toEqual(['x.png', '//x/a', '/x/a', 'ht tps://x/a', 'https\u00a0://x/a']);
+    });
+
+    it('text stays (a font family, content, an area of a grid template, a MIME type, a local font) unless it reads as a URL', () => {
+        const css = 'a{font-family:"Helvetica Neue",serif; content:"→ " counter(c) ". "; grid-template-areas:"a b" "c d"; --font:"Inter"; quotes:"«" "»"} @font-face{src:local("F"),url(f.woff2) format("woff2")} b{background:image-set("p.png" type("image/png")); content:"#"; --u:"Note: x"}';
+        expect(kept(css)).toEqual({
+            css: 'a{font-family:"Helvetica Neue",serif; content:"→ " counter(c) ". "; grid-template-areas:"a b" "c d"; --font:"Inter"; quotes:"«" "»"} @font-face{src:local("F"),url("") format("woff2")} b{background:image-set("" type("image/png")); content:""; --u:""}',
+            dropped: ['f.woff2', 'p.png', '#', 'Note: x'],
+        });
     });
 
     // BD4:TST-6: `@import src("https://…")` (CSS Values 4's other <url>); no engine loads it in an @import today, so this is
     // the scan being ready for the day one does, as it is for the first token that is a string or url().
     it('@import takes its URL from the first token, a string, url() or any function such as src(); a later token names nothing', () => {
-        expect(network('@import url("https://x/1.css"); @import "https://x/2.css";')).toEqual([['style', 'https://x/1.css'], ['style', 'https://x/2.css']]);
-        expect(network('@import src("https://x/3.css");')).toEqual([['style', 'https://x/3.css']]);
-        expect(network('@import src("https://x/4.css") layer(a) supports(display: grid);')).toEqual([['style', 'https://x/4.css']]);
-        expect(network('@import src(url("https://x/5.css")) screen;')).toEqual([['style', 'https://x/5.css']]);
-        expect(network('@import image-set("https://x/6.css" 1x);')).toEqual([['style', 'https://x/6.css']]);
-        expect(network('@import src("https://x/7.css"); a { b: url(https://x/8.png) }')).toEqual([['style', 'https://x/7.css'], ['image', 'https://x/8.png']]); // the rule after it is an image again
-        expect(network('@import layer(a) src("https://x/9.css");')).toEqual([]); // not the first token: no engine reads it as the URL
-        const dropped: [string, string][] = [];
-        expect(withoutNetworkReferences('@import src("https://x/3.css") layer(a);', cssReferences, dropped as any)).toBe('@import src("") layer(a);');
-        expect(dropped).toEqual([['style', 'https://x/3.css']]);
+        expect(loads('@import url("https://x/1.css"); @import "https://x/2.css";')).toEqual([['style', 'https://x/1.css'], ['style', 'https://x/2.css']]);
+        expect(loads('@import src("https://x/3.css");')).toEqual([['style', 'https://x/3.css']]);
+        expect(loads('@import src("https://x/4.css") layer(a) supports(display: grid);')).toEqual([['style', 'https://x/4.css']]);
+        expect(loads('@import src(url("https://x/5.css")) screen;')).toEqual([['style', 'https://x/5.css']]);
+        expect(loads('@import image-set("https://x/6.css" 1x);')).toEqual([['style', 'https://x/6.css']]);
+        expect(loads('@import src("https://x/7.css"); a { b: url(https://x/8.png) }')).toEqual([['style', 'https://x/7.css'], ['image', 'https://x/8.png']]); // the rule after it is an image again
+        expect(loads('@import layer(a) src("https://x/9.css");')).toEqual([]); // not the first token: no engine reads it as the URL
+        expect(kept('@import src("https://x/3.css") layer(a);')).toEqual({ css: '@import src("") layer(a);', dropped: ['https://x/3.css'] });
         expect(cssReferences('@import src("x.css");', 'files')).toEqual([]); // the files scope is as it was
     });
 
@@ -342,13 +335,11 @@ describe('cssReferences, network scope, and withoutNetworkReferences', () => {
             ['an escaped scheme', `--u:"${X.replace('https', 'htt\\70 s')}/a.png"`, true],
             ['a comment before a url()', `background:/* ${X}/x */url("${X}/a.png")`, true],
             ['attr(), which cannot make a string', 'content:attr(data-u)', false],
-            ['a relative url()', 'background:url(/a.png)', false],
-            ['a relative string', '--u:"/a.png"', false],
         ];
         for (const [name, css, dropped] of routes) {
             it(`${name}: ${dropped ? 'dropped and reported' : 'nothing to drop'}`, () => {
                 const list: [string, string][] = [];
-                const kept = dropNetworkCss(css, list);
+                const kept = keptCss(css, list);
                 expect(list.length > 0).toBe(dropped);
                 expect(list.every(([, url]) => /^https?:/i.test(url))).toBe(true);
                 expect(/https?:/i.test(kept.replace(/\/\*[^]*?\*\//g, ''))).toBe(false); // no http(s) string is left outside a comment
@@ -431,7 +422,7 @@ describe('the view: what an operation puts into a <style>, and a load that fails
             return add.call(this, type, listener, options);
         } as typeof window.addEventListener;
         try {
-            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
+            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
         } finally {
             window.addEventListener = add;
         }
@@ -501,7 +492,8 @@ describe('the view: what an operation puts into a <style>, and a load that fails
         const { send, failed, violations, close } = await startView();
         await send({ type: 'VIEW_RENDER', html: `<img id="i" src="${LISTED}/i.png#f"><video id="v"><source id="so" src="${LISTED}/s.mp4"><track id="t" src="${LISTED}/t.vtt"></video><audio id="u" src="${LISTED}/a.mp3"></audio><img id="b" src="r.png"><p id="p">x</p>`, into: 'a' });
         for (const id of ['i', 'so', 't', 'u', 'b', 'p']) await failed(document.getElementById(id)!);
-        expect(violations).toEqual([['img-src', `${LISTED}/i.png`], ['media-src', `${LISTED}/s.mp4`], ['media-src', `${LISTED}/t.vtt`], ['media-src', `${LISTED}/a.mp3`]]);
+        // (the relative URL is dropped by the render and reported then: keepsUrl, BD7:ISO-1; its element has no src to fail)
+        expect(violations).toEqual([['img-src', 'r.png'], ['img-src', `${LISTED}/i.png`], ['media-src', `${LISTED}/s.mp4`], ['media-src', `${LISTED}/t.vtt`], ['media-src', `${LISTED}/a.mp3`]]);
         close();
     });
 });

@@ -72,9 +72,9 @@ export const CHOKEPOINTS = {
         token: 'export const STRICT_WORKER_GLOBALS',
     },
     webAssemblyRemoval: {
-        what: 'the strict prelude deletes `WebAssembly` unless `scriptUnsafe`, which sealed mode refuses',
-        file: 'src/lib/in-sandbox-view.ts',
-        token: "if (!options.scriptUnsafe) remove(g, 'WebAssembly');",
+        what: "the worker's allowlist has no `WebAssembly` unless `scriptUnsafe`, which sealed mode refuses",
+        file: 'src/lib/worker-globals.ts',
+        token: 'export const workerGlobalsFor',
     },
     createObjectUrlRemoval: {
         what: 'the strict prelude deletes `URL.createObjectURL`: the guest mints no URL the view could load',
@@ -116,15 +116,20 @@ export const CHOKEPOINTS = {
         file: 'src/lib/in-sandbox-view.ts',
         token: "toHost({ type: 'VIOLATION', directive: name,",
     },
+    urlKeepRule: {
+        what: "the one rule for a URL in the view (keepsUrl, BD7:ISO-1): a URL attribute, a CSS reference or a registered stylesheet's reference is kept only when it is a URL the view minted, the empty URL, a fragment of the view's document in an SVG reference property, or text that names no URL; everything else goes, whatever its scheme or spelling",
+        file: 'src/lib/css-references.ts',
+        token: 'export function keepsUrl(',
+    },
     rendererUrlDrop: {
-        what: 'the renderer keeps no network URL the view policy refuses (sealed mode: none) and keeps a `blob:` URL only where the view minted it, before insertion',
+        what: 'the renderer keeps a URL attribute only as the URL rule allows (a `blob:` URL the view minted; sealed mode lists no origin), before insertion',
         file: 'src/lib/in-sandbox-view.ts',
         token: 'export function sanitizeRender(',
     },
     cssUrlDrop: {
-        what: "every network URL in guest CSS (`url()`, `image-set()`, `@import`, `@font-face`) is dropped before the view applies it",
+        what: "every reference of guest CSS the URL rule does not keep (`url()`, `image-set()`, `@import`, `@font-face`, a string) becomes `\"\"` before the view applies it, and every one of a registered stylesheet before the view gets it",
         file: 'src/lib/css-references.ts',
-        token: 'export function withoutNetworkReferences(',
+        token: 'export function withKeptReferences(',
     },
     styleEncoding: {
         what: "the view's parser is given the guest's markup with no `style` attribute and no `<style>` element in it, in any context (styleMarkup renames them first): Chromium checks a style attribute as it parses it",
@@ -169,7 +174,12 @@ export const CHOKEPOINTS = {
     forcedCrossorigin: {
         what: 'the renderer gives every `img`, `video`, `audio` and `link` `crossorigin="anonymous"` before it is connected: no load carries credentials',
         file: 'src/lib/in-sandbox-view.ts',
-        token: 'export const RENDER_CROSSORIGIN_ELEMENTS',
+        token: "['img', 'crossorigin', 'anonymous'],",
+    },
+    forcedMediaControls: {
+        what: 'the renderer gives every `video` `disablepictureinpicture` and every `video` and `audio` `disableremoteplayback`, whatever the guest wrote, before it is connected: the user agent offers no picture-in-picture and no remote playback for the guest\'s media (BD7:ISO-3)',
+        file: 'src/lib/in-sandbox-view.ts',
+        token: "['video', 'disablepictureinpicture', ''],",
     },
     autoplaySwitch: {
         what: 'the `autoplay` attribute goes unless `allowAutoplay`',
@@ -493,7 +503,7 @@ export const SURFACES = {
     mediaControls: {
         side: 'view',
         what: "the browser's own media controls (fullscreen, picture-in-picture, remote playback), which the user drives",
-        names: words('html:video@controls html:audio@controls html:video@controlslist html:audio@controlslist html:video@disablepictureinpicture html:video@disableremoteplayback html:audio@disableremoteplayback'),
+        names: words('html:video@controls html:audio@controls html:video@controlslist html:audio@controlslist'),
     },
     svgReference: { side: 'view', what: 'a reference from an SVG shape to a paint server, clip path or mask', names: words('svg:*@fill svg:*@stroke svg:*@clip-path svg:*@mask') },
     focusAttribute: { side: 'view', what: 'make an element focusable', names: words('html:*@tabindex svg:*@tabindex mathml:*@tabindex') },
@@ -571,6 +581,8 @@ const remains = (residuals: readonly string[], why: string): Cell => ({ relation
 export interface Column {
     readonly rest: string;
     readonly cells: Readonly<Record<string, Cell>>;
+    /** `permissionsPolicy` only: every feature the view's document allows, and what it is to a sealed guest (VIEW_FEATURES). */
+    readonly features?: Readonly<Record<string, Cell>>;
 }
 
 // Cells several columns share.
@@ -583,18 +595,59 @@ const NO_FETCH_BRIDGE = neutralised(['sealedFetchRefusal'], 'refused in the gues
 const NO_GUEST_URL = neutralised(['createObjectUrlRemoval'], 'the sealed worker does not have it');
 const SECURE_CONTEXT_REMOVED = neutralised(['secureContextRemoval'], 'only a secure context has it: the sealed worker does not, on any engine and whatever the host page');
 const VIEW_RUNS_NO_GUEST_CODE = neutralised(['viewPolicy', 'viewViolationRelay'], "the view's checks of the host page's policy raise violations in the view, which runs no guest code and relays no policy text");
-const NO_NETWORK_RENDERED = neutralised(['rendererUrlDrop', 'cssUrlDrop', 'inertHref'], 'what it renders keeps no network URL, in markup or CSS, and no link navigates');
+const NO_NETWORK_RENDERED = neutralised(['urlKeepRule', 'rendererUrlDrop', 'cssUrlDrop', 'inertHref'], 'what it renders keeps no URL but a registered file\'s, in markup or CSS, and no link navigates');
 const VIEW_FOCUS_ON_TEARDOWN = neutralised(['teardownDetach'], 'a focused element of the view makes the browser dispatch focus and blur into the host page when the frame goes');
 // The guest's styles, applied through the CSSOM: no check of the host page's `style-src`, so no refusal, violation or report.
 const STYLE_ATTRIBUTE_CSSOM = neutralised(['styleEncoding', 'cssomDeclaration'], "the view applies its text as the element's declaration: no inline style, so no check of the host page's `style-src`");
 const STYLE_ELEMENT_CSSOM = neutralised(['styleEncoding', 'adoptedSheets'], 'the view applies its text as an adopted constructed stylesheet: no inline style, so no check of the host page\'s `style-src`');
 const STYLES_CSSOM = neutralised(['styleEncoding', 'cssomDeclaration', 'adoptedSheets'], 'what it renders: its style attributes and `<style>`s, each applied through the CSSOM');
+// What the guest's styles load: only the URLs the one rule keeps (BD7:ISO-1), so only a registered file's `blob:` URL.
+const STYLE_LOADS = remains(['blobLoads'], "every reference the URL rule does not keep becomes `\"\"` before the view applies the style (urlKeepRule, cssUrlDrop: whatever its scheme, so no report names one); a registered file it names loads as a `blob:` URL, under the page's directive of its kind");
+const STYLE_VIOLATIONS = neutralised(['styleEncoding', 'cssomDeclaration', 'adoptedSheets', 'urlKeepRule', 'cssUrlDrop', 'viewViolationRelay'], "applied through the CSSOM, so no `style-src` check; every URL but a registered file's is dropped first, and a registered file's load the page refuses raises its violation in the view, which runs no guest code and relays no policy text");
+const NO_NETWORK_IN_CSS = neutralised(['urlKeepRule', 'cssUrlDrop'], "CSS keeps no URL but a registered file's `blob:` URL: no network URL");
 // The host realm's passes (HOST_PASSES): none of them parses, loads or writes a sink the browser would check against the host
 // page's policy; and none of them starts, loads or reads anything the other rows govern.
 const HOST_PURE = neutralised(['hostPassRule'], "it hands nothing of the guest's to a parser, a loader or a sink of the host realm, so the browser checks none of it against the host page's policy (BD7:LIM-1)");
 const HOST_NOTHING = none("it reads and builds strings and bytes in the host page's realm, and starts, loads and reads nothing this row governs");
 // Every name that would make a request or load by URL, if the library let it: the rows a request reaches share these.
 const REQUEST_MAKERS = { requests: REQUESTS_GATED, fetchBridge: NO_FETCH_BRIDGE, importScripts: NO_IMPORT_SCRIPTS, dynamicImport: IMPORT_REFUSED } as const;
+
+// A feature the view allows that only script of the view's document reaches (an API of `document`, `navigator` or `window`,
+// a fetch() option): the view runs no guest code, and the worker's allowlist has none of it.
+const SCRIPT_ONLY = (what: string) => none(`${what}: only script of the view's document reaches it, and the view runs no guest code (the worker has no such name)`);
+const NO_REQUEST = (what: string) => neutralised(['urlKeepRule', 'requestGate'], `${what}: rides on a network request, which the view never makes (it loads only the \`blob:\` URLs it minted) and the worker's request gate refuses`);
+
+/**
+ * Every feature the view's document allows (Chromium's `document.featurePolicy.allowedFeatures()`: the features whose
+ * default allowlist is `*`, since the frames delegate none; Firefox and WebKit expose no such list), and what each is to a
+ * sealed guest (BD7:ISO-3). test/e2e/view-permissions.spec.ts fails on a feature the engine allows that this does not name,
+ * so a feature an engine adds is classified before it ships. Only picture-in-picture is reachable from markup, by the user
+ * through a video's controls; the renderer turns it off on every video.
+ */
+export const VIEW_FEATURES: Readonly<Record<string, Cell>> = {
+    'picture-in-picture': neutralised(['forcedMediaControls'], "every `<video>` the renderer keeps has `disablepictureinpicture`: its controls and context menu offer no picture-in-picture, and `requestPictureInPicture()` refuses; the host page's own policy decides nothing for it"),
+    'attribution-reporting': SCRIPT_ONLY("the Attribution Reporting API (and the `attributionsrc` attribute, which no allowlist of the renderer has)"),
+    'browsing-topics': SCRIPT_ONLY('the Topics API (`document.browsingTopics()`, and a fetch option)'),
+    'interest-cohort': SCRIPT_ONLY('FLoC (`document.interestCohort()`)'),
+    'join-ad-interest-group': SCRIPT_ONLY('`navigator.joinAdInterestGroup()`'),
+    'run-ad-auction': SCRIPT_ONLY('`navigator.runAdAuction()`'),
+    'private-aggregation': SCRIPT_ONLY('the Private Aggregation API, from shared-storage and auction worklets'),
+    'shared-storage': SCRIPT_ONLY('`window.sharedStorage` and its worklets'),
+    'shared-storage-select-url': SCRIPT_ONLY('`sharedStorage.selectURL()`'),
+    'private-state-token-issuance': SCRIPT_ONLY('a fetch() option of the Private State Token API'),
+    'private-state-token-redemption': SCRIPT_ONLY('a fetch() option of the Private State Token API'),
+    'storage-access': SCRIPT_ONLY('`document.requestStorageAccess()`'),
+    'deferred-fetch-minimal': SCRIPT_ONLY('`fetchLater()`'),
+    'sync-xhr': SCRIPT_ONLY("a document's synchronous `XMLHttpRequest`"),
+    'gamepad': SCRIPT_ONLY('`navigator.getGamepads()` and the gamepad events'),
+    'aria-notify': SCRIPT_ONLY('`ariaNotify()`'),
+    'unload': none("an `unload` handler: the renderer keeps no event handler attribute, and the view runs no guest code"),
+    'ch-ua': NO_REQUEST('a client hint'),
+    'ch-ua-mobile': NO_REQUEST('a client hint'),
+    'ch-ua-platform': NO_REQUEST('a client hint'),
+    'ch-ua-high-entropy-values': NO_REQUEST('a client hint, which also reaches script through `navigator.userAgentData`, which the view runs none of'),
+    'ch-save-data': NO_REQUEST('a client hint'),
+};
 
 /** Every row of INHERITED_CONTEXT, and what each surface of the sealed guest is to it. */
 export const SEALED_REACH = {
@@ -614,10 +667,10 @@ export const SEALED_REACH = {
         rest: "resolves no URL against the document's base",
         cells: {
             host: HOST_PURE,
-            urlAttribute: neutralised(['baseCheck', 'rendererUrlDrop'], "a registered path is resolved by the library, a network URL is dropped, and what is left resolves against `about:blank`"),
+            urlAttribute: neutralised(['baseCheck', 'urlKeepRule', 'rendererUrlDrop'], 'a registered path is resolved by the library, and every other URL is dropped: none is left to resolve against the base'),
             linkHref: neutralised(['inertHref'], 'the href is replaced before insertion'),
             ...REQUEST_MAKERS,
-            viewApi: neutralised(['baseCheck', 'rendererUrlDrop', 'inertHref'], 'what it renders: its URL attributes and links'),
+            viewApi: neutralised(['baseCheck', 'urlKeepRule', 'rendererUrlDrop', 'inertHref'], 'what it renders: its URL attributes and links'),
             scope: none("the worker's base is its own `blob:` URL, against which no relative URL resolves, never the document's (probe: test/e2e/sealed-reach.spec.ts)"),
         },
     },
@@ -627,14 +680,14 @@ export const SEALED_REACH = {
             host: HOST_PURE,
             ...REQUEST_MAKERS,
             preludeRemoved: NO_GUEST_URL,
-            urlAttribute: remains(['blobLoads'], "a network URL is dropped before insertion (rendererUrlDrop); a registered file's `blob:` URL loads under the host page's directive of its kind"),
+            urlAttribute: remains(['blobLoads'], "every URL but one the view minted is dropped before insertion, whatever its scheme (urlKeepRule, rendererUrlDrop); a registered file's `blob:` URL loads under the host page's directive of its kind"),
             loadKind: remains(['blobLoads'], "the load of a registered file is checked against the host page's directive of its kind"),
-            styleElement: remains(['blobLoads'], "a network URL in it is dropped (cssUrlDrop); a registered file it names loads as a `blob:` URL"),
-            styleAttribute: remains(['blobLoads'], "a network URL in it is dropped (cssUrlDrop); a registered file it names loads as a `blob:` URL"),
+            styleElement: STYLE_LOADS,
+            styleAttribute: STYLE_LOADS,
             linkRelation: neutralised(['linkRelations'], 'no relation that preloads, prefetches or preconnects is kept'),
             linkHref: neutralised(['inertHref', 'navigationCancel'], 'nothing is loaded by a link'),
-            svgReference: neutralised(['svgLocalReferences'], 'a reference names a fragment of the view, never a URL'),
-            viewApi: remains(['blobLoads'], 'what it renders: the registered files its markup names'),
+            svgReference: neutralised(['urlKeepRule', 'svgLocalReferences'], 'a reference keeps only a fragment of the view, which loads nothing'),
+            viewApi: remains(['blobLoads'], 'what it renders and sets: the registered files its markup and its styles name, every other URL dropped (urlKeepRule)'),
         },
     },
     cspPolicyText: {
@@ -648,8 +701,8 @@ export const SEALED_REACH = {
             preludeRemoved: NO_GUEST_URL,
             listeners: neutralised(['violationStop'], 'a listener of the guest never hears a trusted violation'),
             violationEvent: neutralised(['violationFieldBlanking'], 'every field reads blank, on an event of the platform or of the guest'),
-            styleElement: STYLE_ELEMENT_CSSOM,
-            styleAttribute: STYLE_ATTRIBUTE_CSSOM,
+            styleElement: STYLE_VIOLATIONS,
+            styleAttribute: STYLE_VIOLATIONS,
             urlAttribute: VIEW_RUNS_NO_GUEST_CODE,
             loadKind: VIEW_RUNS_NO_GUEST_CODE,
             viewApi: VIEW_RUNS_NO_GUEST_CODE,
@@ -664,11 +717,12 @@ export const SEALED_REACH = {
             webAssembly: NO_WEBASSEMBLY,
             ...REQUEST_MAKERS,
             preludeRemoved: NO_GUEST_URL,
-            styleElement: STYLE_ELEMENT_CSSOM,
-            styleAttribute: STYLE_ATTRIBUTE_CSSOM,
-            urlAttribute: remains(['blobLoads'], "a network URL is dropped before insertion, so no report names one; a directive that refuses `blob:` reports the registered file's load, naming `blob`"),
+            styleElement: remains(['blobLoads'], "applied through the CSSOM, so no `style-src` check (styleEncoding, adoptedSheets); every reference the URL rule does not keep becomes `\"\"` first, whatever its scheme (urlKeepRule, cssUrlDrop), so no report names one; a directive that refuses `blob:` reports a registered file's load, naming `blob`"),
+            styleAttribute: remains(['blobLoads'], "applied through the CSSOM, so no `style-src` check (styleEncoding, cssomDeclaration); every reference the URL rule does not keep becomes `\"\"` first, whatever its scheme (urlKeepRule, cssUrlDrop), so no report names one; a directive that refuses `blob:` reports a registered file's load, naming `blob`"),
+            urlAttribute: remains(['blobLoads'], "every URL but one the view minted is dropped before insertion, whatever its scheme (urlKeepRule), so no report names one; a directive that refuses `blob:` reports the registered file's load, naming `blob`"),
+            svgReference: neutralised(['urlKeepRule', 'svgLocalReferences'], 'a reference keeps only a fragment of the view, which loads nothing'),
             loadKind: remains(['blobLoads'], "a directive that refuses `blob:` reports the load, naming `blob`"),
-            viewApi: remains(['blobLoads'], 'what it renders: the registered files its markup names (its styles are applied through the CSSOM: styleEncoding, cssomDeclaration, adoptedSheets)'),
+            viewApi: remains(['blobLoads'], 'what it renders and sets: the registered files its markup and its styles name, every other URL dropped (urlKeepRule; its styles are applied through the CSSOM: styleEncoding, cssomDeclaration, adoptedSheets)'),
         },
     },
     trustedTypesRequirement: {
@@ -699,11 +753,11 @@ export const SEALED_REACH = {
             host: HOST_PURE,
             ...REQUEST_MAKERS,
             viewApi: NO_NETWORK_RENDERED,
-            urlAttribute: neutralised(['rendererUrlDrop', 'forcedNoReferrer'], 'no network URL is kept; a `blob:` load sends no referrer'),
+            urlAttribute: neutralised(['urlKeepRule', 'rendererUrlDrop', 'forcedNoReferrer'], 'no network URL is kept; a `blob:` load sends no referrer'),
             referrerPolicyAttribute: neutralised(['forcedNoReferrer'], "the guest's value is replaced"),
             linkHref: neutralised(['inertHref', 'navigationCancel'], 'a link navigates nowhere'),
-            styleElement: neutralised(['cssUrlDrop'], 'no network URL in CSS'),
-            styleAttribute: neutralised(['cssUrlDrop'], 'no network URL in CSS'),
+            styleElement: NO_NETWORK_IN_CSS,
+            styleAttribute: NO_NETWORK_IN_CSS,
         },
     },
     ancestorOrigins: {
@@ -724,10 +778,10 @@ export const SEALED_REACH = {
             host: HOST_PURE,
             ...REQUEST_MAKERS,
             viewApi: NO_NETWORK_RENDERED,
-            urlAttribute: neutralised(['rendererUrlDrop', 'forcedCrossorigin'], 'no network URL is kept, and no element load carries credentials; a `blob:` load carries no cookie'),
+            urlAttribute: neutralised(['urlKeepRule', 'rendererUrlDrop', 'forcedCrossorigin'], 'no network URL is kept, and no element load carries credentials; a `blob:` load carries no cookie'),
             linkHref: neutralised(['inertHref', 'navigationCancel'], 'a link navigates nowhere'),
-            styleElement: neutralised(['cssUrlDrop'], 'no network URL in CSS'),
-            styleAttribute: neutralised(['cssUrlDrop'], 'no network URL in CSS'),
+            styleElement: NO_NETWORK_IN_CSS,
+            styleAttribute: NO_NETWORK_IN_CSS,
             loadKind: none('a `blob:` load is no network request and carries no cookie'),
         },
     },
@@ -737,7 +791,7 @@ export const SEALED_REACH = {
             host: HOST_PURE,
             ...REQUEST_MAKERS,
             viewApi: NO_NETWORK_RENDERED,
-            urlAttribute: neutralised(['rendererUrlDrop', 'originCheck'], 'no network URL is kept, and the view is an opaque origin no Service Worker controls'),
+            urlAttribute: neutralised(['urlKeepRule', 'rendererUrlDrop', 'originCheck'], 'no network URL is kept, and the view is an opaque origin no Service Worker controls'),
             loadKind: none("a `blob:` URL is answered from the URL store, and the view's opaque origin has no Service Worker"),
         },
     },
@@ -757,10 +811,11 @@ export const SEALED_REACH = {
         cells: {
             host: HOST_NOTHING,
             autoplay: neutralised(['autoplaySwitch', 'noDelegation', 'viewEventList'], 'dropped by default; with `allowAutoplay` the frame has no `autoplay` delegated, and the guest hears no media event'),
-            mediaControls: neutralised(['noDelegation'], 'fullscreen, picture-in-picture and remote playback are delegated to no frame, so the host page\'s policy decides nothing for them'),
+            mediaControls: neutralised(['forcedMediaControls', 'noDelegation'], "picture-in-picture and remote playback are off on every video and audio the renderer keeps, whatever the host page's policy (picture-in-picture is allowed in every frame by default, so delegating nothing does not turn it off); fullscreen is delegated to no frame"),
             isolation: neutralised(['isolationRefusal'], "`cross-origin-isolated` is the feature behind `crossOriginIsolated`, which no sandbox runs with"),
-            viewApi: neutralised(['autoplaySwitch', 'noDelegation', 'viewEventList'], 'what it renders: its media elements and their controls'),
+            viewApi: neutralised(['autoplaySwitch', 'forcedMediaControls', 'noDelegation', 'viewEventList'], 'what it renders: its media elements and their controls'),
         },
+        features: VIEW_FEATURES,
     },
     permissionState: {
         rest: "reads no browser state keyed to an origin or to the user's profile",

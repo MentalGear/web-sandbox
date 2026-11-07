@@ -168,11 +168,11 @@ test.describe('sealed mode: the host page\'s policy can never be checked by the 
         const steps = STYLE_MAKERS.filter(maker => maker.then !== undefined).map(maker => `${maker.then};`).join('\n');
         await host.sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(STYLE_MAKERS.map(maker => maker.markup).join('') + '<p id="s-done-slot"></p>')});
 ${steps}
-sandboxView.render('<b id="s-done">done</b>', 's-done-slot');
+sandboxView.text('s-done-slot', 'done'); // not a render: a render would sync the sheets the operations before it left (BD7:LIM-4)
 console.log(${JSON.stringify(name)} + 'sent');` });
         expect((await host.configure({ entry: 'main.js' })).at(-1), 'the default sealed build is ready').toEqual({ type: 'ready', reason: null });
         await host.sandbox.waitForLog(name, 30000);
-        await waitInView(host.page, browserName, "!!document.getElementById('s-done')", 15000);
+        await waitInView(host.page, browserName, "document.getElementById('s-done-slot').textContent === 'done'", 15000);
         await host.page.waitForTimeout(2000); // a report the browser sends after the check
 
         // every style applies, with no sheet left over from a <style> that was replaced or removed
@@ -187,14 +187,17 @@ console.log(${JSON.stringify(name)} + 'sent');` });
         const view = seen as Exclude<typeof seen, 'no-context'>;
         expect(view.computed, covering('cspReporting', "every guest style applies under a style-src of hashes alone")).toEqual(checks);
         expect(view.adopted, "one constructed stylesheet for each <style> the view shows, none for one it no longer does").toBe(view.sheets);
-        expect(view.sheets).toBe(8);
+        expect(view.sheets).toBe(9);
         expect(view.inline, 'no <style> element in the view but the library\'s still stylesheet').toBe(1);
 
-        // nothing reached the endpoint, the page heard nothing, and the view raised no violation of the page's style-src
+        // nothing reached the endpoint, the page heard nothing, and the view raised no violation of the page's policy: the only
+        // ones are the renderer's own reports of the URLs it dropped (keepsUrl, BD7:ISO-1)
         const hits = await host.hits();
         expect(hits.reports, covering('cspReporting', "no report of a guest style reaches the host page's endpoint")).toEqual([]);
         expect(await host.cspViolations(), covering('cspReporting', "the host page's own listener hears nothing")).toEqual([]);
-        expect((await sandbox.violations()).map(v => v.directive), covering('cspReporting', 'the view raises no style violation')).toEqual([]);
+        const dropped = STYLE_MAKERS.flatMap(maker => maker.drops ?? []).sort();
+        expect(dropped.length).toBeGreaterThan(0);
+        expect((await sandbox.violations()).map(v => String(v.blockedURI)).sort(), covering('cspReporting', 'the view raises no style violation; it reports what it dropped')).toEqual(dropped);
         expect(await host.state()).toBe('ready');
 
         // positive control: the host page's own inline style is refused and reported, with its sample, on this engine

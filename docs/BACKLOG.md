@@ -131,9 +131,8 @@ Tests: `worker-globals-and-termination.spec.ts` ("V1 … residual", "V3", "H1"),
 Worker mode is frozen as it is (S48). It duplicates strict mode without a view: a worker inside the frame, the same
 worker-globals allowlist (S43), code only through `execute()`. What differs, and what folding has to decide:
 `importScripts` from origins in `origins.scripts` (strict mode takes no `scripts`); nested workers, which worker mode
-lost with the allowlist (S43), so nothing to keep; `WebAssembly`, which worker mode keeps (WebKit compiles it without
-`'unsafe-eval'`) and strict mode keeps only with `scriptUnsafe`; and a headless strict build (no view, or a hidden
-one). Until then worker mode gets no new features.
+lost with the allowlist (S43), so nothing to keep; and a headless strict build (no view, or a hidden one). Until then
+worker mode gets no new features.
 
 ### <a id="s60"></a>S60 · Repository and docs clean-up, then independent adversarial reviews — ⏸️ **after we are done**
 
@@ -471,12 +470,14 @@ the host thread for 12 s) and BD7:ISO-3 (low: picture-in-picture in the sealed v
 low or have no verdict (BD7:LIM-3 medium, availability; BD7:LIM-4, LIM-5, ISO-2 with CHL-1, DOC-1 to DOC-3, TST-1, TST-2,
 NEW-1, NEW-2). The count fell for the second time (10, 5, 3); the evaluation rule triggered in its second form for CHL-2
 and for LIM-2, LIM-4 and LIM-5. No owner decision was needed for any finding: each is solved by construction, in four
-fixes. The host-realm passes fix (BD7:LIM-1, LIM-2, LIM-3, ISO-2 with CHL-1, TST-2): no HTML parser in the host realm on a
+fixes. The host-realm passes fix (#94; BD7:LIM-1, LIM-2, LIM-3, ISO-2 with CHL-1, TST-2): no HTML parser in the host realm on a
 strict or sealed build, one registry of the host's passes over guest content, each pure and linear with a scaling test,
-every standalone `import` token in an entry refused, and `html` capped. The crossing-texts fix (BD7:CHL-2, NEW-2): a
-library error crosses as its code's fixed text, from one table, made by one factory. The URL-rule fix (BD7:ISO-1, ISO-3,
-LIM-4, LIM-5): one keep-predicate for markup and CSS, minted URLs and fragments only, and `disablepictureinpicture` and
-`disableremoteplayback` forced. The docs fix (BD7:DOC-1 to DOC-3, NEW-1, TST-1). BD7:LIM-2 and BD7:LIM-3 are availability
+every standalone `import` token in an entry refused, and `html` capped. The crossing-texts fix (#94; BD7:CHL-2, NEW-2): a
+library error crosses as its code's fixed text, from one table, made by one factory. The URL-rule fix (#95; BD7:ISO-1, ISO-3,
+LIM-4, LIM-5): one keep-predicate for markup and CSS, only URLs the view minted (a fragment only in an SVG reference), and
+`disablepictureinpicture` and `disableremoteplayback` forced. The docs fix (#94; BD7:DOC-1 to DOC-3, NEW-1, TST-1). The
+subtraction inventory before pass 8 found about 190 lines of internal removals (the host and worker ones are in #95); the
+large ones would remove public features outside the board's scope, a question for the owner. BD7:LIM-2 and BD7:LIM-3 are availability
 findings that the board's rule would backlog, and are fixed with the host-realm passes fix. The reports, the verdicts and
 how each finding was resolved are kept in [BOARD-PASS-7-2026-11-07.md](archive/reviews/BOARD-PASS-7-2026-11-07.md); each
 item cites its findings by ID (`BD7:`). The coordinator's evaluation is in

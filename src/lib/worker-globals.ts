@@ -16,8 +16,9 @@
  * messaging inside the worker, encoding, streams, crypto, blobs and URLs, IndexedDB (present, but `open()` is denied in
  * the opaque origin on every engine), canvas and WebGL on an
  * OffscreenCanvas (no URL), WebCodecs (bytes in, frames out), performance and scheduling. WebAssembly's streaming
- * compilation reads a Response the guest's fetch already made. `Request`, `Response` and `Headers` are values, and
- * `BroadcastChannel` reaches only the guest's own opaque origin.
+ * compilation reads a Response the guest's fetch already made (and it is kept only with `scriptUnsafe`:
+ * {@link workerGlobalsFor}). `Request`, `Response` and `Headers` are values, and `BroadcastChannel` reaches only the
+ * guest's own opaque origin.
  *
  * Deliberately absent (they request, or exist to): EventSource, WebTransport, WebSocketStream, FontFace and `fonts`,
  * `caches`, Notification (its icon), the Service Worker and Push interfaces, nested Worker and SharedWorker (a realm
@@ -130,6 +131,14 @@ const secureContextOnly = (list: readonly string[]) => (name: string) => list.in
  * worker requests only through fetch, XMLHttpRequest and WebSocket, which the request gate governs (in-sandbox-script.ts).
  */
 export const STRICT_WORKER_GLOBALS: readonly string[] = WORKER_GLOBALS.filter(name => name !== 'importScripts' && !secureContextOnly(SECURE_CONTEXT_ONLY.globals)(name));
+
+/**
+ * The allowlist a build passes to {@link keepOnlyWorkerGlobals}: `globals` without `WebAssembly` unless `scriptUnsafe`
+ * (R1:R2-5), since WebKit compiles it under a policy without `'wasm-unsafe-eval'`. Off the list, the worker deletes it as
+ * every other name, and fails closed. Sealed mode refuses `scriptUnsafe`, so its worker never has it.
+ */
+export const workerGlobalsFor = (globals: readonly string[], scriptUnsafe: boolean): readonly string[] =>
+    scriptUnsafe ? globals : globals.filter(name => name !== 'WebAssembly');
 
 /**
  * What guest code may find on the worker's navigator (its prototype's members): no `serviceWorker`, no `connection`, no
