@@ -1,4 +1,4 @@
-import { test, expect, type CallOutcome } from './fixture';
+import { test, expect, type CallOutcome, SEALED_HAS_NO_EXECUTE } from './fixture';
 import { VIEW_MODES } from './view-modes';
 
 /**
@@ -223,6 +223,7 @@ for (const mode of MODES) {
 
     test.describe(`broker lifecycle (${mode}): calls never hang`, () => {
         test('a call queued before the port is ready still resolves', async ({ sandbox, page }) => {
+            test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
             void sandbox; // the fixture loads the harness; this case drives setConfig() directly, not mount()
             const result = await page.evaluate(async (mode) => {
                 const s = document.querySelector('web-sandbox') as any;
@@ -331,6 +332,7 @@ for (const mode of MODES) {
         });
 
         test('a non-transferable call queued before ready does not block ready, and a valid call queued after it resolves', async ({ sandbox, page }) => {
+            test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
             void sandbox; // the fixture loads the harness; this case drives setConfig() directly, not mount()
             const outcome = await page.evaluate(async (mode) => {
                 const s = document.querySelector('web-sandbox') as any;
@@ -351,6 +353,7 @@ for (const mode of MODES) {
         });
 
         test('an unpostable answer produced after a re-init is dropped with the old port: the next frame still becomes ready', async ({ sandbox, page }) => {
+            test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
             const warnings: string[] = [];
             page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
             // The host handler re-initializes the sandbox, then returns a value structured clone cannot carry.

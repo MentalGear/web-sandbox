@@ -29,7 +29,7 @@ const scriptWarnings = (warn: { mock: { calls: unknown[][] } }) => warn.mock.cal
 // A registered JSON file: strict mode admits blob: in connect-src for it, sealed mode never does (connect-src 'none'),
 // so the two modes' policies differ and policy equality tells them apart.
 const FILES = { 'data.json': '{}' };
-const SEALED_POLICY = () => sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: viewBootstrapHash(), scriptUnsafe: false });
+const SEALED_POLICY = () => sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: viewBootstrapHash() });
 const STRICT_POLICY = () => strictViewPolicy({ origins: NO_ORIGINS, fileKinds: new Set(['connect']), bootstrapHash: viewBootstrapHash(), scriptUnsafe: false });
 
 /** What the element built: the view's scripts, its policy, its body, the wrapper's flags, the frames of the shadow root. */

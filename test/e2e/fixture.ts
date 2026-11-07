@@ -32,6 +32,20 @@ export const BASELINE_CONFIG: SandboxConfig = {
  */
 export type MountConfig = SandboxConfigOptions & { mode?: 'strict' | 'sealed' | 'cooperative' | 'worker'; origins?: SandboxOrigins; fetchBridge?: FetchBridgeConfig };
 
+/** Why a test that drives its guest with execute() does not run in sealed mode. */
+export const SEALED_HAS_NO_EXECUTE = 'execute() runs nothing in sealed mode, which refuses scriptUnsafe: this test runs in strict mode, whose view and worker are sealed mode\'s';
+
+/**
+ * The config mount() applies: BASELINE_CONFIG merged with `config`, without `scriptUnsafe` where the mode is sealed, which
+ * refuses it (BD6:ISO-1), whether the baseline or the spec gave it: a spec mounts a sealed sandbox to run its guest, and
+ * its execute() then skips the test (run()). A spec that asserts the refusal applies its config itself (setConfig()).
+ */
+export function mounted(config: MountConfig): Record<string, unknown> {
+    const merged: Record<string, unknown> = { ...BASELINE_CONFIG, ...config };
+    if (merged.mode === 'sealed') delete merged.scriptUnsafe;
+    return merged;
+}
+
 export type MountResult = 'ready' | 'terminated';
 
 /** One 'violation' event as the harness records it: the element's detail plus which sandbox sent it. */
@@ -73,9 +87,9 @@ export class SandboxDriver {
         await this.page.waitForFunction(() => (window as any).harnessReady === true);
     }
 
-    /** Applies BASELINE_CONFIG merged with `config`, and waits for the sandbox to become ready. */
+    /** Applies BASELINE_CONFIG merged with `config` (mounted()), and waits for the sandbox to become ready. */
     async mount(config: MountConfig = {}): Promise<MountResult> {
-        return this.page.evaluate((merged) => whenSettled(s => s.setConfig(merged)), { ...BASELINE_CONFIG, ...config } as any);
+        return this.page.evaluate((merged) => whenSettled(s => s.setConfig(merged)), mounted(config) as any);
     }
 
     /** Loads guest markup into the current sandbox and waits for it to become ready. */
@@ -124,7 +138,7 @@ export class SandboxDriver {
             second.addEventListener('terminated', () => resolve('terminated'), { once: true });
             second.setConfig(merged); // detached: only stores the config, the frame is built on insertion
             document.body.appendChild(second);
-        }), { ...BASELINE_CONFIG, ...config } as any);
+        }), mounted(config) as any);
     }
 
     /**
@@ -150,6 +164,11 @@ export class SandboxDriver {
     }
 
     async run(code: string) {
+        // Sealed mode refuses scriptUnsafe (BD6:ISO-1), so execute() runs nothing there: a test that drives its guest with
+        // execute() is skipped in sealed mode, with this reason, and runs in strict mode, whose view and worker are sealed
+        // mode's (view-modes.ts). A test of sealed mode's own gives its guest the entry (inEntry()).
+        const mode = await this.page.evaluate(() => (document.querySelector('web-sandbox') as any)._config?.mode);
+        test.info().skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE);
         await this.page.evaluate((source) => (document.querySelector('web-sandbox') as any).execute(source), code);
     }
 
@@ -162,6 +181,22 @@ export class SandboxDriver {
         await this.run(`(async () => { ${body} })().then(
             v => console.log(${JSON.stringify(tag)} + JSON.stringify(v)),
             e => console.log(${JSON.stringify(tag)} + JSON.stringify({ thrown: String(e && e.stack || e) })))`);
+        const line = await this.waitForLog(tag, timeout);
+        return JSON.parse(line.slice(tag.length));
+    }
+
+    /**
+     * Mounts `config` (a strict or sealed one) with an entry that runs `body` (an async function body) and returns what it
+     * returns, through JSON, as inGuest() does: the way to run guest code in sealed mode, which has no execute(). `files`
+     * are registered beside the entry. A throw comes back as `{ thrown }`.
+     */
+    async inEntry<T = any>(config: MountConfig, body: string, files: Record<string, FileSpec> = {}, timeout = 15000): Promise<T> {
+        const tag = `GUEST_RESULT_${++this.guestRunCount} `;
+        const entry = `(async () => { ${body} })().then(
+            v => console.log(${JSON.stringify(tag)} + JSON.stringify(v)),
+            e => console.log(${JSON.stringify(tag)} + JSON.stringify({ thrown: String(e && e.stack || e) })));`;
+        expect(await this.registerFiles({ ...files, 'main.js': entry })).toBe('ok');
+        expect(await this.mount({ ...config, entry: 'main.js' })).toBe('ready');
         const line = await this.waitForLog(tag, timeout);
         return JSON.parse(line.slice(tag.length));
     }

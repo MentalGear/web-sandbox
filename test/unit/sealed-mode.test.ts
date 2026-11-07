@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { NetworkSandboxOptions, SandboxConfig, SealedSandboxConfig, StrictSandboxConfig } from '@src/host';
-import { CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, NETWORK_OPTIONS, normaliseConfig, SANDBOX_MODES, type NormaliseContext, type OptionRule } from '@src/lib/config-schema';
+import { CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, ConfigRefusal, NETWORK_OPTIONS, normaliseConfig, SANDBOX_MODES, type NormaliseContext, type OptionRule } from '@src/lib/config-schema';
 import { fileKinds, SEALED_FILE_KINDS, sealedViewPolicy, type SealedFileKind, type SealedPolicyInput } from '@src/lib/csp/csp-generator';
 import { NO_ORIGINS } from '@src/lib/csp/origins';
 import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
@@ -142,10 +142,30 @@ describe('T2: the schema: no network option reaches sealed mode', () => {
         }
     });
 
+    // BD6:ISO-1, BD6:ISO-2 (class A: INHERITED_CONTEXT.cspPolicyText, cspReporting): a string run as code is checked
+    // against the host page's policy, which the worker inherits, and a refusal reports the page's policy text and a sample
+    it('a sealed config that turns scriptUnsafe on is refused whole, with its reason; false, absent or not a literal true pass', () => {
+        const context = { hostOrigin: 'https://host.example', hostSites: ['https://host.example'] } as NormaliseContext;
+        for (const config of [{ scriptUnsafe: true }, { mode: 'sealed', scriptUnsafe: true }, { mode: 'sealed', scriptUnsafe: true, entry: 'main.js', html: '<p>x</p>' }]) {
+            const { value, refusal } = normaliseConfig(config, context);
+            expect(value, JSON.stringify(config)).toBeNull();
+            expect(refusal).toBeInstanceOf(ConfigRefusal);
+            expect((refusal as ConfigRefusal).reason).toBe(reasonText('sealedScriptUnsafe'));
+        }
+        for (const config of [{}, { scriptUnsafe: false }, { scriptUnsafe: 'true' }, { scriptUnsafe: 1 }, { mode: 'sealed', scriptUnsafe: undefined }]) {
+            const { value, refusal } = normaliseConfig(config, context);
+            expect(refusal, JSON.stringify(config)).toBeNull();
+            expect(value!.config.scriptUnsafe).toBe(false);
+        }
+        // strict mode keeps it, for testing
+        expect(normaliseConfig({ mode: 'strict', scriptUnsafe: true }, context).value!.config.scriptUnsafe).toBe(true);
+        expect(TERMINATION_REASONS.sealedScriptUnsafe.decidedBy).toBe('config');
+    });
+
     it("no option of a sealed config reads a value of the host page: the host page's origin is never asked", () => {
         const context = { get hostOrigin(): string { throw new Error("the host page's origin was read"); } } as NormaliseContext;
         const every = {
-            mode: 'sealed', html: '<p>x</p>', capabilities: ['allow-scripts'], unsafeCapabilities: ['allow-popups'], scriptUnsafe: true,
+            mode: 'sealed', html: '<p>x</p>', capabilities: ['allow-scripts'], unsafeCapabilities: ['allow-popups'], scriptUnsafe: false,
             hostContentSecurityPolicy: "default-src 'self'", entry: 'main.js', watchdogTimeout: 10, workerExecutionTimeout: 10, autoResize: true,
             callLimits: { maxPerSecond: 5 }, allowAnimations: true, allowAutoplay: true, guestWrites: true,
         };
@@ -171,37 +191,35 @@ describe('T3: sealedViewPolicy can carry no network source', () => {
         const noOrigins: 'origins' extends Keys ? false : true = true;
         expect(noOrigins).toBe(true);
         // @ts-expect-error the template takes no origins
-        expect(() => sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: HASH, scriptUnsafe: false, origins: NO_ORIGINS })).not.toThrow();
+        expect(() => sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: HASH, origins: NO_ORIGINS })).not.toThrow();
     });
 
     it('with no files: the documented policy, every fetch directive \'none\'', () => {
-        expect(sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: HASH, scriptUnsafe: false })).toBe(
+        expect(sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: HASH })).toBe(
             `default-src 'none'; script-src ${HASH}; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'`,
         );
     });
 
-    it('over every subset of file kinds, with and without scriptUnsafe: fetch directives are \'none\' or blob:, connect-src is \'none\', no source is a network one', () => {
+    it('over every subset of file kinds: fetch directives are \'none\' or blob:, connect-src is \'none\', script-src is the bootstrap\'s hash alone, no source is a network one', () => {
         const all = subsets(SEALED_FILE_KINDS);
         expect(all).toHaveLength(16);
         for (const kinds of all) {
-            for (const scriptUnsafe of [false, true]) {
-                // a cast set that also holds connect and scripts (what strict's file kinds can hold) changes nothing
-                const widened = new Set<string>([...kinds, 'connect', 'scripts']) as unknown as ReadonlySet<SealedFileKind>;
-                const policy = sealedViewPolicy({ fileKinds: new Set(kinds), bootstrapHash: HASH, scriptUnsafe });
-                expect(sealedViewPolicy({ fileKinds: widened, bootstrapHash: HASH, scriptUnsafe }), kinds.join()).toBe(policy);
-                const parsed = directives(policy);
-                expect(parsed.get('connect-src'), kinds.join()).toEqual(["'none'"]);
-                for (const name of FETCH) expect(["'none'", 'blob:'], `${name} ${kinds.join()}`).toEqual(expect.arrayContaining(parsed.get(name)!));
-                for (const kind of SEALED_FILE_KINDS) expect(parsed.get(KIND_DIRECTIVE[kind])!.includes('blob:'), `${kind} ${kinds.join()}`).toBe(kinds.includes(kind));
-                expect(parsed.get('script-src')).toEqual([HASH, ...(scriptUnsafe ? ["'unsafe-eval'"] : [])]);
-                for (const [name, sources] of parsed) {
-                    for (const source of sources) {
-                        const library = source === "'none'" || source === "'unsafe-inline'" || source === "'unsafe-eval'" || source === HASH || source === 'blob:';
-                        expect(library, `${name} ${source}`).toBe(true);
-                    }
+            // a cast input that also holds connect and scripts (what strict's file kinds can hold), and scriptUnsafe, changes nothing
+            const widened = { fileKinds: new Set<string>([...kinds, 'connect', 'scripts']) as unknown as ReadonlySet<SealedFileKind>, bootstrapHash: HASH, scriptUnsafe: true } as SealedPolicyInput;
+            const policy = sealedViewPolicy({ fileKinds: new Set(kinds), bootstrapHash: HASH });
+            expect(sealedViewPolicy(widened), kinds.join()).toBe(policy);
+            const parsed = directives(policy);
+            expect(parsed.get('connect-src'), kinds.join()).toEqual(["'none'"]);
+            for (const name of FETCH) expect(["'none'", 'blob:'], `${name} ${kinds.join()}`).toEqual(expect.arrayContaining(parsed.get(name)!));
+            for (const kind of SEALED_FILE_KINDS) expect(parsed.get(KIND_DIRECTIVE[kind])!.includes('blob:'), `${kind} ${kinds.join()}`).toBe(kinds.includes(kind));
+            expect(parsed.get('script-src')).toEqual([HASH]);
+            for (const [name, sources] of parsed) {
+                for (const source of sources) {
+                    const library = source === "'none'" || source === "'unsafe-inline'" || source === HASH || source === 'blob:';
+                    expect(library, `${name} ${source}`).toBe(true);
                 }
-                expect(policy).not.toMatch(/https?:|wss?:|data:|\*|'self'/);
             }
+            expect(policy).not.toMatch(/https?:|wss?:|data:|\*|'self'|unsafe-eval/);
         }
     });
 
@@ -212,7 +230,7 @@ describe('T3: sealedViewPolicy can carry no network source', () => {
         el.setConfig({ mode: 'sealed', entry: 'main.js' });
         expect(el.state).toBe('loading');
         const kinds = new Set<SealedFileKind>(['styles', 'images']);
-        expect(policyOf(el)).toBe(sealedViewPolicy({ fileKinds: kinds, bootstrapHash: HASH, scriptUnsafe: false }));
+        expect(policyOf(el)).toBe(sealedViewPolicy({ fileKinds: kinds, bootstrapHash: HASH }));
         expect([...fileKinds(['application/json'])]).toEqual(['connect']); // what strict would add blob: to connect-src for
         expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(1); // no bridge frame
         expect(Object.keys(el._strictInit)).not.toContain('origins'); // T4, test/unit/sealed-build.test.ts

@@ -66,15 +66,15 @@ test.describe('sealed mode', () => {
             };
         });
         const hostFetches = () => page.evaluate(() => (window as any).hostFetches as number);
-        expect(await sandbox.mount({ mode: 'sealed' })).toBe('ready');
-        expect(await sandbox.inGuest(probe('/sealed'))).toEqual({ fetched: 'TypeError', bridged: 'FETCH_NOT_ALLOWED' });
+        // the guest's code is its entry: sealed mode has no execute() (it refuses scriptUnsafe)
+        expect(await sandbox.inEntry({ mode: 'sealed' }, probe('/sealed'))).toEqual({ fetched: 'TypeError', bridged: 'FETCH_NOT_ALLOWED' });
         await expect.poll(async () => (await sandbox.violations()).filter(v => v.sourceFile === GATE_SOURCE_FILE).map(v => v.blockedURI)).toEqual([`${recorder.allowed}/sealed`]);
         await sandbox.page.waitForTimeout(500);
         expect(recorder.paths('allowed')).toEqual([]);
         expect(await hostFetches()).toBe(0);
         // the guest can call the reserved method itself (BD5:TST-5): sandboxFetch() sends nothing, but bridge.call('sandbox:fetch') reaches
         // the host's handler, which has no bridge in a sealed build and refuses it, and the listener still sees nothing
-        const raw = await sandbox.inGuest(`return await bridge.call('sandbox:fetch', { url: '${recorder.allowed}/sealed-raw', method: 'POST', body: 'x' }).then(() => 'sent', (e) => e.code);`);
+        const raw = await sandbox.inEntry({ mode: 'sealed' }, `return await bridge.call('sandbox:fetch', { url: '${recorder.allowed}/sealed-raw', method: 'POST', body: 'x' }).then(() => 'sent', (e) => e.code);`);
         expect(raw).toBe('FETCH_NOT_ALLOWED');
         expect(await hostFetches()).toBe(1);
         await sandbox.page.waitForTimeout(500);
@@ -95,10 +95,19 @@ test.describe('sealed mode', () => {
         expect(await sandbox.inGuest(raw)).toBe('sent'); // the bridge is on in the strict build (positive control)
         await recorder.waitFor('allowed', '/after-bridge');
         recorder.clear();
-        expect(await sandbox.mount({ mode: 'sealed' })).toBe('ready');
-        expect(await sandbox.inGuest(raw)).toMatch(/^FETCH_NOT_ALLOWED: .*the fetch bridge is off/);
+        // (sealed mode runs no execute(): the same call is the sealed guest's entry, on the same element)
+        expect(await sandbox.inEntry({ mode: 'sealed' }, raw)).toMatch(/^FETCH_NOT_ALLOWED: .*the fetch bridge is off/);
         await sandbox.page.waitForTimeout(500);
         expect(recorder.paths('allowed')).toEqual([]);
+    });
+
+    test('a sealed config with scriptUnsafe: true is refused with its reason, nothing of it is applied; strict mode keeps the option', async ({ sandbox, page }) => {
+        void sandbox;
+        for (const config of [{ scriptUnsafe: true }, { mode: 'sealed', scriptUnsafe: true, html: '<p>x</p>' }]) {
+            expect(await apply(page, config as SandboxConfig), JSON.stringify(config)).toBe('terminated');
+            expect((await sandbox.terminations()).at(-1)!.reason).toBe("scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`");
+        }
+        expect(await apply(page, { mode: 'strict', scriptUnsafe: true, html: '<p>x</p>', hostContentSecurityPolicy: false })).toBe('ready');
     });
 
     test('a sealed config that names origins is refused: terminated with the reason, and a sealed config without it builds again', async ({ sandbox, page }) => {

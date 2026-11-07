@@ -9,6 +9,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixture';
 import type { SandboxConfig } from '@src/host';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
+import { reasonText } from '@src/lib/reasons';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { makerCode, makerUrl, SEALED_MAKERS, type Maker, type MakerScheme } from './sealed-makers';
 
@@ -93,13 +94,16 @@ const makerOf = (hitPath: string) => /^\/m\/([^/?#]+)/.exec(hitPath)?.[1] ?? nul
 
 const byRealm = (realm: Maker['realm']) => SEALED_MAKERS.filter(maker => maker.realm === realm);
 
+/** Whether a maker goes in the shared entry: an `import()` makes the build refuse the entry, so each of those is built alone. */
+const builds = (maker: Maker) => maker.outcome !== 'unbuildable';
+
 /** The entry: renders every view maker, sets every `set({ css })` maker, runs every worker maker, and answers 'results'. */
 function entry(origins: Record<MakerScheme, string>): string {
     const markup = byRealm('view').map(maker => makerCode(maker, makerUrl(maker, origins))).join('')
         + '<link rel="stylesheet" href="net.css"><div class="m-sheet-bg"></div><div class="m-sheet-set"></div><p class="m-sheet-font">sheet</p>'
         + '<div id="m-set-target" style="width:5px;height:5px">set</div><p id="m-done">done</p>';
     const sets = byRealm('set-css').map(maker => `try { sandboxView.set('m-set-target', { css: ${makerCode(maker, makerUrl(maker, origins))} }); } catch (e) { results[${JSON.stringify(maker.id)}] = e.name; }`);
-    const runs = byRealm('worker').map(maker => `results[${JSON.stringify(maker.id)}] = await Promise.race([${makerCode(maker, makerUrl(maker, origins))}, new Promise((resolve) => setTimeout(() => resolve('pending'), 3000))]).then(String, (e) => 'threw ' + e.name);`);
+    const runs = byRealm('worker').filter(builds).map(maker => `results[${JSON.stringify(maker.id)}] = await Promise.race([${makerCode(maker, makerUrl(maker, origins))}, new Promise((resolve) => setTimeout(() => resolve('pending'), 3000))]).then(String, (e) => 'threw ' + e.name);`);
     return `const results = {};
 sandboxView.render(${JSON.stringify(markup)});
 bridge.expose('set', () => {
@@ -154,7 +158,7 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         expect(listener.connections).toEqual({ https: 0, http: 0 });
 
         // the worker: each maker failed in the guest as its outcome says
-        const workerMakers = byRealm('worker');
+        const workerMakers = byRealm('worker').filter(builds);
         expect(seen).toEqual(Object.fromEntries(workerMakers.map(maker => [maker.id, maker.sees])));
 
         // the reports: the gate's for its makers, the renderer's for every URL it dropped (with its directive)
@@ -172,9 +176,8 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
             const reports = reported(maker);
             if (maker.outcome === 'gate') expect(reports.map(v => `${v.directive} ${v.sourceFile}`), maker.id).toEqual([`connect-src ${GATE_SOURCE_FILE}`]);
             else if (maker.outcome === 'dropped') expect(reports.map(v => v.directive), maker.id).toContain(maker.directive);
-            // the browser's own refusal, reported where the engine raises one in a worker (not WebKit)
-            // ledger: worker-violation-reports
-            else if (maker.outcome === 'policy') expect(reports.map(v => v.directive), maker.id).toEqual(browserName === 'webkit' ? [] : ['script-src-elem']);
+            // the rest is stopped before anything is checked: no report, on any engine (a string, an absent maker, an import()
+            // whose entry was never built)
             else expect(reports, maker.id).toEqual([]);
         }
         // the renderer's layer, on its own (BD5:TST-4): the browser's policy would refuse the loads and report the same
@@ -191,6 +194,22 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         // the registered stylesheet: built without its network URLs, said once
         expect(warnings.filter(text => text.includes('registered stylesheet "net.css"') && text.includes('sealed mode has no network'))).toHaveLength(1);
         expect(await sandbox.state()).toBe('ready');
+    });
+
+    // BD6:ISO-2 (class A: INHERITED_CONTEXT.cspReporting): an import() would be checked against the policy list the worker
+    // inherits, and its URL reported; the build refuses every entry that holds one, so no worker runs and nothing is sent.
+    test('every import() maker: the build refuses its entry with the reason that names it, and the listener sees nothing', async ({ sandbox, page }) => {
+        test.setTimeout(60000);
+        const makers = SEALED_MAKERS.filter(maker => !builds(maker));
+        expect(makers.length).toBe(3);
+        for (const maker of makers) {
+            expect(await sandbox.registerFiles({ 'main.js': `sandboxView.render('<p id="m-done">done</p>'); ${makerCode(maker, makerUrl(maker, listener.origins))};` })).toBe('ok');
+            expect(await apply(page, { mode: 'sealed', entry: 'main.js' }), maker.id).toBe('terminated');
+            expect((await sandbox.terminations()).at(-1)?.reason, maker.id).toBe(reasonText('entryImport'));
+        }
+        await page.waitForTimeout(1500);
+        expect(listener.hits.map(hit => `${hit.scheme} ${hit.path}`)).toEqual([]);
+        expect(listener.connections).toEqual({ https: 0, http: 0 });
     });
 
     // BD5:TST-6. The renderer drops the schemes that spell a server in a style value (css-references.ts, isNetwork) and the

@@ -12,7 +12,7 @@ const HASH = `'sha256-${'A'.repeat(43)}='`;
 const policies = () => ({
     cooperative: cooperativePolicy(input),
     strict: strictViewPolicy({ ...input, bootstrapHash: HASH }).replace(HASH, "'sha256-<bootstrap>'"),
-    sealed: sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: HASH, scriptUnsafe: false }).replace(HASH, "'sha256-<bootstrap>'"),
+    sealed: sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: HASH }).replace(HASH, "'sha256-<bootstrap>'"),
 });
 
 /** A policy as a fenced block: its directives filled into lines of at most WIDTH characters. */

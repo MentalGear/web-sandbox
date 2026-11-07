@@ -1948,7 +1948,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#scriptUnsafe:member",
-              "docComment": "/**\n * Whether the guest policy allows `'unsafe-eval'` (strings run as code, WebAssembly too) and\n * `execute()` runs code. For testing: each element that enables it warns once. Only a literal `true`\n * enables it.\n *\n * @defaultValue `false`\n */\n",
+              "docComment": "/**\n * Whether the guest policy allows `'unsafe-eval'` (strings run as code, WebAssembly too) and\n * `execute()` runs code. For testing: each element that enables it warns once. Only a literal `true`\n * enables it. Sealed mode refuses it ({@link SealedSandboxConfig}).\n *\n * @remarks\n *\n * The host page's policy still applies: the guest's realm inherits it, so a string it refuses fails, and the page's\n * policy reports the refusal to the guest's realm (its text) and to the page's report endpoint (a sample of the\n * string). Without it, strict mode's worker refuses every string itself, before the browser sees it.\n *\n * @defaultValue `false`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -3161,6 +3161,33 @@
               "isOptional": true,
               "releaseTag": "Public",
               "name": "origins",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            },
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SealedSandboxConfig#scriptUnsafe:member",
+              "docComment": "/**\n * Not in sealed mode, which runs no string as code: `true` refuses the config.\n *\n * @remarks\n *\n * A string run as code is checked against the host page's policy, which the guest's worker inherits; a policy that\n * refuses it reports the refusal with the page's policy text, and to the page's report endpoint with a sample of the\n * string. So in sealed mode `eval`, `Function`, the other function constructors and a timer given a string throw\n * the library's `EvalError` before the browser sees the string, and `execute()` does nothing. Strict mode keeps the\n * option, for testing.\n *\n * @defaultValue `false`\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "scriptUnsafe?: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "false"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "scriptUnsafe",
               "propertyTypeTokenRange": {
                 "startIndex": 1,
                 "endIndex": 2

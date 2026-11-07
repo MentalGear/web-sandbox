@@ -16,6 +16,22 @@
  */
 
 /**
+ * What each field of `SecurityPolicyViolationEvent.prototype` reads to guest code in the guest's worker (strict, sealed and
+ * worker mode; S74, class A: INHERITED_CONTEXT.cspPolicyText; BD6:ISO-1): its type's empty value. The worker inherits the
+ * host page's policy list, and a violation of it carries the page's policy text (`originalPolicy`), its report setting
+ * (`disposition`, `sample`) and the document's state; the bootstrap stops every trusted one at its own listener, and this
+ * is what is left for an event the guest makes itself. A field an engine adds and this list does not name reads `''`;
+ * test/e2e/sealed-host-policy.spec.ts enumerates the prototype on every engine against it. The library reads the
+ * platform's getters, captured before (in-sandbox-script.ts, readEvent).
+ */
+export const VIOLATION_EVENT_FIELDS: Readonly<Record<string, string | number>> = Object.freeze({
+    documentURI: '', referrer: '', blockedURI: '', effectiveDirective: '', violatedDirective: '', originalPolicy: '',
+    sourceFile: '', sample: '', disposition: '', statusCode: 0, lineNumber: 0, columnNumber: 0,
+    // WebKit's names for the line and the column, beside the standard ones
+    lineno: 0, colno: 0,
+});
+
+/**
  * The `detail` of a `violation` event: the guest's policy refused a load. Guest-supplied: validated and clamped, but not
  * trusted.
  *

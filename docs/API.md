@@ -93,12 +93,12 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 ## Configuration
 
-<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig, api:SealedSandboxConfig, api:NetworkSandboxOptions sig:2daf5a254f4fbd6cdaecf42e3088af61cb46 -->
+<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig, api:SealedSandboxConfig, api:NetworkSandboxOptions sig:2daf5a254f4fbd6cdaecf42e3088f2f1cb46 -->
 [`setConfig(config)`](#setconfigconfig) takes a `SandboxConfig`, a union keyed by `mode` (`StrictSandboxConfig`,
 `SealedSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the
 options every mode takes; all but `SealedSandboxConfig` also extend `NetworkSandboxOptions`, the options that open the
 network: `origins` and `fetchBridge`): strict mode's `origins` has no `scripts`, a sealed config has no `origins` and no
-`fetchBridge`, and a config without `mode` is a sealed config (sealed mode is the default; strict mode is named with
+`fetchBridge`, and its `scriptUnsafe` is `false` or left out, and a config without `mode` is a sealed config (sealed mode is the default; strict mode is named with
 `mode: 'strict'`, so `{ origins }` without it does not type-check). How a call is applied (over the defaults, copied,
 validated, and what a config that cannot be used does) is under [`setConfig()`](#setconfigconfig) below.
 
@@ -112,7 +112,10 @@ validated, and what a config that cannot be used does) is under [`setConfig()`](
   it is applied, and the sandbox terminates with the reason
   `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``
   ([`terminated` reasons](#terminated-reasons)), as it does for a `mode` that is not one. It is never read as strict mode
-  and never stripped: one key would otherwise change the mode, or lose the network an app relies on, silently.
+  and never stripped: one key would otherwise change the mode, or lose the network an app relies on, silently. So is a
+  sealed config with `scriptUnsafe: true`, with the reason
+  `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'` ``: a string run as
+  code is checked against your page's policy, which reports it ([Host page policy](#host-page-policy)).
 - Each option's default, accepted values, bounds, warnings and modes are declared once (`src/lib/config-schema.ts`), and
   so are the checks across options, which hold for every config: every call that `callLimits` can carry fits an empty
   window ([below](#calllimits)); a `fetchBridge` response of `maxBytes` fits one call result; a `fetchBridge` request
@@ -128,10 +131,10 @@ validated, and what a config that cannot be used does) is under [`setConfig()`](
 | `html` | `string` | `''` | strict, sealed, cooperative | The initial view (strict and sealed mode) or the guest document (cooperative mode). In strict and sealed mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element: ``sealed mode (the default) runs no script in `html`; …`` (in strict mode ``strict mode runs no script in `html`; …``). Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
 | `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-orientation-lock`, `allow-scripts`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict and sealed mode always have `allow-scripts allow-forms` (listing either there changes nothing). |
 | `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-downloads`, `allow-forms`, `allow-modals`, `allow-pointer-lock`, `allow-popups`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `allow-pointer-lock` and `fullscreen` let a guest hide the cursor, capture relative input or draw over the whole screen, so each can imitate host or browser UI. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict and sealed mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no opener: the guest's `window.open()` returns `null`, though the page opens. |
-| `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
+| `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. Your page's policy still applies to every string, and reports each one it refuses, to the guest's realm with its text and to your report endpoint with a sample ([Host page policy](#host-page-policy)). Not in sealed mode: a sealed config with `true` is refused, and the sandbox terminates with the reason `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'` ``; without it, strict and sealed mode's worker refuses every string run as code itself, with the library's `EvalError`. |
 | `origins` | `SandboxOrigins` | none | strict, cooperative, worker (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. Not in sealed mode: a sealed config that names it is refused. See [below](#origins). |
 | `hostContentSecurityPolicy` | `string \| false` | none: `origins.connect` and `fetchBridge.allow` are dropped | all | Your page's Content-Security-Policy as text (one or more policies, as a header or `<meta>` carries them), so that the library drops the `origins.connect` and `fetchBridge.allow` entries it refuses, on every engine; `false` when your page sends none. Left out, every `origins.connect` and `fetchBridge.allow` entry is dropped, with one warning: the library never asks the page for its policy. A browser without Trusted Types (Firefox) applies your page's `require-trusted-types-for` and `trusted-types` only from the text you pass ([Trusted Types without the browser](#trusted-types-without-the-browser)). See [Host page policy](#host-page-policy). |
-| `entry` | `string` | none | strict, sealed | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry is not a registered JavaScript file`; the reason does not quote the entry). |
+| `entry` | `string` | none | strict, sealed | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry is not a registered JavaScript file`; the reason does not quote the entry), and so it does if its text holds `import` followed by `(`, in code, a string or a comment (`the guest entry calls import(), …`): the worker's policy admits no module, and your page's policy would report the URL. |
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off, with a warning unless it is `0`. Bounds a looping guest in strict, sealed and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | strict, sealed, worker | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off, with a warning unless it is `0`. |
 | `autoResize` | `boolean` | `false` | strict, sealed, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
@@ -1035,10 +1038,12 @@ type FetchRecord = {
 | `the sandbox document's base URL is not about:blank: the host page's Content-Security-Policy must allow the library's <base> (base-uri must include about: or be omitted; see docs/API.md#host-page-policy)` | A bootstrap of the library's read a base URL other than `about:blank`: the host page's `base-uri` refused the `<base>` the library's wrapper sets, so the sandbox would have seen the host page's URL. It stayed inert, so nothing of the guest's ran. Allow `about:` in `base-uri`, or omit the directive (see [Host page policy](#host-page-policy)). |
 | `the host page is cross-origin isolated (COOP and COEP); a sandbox does not run there (see docs/API.md#host-page-policy)` | The host page reads `crossOriginIsolated === true` (it sends both `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`), and a guest never runs cross-origin isolated, on any engine. The element builds no frame (a bootstrap of the library's that reads it in its own document stays inert too), so nothing of the guest's ran. Serve the page that embeds a sandbox without COOP and COEP (see [Host page policy](#host-page-policy)). |
 | `the guest entry is not a registered JavaScript file` | Strict and sealed mode: `entry` names no registered JavaScript file. |
+| `the guest entry calls import(), which loads nothing in strict and sealed mode: bundle its modules into the entry` | Strict and sealed mode: the entry's text holds `import` followed by `(` (after any whitespace and comments), in code, a string or a comment. The worker's policy admits no module script, so an `import()` could load nothing, and the host page's policy, which the worker inherits, would report the URL it named to the page's report endpoint; the build refuses the entry instead, and nothing of the guest's runs. Bundle the modules into the entry, and keep the word out of its strings and comments. |
 | `the sandbox view stopped responding` | Strict and sealed mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
 | `the view spent more than 2000 ms on one operation twice within 5 minutes` | Strict and sealed mode: an operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it, and another one had, at most 5 minutes before it. The first such operation only logs a `warn` line (see [`sandbox-log`](#sandbox-log--sandboxlog)); see [`sandboxView`](#sandboxview-strict-mode). |
 | `unknown mode: not strict, sealed, cooperative or worker…` | `mode` is not `strict`, `sealed`, `cooperative` or `worker`. For `'iframe'` the reason ends ` ('iframe' was renamed 'cooperative')`; otherwise nothing follows. |
 | `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` `` | `mode` is `'sealed'` or left out (sealed mode is the default), and the config names `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set. |
+| `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'` `` | `mode` is `'sealed'` or left out, and `scriptUnsafe` is `true`. A string run as code is checked against the host page's policy, which the guest's worker inherits, and a refusal reports the page's policy text to the guest and the string to the page's report endpoint; sealed mode runs none. Nothing of the config is applied, as for `sealedNetwork`. |
 | `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned (the error's name follows, as in `(DataCloneError)`), an `origins` that is not an object (`(TypeError: origins is not an object)`), or a kind of it that is not a list (`(TypeError: origins.connect is not a list)`, naming the kind). |
 | `the environment could not be built (…)` | Building the frame failed. |
 | `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
@@ -1200,6 +1205,18 @@ also `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without `'wasm-unsa
 nothing runs there either; deleting it keeps WebKit's compiler away from guest bytes, [research 24](research/24_sealed_mode/README.md);
 cooperative mode keeps it, a frozen limit), and in strict and sealed mode `URL.createObjectURL`. In strict and sealed mode the view document
 runs no guest code at all, and acts only on trusted events: a synthetic event is never forwarded to `sandboxView.on`.
+
+**No string runs as code** in strict and sealed mode's worker (unless `scriptUnsafe`, which sealed mode refuses): before the
+entry runs, `eval`, `Function`, the constructor of every function kind (async, generator, async generator) and
+`setTimeout` and `setInterval` given a handler that is not a function throw an `EvalError` of the library's
+(`[Sandbox] a string does not run as code in the sandbox …`) and never hand the string to the browser, so your page's
+policy, which the worker inherits, is never asked and reports nothing. A timer given a function works as always. An
+entry that calls `import()` is refused when the sandbox builds. In every worker, a `securitypolicyviolation` the browser
+still raises is relayed to the element's `violation` event and stopped there: no listener of the guest's receives it, and
+the fields of `SecurityPolicyViolationEvent` read empty to guest code. Measured figures (examples, 2026-11-07, Playwright
+1.58.1's engines on a shared 4-core VM under load): the refusal adds 0.2 ms to the worker's start on Chromium and under
+1 ms on Firefox and WebKit (their worker clock counts whole milliseconds); the build's scan of the entry for `import()`
+takes 1–2 ms per MiB of entry on the host page's thread, 7–18 ms for an entry of the whole 8 MiB file quota.
 
 **The worker's globals are an allowlist** (worker, strict and sealed mode): before anything else runs in it, the worker keeps
 only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WORKER_NAVIGATOR_MEMBERS` for
@@ -1540,7 +1557,9 @@ page in Chromium and Firefox, with no user activation (measured; cooperative mod
 | For | content you do not trust | content you do not trust that needs the network | cooperative content | headless code (frozen) |
 | Guest code runs in | a worker; the view runs only the library's hash-admitted script | as sealed | the guest document | a worker spawned inside the frame |
 | Guest markup | `html` is the initial view, rendered without scripts or handlers; then `sandboxView.render()` | as sealed | `html` / `load()` | none |
-| How code starts | `entry`, `execute()` | `entry`, `execute()` | markup scripts, `execute()` | `execute()` |
+| How code starts | `entry` | `entry`, `execute()` | markup scripts, `execute()` | `execute()` |
+| Strings run as code | never: `eval`, `Function`, the other function constructors and a timer given a string throw the library's `EvalError`; an entry that calls `import()` is refused; `scriptUnsafe: true` refuses the config | as sealed, unless `scriptUnsafe` | with `scriptUnsafe` | with `scriptUnsafe` |
+| The host page's policy, which the guest's realm inherits | never checked by guest code: no violation reaches it, and it makes the browser send your page's report endpoint nothing | as sealed, unless `scriptUnsafe` | checked, and reported to the guest and to your endpoint | checked (`execute()`'s strings), and reported to your endpoint |
 | Network | none: the view's fetch directives are `'none'` or `blob:` for registered files, `connect-src 'none'`; a config that names `origins` or `fetchBridge` is refused | `origins`, `fetchBridge` | `origins`, `fetchBridge` | `origins`, `fetchBridge` |
 | `autoResize` | ✓ | ✓ | ✓ | — |
 | `workerExecutionTimeout` | ✓ | ✓ | — | ✓ |
@@ -1553,7 +1572,12 @@ A config without `mode` is sealed; strict mode is named with `mode: 'strict'`. S
 network: the same view, worker, renderer and bootstrap, with a view policy (its worker inherits it) that admits no
 network source, and `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. A config with no `mode` that names `origins` or
 `fetchBridge` is refused with the reason
-`` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``.
+`` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``,
+and one that sets `scriptUnsafe: true` with
+`` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'` ``.
+The guest's worker inherits your page's Content-Security-Policy, its text and its report endpoints with it, and the
+browser reports every refusal of it to the realm that tried and to your endpoint; so in sealed mode guest code never
+asks the browser for anything your page's policy decides (see [Host page policy](#host-page-policy)).
 `'iframe'` is not a mode; it starts nothing, like any value that is not a mode. [ADR-005](ADR-005-strict-mode.md),
 [ADR-008](ADR-008-sealed-mode.md)
 
@@ -1847,7 +1871,8 @@ input](#sandboxview-strict-mode) describes them, and [research 23](research/23_v
 | Run a `<script>` or a handler in `html` | put the code in `entry` |
 | Use a `<canvas>`, SVG animation, SVG filters, `contenteditable`, popovers | draw with `OffscreenCanvas` and write a raster image; inline `<svg>` for static vector graphics; `<textarea>` or `<input>` for editing; CSS animations with [`allowAnimations`](#allowanimations-and-allowautoplay) |
 | Use WebAssembly (`WebAssembly` is removed from the worker, [research 24](research/24_sealed_mode/README.md)) | write the code in JavaScript. A module **you** wrote and trust may run in your page and hand its results over with `call()` as copies of exactly the bytes they cover (a view arrives with a buffer of its own bytes, not the module's heap). Never the app's own module: running the app's code in your page gives it your page's rights, and the JavaScript glue a toolchain such as Emscripten ships would run as your page |
-| Evaluate strings or call `execute()` | `scriptUnsafe` turns both on, and WebAssembly with them, in the worker (it is not part of the sealed baseline); an app that needs neither leaves it off |
+| Evaluate strings (`eval`, `new Function`, a timer given a string: each throws the library's `EvalError`) or call `execute()` | write the code in the entry. `mode: 'strict'` with `scriptUnsafe`, for testing: sealed mode refuses it, because a string run as code is checked against your page's policy, which reports the refusal with its text to the guest and with the string to your report endpoint |
+| Load a module with `import()` (the build refuses an entry whose text holds `import` followed by `(`, in a string or a comment too, with the reason `entryImport`) | bundle the modules into the entry |
 | Open a link or a window | an exposed method that takes a key and opens the address you hold for it (the `openExternal` example) |
 
 ---
@@ -1962,7 +1987,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Answers to the host's calls (`bridge.expose`) | one a call the host made: the host's pending calls | `RPC_MAX_BYTES` (34603008) an answer, measured by both ends; an error text cut at `MAX_TEXT_LENGTH` (65536) characters by both ends | the host's call timeout (`callWithTimeout`; by default `DEFAULT_TIMEOUT_MS` (30000) ms) | none beyond the host's pending calls and the bytes | none | test/unit/rpc-bounds-and-call-limits.test.ts (C-1); test/unit/structural.test.ts |
 | Guest writes (`sandboxFiles.write`, `remove`) | `GUEST_WRITES_PER_SECOND` (100) requests in any second, and each as a call; what is kept, at most `MAX_FILES` (1000) files with the registered ones | `GUEST_WRITE_BYTES_PER_SECOND` (8388608) in any second; what is kept, at most `MAX_TOTAL_BYTES` (8388608) with the registered files | none of its own: the count and the bytes | none beyond the count and the bytes | none: the host keeps them | test/unit/guest-writes.test.ts; test/e2e/guest-writes.spec.ts |
 | `sandboxFetch()`: a request the host decides and the bridge's frame makes, on the guest's behalf | `fetchBridge.maxConcurrent` at once, at most `MAX_MAX_CONCURRENT` (16); and each as a call | `fetchBridge.maxBytes` a response, at most `MAX_MAX_BYTES` (33554432); its status text and headers at most `MAX_RESPONSE_HEAD` (262144) characters together | `fetchBridge.timeoutMs` a request, at most `MAX_TIMEOUT_MS` (120000) ms | none beyond the count, the bytes and the time: each request is one fetch of the bridge's frame (an opaque origin: no Service Worker, no wrapper of the host page's), its body crossing to the host page one chunk at a time, as the host reads it | none: `sandboxFetch()` rejects in the guest with `FETCH_NOT_ALLOWED` and sends nothing; no bridge frame is built | src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts; test/e2e/fetch-bridge-isolation.spec.ts; test/unit/sealed-build.test.ts; test/e2e/sealed-no-network.spec.ts |
-| CSP violation reports, to `violation` | `VIOLATION_EVENT_LIMIT` (100) events an environment (strict mode: per source, and per directive for the view) | each string cut at `VIOLATION_MAX_STRING` (2048) characters before it is posted, by the bootstrap and by the view, and again by the host on receipt | none of its own: the count | none beyond the count | none: every request the guest tries is refused and reported here, the request gate's refusals included | src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts; test/e2e/sealed-no-network.spec.ts |
+| CSP violation reports, to `violation` | `VIOLATION_EVENT_LIMIT` (100) events an environment (strict mode: per source, and per directive for the view) | each string cut at `VIOLATION_MAX_STRING` (2048) characters before it is posted, by the bootstrap and by the view, and again by the host on receipt | none of its own: the count | none beyond the count | none from the worker: every request the guest tries is refused by the library and reported here, the request gate's refusals included, and no string runs as code and no entry calls `import()`, so the host page's own policy, which the worker inherits, is never asked and its report endpoint receives nothing the worker caused (INHERITED_CONTEXT.cspReporting). The view runs no guest code: a load of a registered file or a guest's inline style the host page's policy refuses is reported to its endpoint as well, naming `blob` or `inline` | src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts; test/e2e/sealed-no-network.spec.ts |
 | Content heights (`autoResize`), to the frame's height | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) a second, and one a frame | a number, at most `AUTO_RESIZE_MAX_HEIGHT` (100000) px | none of its own: one relayout of the host page's frame a change | a cap: `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) relayouts of the host page's frame a second | none | src/lib/auto-resize.test.ts; test/e2e/auto-resize.spec.ts |
 | Liveness answers (PONG, VIEW_PONG), to the host's probes | one a probe of the host's | a number | `VIEW_LIVENESS_TIMEOUT_MS` (5000) ms for the view to answer; `EXECUTION_TIMEOUT_GRACE_MS` (1000) ms past a deadline for the worker (`workerExecutionTimeout`) | none: the library's own | none | src/lib/watchdog.test.ts; test/e2e/watchdog.spec.ts |
 | Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log` | `LOG_EVENTS_PER_SECOND` (1000) a second, counted in the view | each cut at `VIEW_OPTIONS.guestText.maxLength` (2048) characters in the view, before it is posted; each uncaught one counted whole against `UNCAUGHT_CHARACTERS_PER_SECOND` (1048576) characters in any second, as the worker counts the ones it sees (WebKit mutes those of a revoked script there); past it the sandbox ends | none of its own: one line each | none beyond the count and the bytes | none | test/unit/rpc-bounds-and-call-limits.test.ts (C-4); test/e2e/worker-port-and-view-cost.spec.ts (M-5) |
@@ -1977,7 +2002,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 counts and bytes above bound); and where the view shares the host page's thread it cannot run during a stall of the view
 ([(b)](#b-the-single-operation-bound)).
 
-<!-- describes: budgets sig:012c -->
+<!-- describes: budgets sig:e205 -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;
@@ -2170,7 +2195,7 @@ policy must allow:
 
 | Your page's | sealed (default) and strict | cooperative | worker |
 | :--- | :--- | :--- | :--- |
-| `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
+| `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; strict mode: `'unsafe-eval'` for `execute()` (sealed mode runs no string as code) | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
 | `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
 | `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; while `allowAnimations` is `false` (the default), also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind (sealed mode needs none in `connect-src`, which is `'none'` there); strict mode: every origin in `origins` (in `connect-src`, named by scheme and host, not `'self'`: [below](#your-connect-src)); sealed mode: no origin, it has none | `blob:` for registered files of that kind; every origin in `origins` | the same |
@@ -2198,6 +2223,24 @@ policy must allow:
   `'unsafe-inline'` allows inline script everywhere on it, and so gives up its defence against an injected `<script>`.
   Prefer strict mode, whose hash sits beside your own hashes and nonces; using `'unsafe-inline'` there instead of the hash
   costs the same.
+- **Your report endpoint (`report-uri`, `report-to`) and your policy's text.** The sandbox's documents and its worker
+  inherit your page's policy list as it is, its text and its endpoints with it, and the browser reports every refusal
+  of it twice: to the realm that tried (a `securitypolicyviolation` event that carries your policy's text, its nonces,
+  its endpoint with any key in its URL) and to your endpoint (a POST with the refused URL, path and query included, and a
+  sample of a script or a style). In sealed mode, and in strict mode without `scriptUnsafe`, guest code never makes the
+  browser check your policy: the worker refuses every string run as code itself (`eval`, `Function`, the other function
+  constructors, a timer given a string: the library's `EvalError`), the build refuses an entry that calls `import()`, and
+  every request is refused by the library before the browser sees it; whatever still raises a violation in the worker
+  is stopped before guest code hears it. So the guest reads nothing of your policy, and your endpoint receives nothing
+  it caused from the worker. The view runs no guest code, but what it shows is checked against your policy: a registered
+  file's `blob:` load under an `img-src`, `media-src`, `font-src` or `style-src` without `blob:`, and the guest's inline
+  styles under a `style-src` without `'unsafe-inline'`, are refused and reported to your endpoint, each naming `blob` or
+  `inline` as blocked, with the style's first characters where your `style-src` has `'report-sample'`; how many there
+  are, and when, is the guest's choice. Admit them as the table above says, or treat those reports as the guest's data.
+  Strict mode with `scriptUnsafe`, cooperative mode and worker mode run guest strings and scripts that your policy checks:
+  your endpoint then receives reports whose URLs and samples the guest chose, as many as the engine sends (it throttles
+  bursts, not a steady rate). Treat every field of them as untrusted guest data, or serve the embedding page without
+  reporting.
 - **Your `img-src`, `media-src`, `font-src` and the other fetch directives narrow `origins` silently**, in the engines
   that apply the inherited list: an origin listed in `origins` that your page's policy does not allow is refused in the
   sandbox too. The refusal happens in the sandbox's documents, so it arrives as the element's `violation` event (where the

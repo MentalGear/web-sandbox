@@ -73,12 +73,20 @@ export const ENGINE_DIFFERENCES = {
         tests: [`${E2E}relay-and-rpc-budgets.spec.ts`, `${E2E}error-cost-and-queued-calls.spec.ts`],
     },
     'worker-violation-reports': {
-        what: "`securitypolicyviolation` reports raised inside a worker (`source: 'logic'`) for `importScripts` or a module `import()` (a refused `fetch()`, `XMLHttpRequest` or `WebSocket` is the request gate's own report on every engine)",
+        what: "`securitypolicyviolation` reports raised inside a worker (`source: 'logic'`) for `importScripts` or a module `import()` in worker mode (strict and sealed mode's build refuses an entry that calls `import()`, and their worker has no `importScripts`; a refused `fetch()`, `XMLHttpRequest` or `WebSocket` is the request gate's own report on every engine)",
         chromium: "Raises the refusal in the worker (`script-src-elem`)",
         firefox: "The refusal reaches the creating document (in strict and sealed mode, the view's report)",
         webkit: "None",
         why: "WebKit raises no violation event in workers, and Firefox routes these refusals to the creating document. Reports from the guest's realm are claims, and the refusal itself is the same on every engine",
-        tests: [`${E2E}violations.spec.ts`, `${E2E}worker-security.spec.ts`, `${E2E}blob-delivery.spec.ts`, `${E2E}sealed-no-network.spec.ts`],
+        tests: [`${E2E}violations.spec.ts`, `${E2E}worker-security.spec.ts`, `${E2E}blob-delivery.spec.ts`],
+    },
+    'reporting-api-delivery': {
+        what: "Whether a host page's `report-to` endpoint (`Reporting-Endpoints`) receives its policy's reports in the e2e harness",
+        chromium: "None arrived, not even the host page's own, within 180 s (headless; measured)",
+        firefox: 'None: the Reporting API is off, so a page with `report-to` alone receives nothing',
+        webkit: "Delivered as `csp-violation` reports, the host page's own within seconds",
+        why: "A limit of the harness (Chromium) and an engine's default (Firefox); `report-uri` is delivered on every engine. The library's guarantee does not depend on it: the guest's worker reaches no refusing check of the host page's policy, so no endpoint of it has anything to receive (INHERITED_CONTEXT.cspReporting); the spec asserts it on `report-uri` on every engine, and on `report-to` where a report arrives",
+        tests: [`${E2E}sealed-host-policy.spec.ts`],
     },
     'entry-parse-detail': {
         what: "The guest line for a strict entry that does not parse (the reason, the host line and the state are the same on every engine)",

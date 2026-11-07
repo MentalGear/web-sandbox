@@ -211,16 +211,14 @@ test.describe('1. default CSP: guest-created blob: subresources are refused', ()
         });
     });
 
-    test('worker mode: importScripts, import() and fetch of a blob are refused; there are no nested workers (independent verification V1)', async ({ sandbox, browserName }) => {
+    test('worker mode: importScripts, import() and fetch of a blob are refused; there are no nested workers (independent verification V1)', async ({ sandbox }) => {
         expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');
-        // Every engine refuses; which violations reach the worker's own securitypolicyviolation
-        // listener differs: Chromium delivers both script loads', Firefox and WebKit none. fetch() is the request
-        // gate's to refuse, before the browser sees it: no event in the realm on any engine.
-        // ledger: worker-violation-reports
-        const csp = (directive: string, engines: string[]) => (engines.includes(browserName) ? ` csp=${directive}` : '');
+        // Every engine refuses, and the guest's own securitypolicyviolation listener hears nothing on any engine: the
+        // bootstrap's first listener relays a violation to the host and stops it (class A, cspPolicyText). fetch() is the
+        // request gate's to refuse, before the browser sees it.
         expect(await runProbes(sandbox, WORKER_LOADS)).toEqual({
-            'importScripts()': 'error:NetworkError' + csp('script-src-elem', ['chromium']),
-            'import()': 'error:TypeError' + csp('script-src-elem', ['chromium']),
+            'importScripts()': 'error:NetworkError',
+            'import()': 'error:TypeError',
             'fetch()': 'error:TypeError',
             // the worker keeps only the allowlisted globals (src/lib/worker-globals.ts): a nested worker would be a realm
             // the library's prelude never reaches

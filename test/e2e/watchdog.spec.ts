@@ -1,4 +1,4 @@
-import { test, expect } from './fixture';
+import { test, expect, SEALED_HAS_NO_EXECUTE } from './fixture';
 import { lag, oneApplyStall, quietStall, startLag } from './host-share';
 import { VIEW_MODES } from './view-modes';
 
@@ -200,6 +200,7 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
     });
 
     test('an endless loop through execute() is terminated within the budget on every engine, and reset() recovers', async ({ sandbox, page }) => {
+        test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
         expect(await sandbox.mount({ mode, watchdogTimeout: BUDGET })).toBe('ready');
         await expectWatchdogStopsLoop(sandbox, page);
     });
@@ -210,6 +211,7 @@ const RENDER_THEN_LOOP_HTML = '<p>' + 'x'.repeat(262144 - 8) + '</p>';
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
     test('a worker that renders 256 Ki characters and then loops is terminated within the budget plus the measured stall of that one render; host round trips stay within one render\'s apply time', async ({ sandbox, page, browserName }) => {
+        test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
         // what one apply of this render costs here, now (./host-share.ts): the stall bound below is relative to it
         const before = await oneApplyStall(page, RENDER_THEN_LOOP_HTML);
         expect(await sandbox.mount({ mode, watchdogTimeout: BUDGET })).toBe('ready');
