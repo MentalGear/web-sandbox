@@ -47,8 +47,15 @@ engines.
 | D3 | New public names: `SealedSandboxConfig` and `NetworkSandboxOptions` (the interface that carries `fetchBridge` for strict, cooperative and worker). |
 | D4 | `sandboxFetch` exists in sealed and rejects with `FETCH_NOT_ALLOWED` in the guest's realm and sends nothing; the host's reserved method has no bridge and refuses a raw `bridge.call('sandbox:fetch')` the same way. |
 | D5 | Data findings that reach only strict's network opt-ins do not count against a clean pass; they are fixed or documented as limits of those opt-ins. |
-| D6 | The served-document mode ([research 20](../20_served_document_mode/README.md)) is shelved: sealed answers research 22's trigger for the default. |
+| D6 | The served-document mode ([research 20](../20_served_document_mode/README.md)) is shelved: sealed answers research 22's trigger for the default. Superseded by D8. |
 | D7 | The 8 MiB file quota stays for v1. |
+
+**Decisions of the owner (2026-11-07).**
+
+| # | Decision |
+| :---: | :--- |
+| D8 | Sealed mode switches to the served-document mode ([research 20](../20_served_document_mode/README.md)) now, without waiting for a trigger: its documents start a policy of their own, so the host page's policy is no longer inherited ([research 22](../22_review_trajectory/README.md)). Supersedes D6. Not built yet. |
+| D9 | Cooperative mode, worker mode and strict mode's network options (`origins`, `fetchBridge`) stay as they are, behind a build flag that is off by default. Not built yet. |
 
 ## 1. What sealed removes (from the code)
 
