@@ -97,12 +97,20 @@ export const ENGINE_DIFFERENCES = {
         tests: [`${E2E}strict.spec.ts`],
     },
     'worker-global-set': {
-        what: "Which of the allowlisted globals (`WORKER_GLOBALS`) and navigator members (`WORKER_NAVIGATOR_MEMBERS`) the guest worker has: a name an engine does not offer is not there (worker and strict mode alike; `SharedArrayBuffer`, absent without cross-origin isolation, and strict mode's missing `importScripts` are the same on every engine)",
-        chromium: "Lacks `InternalError`, `onoffline`, `ononline`, and, because its opaque-origin worker is not a secure context, `CryptoKey`, `SubtleCrypto`, `Lock`, `LockManager`, the WebCodecs coders and image decoder (`AudioDecoder`, `AudioEncoder`, `VideoDecoder`, `VideoEncoder`, `ImageDecoder`, `ImageTrack`, `ImageTrackList`) and the navigator's `deviceMemory`, `globalPrivacyControl`, `locks`, `gpu`",
+        what: "Which of the allowlisted globals (`WORKER_GLOBALS`) and navigator members (`WORKER_NAVIGATOR_MEMBERS`) the guest worker has: a name an engine does not offer is not there (worker and strict mode alike; `SharedArrayBuffer`, absent without cross-origin isolation, and strict mode's missing `importScripts` and secure-context-only names, `SECURE_CONTEXT_ONLY`, are the same on every engine)",
+        chromium: "Lacks `InternalError`, `onoffline`, `ononline`, and, because its opaque-origin worker is not a secure context, `CryptoKey`, `SubtleCrypto`, `Lock`, `LockManager`, the WebCodecs coders and image decoder (`AudioDecoder`, `AudioEncoder`, `VideoDecoder`, `VideoEncoder`, `ImageDecoder`, `ImageTrack`, `ImageTrackList`) and the navigator's `deviceMemory`, `globalPrivacyControl`, `locks`, `gpu` (worker mode; strict mode's worker keeps no secure-context-only name on any engine)",
         firefox: "Lacks `SecurityPolicyViolationEvent`, `QuotaExceededError`, `IDBRecord`, `WebGLObject` and the navigator's `deviceMemory`, `gpu`",
         webkit: "Lacks `Temporal`, `SuppressedError`, `InternalError`, `DisposableStack`, `AsyncDisposableStack`, `onlanguagechange`, `scheduler`, `Scheduler`, `TaskController`, `TaskSignal`, `TaskPriorityChangeEvent`, `QuotaExceededError`, `IDBRecord`, `WebGLObject`, `ImageDecoder`, `ImageTrack`, `ImageTrackList` and the navigator's `deviceMemory`, `globalPrivacyControl`, `gpu`",
         why: "Which APIs an engine ships (and, for secure-context-only ones, whether it counts a `blob:` worker of an opaque origin as secure). The library only deletes names off the allowlist, so an absent name is absent and none is added; no name that can make a request or open a channel differs (the four request makers are present on every engine, `importScripts` in worker mode)",
         tests: [`${E2E}worker-globals-and-termination.spec.ts`],
+    },
+    'view-inline-style-check': {
+        what: "What the view's checks of the host page's `style-src` and `img-src` do with the guest's inline styles and a registered file, on a page whose policy refuses them (`cspStyle` and `cspReporting` residuals)",
+        chromium: "Refuses the style attribute, the style element and the file, and reports each to the page's endpoint",
+        firefox: "Refuses the style attribute, the style element and the file, and reports each to the page's endpoint",
+        webkit: "Applies the style attribute (it checks no attribute the renderer sets), refuses the style element and the file, and sends the page's endpoint nothing from the view",
+        why: "How an engine applies an inherited `style-src` to an attribute set through the DOM, and whether it delivers a report from an opaque frame. Documented residuals: every report names only `inline` or `blob` as blocked, and the guest hears none",
+        tests: [`${E2E}sealed-reach.spec.ts`],
     },
     'worker-eventsource-fontface': {
         what: "A worker the guest makes in cooperative mode: its `EventSource` and `FontFace` against the policy",

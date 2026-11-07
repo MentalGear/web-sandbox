@@ -152,6 +152,27 @@ describe('a refused XMLHttpRequest fails as a network error does', () => {
         expect(xhr.readyState).toBe(0);
     });
 
+    // Class A (INHERITED_CONTEXT.cspReporting): the platform's send() of the placeholder is a check of the host page's
+    // inherited connect-src, which reports it to the page's endpoint (found by test/e2e/sealed-reach.spec.ts's sweep).
+    it("an open() that throws leaves the request as it was: a refused request's send() never reaches the platform, nor does an unopened one's", async () => {
+        clear();
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', 'https://evil.example/d');
+        expect(() => xhr.open('not a method', 'https://evil.example/d'), "the platform's refusal of the method").toThrow(expect.objectContaining({ name: 'SyntaxError' }));
+        expect(() => xhr.open('GET', 'http://[x'), "the gate's refusal of the URL").toThrow(expect.objectContaining({ name: 'SyntaxError' }));
+        xhr.send();
+        await new Promise(resolve => setTimeout(resolve, 10));
+        expect(xhr.readyState, 'refused, as before the open() that threw').toBe(4);
+        expect(() => new XMLHttpRequest().send()).toThrow(expect.objectContaining({ name: 'InvalidStateError' }));
+        expect(sent).toEqual([]);
+        // the positive control: an admitted open() after a refused one is the platform's to send
+        const admitted = new XMLHttpRequest();
+        admitted.open('GET', 'https://evil.example/e');
+        admitted.open('GET', 'https://api.example/e');
+        admitted.send();
+        expect(sent).toEqual(['https://api.example/e']);
+    });
+
     it('open() again with an admitted URL makes a request of the platform\'s', () => {
         clear();
         const xhr = new XMLHttpRequest();

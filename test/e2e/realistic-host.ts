@@ -67,6 +67,11 @@ export interface HostOptions {
     cookies?: boolean;
     /** Edits the policy the page would send (the directive matrix sets one directive; a test adds the origins it lists to connect-src). */
     directives?: (base: Directives) => Directives;
+    /**
+     * The origin the page is served from, where a test reaches the e2e server under another name through a proxy of its own
+     * (a URL that is not potentially trustworthy, for one); default the e2e server's. The test's backend records are the same.
+     */
+    origin?: string;
 }
 
 /**
@@ -110,6 +115,27 @@ export function hostDirectives(options: HostOptions & { session: string; viewHas
     }
     return options.directives ? options.directives(directives) : directives;
 }
+
+/** What a production page keeps from the content it embeds: a script nonce, and a key in its report endpoint's URL. */
+export type PolicySecrets = { nonce: string; key: string };
+
+/**
+ * The realistic host's policy with a production page's secrets (BD6:ISO-1, BD6:ISO-2): a script nonce, `'report-sample'`
+ * on `script-src` and `style-src`, and a key in its report endpoint's URL; with `reportTo`, a `report-to` group in place of
+ * `report-uri`.
+ */
+export const withPolicySecrets = (secrets: PolicySecrets, reportTo?: string) => (base: Directives): Directives => {
+    const report = base['report-uri']![0]!;
+    const directives: Directives = {
+        ...base,
+        'script-src': [...base['script-src']!, `'nonce-${secrets.nonce}'`, "'report-sample'"],
+        'style-src': [...base['style-src']!, "'report-sample'"],
+        'report-uri': [`${report}?sentry_key=${secrets.key}`],
+    };
+    if (reportTo === undefined) return directives;
+    const { 'report-uri': _reportUri, ...rest } = directives;
+    return { ...rest, 'report-to': [reportTo] };
+};
 
 // ---- what a test reads ---------------------------------------------------------------------------------------------------
 
@@ -181,7 +207,7 @@ export class RealisticHost {
         if (options.cookies === false) query.set('cookies', '0');
         if (options.serviceWorker === false) query.set('sw', '0');
         if (options.guestCode !== 'execute' && options.ttDefault !== false) query.set('tt-default', '1');
-        await page.goto(`${HOST_BASE}/page?${query}`);
+        await page.goto(`${options.origin ?? ORIGIN}${REALISTIC_HOST_PATH}/page?${query}`);
         await page.waitForFunction(() => (window as any).harnessReady === true);
         // the element's first build (no script to run) has finished: its 'ready' is not a later build's (a host policy can end it
         // already: a Trusted Types list that does not name the library's policy)

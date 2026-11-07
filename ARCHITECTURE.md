@@ -14,7 +14,7 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 
 ## Modes and realms
 
-<!-- describes: realms sig:d682 -->
+<!-- describes: realms sig:6d9d -->
 
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
@@ -50,7 +50,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `worker-frame` | Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup. | no | `workerBootstrap`, `checkSandboxEnvironment` | `announcement`, `worker` |
 | `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeWebAssembly` | `logic-port`, `worker` |
 | `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `cssReferences`, `withoutNetworkReferences`, `viewInputOutbox`, `isStyleProperty`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
-| `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap, the prelude and the code-from-string refusal, then the guest's entry. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `assertEntryScoped`, `inStrictWorker`, `refuseCodeFromStrings`, `isStyleProperty` | `logic-port`, `render-port`, `worker` |
+| `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap, the prelude and the code-from-string refusal, then the guest's entry. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeSecureContextOnly`, `assertEntryScoped`, `inStrictWorker`, `refuseCodeFromStrings`, `isStyleProperty` | `logic-port`, `render-port`, `worker` |
 | `bridge-frame` | The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it. | no | `checkSandboxEnvironment`, `inBridgeFrame` | `announcement`, `bridge-init`, `bridge-port` |
 <!-- generated:end -->
 
@@ -64,6 +64,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `inSandboxImportMap` | `src/lib/in-sandbox-files.ts` | `cooperative` |
 | `inSandboxMarkup` | `src/lib/in-sandbox-files.ts` | `cooperative` |
 | `keepOnlyWorkerGlobals` | `src/lib/worker-globals.ts` | `worker`, `strict-worker` |
+| `removeSecureContextOnly` | `src/lib/worker-globals.ts` | `strict-worker` |
 | `removeWebAssembly` | `src/host.ts` | `worker` |
 | `workerBootstrap` | `src/lib/worker-bootstrap.ts` | `worker-frame` |
 | `assertEntryScoped` | `src/lib/in-sandbox-view.ts` | `strict-worker` |
@@ -83,7 +84,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:d682f2f642cb49d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:6d9df2f642cb49d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
@@ -97,7 +98,7 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Sealed mode: strict mode with no network
 
-<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e2dafc8c9eee4 -->
+<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e2daf33bfeee4 -->
 
 Sealed mode, the default (no `mode`, or `mode: 'sealed'`), is strict mode's view and worker with no network
 ([research 24](docs/research/24_sealed_mode/README.md), [ADR-008](docs/ADR-008-sealed-mode.md)). It is not strict mode
@@ -127,6 +128,10 @@ with its network options left empty: the sealed path never reaches the code that
   every mode); `hostContentSecurityPolicy` serves only Trusted Types where the browser has none. Which inherited channels
   remain in sealed mode is the sealed column of the [host page's context](docs/THREAT-MODEL.md#the-host-pages-context),
   and what each channel of guest activity reaches of the network, the sealed column of [Budgets](docs/API.md#budgets).
+  What the guest's code and markup can reach of each inherited channel is classified name by name
+  ([`SEALED_REACH`](docs/THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)); the worker has nothing only a
+  secure context has, and reads `isSecureContext` as false, so its surface does not depend on the page's URL on any
+  engine (`SECURE_CONTEXT_ONLY`, `src/lib/worker-globals.ts`).
 
 `test/unit/sealed-build.test.ts` holds this by construction and by run: the call graph of the sealed path reaches none of
 the network code, the host page is never asked, and each check has strict mode with a network as its positive control.
@@ -387,6 +392,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/reasons.ts` | The texts the element gives |
 | `src/lib/rpc.ts` | β — a typed, bidirectional RPC broker that rides the MessageChannel already connecting host and guest |
 | `src/lib/sandbox-log.ts` | The detail of the element's 'sandbox-log' event |
+| `src/lib/sealed-reach.ts` | Everything a sealed guest can reach, classified against every row of INHERITED_CONTEXT |
 | `src/lib/srcset.ts` | The URLs of a `srcset` attribute |
 | `src/lib/structured-size.ts` | The one measure of the byte budgets on log lines and RPC messages: how many bytes structured clone copies for a value |
 | `src/lib/trusted-types.ts` | The element's HTML sinks on a host page that enforces Trusted Types |
