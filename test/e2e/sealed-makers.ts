@@ -233,6 +233,8 @@ export interface StyleMaker {
     readonly then?: string;
     /** The element whose computed style shows the maker applied: its `property` computes to `value`. */
     readonly check: { readonly id: string; readonly property: string; readonly value: string };
+    /** The URLs its CSS names that the view drops and reports (keepsUrl, BD7:ISO-1), as a report names them; none by default. */
+    readonly drops?: readonly string[];
 }
 
 const APPLIED = 'rgb(1, 2, 3)';
@@ -252,4 +254,7 @@ export const STYLE_MAKERS: readonly StyleMaker[] = Object.freeze([
     { id: 'replace', way: 'replace', namespace: 'html', markup: `<div id="s-replace-slot"><style>#s-replace { color: ${OVERRIDDEN} }</style></div><p id="s-replace">r</p>`, then: `sandboxView.render('<style>#s-replace { color: ${APPLIED} }</style>', 's-replace-slot')`, check: { id: 's-replace', property: 'color', value: APPLIED } },
     { id: 'remove', way: 'remove', namespace: 'html', markup: `<div id="s-remove-slot"><style>#s-remove { color: ${OVERRIDDEN} }</style></div><p id="s-remove">x</p>`, then: "sandboxView.render('', 's-remove-slot')", check: { id: 's-remove', property: 'color', value: UNSTYLED } },
     { id: 'set-css', way: 'set-css', namespace: 'html', markup: '<p id="s-set">s</p>', then: "sandboxView.set('s-set', { css: { opacity: '0.5' } })", check: { id: 's-set', property: 'opacity', value: '0.5' } },
+    // CSS that names URLs of no network (BD7:ISO-1): each one the view keeps no URL of goes, the style applies, and no report reaches the page
+    { id: 'element-urls', way: 'element', namespace: 'html', markup: `<style>@import "zqimport:x"; @font-face { font-family: zq; src: url(zqfont:x) } #s-urls { color: ${APPLIED}; background-image: url(mailto:a@b.example), image-set("about:x" 1x) }</style><p id="s-urls">u</p>`, check: { id: 's-urls', property: 'color', value: APPLIED }, drops: ['zqimport:x', 'zqfont:x', 'mailto:a@b.example', 'about:x'] },
+    { id: 'attribute-urls', way: 'attribute', namespace: 'svg', markup: `<svg width="9" height="9"><clipPath id="s-clip"><rect width="9" height="9"/></clipPath><rect id="s-urls-svg" width="9" height="9" style="fill: ${APPLIED}; stroke: url(chrome-extension://abcdefghijklmnopabcdefghijklmnop/s.svg#a); clip-path: url(#s-clip)"/></svg>`, check: { id: 's-urls-svg', property: 'fill', value: APPLIED }, drops: ['chrome-extension://abcdefghijklmnopabcdefghijklmnop/s.svg'] },
 ]);

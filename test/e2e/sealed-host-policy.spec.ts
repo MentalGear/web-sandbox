@@ -187,14 +187,17 @@ console.log(${JSON.stringify(name)} + 'sent');` });
         const view = seen as Exclude<typeof seen, 'no-context'>;
         expect(view.computed, covering('cspReporting', "every guest style applies under a style-src of hashes alone")).toEqual(checks);
         expect(view.adopted, "one constructed stylesheet for each <style> the view shows, none for one it no longer does").toBe(view.sheets);
-        expect(view.sheets).toBe(8);
+        expect(view.sheets).toBe(9);
         expect(view.inline, 'no <style> element in the view but the library\'s still stylesheet').toBe(1);
 
-        // nothing reached the endpoint, the page heard nothing, and the view raised no violation of the page's style-src
+        // nothing reached the endpoint, the page heard nothing, and the view raised no violation of the page's policy: the only
+        // ones are the renderer's own reports of the URLs it dropped (keepsUrl, BD7:ISO-1)
         const hits = await host.hits();
         expect(hits.reports, covering('cspReporting', "no report of a guest style reaches the host page's endpoint")).toEqual([]);
         expect(await host.cspViolations(), covering('cspReporting', "the host page's own listener hears nothing")).toEqual([]);
-        expect((await sandbox.violations()).map(v => v.directive), covering('cspReporting', 'the view raises no style violation')).toEqual([]);
+        const dropped = STYLE_MAKERS.flatMap(maker => maker.drops ?? []).sort();
+        expect(dropped.length).toBeGreaterThan(0);
+        expect((await sandbox.violations()).map(v => String(v.blockedURI)).sort(), covering('cspReporting', 'the view raises no style violation; it reports what it dropped')).toEqual(dropped);
         expect(await host.state()).toBe('ready');
 
         // positive control: the host page's own inline style is refused and reported, with its sample, on this engine
