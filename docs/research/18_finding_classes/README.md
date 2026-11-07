@@ -675,9 +675,9 @@ classified for one effect only (`WORKER_STATE_READS`: does it read per-origin st
 `none`, with why; `neutralised`, naming the library's chokepoint, which the code must have; or `remains`, naming one of
 the row's residuals, each stated with the test that pins it. Each name has one surface (what it can do) and each row a
 column (what each surface is to it); `WORKER_STATE_READS` became the `permissionState` column. On 2026-11-07: 725 names ×
-22 rows, 15,950 cells: 15,115 `none`, 307 `neutralised`, 528 `remains`. Of the 528, 465 are the view's rendering on the
-host page's thread (availability), 46 the view's checks of the page's `style-src` and fetch directives against the guest's
-inline styles and registered files, and 17 one bit of the host page's secure context. THREAT-MODEL renders the table
+22 rows, 15,950 cells: 15,113 `none`, 326 `neutralised`, 511 `remains`. Of the 511, 465 are the view's rendering on the
+host page's thread (availability) and 46 the view's checks of the page's `style-src` and fetch directives against the
+guest's inline styles and registered files; none is of the host page's own state. THREAT-MODEL renders the table
 ([What a sealed guest can reach](../../THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)).
 
 **The structural tests.**
@@ -688,17 +688,23 @@ inline styles and registered files, and 17 one bit of the host page's secure con
 - `test/e2e/sealed-reach.spec.ts`, on three engines: the sealed worker's global object is the allowlist and the library's
   names; every member of every global it keeps (about 2,000 per engine, about 5,800 calls), called with a URL, a string of
   code and nothing, on a host page whose policy has a nonce, `'report-sample'` and a keyed report endpoint, makes no
-  request, raises no violation, sends no report and puts no secret in an error's text; every name whose presence differs
-  between a host page on a URL that is not potentially trustworthy and one on a loopback host is a `remains` cell of
-  `secureContext`; and the view's residuals hold as the table says, per engine.
+  request, raises no violation, sends no report and puts no secret in an error's text; a host page on a URL that is not
+  potentially trustworthy and one on a loopback host give the sealed worker the same globals and members (every member
+  they lead to compared, about 3,000 paths) and an `isSecureContext` that reads false on both; and the view's residuals
+  hold as the table says, per engine.
 
 **What the enumeration found.** Two things no review had found:
 - A row the list did not have, `secureContext`. A document's secure context is its top-level page's, and Firefox's and
-  WebKit's `blob:` worker of an opaque origin follows its owner, so a sealed guest learns whether the host page's URL is
-  potentially trustworthy, from `isSecureContext` and from which secure-context interfaces it has (Chromium counts that
-  worker as not secure on every page). One bit, which every visitor of the page sees in the address bar: documented. The
-  construction that would make it constant, refusing to build on a host page that is not a secure context, ends embedding
-  on plain `http:` pages, and is the owner's to decide.
+  WebKit's `blob:` worker of an opaque origin follows its owner, so a sealed guest learned whether the host page's URL is
+  potentially trustworthy, from `isSecureContext` and from which secure-context interfaces it had (on Firefox 208 paths
+  differed between the two kinds of host page, on WebKit 70; Chromium counts that worker as not secure on every page, so
+  none). Deconstructed, the root is that the worker's reachable surface depended on the host page and on the engine; the
+  construction makes it one surface: strict and sealed mode's worker keeps nothing only a secure context has
+  (`SECURE_CONTEXT_ONLY`: SubtleCrypto and `CryptoKey`, `crypto.subtle` and `randomUUID`, Web Locks, the WebCodecs coders,
+  the image decoder, server timing, `navigator.deviceMemory` and `gpu`) and reads `isSecureContext` as false, which is
+  Chromium's surface on every page, so no app loses what it could count on across engines. The globals and navigator
+  members are off the strict allowlists, and the prelude deletes the members and pins `isSecureContext`
+  (`removeSecureContextOnly`); the comparison now fails on any difference, and failed on Firefox and WebKit before.
 - A name the list called neutralised that was not: `XMLHttpRequest`. A refused `open()` hands the platform a placeholder,
   and a later `open()` that threw left the platform holding it while the gate forgot the refusal, so `send()` reached the
   platform; Chromium checked the host page's `connect-src` and reported the refusal to its endpoint (`cspReporting`). The
