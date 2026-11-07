@@ -1,6 +1,7 @@
 import { parseOrigin, type Origin, type OriginRules } from "../origin";
 import { defineData, ownField } from "../utils";
 import { fixedDetail, joinDetails, type LibraryDetail } from "../reasons";
+import { mintUncodedError } from "../minted-errors";
 
 /**
  * `origins`: what the embedder may open in the guest policy (ADR-007). One list of exact origins per kind of load,
@@ -143,7 +144,7 @@ export function refusalDetail(error: unknown): LibraryDetail {
  * refuses the config. Everything else it cannot use goes to `warn`, one message per entry, and is left out.
  */
 export function parseOrigins(input: unknown, mode: unknown, warn: (message: string) => void): OriginPolicy {
-    if (input !== undefined && (!input || typeof input !== 'object' || Array.isArray(input))) throw new OriginsTypeError('origins');
+    if (input !== undefined && (!input || typeof input !== 'object' || Array.isArray(input))) throw mintUncodedError(OriginsTypeError, 'origins');
     const source = (input ?? {}) as Record<string, unknown>;
     for (const key of Object.keys(source)) {
         if (!isKind(key)) warn(`[Sandbox] origins.${shown(key)} was dropped: origins takes ${ORIGIN_KINDS.join(', ')}.`);
@@ -152,7 +153,7 @@ export function parseOrigins(input: unknown, mode: unknown, warn: (message: stri
     const policy: Record<string, readonly Origin[]> = {};
     for (const kind of ORIGIN_KINDS) {
         const entries = ownField(source, kind);
-        if (entries !== undefined && !Array.isArray(entries)) throw new OriginsTypeError(kind);
+        if (entries !== undefined && !Array.isArray(entries)) throw mintUncodedError(OriginsTypeError, kind);
         defineData(policy, kind, Object.freeze(originsOf(kind, entries ?? [], mode, warn)));
     }
     return Object.freeze(policy) as OriginPolicy;

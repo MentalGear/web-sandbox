@@ -35,6 +35,7 @@ import { MAX_TOTAL_BYTES } from './files';
 import { defineData, hasOwnField, ownField, type Complete, type Holds } from './utils';
 import { watchdogBudget } from './watchdog';
 import { fixedDetail, reasonText, type LibraryDetail } from './reasons';
+import { mintUncodedError } from './minted-errors';
 
 /** The per-second budget of the calls the guest makes, per environment: what both ends count. */
 export interface CallBudget {
@@ -166,7 +167,7 @@ export class ConfigRefusal extends Error {
  */
 export function sealedNetworkRefusal(mode: unknown, source: Record<string, unknown>): ConfigRefusal | null {
     if (mode !== 'sealed') return null;
-    return NETWORK_OPTIONS.some(name => ownField(source, name) !== undefined) ? new ConfigRefusal(reasonText('sealedNetwork')) : null;
+    return NETWORK_OPTIONS.some(name => ownField(source, name) !== undefined) ? mintUncodedError(ConfigRefusal, reasonText('sealedNetwork')) : null;
 }
 
 /**
@@ -178,7 +179,7 @@ export function sealedNetworkRefusal(mode: unknown, source: Record<string, unkno
  */
 export function sealedScriptUnsafeRefusal(mode: unknown, source: Record<string, unknown>): ConfigRefusal | null {
     if (mode !== 'sealed') return null;
-    return ownField(source, 'scriptUnsafe') === true ? new ConfigRefusal(reasonText('sealedScriptUnsafe')) : null;
+    return ownField(source, 'scriptUnsafe') === true ? mintUncodedError(ConfigRefusal, reasonText('sealedScriptUnsafe')) : null;
 }
 
 // Old names of modes: refused like any other value that is not a mode, never an alias (nothing is published, so no
@@ -554,7 +555,7 @@ export interface Normalised {
 export function normaliseConfig(copy: unknown, hostPage: HostPage): Normalised {
     const warnings: string[] = [];
     const warn = (message: string) => { warnings.push(message); };
-    if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return { value: null, warnings, refusal: new TypeError('setConfig() takes an object') };
+    if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return { value: null, warnings, refusal: mintUncodedError(TypeError, 'setConfig() takes an object') };
     const source = copy as Record<string, unknown>;
     let asked: NormaliseContext | null = null;
     const host = (): NormaliseContext => (asked ??= typeof hostPage === 'function' ? hostPage() : hostPage);

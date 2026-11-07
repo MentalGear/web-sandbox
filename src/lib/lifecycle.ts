@@ -40,6 +40,7 @@
  */
 import type { SandboxState } from '../host';
 import { hostLine, reasonText } from './reasons';
+import { mintUncodedError } from './minted-errors';
 
 /**
  * What a build reads besides the reducer's own state, asked of the host at the moment the build starts: whether the
@@ -294,7 +295,7 @@ export function admits(state: LcState, input: LcInput): boolean {
 
 /** The exhaustiveness check of a switch over a declared union: a kind added and not handled fails to compile there. */
 export function assertNever(value: never): never {
-    throw new Error(`[Sandbox] lifecycle: unhandled ${JSON.stringify(value)}`);
+    throw mintUncodedError(Error, `[Sandbox] lifecycle: unhandled ${JSON.stringify(value)}`);
 }
 
 export interface LcOutput {
@@ -515,7 +516,7 @@ export function isStale(state: LcState, input: LcInput): boolean {
  */
 export function reduce(state: LcState, input: LcInput): LcOutput {
     if (isStale(state, input)) return unchanged(state);
-    if (!admits(state, input)) throw new Error(`[Sandbox] lifecycle: ${input.t} cannot arrive in ${state.state}${state.build === null ? '' : state.build.strict ? ' (strict)' : ' (not strict)'}`);
+    if (!admits(state, input)) throw mintUncodedError(Error, `[Sandbox] lifecycle: ${input.t} cannot arrive in ${state.state}${state.build === null ? '' : state.build.strict ? ' (strict)' : ' (not strict)'}`);
     switch (input.t) {
         case 'connect':
             if (!input.ctx.buildsHere) {

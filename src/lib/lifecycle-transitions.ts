@@ -14,6 +14,7 @@
  */
 import type { SandboxState } from '../host';
 import { admits, INITIAL_LIFECYCLE, LC_INPUTS, reduce, type BuildContext, type InputKind, type LcInput, type LcInputKind, type LcState } from './lifecycle';
+import { mintUncodedError } from './minted-errors';
 
 export interface Transition {
     readonly from: SandboxState;
@@ -56,7 +57,7 @@ export function samplesOf(type: string): readonly unknown[] {
         case 'window': return [WINDOW_A, WINDOW_B];
         case 'window | null': return [null, WINDOW_A, WINDOW_B];
         case 'readonly Notice[]': return [[{ level: 'error', text: `[Sandbox] ${REASON}`, source: 'host' }]];
-        default: throw new Error(`lifecycleTransitions: no values for a field of type ${type}`);
+        default: throw mintUncodedError(Error, `lifecycleTransitions: no values for a field of type ${type}`);
     }
 }
 
