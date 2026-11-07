@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { ABSENT_COMPILERS, CODE_FROM_STRING_SINKS } from '@src/lib/code-from-strings';
 import { INHERITED_CONTEXT, type InheritedContextId, type InheritedContextRow } from '@src/lib/inherited-context';
 import {
-    CHOKEPOINTS, REACH_RELATIONS, REACH_SIDES, SEALED_REACH, SURFACES, reachCell, sealedReachNames, secureContextOnlyNames, sideOf, surfaceOf,
+    CHOKEPOINTS, IMPORT_EXPRESSIONS, REACH_RELATIONS, REACH_SIDES, SEALED_REACH, SURFACES, reachCell, sealedReachNames, secureContextOnlyNames, sideOf, surfaceOf,
     type Cell, type ChokepointId, type Column, type SurfaceId,
 } from '@src/lib/sealed-reach';
 import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
@@ -45,11 +45,11 @@ describe('every name a sealed guest can reach has one surface', () => {
         }
     });
 
-    it('the domain is the code\'s lists: every worker global and navigator member, every function kind, and import()', () => {
+    it('the domain is the code\'s lists: every worker global and navigator member, every function kind, and every import expression', () => {
         for (const name of WORKER_GLOBALS) expect(nameList, name).toContain(name);
         for (const member of WORKER_NAVIGATOR_MEMBERS) expect(nameList, member).toContain(`navigator.${member}`);
         for (const [id, sink] of Object.entries(CODE_FROM_STRING_SINKS)) if (sink.kind === 'function-kind') expect(nameList, id).toContain(id);
-        expect(nameList).toContain('import()');
+        for (const name of IMPORT_EXPRESSIONS) expect(nameList, name).toContain(name); // import() and its phases (BD7:CHL-1)
     });
 });
 
@@ -130,7 +130,9 @@ describe('the classification agrees with the chokepoints the code keeps', () => 
         for (const name of Object.keys(CODE_FROM_STRING_SINKS)) {
             for (const rowId of ['cspScript', 'cspPolicyText', 'cspReporting', 'trustedTypesRequirement'] as const) neutralisedBy(name, rowId, 'codeFromStringRefusal');
         }
-        for (const rowId of ['cspScript', 'cspPolicyText', 'cspReporting'] as const) neutralisedBy('import()', rowId, 'entryImportRefusal');
+        for (const name of IMPORT_EXPRESSIONS) {
+            for (const rowId of ['cspScript', 'cspPolicyText', 'cspReporting'] as const) neutralisedBy(name, rowId, 'entryImportRefusal');
+        }
     });
 
     it('every compiler of ABSENT_COMPILERS that the allowlist names is neutralised by what removes it', () => {

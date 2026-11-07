@@ -178,11 +178,11 @@ so nothing of it depends on the page's URL).
 
 ### What a sealed guest can reach, row by row
 
-<!-- describes: sealed-reach sig:e9bc -->
+<!-- describes: sealed-reach sig:ef9d -->
 The table above lists the channels found so far; this one closes the class by enumeration
 ([research 18](research/18_finding_classes/README.md#class-a-closed-by-enumeration)). In sealed mode guest code reaches the
 browser through two allowlists only: the worker's globals (`WORKER_GLOBALS`, with the library's own names `bridge`,
-`sandboxFiles`, `sandboxView` and `sandboxFetch`, and the syntax that compiles: `import()` and each function kind's
+`sandboxFiles`, `sandboxView` and `sandboxFetch`, and the syntax that compiles: `import()` and its phases (`import.source()`, `import.defer()`), and each function kind's
 constructor) and what the view's renderer admits (its elements, attributes and load kinds; the view runs no guest script).
 Every name of those lists is classified against every row above (`SEALED_REACH`, `src/lib/sealed-reach.ts`): `none` (it
 cannot make the browser consult the row's inherited state, nor read it, and the cell says why), `neutralised` (a chokepoint
@@ -202,32 +202,32 @@ sealed worker the same globals and members, every member they lead to compared, 
 false on both (`secureContext`); and the view's residuals are what the table says.
 
 <!-- generated:begin sealed-reach -->
-725 names × 22 rows = 15950 cells.
+727 names × 22 rows = 15994 cells.
 
 | Row | None | Neutralised (by) | Remains (the residual, the surfaces that reach it) |
 | :--- | :--- | :--- | :--- |
-| `cspScript` | 714 | 11: `codeFromStringRefusal`, `entryImportRefusal`, `strictWorkerAllowlist`, `webAssemblyRemoval` | 0 |
-| `cspWorker` | 725 | 0 | 0 |
-| `cspStyle` | 719 | 6: `adoptedSheets`, `cssomDeclaration`, `styleEncoding` | 0 |
-| `cspBaseUri` | 702 | 23: `baseCheck`, `entryImportRefusal`, `inertHref`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
-| `cspFetch` | 686 | 19: `createObjectUrlRemoval`, `entryImportRefusal`, `inertHref`, `linkRelations`, `navigationCancel`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `svgLocalReferences` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): a registered file's load in the view (a `blob:` URL the view minted) is checked against the page's `img-src`, `font-src`, `media-src` or `style-src`: one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show |
-| `cspPolicyText` | 685 | 40: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssomDeclaration`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `styleEncoding`, `viewPolicy`, `viewViolationRelay`, `violationFieldBlanking`, `violationStop`, `webAssemblyRemoval` | 0 |
-| `cspReporting` | 687 | 23: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssomDeclaration`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `styleEncoding`, `webAssemblyRemoval` | 15: `blobLoads` (from `loadKind`, `urlAttribute`, `viewApi`): each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice |
-| `trustedTypesRequirement` | 715 | 10: `codeFromStringRefusal`, `strictWorkerAllowlist`, `trustedTypesPolicy` | 0 |
-| `trustedTypesDefault` | 725 | 0 | 0 |
-| `coep` | 712 | 13: `isolationRefusal` | 0 |
-| `referrer` | 692 | 33: `cssUrlDrop`, `entryImportRefusal`, `forcedNoReferrer`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
-| `ancestorOrigins` | 725 | 0 | 0 |
-| `documentOrigin` | 697 | 28: `originCheck` | 0 |
-| `cookies` | 697 | 28: `cssUrlDrop`, `entryImportRefusal`, `forcedCrossorigin`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
-| `serviceWorker` | 707 | 18: `cssUrlDrop`, `entryImportRefusal`, `inertHref`, `originCheck`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
-| `hostRealmGlobals` | 707 | 18: `brokerCapture`, `logRelay` | 0 |
-| `permissionsPolicy` | 712 | 13: `autoplaySwitch`, `isolationRefusal`, `noDelegation`, `viewEventList` | 0 |
-| `permissionState` | 719 | 6: `originCheck`, `secureContextRemoval` | 0 |
-| `secureContext` | 706 | 19: `secureContextRemoval` | 0 |
-| `uiSurfaces` | 711 | 14: `inertHref`, `navigationCancel`, `viewFocusRule` | 0 |
-| `eventDispatch` | 710 | 15: `teardownDetach` | 0 |
-| `thread` | 260 | 0 | 465: `viewRendering` (from `autoplay`, `disclosure`, `focusAttribute`, `form`, `hyperlink`, `linkHref`, `linkRelation`, `loadKind`, `loader`, `markup`, `mediaControls`, `presentation`, `referrerPolicyAttribute`, `styleAttribute`, `styleElement`, `svgReference`, `urlAttribute`, `viewApi`): what the guest renders and sets is applied in the view, on the host page's thread on Firefox, WebKit, Android WebView and Chromium's headless shell: an availability cost, bounded by the view's budgets and the repeated-overrun rule (docs/API.md, the view's cost to the host page) |
+| `cspScript` | 714 | 13: `codeFromStringRefusal`, `entryImportRefusal`, `strictWorkerAllowlist`, `webAssemblyRemoval` | 0 |
+| `cspWorker` | 727 | 0 | 0 |
+| `cspStyle` | 721 | 6: `adoptedSheets`, `cssomDeclaration`, `styleEncoding` | 0 |
+| `cspBaseUri` | 702 | 25: `baseCheck`, `entryImportRefusal`, `inertHref`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
+| `cspFetch` | 686 | 21: `createObjectUrlRemoval`, `entryImportRefusal`, `inertHref`, `linkRelations`, `navigationCancel`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `svgLocalReferences` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): a registered file's load in the view (a `blob:` URL the view minted) is checked against the page's `img-src`, `font-src`, `media-src` or `style-src`: one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show |
+| `cspPolicyText` | 685 | 42: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssomDeclaration`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `styleEncoding`, `viewPolicy`, `viewViolationRelay`, `violationFieldBlanking`, `violationStop`, `webAssemblyRemoval` | 0 |
+| `cspReporting` | 687 | 25: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssomDeclaration`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `styleEncoding`, `webAssemblyRemoval` | 15: `blobLoads` (from `loadKind`, `urlAttribute`, `viewApi`): each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice |
+| `trustedTypesRequirement` | 717 | 10: `codeFromStringRefusal`, `strictWorkerAllowlist`, `trustedTypesPolicy` | 0 |
+| `trustedTypesDefault` | 727 | 0 | 0 |
+| `coep` | 714 | 13: `isolationRefusal` | 0 |
+| `referrer` | 692 | 35: `cssUrlDrop`, `entryImportRefusal`, `forcedNoReferrer`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
+| `ancestorOrigins` | 727 | 0 | 0 |
+| `documentOrigin` | 699 | 28: `originCheck` | 0 |
+| `cookies` | 697 | 30: `cssUrlDrop`, `entryImportRefusal`, `forcedCrossorigin`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
+| `serviceWorker` | 707 | 20: `cssUrlDrop`, `entryImportRefusal`, `inertHref`, `originCheck`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
+| `hostRealmGlobals` | 709 | 18: `brokerCapture`, `logRelay` | 0 |
+| `permissionsPolicy` | 714 | 13: `autoplaySwitch`, `isolationRefusal`, `noDelegation`, `viewEventList` | 0 |
+| `permissionState` | 721 | 6: `originCheck`, `secureContextRemoval` | 0 |
+| `secureContext` | 708 | 19: `secureContextRemoval` | 0 |
+| `uiSurfaces` | 713 | 14: `inertHref`, `navigationCancel`, `viewFocusRule` | 0 |
+| `eventDispatch` | 712 | 15: `teardownDetach` | 0 |
+| `thread` | 262 | 0 | 465: `viewRendering` (from `autoplay`, `disclosure`, `focusAttribute`, `form`, `hyperlink`, `linkHref`, `linkRelation`, `loadKind`, `loader`, `markup`, `mediaControls`, `presentation`, `referrerPolicyAttribute`, `styleAttribute`, `styleElement`, `svgReference`, `urlAttribute`, `viewApi`): what the guest renders and sets is applied in the view, on the host page's thread on Firefox, WebKit, Android WebView and Chromium's headless shell: an availability cost, bounded by the view's budgets and the repeated-overrun rule (docs/API.md, the view's cost to the host page) |
 <!-- generated:end -->
 
 The chokepoints the cells name, each a declaration or a statement of the code:
@@ -238,7 +238,7 @@ The chokepoints the cells name, each a declaration or a statement of the code:
 | `requestGate` | the request gate: the guest's `fetch`, `XMLHttpRequest` and `WebSocket` admit only the guest policy's `connect-src` sources, which sealed mode has none of, and refuse before the platform | `src/lib/in-sandbox-script.ts` |
 | `sealedFetchRefusal` | `sandboxFetch()` refuses in the guest with `FETCH_NOT_ALLOWED` and sends nothing to the host | `src/lib/in-sandbox-script.ts` |
 | `codeFromStringRefusal` | the prelude puts the library's `EvalError` in place of every code-from-string sink (CODE_FROM_STRING_SINKS), which never calls the platform | `src/lib/code-from-strings.ts` |
-| `entryImportRefusal` | the build refuses an entry that calls `import()`, with the reason `entryImport`, so no worker runs it | `src/lib/entry-imports.ts` |
+| `entryImportRefusal` | the build refuses an entry that holds an import expression (`import()`, or a phase of one: `import.source()`, `import.defer()`), with the reason `entryImport`, so no worker runs it | `src/lib/entry-imports.ts` |
 | `strictWorkerAllowlist` | strict and sealed mode's worker globals have no `importScripts` | `src/lib/worker-globals.ts` |
 | `webAssemblyRemoval` | the strict prelude deletes `WebAssembly` unless `scriptUnsafe`, which sealed mode refuses | `src/lib/in-sandbox-view.ts` |
 | `createObjectUrlRemoval` | the strict prelude deletes `URL.createObjectURL`: the guest mints no URL the view could load | `src/lib/in-sandbox-view.ts` |

@@ -364,7 +364,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/egress.ts` | The egress table |
 | `src/lib/element-events.ts` | The element's events |
 | `src/lib/engine-ledger.ts` | The engine-difference ledger |
-| `src/lib/entry-imports.ts` | The dynamic `import()` of a strict or sealed entry |
+| `src/lib/entry-imports.ts` | The import expressions of a strict or sealed entry |
 | `src/lib/environment-check.ts` | The environment check |
 | `src/lib/environment.ts` | The resources of one environment, declared once |
 | `src/lib/fetch-bridge.ts` | The host-mediated fetch bridge, host side |

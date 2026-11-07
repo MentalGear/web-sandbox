@@ -61,7 +61,7 @@ export const CHOKEPOINTS = {
         token: 'export function refuseCodeFromStrings(',
     },
     entryImportRefusal: {
-        what: 'the build refuses an entry that calls `import()`, with the reason `entryImport`, so no worker runs it',
+        what: 'the build refuses an entry that holds an import expression (`import()`, or a phase of one: `import.source()`, `import.defer()`), with the reason `entryImport`, so no worker runs it',
         file: 'src/lib/entry-imports.ts',
         token: 'export function dynamicImportAt(',
     },
@@ -246,6 +246,15 @@ export const secureContextOnlyNames = (): string[] => [
 /** `import()`: syntax, which nothing at run time can take from the language. */
 export const DYNAMIC_IMPORT = 'import()';
 
+/**
+ * The phases of an import (TC39 proposals an engine may run behind a flag): syntax too, which the build refuses with
+ * `import()` (entry-imports.ts; BD7:CHL-1).
+ */
+export const IMPORT_PHASES = ['import.source()', 'import.defer()'] as const;
+
+/** Every import expression: `import()` and its phases. */
+export const IMPORT_EXPRESSIONS: readonly string[] = [DYNAMIC_IMPORT, ...IMPORT_PHASES];
+
 /** Where a name is found. */
 export const REACH_DOMAINS = ['global', 'navigator', 'library', 'member', 'syntax', 'element', 'attribute', 'loadKind'] as const;
 export type ReachDomain = (typeof REACH_DOMAINS)[number];
@@ -280,9 +289,9 @@ function attributeNames(): string[] {
     return names;
 }
 
-/** The syntax that reaches a compiler: `import()`, and each function kind's constructor (CODE_FROM_STRING_SINKS). */
+/** The syntax that reaches a compiler: the import expressions, and each function kind's constructor (CODE_FROM_STRING_SINKS). */
 function syntaxNames(): string[] {
-    const names: string[] = [DYNAMIC_IMPORT];
+    const names: string[] = [...IMPORT_EXPRESSIONS];
     for (const [id, sink] of Object.entries(CODE_FROM_STRING_SINKS)) {
         if (sink.kind === 'function-kind') names.push(id);
     }
@@ -340,10 +349,10 @@ export const SURFACES = {
     code: {
         side: 'worker',
         what: 'compile a string as code: `eval`, `Function` and the constructor of every function kind',
-        names: words(`eval Function ${syntaxNames().filter(name => name !== DYNAMIC_IMPORT).join(' ')}`),
+        names: words(`eval Function ${syntaxNames().filter(name => !IMPORT_EXPRESSIONS.includes(name)).join(' ')}`),
     },
     timers: { side: 'worker', what: 'schedule a handler, and compile it when it is a string', names: words('setTimeout setInterval') },
-    dynamicImport: { side: 'worker', what: 'load and run a module by URL', names: [DYNAMIC_IMPORT] },
+    dynamicImport: { side: 'worker', what: 'load and run a module by URL, in any phase', names: IMPORT_EXPRESSIONS },
     scheduling: {
         side: 'worker',
         what: 'schedule work the guest gives as a function',
