@@ -11,7 +11,7 @@
  * captured the platform's `Function` before (in-sandbox-script.ts), and runs only with `scriptUnsafe`, in strict mode,
  * where the prelude leaves the sinks as the platform has them (sealed mode refuses `scriptUnsafe`, config-schema.ts).
  *
- * The other ways a worker compiles text are off the allowlist (worker-globals.ts) or removed by the prelude, so the guest
+ * The other ways a worker compiles text are off the allowlist the build passes (worker-globals.ts), so the guest
  * has none of them: {@link ABSENT_COMPILERS}. A dynamic `import()` is syntax, which nothing at run time can take from the
  * language: the build refuses an entry that calls it (entry-imports.ts).
  *
@@ -73,15 +73,15 @@ export const REFUSED_TIMERS: readonly string[] = SINK_IDS.filter(id => sinkOf(id
 export const FUNCTION_KINDS_SOURCE = `[${SINK_IDS.filter(id => sinkOf(id).kind === 'function-kind').map(id => sinkOf(id).syntax).join(', ')}]`;
 
 /**
- * The worker's other ways to compile or load code, which the guest never has: each is off the allowlist
- * (STRICT_WORKER_GLOBALS, worker-globals.ts) or removed by the prelude before guest code runs. With why each would check
- * the inherited policy.
+ * The worker's other ways to compile or load code, which the guest never has: each is off the allowlist the build passes
+ * without `scriptUnsafe` (STRICT_WORKER_GLOBALS and workerGlobalsFor, worker-globals.ts), so the worker deletes it before
+ * guest code runs. With why each would check the inherited policy.
  */
 export const ABSENT_COMPILERS = {
     'importScripts': 'loads a classic script: script-src',
     'Worker': 'a nested worker of a URL: worker-src',
     'SharedWorker': 'a shared worker of a URL: worker-src',
-    'WebAssembly': "compiles bytes: 'wasm-unsafe-eval' (removed by the prelude unless scriptUnsafe, in-sandbox-view.ts)",
+    'WebAssembly': "compiles bytes: 'wasm-unsafe-eval' (off the allowlist unless scriptUnsafe, workerGlobalsFor)",
     'ShadowRealm': 'evaluate() compiles a string: script-src',
     'trustedTypes': 'the Trusted Types factory, whose policies make the values a sink accepts',
     'TrustedScript': 'a value a Trusted Types sink accepts as code',

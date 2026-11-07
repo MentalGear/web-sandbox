@@ -295,7 +295,7 @@ describe('onHostSite is never narrower than a public-suffix list', () => {
 // rule's to read. The in-sandbox bootstraps (the modules the realms registry stringifies into a sandbox document) run
 // in their own realms, and are not host-side.
 describe('host-side code reads the host page only through host-site.ts', () => {
-    const BOOTSTRAPS = new Set<string>(Object.values(STRINGIFIED).map(row => row.module).filter(module => module !== 'src/host.ts'));
+    const BOOTSTRAPS = new Set<string>(Object.values(STRINGIFIED).map(row => row.module));
     const hostSide = (): string[] => {
         const files = ['src/host.ts'];
         const walk = (dir: string) => {

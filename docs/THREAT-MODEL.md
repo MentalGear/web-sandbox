@@ -60,7 +60,7 @@ cooperative mode's are ([S74](BACKLOG.md#s74)). `scriptUnsafe` is for testing an
 
 ## Trust boundaries
 
-<!-- describes: realms, channels sig:c25c3794 -->
+<!-- describes: realms, channels sig:ec393794 -->
 
 The realms and the channels between them are generated from the code in [ARCHITECTURE.md](../ARCHITECTURE.md#modes-and-realms)
 (which realm runs guest code, which library functions are stringified into it) and
@@ -252,7 +252,7 @@ The chokepoints the cells name, each a declaration or a statement of the code:
 | `codeFromStringRefusal` | the prelude puts the library's `EvalError` in place of every code-from-string sink (CODE_FROM_STRING_SINKS), which never calls the platform | `src/lib/code-from-strings.ts` |
 | `entryImportRefusal` | the build refuses an entry that holds an import expression (`import()`, or a phase of one: `import.source()`, `import.defer()`), with the reason `entryImport`, so no worker runs it | `src/lib/entry-imports.ts` |
 | `strictWorkerAllowlist` | strict and sealed mode's worker globals have no `importScripts` | `src/lib/worker-globals.ts` |
-| `webAssemblyRemoval` | the strict prelude deletes `WebAssembly` unless `scriptUnsafe`, which sealed mode refuses | `src/lib/in-sandbox-view.ts` |
+| `webAssemblyRemoval` | the worker's allowlist has no `WebAssembly` unless `scriptUnsafe`, which sealed mode refuses | `src/lib/worker-globals.ts` |
 | `createObjectUrlRemoval` | the strict prelude deletes `URL.createObjectURL`: the guest mints no URL the view could load | `src/lib/in-sandbox-view.ts` |
 | `violationStop` | the bootstrap's first capture listener relays a trusted violation and stops it, so no listener of the guest's hears one | `src/lib/in-sandbox-script.ts` |
 | `violationFieldBlanking` | every field of `SecurityPolicyViolationEvent.prototype` reads blank to guest code (VIOLATION_EVENT_FIELDS) | `src/lib/in-sandbox-script.ts` |

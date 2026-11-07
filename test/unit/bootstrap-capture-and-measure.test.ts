@@ -452,7 +452,7 @@ describe('C-9: coalescing a render keeps the order of the operations that remain
         w.URL = {};
         w.queueMicrotask = queueMicrotask;
         const run = new Function('globalThis', 'EventTarget', 'MessagePort', 'MessageEvent', 'Event', `return (${inStrictWorker.toString()})`)(w, Target, Port, MsgEv, Ev);
-        run({ attach: () => {}, log: () => {} }, { scriptUnsafe: true, maxRender: 1000, maxTarget: 64, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__c9Done', eventTypes: ['click'] });
+        run({ attach: () => {}, log: () => {} }, { maxRender: 1000, maxTarget: 64, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__c9Done', eventTypes: ['click'] });
         const renderPort = new Port();
         listeners.get(w)!['message']!(new MsgEv({ data: { type: 'INIT_WORKER' }, ports: [new Port(), renderPort] }));
         const ack = () => listeners.get(renderPort)!['message']!(new MsgEv({ data: { type: 'VIEW_ACK' } }));

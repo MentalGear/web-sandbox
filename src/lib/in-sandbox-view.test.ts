@@ -326,15 +326,14 @@ describe('the view bootstrap', () => {
 });
 
 describe('the strict worker prelude (unit; the e2e specs cover it in real workers)', () => {
-    it('removes URL.createObjectURL and (without scriptUnsafe) WebAssembly (Worker and SharedWorker: worker-globals.ts, first); render() validates; an untrusted INIT is ignored', () => {
+    it('removes URL.createObjectURL (Worker, SharedWorker and, without scriptUnsafe, WebAssembly: the allowlist, worker-globals.ts, first); render() validates; an untrusted INIT is ignored', () => {
         // run as stringified, with globalThis bound to a stand-in global (a real EventTarget), so the test realm is untouched
         const w = new EventTarget() as any;
         const fakeUrl = { createObjectURL: () => 'blob:x' };
-        Object.assign(w, { Worker: function () {}, SharedWorker: function () {}, WebAssembly: {}, URL: fakeUrl });
+        Object.assign(w, { URL: fakeUrl });
         const attached: unknown[] = [];
         const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
-        run({ attach: (port: unknown) => attached.push(port) }, { scriptUnsafe: false, maxRender: 10, maxTarget: 5, maxElements: 100, maxDepth: 10, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
-        expect(['WebAssembly'].filter(name => name in w)).toEqual([]);
+        run({ attach: (port: unknown) => attached.push(port) }, { maxRender: 10, maxTarget: 5, maxElements: 100, maxDepth: 10, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
         expect('createObjectURL' in fakeUrl).toBe(false);
 
         const view = w.sandboxView;
@@ -365,7 +364,7 @@ describe('the strict worker prelude (unit; the e2e specs cover it in real worker
 describe('review C2 and C3: the strict worker prelude against hostile globals', () => {
     const start = (w: any) => {
         const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
-        run({ attach: () => {} }, { scriptUnsafe: false, maxRender: 100, maxTarget: 5, maxElements: 100, maxDepth: 10, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
+        run({ attach: () => {} }, { maxRender: 100, maxTarget: 5, maxElements: 100, maxDepth: 10, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
     };
 
     it('assertEntryScoped refuses a global object holding a non-configurable function (what a top-level declaration leaves), whatever happened to the name Object', () => {
@@ -381,9 +380,10 @@ describe('review C2 and C3: the strict worker prelude against hostile globals', 
 
     it('a name the prelude must remove but cannot is an error, not a silent pass (C2)', () => {
         const w = new EventTarget() as any;
-        Object.defineProperty(w, 'WebAssembly', { value: {}, writable: true, enumerable: true, configurable: false });
-        Object.assign(w, { URL: {} });
-        expect(() => start(w)).toThrowError(/could not remove WebAssembly/);
+        const url = {};
+        Object.defineProperty(url, 'createObjectURL', { value: () => 'blob:x', writable: true, enumerable: true, configurable: false });
+        Object.assign(w, { URL: url });
+        expect(() => start(w)).toThrowError(/could not remove createObjectURL/);
     });
 
     it("writes to the prelude's lists never reach a setter on Array.prototype (C3)", () => {

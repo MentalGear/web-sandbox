@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
+import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from './worker-globals';
 
 /**
  * The worker globals allowlist (VR:V1), on a stand-in global shaped like a worker's
@@ -65,6 +65,21 @@ describe('V1: the worker keeps only the allowlisted globals', () => {
         new Function(`return (${keepOnlyWorkerGlobals.toString()})`)()(g, STRICT_WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS);
         expect(Object.getOwnPropertyNames(scope).sort()).toEqual(['constructor', 'fetch', 'navigator', 'setTimeout']);
         expect('importScripts' in g).toBe(false);
+    });
+
+    it('a build keeps WebAssembly only with scriptUnsafe (R1:R2-5): off the list it is deleted, and one that cannot be is an error', () => {
+        const keep = (g: object, allowed: readonly string[]) => new Function(`return (${keepOnlyWorkerGlobals.toString()})`)()(g, allowed, WORKER_NAVIGATOR_MEMBERS);
+        for (const globals of [WORKER_GLOBALS, STRICT_WORKER_GLOBALS]) {
+            expect(workerGlobalsFor(globals, true)).toEqual(globals);
+            expect(workerGlobalsFor(globals, false)).toEqual(globals.filter(name => name !== 'WebAssembly'));
+        }
+        const { g } = standInWorker();
+        Object.defineProperty(g, 'WebAssembly', { value: {}, writable: true, configurable: true });
+        keep(g, workerGlobalsFor(WORKER_GLOBALS, false));
+        expect('WebAssembly' in g).toBe(false);
+        const stuck = standInWorker();
+        Object.defineProperty(stuck.g, 'WebAssembly', { value: {}, configurable: false });
+        expect(() => keep(stuck.g, workerGlobalsFor(WORKER_GLOBALS, false))).toThrowError(/could not remove WebAssembly/);
     });
 });
 

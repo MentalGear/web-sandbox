@@ -3457,8 +3457,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  *
  * Hardening before any guest code (A7), beyond the globals allowlist the worker's source applies first
  * (worker-globals.ts: no Worker or SharedWorker, whose nested worker worker-src blob: would admit, research 15 P3; no
- * EventSource; nothing else that requests): no WebAssembly unless scriptUnsafe (WebKit compiles it without
- * 'unsafe-eval', P3), and no URL.createObjectURL — the files' URLs are minted before this runs, and a URL
+ * EventSource; nothing else that requests; no WebAssembly unless scriptUnsafe, which WebKit compiles without
+ * 'unsafe-eval', P3): no URL.createObjectURL — the files' URLs are minted before this runs, and a URL
  * guest code minted could otherwise name unregistered media to the view through CSS (A8). RTCPeerConnection
  * is never there in a worker, and the comms script deletes it anyway. After this prelude, unless scriptUnsafe, the
  * worker's source runs the code-from-string refusal (code-from-strings.ts), its last statement before the entry.
@@ -3473,7 +3473,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * (the port itself is never handed to a handler); each frame of events is acknowledged (VIEW_EVENT_ACK) once its
  * handlers have returned.
  */
-export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; maxUrls: number; maxDistinctUrls: number; entryDoneName: string; eventTypes: readonly string[]; maxMarks: number; style: { properties: readonly string[]; maxProperties: number; maxValue: number } }, styleProperty: typeof isStyleProperty) {
+export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; maxUrls: number; maxDistinctUrls: number; entryDoneName: string; eventTypes: readonly string[]; maxMarks: number; style: { properties: readonly string[]; maxProperties: number; maxValue: number } }, styleProperty: typeof isStyleProperty) {
     // ---- The captured list (AR:C3, R2:C-1): sandboxView's methods, the render port's listener and the
     // error listener run after the entry, so everything they use is taken here, and nothing below reads a global or a
     // prototype guest code can replace (a unit test scans the text). The prelude's own lists have no prototype
@@ -3531,7 +3531,6 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         if (owner && name in owner) deleteOwn(owner, name);
         if (owner && name in owner) throw new ErrorConstructor('[Sandbox] the strict worker could not remove ' + name);
     };
-    if (!options.scriptUnsafe) remove(g, 'WebAssembly');
     remove(urlStatics, 'createObjectURL');
     remove(webkitUrlStatics, 'createObjectURL');
 

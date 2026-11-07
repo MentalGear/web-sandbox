@@ -72,7 +72,7 @@ async function startPrelude(maxRender = 20) {
     w.URL = {};
     const lines: string[] = [];
     const run = new Function('globalThis', 'EventTarget', 'MessageEvent', 'Event', 'MessagePort', `return (${inStrictWorker.toString()})`)(w, FakeTarget, FakeMessageEvent, FakeEvent, FakePort);
-    run({ attach: () => {}, log: (_level: string, args: unknown[]) => lines.push(String(args[0])) }, { scriptUnsafe: false, maxRender, maxTarget: 5, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: ['click'] });
+    run({ attach: () => {}, log: (_level: string, args: unknown[]) => lines.push(String(args[0])) }, { maxRender, maxTarget: 5, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: ['click'] });
     const render = new FakePort();
     w.listeners.message(new FakeMessageEvent({ data: { type: 'INIT_WORKER' }, ports: [new FakePort(), render] }));
     const sent = () => render.posted.filter(frame => frame.type !== 'VIEW_STARTED' && frame.type !== 'VIEW_LISTEN');

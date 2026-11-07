@@ -131,9 +131,8 @@ Tests: `worker-globals-and-termination.spec.ts` ("V1 … residual", "V3", "H1"),
 Worker mode is frozen as it is (S48). It duplicates strict mode without a view: a worker inside the frame, the same
 worker-globals allowlist (S43), code only through `execute()`. What differs, and what folding has to decide:
 `importScripts` from origins in `origins.scripts` (strict mode takes no `scripts`); nested workers, which worker mode
-lost with the allowlist (S43), so nothing to keep; `WebAssembly`, which worker mode keeps (WebKit compiles it without
-`'unsafe-eval'`) and strict mode keeps only with `scriptUnsafe`; and a headless strict build (no view, or a hidden
-one). Until then worker mode gets no new features.
+lost with the allowlist (S43), so nothing to keep; and a headless strict build (no view, or a hidden one). Until then
+worker mode gets no new features.
 
 ### <a id="s60"></a>S60 · Repository and docs clean-up, then independent adversarial reviews — ⏸️ **after we are done**
 

@@ -1,8 +1,8 @@
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { ABSENT_COMPILERS, CODE_FROM_STRING_REFUSAL, CODE_FROM_STRING_SINKS, FUNCTION_KINDS_SOURCE, REFUSED_GLOBALS, REFUSED_TIMERS, refuseCodeFromStrings } from '@src/lib/code-from-strings';
-import { STRICT_WORKER_GLOBALS } from '@src/lib/worker-globals';
-import { inStrictWorker, viewBootstrapHash } from '@src/lib/in-sandbox-view';
+import { STRICT_WORKER_GLOBALS, workerGlobalsFor } from '@src/lib/worker-globals';
+import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
 import { SEALED_FILE_KINDS, sealedViewPolicy } from '@src/lib/csp/csp-generator';
 
 /**
@@ -151,13 +151,11 @@ describe('refuseCodeFromStrings: every sink throws the library\'s EvalError and 
 });
 
 describe('the other compilers are absent from the worker', () => {
-    it('each one of ABSENT_COMPILERS is off the strict allowlist, or removed by the prelude', () => {
-        const prelude = inStrictWorker.toString();
-        for (const name of Object.keys(ABSENT_COMPILERS)) {
-            if (!STRICT_WORKER_GLOBALS.includes(name)) continue;
-            expect(name).toBe('WebAssembly');
-            expect(prelude).toMatch(/if \(!options\.scriptUnsafe\) remove\(g, ["']WebAssembly["']\)/);
-        }
+    it('each one of ABSENT_COMPILERS is off the allowlist a strict build passes without scriptUnsafe', () => {
+        const compilers = Object.keys(ABSENT_COMPILERS);
+        const kept = workerGlobalsFor(STRICT_WORKER_GLOBALS, false);
+        expect(compilers.filter(name => kept.includes(name))).toEqual([]);
+        expect(compilers.filter(name => STRICT_WORKER_GLOBALS.includes(name))).toEqual(['WebAssembly']); // kept with scriptUnsafe alone
     });
 });
 

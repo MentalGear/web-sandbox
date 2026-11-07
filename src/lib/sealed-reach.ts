@@ -72,9 +72,9 @@ export const CHOKEPOINTS = {
         token: 'export const STRICT_WORKER_GLOBALS',
     },
     webAssemblyRemoval: {
-        what: 'the strict prelude deletes `WebAssembly` unless `scriptUnsafe`, which sealed mode refuses',
-        file: 'src/lib/in-sandbox-view.ts',
-        token: "if (!options.scriptUnsafe) remove(g, 'WebAssembly');",
+        what: "the worker's allowlist has no `WebAssembly` unless `scriptUnsafe`, which sealed mode refuses",
+        file: 'src/lib/worker-globals.ts',
+        token: 'export const workerGlobalsFor',
     },
     createObjectUrlRemoval: {
         what: 'the strict prelude deletes `URL.createObjectURL`: the guest mints no URL the view could load',

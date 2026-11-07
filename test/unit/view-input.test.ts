@@ -337,7 +337,7 @@ function startPrelude() {
     const reported: unknown[] = [];
     w.reportError = (error: unknown) => reported.push(error);
     const run = new Function('globalThis', 'EventTarget', 'MessageEvent', 'Event', 'MessagePort', `return (${inStrictWorker.toString()})`)(w, FakeTarget, FakeMessageEvent, FakeEvent, FakePort);
-    run({ attach: () => {}, log: () => {} }, { scriptUnsafe: false, maxRender: 100, maxTarget: 50, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } }, isStyleProperty);
+    run({ attach: () => {}, log: () => {} }, { maxRender: 100, maxTarget: 50, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } }, isStyleProperty);
     const render = new FakePort();
     w.listeners.message(new FakeMessageEvent({ data: { type: 'INIT_WORKER' }, ports: [new FakePort(), render] }));
     const sent = () => render.posted.filter(frame => frame.type !== 'VIEW_STARTED' && frame.type !== 'VIEW_LISTEN' && frame.type !== 'VIEW_EVENT_ACK');

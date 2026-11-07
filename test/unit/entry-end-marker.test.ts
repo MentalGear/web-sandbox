@@ -206,7 +206,7 @@ describe('S75: the strict prelude raises the marker error at the end of the entr
         };
         if (withReportError) w.reportError = (error: Error) => raise(error);
         const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
-        run({ attach: () => {}, log: (_level: string, args: unknown[]) => lines.push(args) }, { scriptUnsafe: false, maxRender: 100, maxTarget: 5, maxElements: 100, maxDepth: 10, maxCharacters: 100, maxUrls: 10, maxDistinctUrls: 10, entryDoneName: MARKER, eventTypes: ['click'] });
+        run({ attach: () => {}, log: (_level: string, args: unknown[]) => lines.push(args) }, { maxRender: 100, maxTarget: 5, maxElements: 100, maxDepth: 10, maxCharacters: 100, maxUrls: 10, maxDistinctUrls: 10, entryDoneName: MARKER, eventTypes: ['click'] });
         return { w, raise, lines, reachedView };
     };
 

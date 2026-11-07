@@ -35,7 +35,7 @@ describe("N-2 (class G): the strict prelude's error listener reads the event onl
         };
         const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
         try {
-            run({ attach: () => {}, log: (_level: string, args: unknown[]) => lines.push(args) }, { scriptUnsafe: false, maxRender: 100, maxTarget: 5, maxElements: 100, maxDepth: 10, maxCharacters: 100, maxUrls: 10, entryDoneName: '__testEntryDone', eventTypes: ['click'] });
+            run({ attach: () => {}, log: (_level: string, args: unknown[]) => lines.push(args) }, { maxRender: 100, maxTarget: 5, maxElements: 100, maxDepth: 10, maxCharacters: 100, maxUrls: 10, entryDoneName: '__testEntryDone', eventTypes: ['click'] });
         } finally {
             EventTarget.prototype.addEventListener = add;
         }

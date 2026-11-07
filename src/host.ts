@@ -21,7 +21,7 @@ import { crossingText, mintError, mintUncodedError } from "./lib/minted-errors";
 import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
-import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
+import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from "./lib/worker-globals";
 import { dynamicImportAt } from "./lib/entry-imports";
 import { CODE_FROM_STRING_REFUSAL, FUNCTION_KINDS_SOURCE, REFUSED_GLOBALS, REFUSED_TIMERS, refuseCodeFromStrings } from "./lib/code-from-strings";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
@@ -576,13 +576,6 @@ function sameData(a: unknown, b: unknown): boolean {
     return true;
 }
 
-// The first statement after the globals allowlist in worker mode's worker unless scriptUnsafe (R1:R2-5). Stringified.
-function removeWebAssembly(g: { WebAssembly?: unknown }) {
-    if (!('WebAssembly' in g)) return;
-    Reflect.deleteProperty(g, 'WebAssembly'); // strict-mode code (STRICT_DIRECTIVE): a failed delete is checked below, not thrown
-    if ('WebAssembly' in g) throw new Error('[Sandbox] the worker could not remove WebAssembly');
-}
-
 // The first statement of every guest worker's source, worker mode and strict mode (VR:V1): the worker keeps only the allowlisted globals (worker-globals.ts) before any other script of the
 // library or the guest runs there, so every request guest code can make goes through an API the policy governs on
 // every engine. `global` is the expression for the global object in that source.
@@ -592,9 +585,9 @@ function removeWebAssembly(g: { WebAssembly?: unknown }) {
 // never lets load anything (S74), and none of the names only a secure context has, whose members removeSecureContextOnly
 // deletes next and whose isSecureContext it pins to false, so its surface is the same whatever the host page's URL and the
 // engine (class A: INHERITED_CONTEXT.secureContext; SECURE_CONTEXT_ONLY).
-const workerGlobalsCall = (global: string, globals: readonly string[] = WORKER_GLOBALS, navigatorMembers: readonly string[] = WORKER_NAVIGATOR_MEMBERS) =>
+const workerGlobalsCall = (global: string, globals: readonly string[], navigatorMembers: readonly string[] = WORKER_NAVIGATOR_MEMBERS) =>
     `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(globals)}, ${toInlineScriptLiteral(navigatorMembers)})`;
-const workerGlobalsStatement = (global: string) => `${workerGlobalsCall(global, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS)};`
+const workerGlobalsStatement = (global: string, scriptUnsafe: boolean) => `${workerGlobalsCall(global, workerGlobalsFor(STRICT_WORKER_GLOBALS, scriptUnsafe), STRICT_WORKER_NAVIGATOR_MEMBERS)};`
     + `(${removeSecureContextOnly.toString()})(${global}, ${toInlineScriptLiteral(SECURE_CONTEXT_ONLY.members)});`;
 
 // The strict prelude's last statement, before the guest's entry, unless scriptUnsafe (code-from-strings.ts; BD6:ISO-1,
@@ -2178,12 +2171,11 @@ export class WebSandbox extends ElementBase {
     private _getWorkerBootstrapScript(files: FileSnapshotEntry[], connect: readonly string[]) {
         // the worker keeps only the allowlisted globals (worker-globals.ts), then runs the comms script and builds its
         // own blobs and sandboxFiles from the same literal; the frame only spawns it and forwards the port
-        // No WebAssembly unless scriptUnsafe (R1:R2-5), as in strict mode: WebKit compiles it without
-        // 'wasm-unsafe-eval', so the policy alone does not keep it out. Removed before the comms script, like the globals.
+        // No WebAssembly unless scriptUnsafe (R1:R2-5), as in strict mode: off the allowlist (workerGlobalsFor).
         // The allowlist runs first, as the argument of the function the rest runs in: it returns the worker's postMessage,
         // which it deleted (R4:M-1), and only the comms script is given it, for its one WORKER_STARTED.
-        const noWasm = this._config.scriptUnsafe === true ? '' : `(${removeWebAssembly.toString()})(g);`;
-        const workerSource = `${STRICT_DIRECTIVE}(function (g, postToFrame) {${noWasm}${this._getSandboxCommsScript('worker', files, NO_MARKUP_PLAN, 'postToFrame', connect)}})(this, ${workerGlobalsCall('this')});`;
+        const globals = workerGlobalsFor(WORKER_GLOBALS, this._config.scriptUnsafe === true);
+        const workerSource = `${STRICT_DIRECTIVE}(function (g, postToFrame) {${this._getSandboxCommsScript('worker', files, NO_MARKUP_PLAN, 'postToFrame', connect)}})(this, ${workerGlobalsCall('this', globals)});`;
         return environmentGate('parent.parent', false, `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)}, ${toInlineScriptLiteral(TRUSTED_TYPES_POLICY)});`);
     }
 
@@ -2515,14 +2507,15 @@ export class WebSandbox extends ElementBase {
             : { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [], sealed: true, violationFields: { ...VIOLATION_EVENT_FIELDS } };
         if (network?.fetchBridge) features.fetchBridge = { ...network.fetchBridge };
         if (this._config.guestWrites === true) features.guestWrites = true;
-        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
+        const scriptUnsafe = this._config.scriptUnsafe === true;
+        const options = { maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
         const prelude = `(function (g) {${STRICT_DIRECTIVE}`
             + `(${assertEntryScoped.toString()})(g);`
-            + workerGlobalsStatement('g')
-            + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()});`
+            + workerGlobalsStatement('g', scriptUnsafe)
+            + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}, ${this._config.guestWrites === true ? 'comms.writeFiles' : 'null'}, ${toInlineScriptLiteral(VIEW_FILE_TYPES)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)}, ${isStyleProperty.toString()});`
-            + (options.scriptUnsafe ? '' : refuseCodeFromStringsStatement('g'))
+            + (scriptUnsafe ? '' : refuseCodeFromStringsStatement('g'))
             + '})(this);';
         return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${marker}();\n`;
     }
