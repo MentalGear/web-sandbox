@@ -21,9 +21,10 @@ import { STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS } from '@src/lib
  *     the policy and network rows, over the whole domain, members included;
  *   - the one bit of the `secureContext` row: the sealed worker of a host page served from a name that is not potentially
  *     trustworthy against one on a loopback host, where every name that differs must be a `remains` cell of that row;
- *   - the residuals of the view (`cspStyle.guestStyles`, `cspFetch.blobLoads`, `cspReporting.blobLoads` and `inlineStyles`):
- *     on a page whose `style-src` and `img-src` refuse them, the guest's inline styles and a registered image are refused,
- *     reported to the endpoint naming only `inline` or `blob`, and the guest hears nothing.
+ *   - the residuals of the view (`cspFetch.blobLoads`, `cspReporting.blobLoads`): on a page whose `img-src` refuses `blob:`, a
+ *     registered image is refused and reported to the endpoint naming only `blob`, and the guest hears nothing; and the cells
+ *     the CSSOM neutralises (`cspStyle`, `cspReporting`): the guest's style attribute and `<style>` apply under that page's
+ *     `style-src` of hashes alone, with no violation and no report.
  */
 
 const tag = () => randomUUID().replaceAll('-', '').slice(0, 16);
@@ -100,7 +101,7 @@ test.describe('sealed mode: what the guest can reach, against every inherited ro
         await expect.poll(async () => (await host.hits()).reports.length, { message: "the host page's own violation is reported (control)", timeout: 15000 }).toBeGreaterThan(0);
     });
 
-    test("the view's residuals: the guest's inline styles and a registered file, on a page that refuses them, are refused and reported naming only inline or blob, and the guest hears nothing", async ({ sandbox, browserName }) => {
+    test("the view's residual: a registered file, on a page that refuses it, is refused and reported naming only blob, and the guest hears nothing; the guest's styles apply there, unchecked", async ({ sandbox, browserName }) => {
         const secrets = secretsOf();
         // the realistic page without `blob:` in `img-src`; its `style-src` (the documented hashes) has no 'unsafe-inline'
         const directives = (base: Record<string, string[]>) => ({ ...withPolicySecrets(secrets)(base), 'img-src': ["'self'"] });
@@ -124,30 +125,28 @@ test.describe('sealed mode: what the guest can reach, against every inherited ro
         const guest = await host.guestResult<{ heard: number }>(30000);
         expect(guest.heard, covering('cspPolicyText', "the view's refusals never reach the worker")).toBe(0);
 
-        // the guest's styles and its image did not apply in the view: the page's policy refused them
+        // the guest's styles applied in the view, through the CSSOM; its image did not: the page's img-src refused it
         const view = await inView<{ styled: string; sheet: string; image: number }>(host.page, browserName, `({ styled: getComputedStyle(document.getElementById('sty')).color, sheet: getComputedStyle(document.getElementById('sel')).color, image: document.getElementById('img').naturalWidth })`);
         expect(view, 'the view is reachable').not.toBe('no-context');
         if (view === 'no-context') return;
         await host.page.waitForTimeout(2000); // a report the browser sends after the refusal
-        // ledger: view-inline-style-check
-        const facts = VIEW_RESIDUAL_FACTS[browserName as keyof typeof VIEW_RESIDUAL_FACTS];
-        expect(view.styled === 'rgb(1, 2, 3)' ? 'applied' : 'refused', covering('cspStyle', "the guest's style attribute under a style-src without 'unsafe-inline'")).toBe(facts.attribute);
-        expect(view.sheet, covering('cspStyle', "a page's style-src without 'unsafe-inline' refuses the guest's style element")).not.toBe('rgb(4, 5, 6)');
+        expect(view.styled, covering('cspStyle', "the guest's style attribute applies under a style-src of hashes alone (cssomDeclaration)")).toBe('rgb(1, 2, 3)');
+        expect(view.sheet, covering('cspStyle', "the guest's <style> applies under a style-src of hashes alone (adoptedSheets)")).toBe('rgb(4, 5, 6)');
         expect(view.image, covering('cspFetch', "a page's img-src without blob: refuses a registered image")).toBe(0);
 
-        // the element reports each refusal as a violation, naming only blob or inline
+        // the element reports the one refusal as a violation, naming only blob: no style is checked
         const violations = (await sandbox.violations()).map(violation => [violation.directive, violation.blockedURI]);
-        const refused = [...(facts.attribute === 'refused' ? ['style-src-attr'] : []), 'style-src-elem', 'img-src'];
-        expect([...new Set(violations.map(([directive]) => directive))].sort(), covering('cspFetch', 'each refusal is reported as a violation')).toEqual(refused.sort());
-        for (const [, blocked] of violations) expect(blocked).toMatch(/^(inline|blob)$/);
+        expect([...new Set(violations.map(([directive]) => directive))], covering('cspFetch', 'the refusal is reported as a violation, and no style is')).toEqual(['img-src']);
+        for (const [, blocked] of violations) expect(blocked).toBe('blob');
 
-        // what reached the page's endpoint names only inline or blob, and a sample is the guest's own style's first characters
+        // what reached the page's endpoint names only blob, with no sample: nothing of the guest's styles
+        // ledger: view-report-delivery
+        const delivered = VIEW_REPORT_DELIVERY[browserName as keyof typeof VIEW_REPORT_DELIVERY];
         const reports = (await host.hits()).reports.map(report => (report as { 'csp-report'?: Record<string, unknown> })['csp-report'] ?? {});
-        expect(reports.map(report => String(report['violated-directive'])).sort(), covering('cspReporting', "the page's endpoint receives what the engine reports from the view")).toEqual(facts.reports ? refused.sort() : []);
+        expect(reports.map(report => String(report['violated-directive'])), covering('cspReporting', "the page's endpoint receives what the engine reports from the view: the registered image, never a style")).toEqual(delivered ? ['img-src'] : []);
         for (const report of reports) {
-            expect(String(report['blocked-uri']), covering('cspReporting', 'a report names inline or blob as blocked')).toMatch(/^(inline|blob)$/);
-            const sample = String(report['script-sample'] ?? '');
-            expect(sample === '' || attribute.startsWith(sample) || sheet.startsWith(sample), covering('cspReporting', `a sample is the guest's own style: ${sample}`)).toBe(true);
+            expect(String(report['blocked-uri']), covering('cspReporting', 'a report names blob as blocked')).toBe('blob');
+            expect(String(report['script-sample'] ?? ''), covering('cspReporting', 'a report carries no sample of the guest')).toBe('');
         }
     });
 });
@@ -254,17 +253,11 @@ test.describe("the secureContext row: the sealed worker is the same whatever the
 });
 
 /**
- * What each engine does with the view's residuals on a page whose `style-src` has no `'unsafe-inline'` and whose `img-src`
- * has no `blob:` (measured): Chromium and Firefox refuse the guest's style attribute, its style element and the registered
- * image, and report each to the page's endpoint; WebKit applies the style attribute (it checks no attribute the renderer
- * sets), refuses the other two, and sends the endpoint nothing from the view.
+ * Whether the engine delivers a report of the view's refusals to the page's endpoint (measured; research 25): Chromium and
+ * Firefox do, WebKit sends none from the view (it raises the violation there, and reports the host page's own).
  */
-// ledger: view-inline-style-check
-const VIEW_RESIDUAL_FACTS = {
-    chromium: { attribute: 'refused', reports: true },
-    firefox: { attribute: 'refused', reports: true },
-    webkit: { attribute: 'applied', reports: false },
-} as const;
+// ledger: view-report-delivery
+const VIEW_REPORT_DELIVERY = { chromium: true, firefox: true, webkit: false } as const;
 
 /** A 1×1 PNG, a registered file the view loads as an image. */
 const DOT_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';

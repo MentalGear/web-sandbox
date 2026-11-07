@@ -125,6 +125,21 @@ export const CHOKEPOINTS = {
         file: 'src/lib/css-references.ts',
         token: 'export function withoutNetworkReferences(',
     },
+    styleEncoding: {
+        what: "the view's parser is given the guest's markup with no `style` attribute and no `<style>` element in it, in any context (styleMarkup renames them first): Chromium checks a style attribute as it parses it",
+        file: 'src/lib/style-markup.ts',
+        token: 'export function styleMarkup(nonce: string): StyleMarkup {',
+    },
+    cssomDeclaration: {
+        what: "a guest style attribute's text becomes the element's CSSOM declaration (the `cssText` setter), which no `style-src` checks, on any engine; no attribute named style is written from guest text",
+        file: 'src/lib/in-sandbox-view.ts',
+        token: 'call(setCssText, style, [css]);',
+    },
+    adoptedSheets: {
+        what: "a guest `<style>` is an inert `noframes` holding its text, which the view applies as a constructed stylesheet it adopts, in tree order; no `style-src` checks one, on any engine, and no `<style>` element of the guest's is ever in the view",
+        file: 'src/lib/in-sandbox-view.ts',
+        token: 'const syncSheets = (target: Element, added: readonly Element[]) => {',
+    },
     linkRelations: {
         what: 'a kept `<link>` has only the `stylesheet` and `icon` relations: no preload, prefetch or preconnect',
         file: 'src/lib/in-sandbox-view.ts',
@@ -544,6 +559,10 @@ const SECURE_CONTEXT_REMOVED = neutralised(['secureContextRemoval'], 'only a sec
 const VIEW_RUNS_NO_GUEST_CODE = neutralised(['viewPolicy', 'viewViolationRelay'], "the view's checks of the host page's policy raise violations in the view, which runs no guest code and relays no policy text");
 const NO_NETWORK_RENDERED = neutralised(['rendererUrlDrop', 'cssUrlDrop', 'inertHref'], 'what it renders keeps no network URL, in markup or CSS, and no link navigates');
 const VIEW_FOCUS_ON_TEARDOWN = neutralised(['teardownDetach'], 'a focused element of the view makes the browser dispatch focus and blur into the host page when the frame goes');
+// The guest's styles, applied through the CSSOM: no check of the host page's `style-src`, so no refusal, violation or report.
+const STYLE_ATTRIBUTE_CSSOM = neutralised(['styleEncoding', 'cssomDeclaration'], "the view applies its text as the element's declaration: no inline style, so no check of the host page's `style-src`");
+const STYLE_ELEMENT_CSSOM = neutralised(['styleEncoding', 'adoptedSheets'], 'the view applies its text as an adopted constructed stylesheet: no inline style, so no check of the host page\'s `style-src`');
+const STYLES_CSSOM = neutralised(['styleEncoding', 'cssomDeclaration', 'adoptedSheets'], 'what it renders: its style attributes and `<style>`s, each applied through the CSSOM');
 // Every name that would make a request or load by URL, if the library let it: the rows a request reaches share these.
 const REQUEST_MAKERS = { requests: REQUESTS_GATED, fetchBridge: NO_FETCH_BRIDGE, importScripts: NO_IMPORT_SCRIPTS, dynamicImport: IMPORT_REFUSED } as const;
 
@@ -559,11 +578,7 @@ export const SEALED_REACH = {
     },
     cspStyle: {
         rest: "applies no style the host page's `style-src` checks",
-        cells: {
-            styleElement: remains(['guestStyles'], "a `<style>` of the guest's is an inline stylesheet the host page's `style-src` checks"),
-            styleAttribute: remains(['guestStyles'], "a `style` attribute of the guest's is an inline style the host page's `style-src` checks"),
-            viewApi: remains(['guestStyles'], 'what it renders: its style elements and attributes'),
-        },
+        cells: { styleElement: STYLE_ELEMENT_CSSOM, styleAttribute: STYLE_ATTRIBUTE_CSSOM, viewApi: STYLES_CSSOM },
     },
     cspBaseUri: {
         rest: "resolves no URL against the document's base",
@@ -600,8 +615,8 @@ export const SEALED_REACH = {
             preludeRemoved: NO_GUEST_URL,
             listeners: neutralised(['violationStop'], 'a listener of the guest never hears a trusted violation'),
             violationEvent: neutralised(['violationFieldBlanking'], 'every field reads blank, on an event of the platform or of the guest'),
-            styleElement: VIEW_RUNS_NO_GUEST_CODE,
-            styleAttribute: VIEW_RUNS_NO_GUEST_CODE,
+            styleElement: STYLE_ELEMENT_CSSOM,
+            styleAttribute: STYLE_ATTRIBUTE_CSSOM,
             urlAttribute: VIEW_RUNS_NO_GUEST_CODE,
             loadKind: VIEW_RUNS_NO_GUEST_CODE,
             viewApi: VIEW_RUNS_NO_GUEST_CODE,
@@ -615,11 +630,11 @@ export const SEALED_REACH = {
             webAssembly: NO_WEBASSEMBLY,
             ...REQUEST_MAKERS,
             preludeRemoved: NO_GUEST_URL,
-            styleElement: remains(['inlineStyles'], "a `style-src` that refuses it reports it, naming `inline`"),
-            styleAttribute: remains(['inlineStyles'], "a `style-src` that refuses it reports it, naming `inline`"),
+            styleElement: STYLE_ELEMENT_CSSOM,
+            styleAttribute: STYLE_ATTRIBUTE_CSSOM,
             urlAttribute: remains(['blobLoads'], "a network URL is dropped before insertion, so no report names one; a directive that refuses `blob:` reports the registered file's load, naming `blob`"),
             loadKind: remains(['blobLoads'], "a directive that refuses `blob:` reports the load, naming `blob`"),
-            viewApi: remains(['inlineStyles', 'blobLoads'], 'what it renders: its inline styles and the registered files its markup names'),
+            viewApi: remains(['blobLoads'], 'what it renders: the registered files its markup names (its styles are applied through the CSSOM: styleEncoding, cssomDeclaration, adoptedSheets)'),
         },
     },
     trustedTypesRequirement: {

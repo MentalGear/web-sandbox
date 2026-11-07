@@ -52,8 +52,10 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
    the request gate and the allowlist, nothing guest code does in the worker reaches a check of the inherited list: no
    violation, no engine message, no report. What would still raise one there is relayed and stopped by the bootstrap's
    first listener, and the fields of `SecurityPolicyViolationEvent` read blank to guest code. The view runs no guest
-   code; what it has checked against the host page's policy is the library's loads of registered files and the guest's
-   inline styles, which a page whose policy refuses them gets reports of, naming `blob` or `inline`
+   code, and applies the guest's styles through the CSSOM, which no `style-src` checks: its parser is never given a
+   `style` attribute or a `<style>` element (ADR-005, "The renderer"), so the page's `style-src` needs nothing for them
+   and reports none of them. What it still has checked against the host page's policy is the library's loads of
+   registered files, which a page whose policy refuses `blob:` gets reports of, naming only `blob`
    ([Host page policy](API.md#host-page-policy)).
 3. **A sealed config that names a network option is refused.** `origins` or `fetchBridge`, with any value but
    `undefined`, with `mode: 'sealed'` written or with no `mode`, refuses the whole config: nothing of it is applied, and

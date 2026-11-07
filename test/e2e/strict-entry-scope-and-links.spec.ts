@@ -24,6 +24,7 @@ import { VIEW_MODES, type ViewMode } from './view-modes';
  */
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="5"></svg>';
+const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 /** A config of `mode` (strict or sealed: VIEW_MODES), applied over the fixture's baseline. */
 const inMode = (mode: ViewMode, config: Omit<MountConfig, 'mode'> = {}): MountConfig => ({ ...config, mode });
 
@@ -50,20 +51,21 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
                     fetched: text,
                     image,
                     ruleApplied: getComputedStyle(document.getElementById('c1')).width === '66px',
-                    escapedKept: document.getElementById('bg').getAttribute('style').includes('6f b:'),
+                    // the escaped URL reached the element's declaration (the view applies a style attribute through the CSSOM)
+                    escapedKept: document.getElementById('bg').style.backgroundImage.includes(${JSON.stringify(workerUrl)}),
                 };
             })()`);
             expect(r).toEqual({ fetched: 'TypeError', image: 'error', ruleApplied: false, escapedKept: true });
         });
 
-        test("a worker's copies of registered files resolve in the view: the worker mints none for a JavaScript file (review round 1, R2-4: only the view's types), a copy of a stylesheet applies (positive control) and shows no more than the registered content", async ({ sandbox, page, browserName }) => {
-            await sandbox.registerFiles({ 'rule.js': '#viaJs { width: 77px }', 'rule.css': '#viaCss { width: 55px }' });
+        test("a worker's copies of registered files resolve in the view: the worker mints none for a JavaScript file (review round 1, R2-4: only the view's types), a copy of an image decodes (positive control), and a copy of a stylesheet a <style> imports applies nothing (a constructed stylesheet has no @import)", async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({ 'rule.js': '#viaJs { width: 77px }', 'rule.css': '#viaCss { width: 55px }', 'dot.png': { base64: PNG_1X1 } });
             expect(await sandbox.mount(inMode(mode))).toBe('ready');
-            const urls = await sandbox.inGuest(`let js; try { js = sandboxFiles.url('rule.js'); } catch (error) { js = error.code; } return { js, css: sandboxFiles.url('rule.css') }`);
+            const urls = await sandbox.inGuest(`let js; try { js = sandboxFiles.url('rule.js'); } catch (error) { js = error.code; } return { js, css: sandboxFiles.url('rule.css'), png: sandboxFiles.url('dot.png') }`);
             expect(urls.js).toBe('NOT_FOUND');
-            await render(sandbox, browserName, `<style>@import url("${urls.css}");</style><i id="viaJs" style="display:block"></i><i id="viaCss" style="display:block"></i>`);
-            await waitInView(page, browserName, `getComputedStyle(document.getElementById('viaCss')).width === '55px'`, 8000);
-            expect(await inView(page, browserName, `getComputedStyle(document.getElementById('viaJs')).width`)).not.toBe('77px');
+            await render(sandbox, browserName, `<style>@import url("${urls.css}"); #viaImage { background-image: url("${urls.png}") }</style><i id="viaJs" style="display:block"></i><i id="viaCss" style="display:block"></i><i id="viaImage" style="display:block;width:1px;height:1px"></i>`);
+            expect(await inView(page, browserName, `new Promise((resolve) => { const i = new Image(); i.onload = () => resolve('decoded'); i.onerror = () => resolve('error'); i.src = getComputedStyle(document.getElementById('viaImage')).backgroundImage.slice(5, -2); })`)).toBe('decoded');
+            expect(await inView(page, browserName, `[getComputedStyle(document.getElementById('viaCss')).width, getComputedStyle(document.getElementById('viaJs')).width]`)).toEqual([expect.not.stringMatching(/^55px$/), expect.not.stringMatching(/^77px$/)]);
         });
 
         test("after the revocation the worker keeps working, in WebKit too: sandboxFiles url/read/text, fetches of its own blob: URLs, Blob reads, execute(), and error text from execute() and from later uncaught errors of the entry's code and of executed code", async ({ sandbox, page, browserName }) => {
