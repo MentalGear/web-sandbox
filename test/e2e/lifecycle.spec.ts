@@ -1,4 +1,4 @@
-import { test, expect, type CallOutcome } from './fixture';
+import { test, expect, type CallOutcome, SEALED_HAS_NO_EXECUTE } from './fixture';
 import { VIEW_MODES } from './view-modes';
 
 /**
@@ -20,6 +20,7 @@ function terminatedRefusal(message: string): CallOutcome {
 for (const mode of MODES) {
     test.describe(`lifecycle (${mode})`, () => {
         test('state goes idle → loading → ready as the element is mounted, and reads ready when the event fires', async ({ sandbox, page }) => {
+            test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
             void sandbox; // loads the harness; this case builds its own element
             const report = await page.evaluate(async (mode) => {
                 const el = document.createElement('web-sandbox') as any;

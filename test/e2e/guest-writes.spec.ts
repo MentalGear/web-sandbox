@@ -1,5 +1,5 @@
 import { deflateSync } from 'node:zlib';
-import { test, expect, type MountConfig, type SandboxDriver } from './fixture';
+import { test, expect, type MountConfig, type SandboxDriver, SEALED_HAS_NO_EXECUTE } from './fixture';
 import { useRecorder } from './recorder';
 import { waitInView, inView } from './strict-view';
 import { MAX_FILES, MAX_TOTAL_BYTES } from '@src/lib/files';
@@ -382,6 +382,7 @@ for (const mode of MODES) {
         });
 
         test("7b. a listener that resets the sandbox in 'fileswritten' mid-flood is never undone: the next environment records nothing from the old one (Firefox delivers frames queued on a closed port)", async ({ sandbox, page }) => {
+            test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
             expect(await sandbox.mount(writesOn(mode))).toBe('ready');
             await page.evaluate(() => {
                 const el = document.querySelector('web-sandbox') as any;
