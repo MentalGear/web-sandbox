@@ -163,8 +163,8 @@ describe('R4-5: sandboxView.text() and sandboxView.set() in the worker', () => {
         ackDropped(['other', 'x', 'y']);
         expect(lines).toEqual([
             '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker).',
-            '[Sandbox] sandboxView.render: a reference that names no file the view shows was kept as written and loads nothing (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
-            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was kept as written and loads nothing (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
+            '[Sandbox] sandboxView.render: a reference that names no file the view shows was dropped (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
+            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was dropped (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
         ]);
     });
 
@@ -178,7 +178,7 @@ describe('R4-5: sandboxView.text() and sandboxView.set() in the worker', () => {
         expect(lines).toEqual([
             '[Sandbox] sandboxView.render: the view runs no script, so the on… handlers of this render were dropped (code runs in the entry, in the worker).',
             '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements and on… handlers of this render were dropped (code runs in the entry, in the worker).',
-            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements and on… handlers of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was kept as written and loads nothing (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
+            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements and on… handlers of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was dropped (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
         ]);
     });
 });

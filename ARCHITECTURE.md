@@ -14,7 +14,7 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 
 ## Modes and realms
 
-<!-- describes: realms sig:ec39 -->
+<!-- describes: realms sig:8bc7 -->
 
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
@@ -49,7 +49,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `cooperative` | Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `inSandboxImportMap`, `inSandboxMarkup`, `checkSandboxEnvironment` | `announcement`, `logic-port` |
 | `worker-frame` | Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup. | no | `workerBootstrap`, `checkSandboxEnvironment` | `announcement`, `worker` |
 | `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals` | `logic-port`, `worker` |
-| `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `cssReferences`, `withoutNetworkReferences`, `styleMarkup`, `viewInputOutbox`, `isStyleProperty`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
+| `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `cssReferences`, `withKeptReferences`, `keepsUrl`, `styleMarkup`, `viewInputOutbox`, `isStyleProperty`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
 | `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap, the prelude and the code-from-string refusal, then the guest's entry. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeSecureContextOnly`, `assertEntryScoped`, `inStrictWorker`, `refuseCodeFromStrings`, `isStyleProperty` | `logic-port`, `render-port`, `worker` |
 | `bridge-frame` | The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it. | no | `checkSandboxEnvironment`, `inBridgeFrame` | `announcement`, `bridge-init`, `bridge-port` |
 <!-- generated:end -->
@@ -74,7 +74,8 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `viewBudget` | `src/lib/in-sandbox-view.ts` | `view` |
 | `cssLoadBound` | `src/lib/in-sandbox-view.ts` | `view` |
 | `cssReferences` | `src/lib/css-references.ts` | `view` |
-| `withoutNetworkReferences` | `src/lib/css-references.ts` | `view` |
+| `withKeptReferences` | `src/lib/css-references.ts` | `view` |
+| `keepsUrl` | `src/lib/css-references.ts` | `view` |
 | `styleMarkup` | `src/lib/style-markup.ts` | `view` |
 | `viewInputOutbox` | `src/lib/in-sandbox-view.ts` | `view` |
 | `isStyleProperty` | `src/lib/in-sandbox-view.ts` | `view`, `strict-worker` |
@@ -84,7 +85,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:ec39b45f42cb49d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:8bc7b45f42cb49d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
@@ -98,7 +99,7 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Sealed mode: strict mode with no network
 
-<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818ebf360da8eee4 -->
+<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818ebf360da87e47 -->
 
 Sealed mode, the default (no `mode`, or `mode: 'sealed'`), is strict mode's view and worker with no network
 ([research 24](docs/research/24_sealed_mode/README.md), [ADR-008](docs/ADR-008-sealed-mode.md)). It is not strict mode
@@ -123,7 +124,9 @@ with its network options left empty: the sealed path never reaches the code that
   (`src/lib/entry-imports.ts`), so nothing the worker does makes the browser check the host page's own policy, which the
   worker inherits with its text and its report endpoints; a violation the browser still raises there is relayed and
   stopped before guest code hears it.
-- **The view.** `INIT_VIEW` carries no origins, so the renderer keeps no network URL; what it shows loads from `blob:`. Its
+- **The view.** `INIT_VIEW` carries no origins, and every URL the guest writes, in markup, in CSS or in a registered
+  stylesheet, is kept only as the one rule for a URL in the view allows (`keepsUrl`, `src/lib/css-references.ts`): a
+  registered file's URL the view minted, or a fragment in an SVG reference, so what it shows loads from `blob:`. Its
   parser is never given a `style` attribute or a `<style>` element (`src/lib/style-markup.ts`), and the guest's styles
   are applied through the CSSOM, so the host page's `style-src` checks and reports none of them.
 - **The host page.** The one value of the page's a sealed build reads is `crossOriginIsolated`, only to refuse (as in
@@ -326,7 +329,7 @@ stateDiagram-v2
 
 ## Budgets
 
-<!-- describes: budgets:channels sig:eee4 -->
+<!-- describes: budgets:channels sig:7e47 -->
 
 Everything the guest can make the host page, the view or the network do goes through a **channel**, and every channel has
 a bound in count, bytes and time. The surfaces a guest can reach are listed once (the egress table), each with how it is

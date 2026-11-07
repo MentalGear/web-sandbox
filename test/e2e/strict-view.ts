@@ -159,6 +159,20 @@ async function inFramesThroughCdp<T>(page: Page, expression: string, only: (path
 }
 
 /**
+ * Chromium only: evaluates `expression` in the view as if with a user's gesture (Runtime.evaluate's `userGesture`), for
+ * what the user agent lets only a user start (picture-in-picture, fullscreen). 'no-context' when there is no view.
+ */
+export async function inViewWithGesture<T = unknown>(page: Page, expression: string): Promise<T | 'no-context'> {
+    let value: T | 'no-context' = 'no-context';
+    await walkChromiumFrames(page, async (cdp, _frame, path, contextId) => {
+        if (path !== 'main/wrapper/view' || contextId === undefined) return;
+        const reply = await withTimeout(cdp.send('Runtime.evaluate', { expression, contextId, returnByValue: true, awaitPromise: true, userGesture: true }), 5000, null);
+        if (reply && !reply.exceptionDetails) value = reply.result.value as T;
+    });
+    return value;
+}
+
+/**
  * Chromium only: the URL its accessibility tree exposes for every link in the view (Accessibility.getFullAXTree
  * of the view frame, the `url` property of each node with the role link), in tree order. What assistive
  * technology announces and acts on, read from the browser, not from the page. null when there is no view.

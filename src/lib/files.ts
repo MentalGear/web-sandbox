@@ -10,7 +10,7 @@
 import { moduleSpecifierEdits, VIRTUAL_ROOT } from './module-specifiers';
 import { mintError } from './minted-errors';
 import type { Complete, Holds } from './utils';
-import { cssReferences, cssUrlReferences } from './css-references';
+import { cssReferences, cssUrlReferences, keepsUrl } from './css-references';
 import { virtualPathOf } from './markup-references';
 import { admits, type LoadKindName } from './load-kinds';
 
@@ -769,12 +769,12 @@ function utf8Length(source: string, from: number, to: number): number {
     return length;
 }
 
-/** A registered stylesheet the strict view gets without its network URLs, or not at all (viewStylesheets). */
+/** A registered stylesheet the strict view gets without the URLs it may not keep, or not at all (viewStylesheets). */
 export interface ViewStylesheetDrop {
     path: string;
-    /** The network URLs dropped, as written; empty when the whole file was left out. */
+    /** The URLs dropped, as written; empty when the whole file was left out. */
     urls: string[];
-    /** Why the whole file was left out, or null when only its network URLs went. */
+    /** Why the whole file was left out, or null when only some of its URLs went. */
     unreadable: string | null;
 }
 
@@ -785,14 +785,18 @@ const UTF8_CHARSETS = ['unicode-1-1-utf-8', 'unicode11utf8', 'unicode20utf8', 'u
 const CHARSET_RULE = /^@charset "([^"]{0,1014})";/;
 
 /**
- * Strict mode's registered stylesheets as the view gets them (S74, BD2:ISO-2; docs/research/21_crossorigin_loads/README.md): without a network URL. No attribute
- * reaches a load that CSS makes, so it would carry the listed origin's cookies (Firefox, WebKit); every `url()`,
- * `@import`, `image-set()` and `@font-face` source with an absolute http: or https: URL (cssReferences, `network`
- * scope) becomes `""` through the snapshot's own edits, beside the slots of the references to registered files, which
- * stay and become the view's blob: URLs. The browser must read the file as the tokenizer did, so a stylesheet that is
- * not UTF-8, or whose `@charset` names another encoding, gets no URL in the view at all (its references fail closed).
- * `entries` are the view's files (FileSnapshotEntry); every other entry is returned as it is. Each stylesheet that lost
- * something is in `dropped`, for the element's warning.
+ * Strict and sealed mode's registered stylesheets as the view gets them: with only the URLs the one rule for a URL in the
+ * view keeps (keepsUrl, css-references.ts; BD7:ISO-1). A reference to a registered file is a slot the snapshot already
+ * holds (FileStore.snapshot: a file of an admitted type, off a cycle), which becomes the view's blob: URL, a URL the view
+ * mints; a fragment-only URL stays in a reference property (keepsUrl). Every other reference the browser could load
+ * (cssReferences, `loads` scope: `url()`, `@import`, `image-set()`, `@font-face` sources, any string) becomes `""`
+ * through the snapshot's own edits, whatever it names: a network URL (no attribute reaches a load that CSS makes, so it
+ * would carry the listed origin's cookies on Firefox and WebKit: S74, BD2:ISO-2, docs/research/21_crossorigin_loads), a
+ * URL of any other scheme (which the host page's policy refuses and reports with its scheme whole), or a relative URL
+ * that names no registered file. The browser must read the file as the tokenizer did, so a stylesheet that is not UTF-8,
+ * or whose `@charset` names another encoding, gets no URL in the view at all (its references fail closed). `entries` are
+ * the view's files (FileSnapshotEntry); every other entry is returned as it is. Each stylesheet that lost something is in
+ * `dropped`, for the element's warning.
  */
 export function viewStylesheets(entries: readonly FileSnapshotEntry[]): { entries: FileSnapshotEntry[]; dropped: ViewStylesheetDrop[] } {
     const out: FileSnapshotEntry[] = [];
@@ -821,16 +825,18 @@ export function viewStylesheets(entries: readonly FileSnapshotEntry[]): { entrie
         const toBytes = utf8Offsets(source);
         const drops: [start: number, end: number][] = [];
         const urls: string[] = [];
-        // The slots and the network references, both in source order, are read in one walk (HOST_PASSES.viewStylesheets,
+        // The slots and the references, both in source order, are read in one walk (HOST_PASSES.viewStylesheets,
         // class E-cpu: a host pass over guest content is linear in it): the slots that end before a reference starts end
         // before every later one starts too.
-        const references = cssReferences(source, 'network').sort((a, b) => a.start - b.start);
+        const references = cssReferences(source, 'loads').sort((a, b) => a.start - b.start);
         let next = 0;
         for (const reference of references) {
             const start = toBytes(reference.start);
             const end = toBytes(reference.end);
             while (next < slotted.length && slotted[next]![1] <= start) next++;
-            if (next < slotted.length && slotted[next]![0] < end) continue; // a registered file's slot (https://vfs.invalid/…): the view's blob: URL
+            // a registered file's slot (https://vfs.invalid/…) is a URL the view mints: its blob: URL
+            const isSlot = () => next < slotted.length && slotted[next]![0] < end;
+            if (keepsUrl(reference.url, isSlot, reference.property, reference.text)) continue;
             drops.push([start, end]);
             urls.push(reference.url);
         }

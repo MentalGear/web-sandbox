@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import fc from 'fast-check';
 import { cssLoadBound, inSandboxView, isStyleProperty, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, viewBudget, viewInputOutbox, type RenderContext, type RenderSwitches, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
-import { cssReferences, dropNetworkCss, withoutNetworkReferences } from '@src/lib/css-references';
+import { cssReferences, keepsUrl, keptCss, withKeptReferences } from '@src/lib/css-references';
 import { styleMarkup, type StyleMarkup } from '@src/lib/style-markup';
 import { declared, parseAsIs, parseAsView } from './view-parse';
 
@@ -220,7 +220,7 @@ describe('the renderer: a style attribute becomes a declaration, a <style> a nof
         vi.spyOn(Element.prototype, 'setAttribute').mockImplementation(function (this: Element, name, value) { record(name); return setAttribute.call(this, name, value); });
         vi.spyOn(Element.prototype, 'setAttributeNS').mockImplementation(function (this: Element, namespace, name, value) { record(String(name).split(':').pop()); return setAttributeNS.call(this, namespace, name, value); });
         const context: RenderContext = { target: 'body', animating: RENDER_RULES.still.known, origins: {}, refused: [], urls: 0, loads: [], css: [], sheets: [], markup };
-        sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, switches, undefined, context);
+        sanitizeRender(template.content, () => null, () => false, keptCss, RENDER_RULES, switches, undefined, context);
         vi.restoreAllMocks();
         return { fragment: template.content, context, written };
     }
@@ -259,7 +259,7 @@ describe('the renderer: a style attribute becomes a declaration, a <style> a nof
         expect(render('<noframes><p id="in">x</p></noframes><p id="out">y</p>').fragment.querySelector('#in')).toBeNull();
         const template = parse('<style>a{}</style><p style="color: red">z</p>');
         const context: RenderContext = { target: 'body', animating: [], origins: {}, refused: [], urls: 0, loads: [], css: [], sheets: [] };
-        sanitizeRender(template, () => null, () => false, dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
+        sanitizeRender(template, () => null, () => false, keptCss, RENDER_RULES, KEEP_ALL, undefined, context);
         expect([context.sheets, context.css]).toEqual([[], ['color: red']]);
         expect(stylesIn(template).filter(found => found.startsWith('element'))).toEqual([]);
     });
@@ -299,7 +299,7 @@ describe('the view: its parser is given encoded markup only', () => {
             descriptor.set!.call(this, value);
         });
         const options: ViewOptions = { ...VIEW_OPTIONS, rates: { characters: 1e9, time: 1e9, urls: 1e9 } };
-        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
+        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
         const logic = new MessageChannel(), view = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<p id="a" style="color: red">a</p><style id="s">p { color: blue }</style>', allowAnimations: true }, source: window, ports: [logic.port1, view.port1] }));
         const render = workers[0]!.transfer[1]!;

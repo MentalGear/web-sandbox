@@ -16,7 +16,7 @@ import { LOG_EVENTS_PER_SECOND } from '@src/lib/sandbox-log';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { stringifiedFor } from './stringified';
 import { runBootstrap } from './sandbox-environment';
-import { dropNetworkCss } from '@src/lib/css-references';
+import { keptCss } from '@src/lib/css-references';
 
 const TYPEOF_SCANNED = await stringifiedFor('typeofRead');
 
@@ -427,7 +427,7 @@ describe('M-2: the renderer drops every URL the view policy refuses, reports it,
         const template = document.createElement('template');
         template.innerHTML = html;
         const context = { target, animating: [] as string[], origins, refused: [] as [string, string][], urls: 0, loads: [] as string[] };
-        sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, { animations: true, autoplay: true, stylesheets: true }, room, context);
+        sanitizeRender(template.content, () => null, () => false, keptCss, RENDER_RULES, { animations: true, autoplay: true, stylesheets: true }, room, context);
         return { fragment: template.content, context };
     };
     const attribute = (fragment: DocumentFragment, id: string, name: string) => fragment.getElementById(id)!.getAttribute(name);
@@ -440,7 +440,7 @@ describe('M-2: the renderer drops every URL the view policy refuses, reports it,
             '<img id="up" src="http://a.example/5.png"><img id="rel" src="r.png"><audio id="au" src="https://a.example/a.mp3"></audio>',
         ].join(''), { images: ['https://a.example'], media: ['https://b.example'] });
         expect([['a', 'src'], ['b', 'src'], ['c', 'srcset'], ['v', 'src'], ['v', 'poster'], ['vs', 'src'], ['t', 'src'], ['ps', 'srcset'], ['loose', 'src'], ['up', 'src'], ['rel', 'src'], ['au', 'src']].map(([id, name]) => attribute(fragment, id!, name!))).toEqual([
-            'https://a.example/1.png', null, null, 'https://b.example/v.mp4', null, null, 'https://b.example/t.vtt', null, 'https://b.example/l.mp4', null, 'r.png', null,
+            'https://a.example/1.png', null, null, 'https://b.example/v.mp4', null, null, 'https://b.example/t.vtt', null, null, null, null, null,
         ]);
         expect(context.refused).toEqual([
             ['img-src', 'https://b.example:8443/2.png?q'],
@@ -448,21 +448,25 @@ describe('M-2: the renderer drops every URL the view policy refuses, reports it,
             ['img-src', 'https://a.example/p.png'], // a listed origin, but no poster keeps a network URL (RENDER_NETWORK_DROPPED)
             ['media-src', 'https://a.example/s.mp4'],
             ['img-src', 'https://b.example/p.png'],
+            ['default-src', 'https://b.example/l.mp4'], // a <source> outside media loads nothing: no origin is listed for it
             ['img-src', 'http://a.example/5.png'],
+            ['img-src', 'r.png'], // a relative URL: no position keeps one (keepsUrl, BD7:ISO-1)
             ['media-src', 'https://a.example/a.mp3'],
         ]);
-        expect(context.urls).toBe(5); // a, v src, t, loose (a <source> outside media loads nothing), rel (up is the http: form of a listed https: origin: refused, not kept)
+        expect(context.urls).toBe(3); // a, v src, t (up is the http: form of a listed https: origin: refused, not kept)
     });
 
     it("a fragment's top-level <source> loads by the target it goes into", () => {
         expect(run('<source id="s" src="https://b.example/s.mp4">', {}, undefined, 'video').context.refused).toEqual([['media-src', 'https://b.example/s.mp4']]);
-        expect(run('<source id="s" src="https://b.example/s.mp4">', {}, undefined, 'div').context.refused).toEqual([]);
+        expect(run('<source id="s" src="https://b.example/s.mp4">', { media: ['https://b.example'] }, undefined, 'video').context.refused).toEqual([]);
+        expect(run('<source id="s" src="https://b.example/s.mp4">', { media: ['https://b.example'] }, undefined, 'div').context.refused).toEqual([['default-src', 'https://b.example/s.mp4']]);
     });
 
     it('past what is left of VIEW_MAX_URLS it throws before anything is inserted; up to it, it does not', () => {
-        expect(() => run('<img src="x"><img src="y">', {}, { elements: 10, depth: 10, urls: 2 })).not.toThrow();
-        expect(() => run('<img src="x"><img src="y"><img src="z">', {}, { elements: 10, depth: 10, urls: 2 })).toThrowError('VIEW_MAX_URLS');
-        expect(() => run('<img src="x"><img alt="no URL">', {}, { elements: 10, depth: 10, urls: 1 })).not.toThrow();
+        const images = { images: ['https://a.example'] };
+        expect(() => run('<img src="https://a.example/x"><img src="https://a.example/y">', images, { elements: 10, depth: 10, urls: 2 })).not.toThrow();
+        expect(() => run('<img src="https://a.example/x"><img src="https://a.example/y"><img src="https://a.example/z">', images, { elements: 10, depth: 10, urls: 2 })).toThrowError('VIEW_MAX_URLS');
+        expect(() => run('<img src="https://a.example/x"><img alt="no URL"><img src="dropped">', images, { elements: 10, depth: 10, urls: 1 })).not.toThrow();
     });
 });
 

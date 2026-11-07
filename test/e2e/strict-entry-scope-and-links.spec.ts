@@ -35,14 +35,14 @@ async function render(sandbox: SandboxDriver, browserName: string, html: string,
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
     test.describe('C1: the view renders no blob: content but registered files', () => {
-        test("the worker's own source URL is revoked once the worker has run its script: the view can no longer fetch it, and referenced from <style> text and a CSS-escaped style attribute (which the renderer does not inspect) it applies no rule and decodes as no image", async ({ sandbox, page, browserName }) => {
+        test("the worker's own source URL is revoked once the worker has run its script: the view can no longer fetch it, and referenced from <style> text and a CSS-escaped style attribute it is dropped (keepsUrl: no URL the view did not mint) and applies no rule", async ({ sandbox, page, browserName }) => {
             // the entry carries a CSS rule inside a JS comment: lenient CSS parsing of the worker source would apply it
             await sandbox.registerFiles({ 'main.js': '/*\n}#c1 { width: 66px }\n*/ void 0;', 'img/logo.svg': SVG, 'a.css': 'p {}' });
             // allowAnimations: true keeps the style attribute with the escape; by default the renderer removes it whole (it holds a backslash)
             expect(await sandbox.mount(inMode(mode, { entry: 'main.js', allowAnimations: true }))).toBe('ready');
             const workerUrl: string = await sandbox.inGuest('return location.href');
             expect(workerUrl).toMatch(/^blob:/);
-            const escaped = 'bl\\6f b:' + workerUrl.slice(5); // "blob:" with a CSS escape, invisible to the attribute check
+            const escaped = 'bl\\6f b:' + workerUrl.slice(5); // "blob:" with a CSS escape: the same URL to CSS
             await render(sandbox, browserName, `<style>@import url("${workerUrl}");</style><i id="c1" style="display:block"></i><i id="bg" style="display:block;width:3px;height:5px;background-image:url(${escaped})"></i>`);
             const r = await inView<any>(page, browserName, `(async () => {
                 const text = await fetch(${JSON.stringify(workerUrl)}).then((r) => r.text(), (e) => e.name);
@@ -51,20 +51,22 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
                     fetched: text,
                     image,
                     ruleApplied: getComputedStyle(document.getElementById('c1')).width === '66px',
-                    // the escaped URL reached the element's declaration (the view applies a style attribute through the CSSOM)
+                    // the escaped URL never reached the element's declaration: the view keeps no URL it did not mint (BD7:ISO-1)
                     escapedKept: document.getElementById('bg').style.backgroundImage.includes(${JSON.stringify(workerUrl)}),
                 };
             })()`);
-            expect(r).toEqual({ fetched: 'TypeError', image: 'error', ruleApplied: false, escapedKept: true });
+            expect(r).toEqual({ fetched: 'TypeError', image: 'error', ruleApplied: false, escapedKept: false });
         });
 
-        test("a worker's copies of registered files resolve in the view: the worker mints none for a JavaScript file (review round 1, R2-4: only the view's types), a copy of an image decodes (positive control), and a copy of a stylesheet a <style> imports applies nothing (a constructed stylesheet has no @import)", async ({ sandbox, page, browserName }) => {
+        test("a worker's copies of registered files resolve in the view, and the view keeps none: the worker mints none for a JavaScript file (review round 1, R2-4: only the view's types), a copy of an image decodes in the view (positive control) but a <style> that names it keeps no URL (keepsUrl), and a copy of a stylesheet a <style> imports applies nothing", async ({ sandbox, page, browserName }) => {
             await sandbox.registerFiles({ 'rule.js': '#viaJs { width: 77px }', 'rule.css': '#viaCss { width: 55px }', 'dot.png': { base64: PNG_1X1 } });
             expect(await sandbox.mount(inMode(mode))).toBe('ready');
             const urls = await sandbox.inGuest(`let js; try { js = sandboxFiles.url('rule.js'); } catch (error) { js = error.code; } return { js, css: sandboxFiles.url('rule.css'), png: sandboxFiles.url('dot.png') }`);
             expect(urls.js).toBe('NOT_FOUND');
             await render(sandbox, browserName, `<style>@import url("${urls.css}"); #viaImage { background-image: url("${urls.png}") }</style><i id="viaJs" style="display:block"></i><i id="viaCss" style="display:block"></i><i id="viaImage" style="display:block;width:1px;height:1px"></i>`);
-            expect(await inView(page, browserName, `new Promise((resolve) => { const i = new Image(); i.onload = () => resolve('decoded'); i.onerror = () => resolve('error'); i.src = getComputedStyle(document.getElementById('viaImage')).backgroundImage.slice(5, -2); })`)).toBe('decoded');
+            // the URL resolves in the view's origin (read from outside: the control), and is why the view keeps none of the worker's
+            expect(await inView(page, browserName, `new Promise((resolve) => { const i = new Image(); i.onload = () => resolve('decoded'); i.onerror = () => resolve('error'); i.src = ${JSON.stringify(urls.png)}; })`)).toBe('decoded');
+            expect(await inView(page, browserName, `getComputedStyle(document.getElementById('viaImage')).backgroundImage.includes(${JSON.stringify(urls.png)})`)).toBe(false);
             expect(await inView(page, browserName, `[getComputedStyle(document.getElementById('viaCss')).width, getComputedStyle(document.getElementById('viaJs')).width]`)).toEqual([expect.not.stringMatching(/^55px$/), expect.not.stringMatching(/^77px$/)]);
         });
 
