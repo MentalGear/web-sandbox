@@ -7,7 +7,7 @@ import { VIOLATION_EVENT_LIMIT, VIOLATION_MAX_STRING } from './violation';
 import { mimeTypeFor } from './files';
 import { scalingRatio, type ScalingSize } from '../../test/unit/scaling';
 import { runBootstrap } from '../../test/unit/sandbox-environment';
-import { dropNetworkCss } from './css-references';
+import { keptCss } from './css-references';
 
 // the renderer with every switch on (RenderSwitches): the tests that do not test a switch keep what the switches govern
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
@@ -22,7 +22,8 @@ function sanitize(html: string, files: Record<string, string> = {}, origins: Rec
     template.innerHTML = html;
     const minted = new Set(Object.values(files));
     const context: RenderContext = { target: 'body', animating: RENDER_RULES.still.known, origins, refused: [], urls: 0, loads: [] };
-    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
+    const css = (text: string, dropped: [string, string][], property: string) => keptCss(text, dropped, property, url => minted.has(url));
+    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), css, RENDER_RULES, KEEP_ALL, undefined, context);
     return template.content;
 }
 /** What the renderer noted it dropped (RenderContext.dropped, BD5:NEW-3), for `html` with registered `files`. */
@@ -31,7 +32,7 @@ function droppedBy(html: string, files: Record<string, string> = {}) {
     template.innerHTML = html;
     const minted = new Set(Object.values(files));
     const context: RenderContext = { target: 'body', animating: RENDER_RULES.still.known, origins: {}, refused: [], urls: 0, loads: [], dropped: [] };
-    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
+    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), keptCss, RENDER_RULES, KEEP_ALL, undefined, context);
     return context.dropped;
 }
 
@@ -115,28 +116,33 @@ describe('the renderer: file references, blob: URLs (A8), referrer and ping (A1)
         ].join(''), files, { images: ['https://cdn.example'] });
         const src = (id: string, attribute = 'src') => fragment.getElementById(id)!.getAttribute(attribute);
         expect(['a', 'b', 'c', 'd'].map(id => src(id))).toEqual(Array(4).fill('blob:null/logo'));
-        expect(['e', 'f', 'g'].map(id => src(id))).toEqual(['img/Logo.png', 'img/logo.png?v=2', 'https://cdn.example/img/logo.png']);
+        // a path that names no registered file is a relative URL, which no position keeps (keepsUrl, BD7:ISO-1)
+        expect(['e', 'f', 'g'].map(id => src(id))).toEqual([null, null, 'https://cdn.example/img/logo.png']);
         expect([src('v'), src('v', 'poster'), src('s'), src('t'), src('au')]).toEqual(['blob:null/clip', 'blob:null/logo', 'blob:null/clip', 'blob:null/subs', 'blob:null/clip']);
         // derived from the cooperative-mode table, never a copy
         expect(RENDER_RULES.references).toEqual(REFERENCES.filter(([element]) => element !== 'script'));
     });
 
-    it('removes every attribute holding a blob: URL the view did not mint, however it is written; keeps a minted one on a reference attribute', () => {
+    it('keeps a blob: URL only where it is exactly one the view minted, in every position that loads, however it is written (A8, BD7:ISO-1)', () => {
         const fragment = sanitize([
             '<img id="minted" src="img/logo.png">',
             '<img id="foreign" src="blob:null/worker-made">',
             '<img id="spaced" src=" b\tl\nob:null/worker-made">',
             '<img id="upper" src="BLOB:null/x">',
+            '<img id="exact" src="blob:null/logo">', // the view's own URL, written by the guest: it names a registered file
             '<a id="anchor" href="blob:null/logo">x</a>',
-            '<div id="styled" style="background:url(blob:null/logo)"></div>',
-            '<img id="srcset" srcset="blob:null/logo 1x">',
-            '<p id="data" data-x="see blob:null/logo">p</p>',
-            '<p id="tabbed" data-x="see bl\tob:null/logo" data-y="b\nl\rob:null/logo">p</p>', // the URL parser removes a tab and a newline (BD4:TST-7)
+            '<div id="styled" style="background:url(blob:null/other)"></div>',
+            '<div id="styled-minted" style="background:url(blob:null/logo)"></div>',
+            '<img id="srcset" srcset="blob:null/other 1x">',
+            '<p id="data" data-x="see blob:null/logo">p</p>', // text, which nothing loads: no attribute outside the governed ones holds a URL
         ].join(''), files);
-        const has = (id: string, attribute: string) => fragment.getElementById(id)!.hasAttribute(attribute);
-        expect(fragment.getElementById('minted')!.getAttribute('src')).toBe('blob:null/logo');
-        expect([has('foreign', 'src'), has('spaced', 'src'), has('upper', 'src'), has('styled', 'style'), has('srcset', 'srcset'), has('data', 'data-x'), has('tabbed', 'data-x'), has('tabbed', 'data-y')]).toEqual(Array(8).fill(false));
-        expect(fragment.getElementById('anchor')!.getAttribute('href')).toBe(INERT_HREF); // a link's href is the constant (S24)
+        const element = (id: string) => fragment.getElementById(id)!;
+        expect([element('minted').getAttribute('src'), element('exact').getAttribute('src')]).toEqual(['blob:null/logo', 'blob:null/logo']);
+        expect([element('foreign').hasAttribute('src'), element('spaced').hasAttribute('src'), element('upper').hasAttribute('src'), element('srcset').hasAttribute('srcset')]).toEqual(Array(4).fill(false));
+        expect(element('styled').style.backgroundImage).toBe('url("")');
+        expect(element('styled-minted').style.backgroundImage).toBe('url("blob:null/logo")');
+        expect(element('data').getAttribute('data-x')).toBe('see blob:null/logo');
+        expect(element('anchor').getAttribute('href')).toBe(INERT_HREF); // a link's href is the constant (S24)
     });
 
     it('forces referrerpolicy="no-referrer" on a, area, img and link and wherever it is set; drops ping; keeps only noopener, noreferrer, nofollow in rel', () => {
@@ -207,7 +213,7 @@ describe('A2: the fragment is moved, never cloned or imported', () => {
         const adoptNode = vi.spyOn(Document.prototype, 'adoptNode');
         const template = document.createElement('template');
         template.innerHTML = '<svg><script>x</script></svg><div><img src="a"><p>t</p></div>';
-        sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, KEEP_ALL);
+        sanitizeRender(template.content, () => null, () => false, keptCss, RENDER_RULES, KEEP_ALL);
         expect([clone.mock.calls.length, importNode.mock.calls.length, adoptNode.mock.calls.length]).toEqual([0, 0, 0]);
     });
 
@@ -475,25 +481,29 @@ describe('broad review 2026-10-14: the renderer is an allowlist', () => {
         }
     });
 
-    it('URL attributes keep only http(s), a URL the view minted, or a relative URL; srcset is checked candidate by candidate', () => {
+    it('URL attributes keep only a URL the view minted or an http(s) URL of a listed origin (never a relative URL); srcset is checked candidate by candidate', () => {
         const files = { 'a.png': 'blob:null/minted' };
         const fragment = sanitize([
             '<img id="https" src="https://x.example/i.png"><img id="http" src="HTTP://x.example/i.png"><img id="relative" src="nope.png"><img id="file" src="a.png">',
             '<img id="data" src="data:image/png;base64,AA=="><img id="js" src=" \u0001java\tscript:x"><img id="blob" src="blob:null/other"><img id="other" src="ftp://x.example/i.png">',
             '<video id="poster" poster="data:image/svg+xml,x"></video><audio id="audio" src="javascript:x"></audio><video><source id="source" srcset="https://x.example/a.png 1x,https://x.example/b.png 2x" src="data:,x"></video>',
-            '<img id="set-ok" srcset="https://x.example/a.png 1x, https://x.example/b,c.png 2x"><img id="set-data" srcset="https://x.example/a.png 1x,data:image/svg+xml,x 2x"><img id="set-js" srcset=" javascript:x 1x">',
+            '<img id="set-ok" srcset="https://x.example/a.png 1x, https://x.example/b.png 2x"><img id="set-data" srcset="https://x.example/a.png 1x,data:image/svg+xml,x 2x"><img id="set-js" srcset=" javascript:x 1x">',
+            '<img id="set-comma" srcset="https://x.example/a.png 1x, https://x.example/b,c.png 2x">',
         ].join(''), files, { images: ['https://x.example'], media: ['https://x.example'] });
         const src = (id: string, name = 'src') => fragment.getElementById(id)!.getAttribute(name);
-        expect(['https', 'http', 'relative', 'file'].map(id => src(id))).toEqual(['https://x.example/i.png', null, 'nope.png', 'blob:null/minted']); // (the http: form of a listed https: origin is refused by every engine: no policy upgrades it)
+        expect(['https', 'http', 'relative', 'file'].map(id => src(id))).toEqual(['https://x.example/i.png', null, null, 'blob:null/minted']); // (the http: form of a listed https: origin is refused by every engine: no policy upgrades it)
         expect(['data', 'js', 'blob', 'other', 'audio', 'source'].map(id => src(id))).toEqual(Array(6).fill(null));
-        expect([src('poster', 'poster'), src('source', 'srcset'), src('set-ok', 'srcset'), src('set-data', 'srcset'), src('set-js', 'srcset')])
-            .toEqual([null, 'https://x.example/a.png 1x,https://x.example/b.png 2x', 'https://x.example/a.png 1x, https://x.example/b,c.png 2x', null, null]);
+        // (a <source> of a <video> loads nothing by srcset, so it has no listed origin either; every token after a comma is
+        // checked as a candidate, so a URL that holds a comma goes: what follows the comma is no URL the view keeps)
+        expect([src('poster', 'poster'), src('source', 'srcset'), src('set-ok', 'srcset'), src('set-data', 'srcset'), src('set-js', 'srcset'), src('set-comma', 'srcset')])
+            .toEqual([null, null, 'https://x.example/a.png 1x, https://x.example/b.png 2x', null, null, null]);
     });
 
-    it('SVG paint and clip references name only fragments of this document; no form target, invoker or handler survives', () => {
-        const fragment = sanitize('<svg><rect id="r" fill="url(#g)" stroke="url(https://x.example/s.svg#a)" mask="url(\\68ttps//x/#m)" clip-path="url(#c)"/></svg>'
+    it('SVG paint, clip and mask references keep only fragments of this document (keepsUrl); no form target, invoker or handler survives', () => {
+        const fragment = sanitize('<svg><rect id="r" fill="url(#g)" stroke="url(https://x.example/s.svg#a)" mask="url(\\68ttps//x/#m)" clip-path="url(#c) border-box"/></svg>'
             + '<form id="f" action="https://x.example/" method="post" target="_top"><button id="b" formaction="https://x.example/" popovertarget="p" commandfor="d" command="show-modal" onclick="x()">b</button></form>');
-        expect(fragment.getElementById('r')!.getAttributeNames()).toEqual(['id', 'fill', 'clip-path']);
+        const rect = fragment.getElementById('r')!;
+        expect(rect.getAttributeNames().map(name => [name, rect.getAttribute(name)])).toEqual([['id', 'r'], ['fill', 'url(#g)'], ['stroke', 'url("")'], ['mask', 'url("")'], ['clip-path', 'url(#c) border-box']]);
         expect(fragment.getElementById('f')!.getAttributeNames()).toEqual(['id']);
         expect(fragment.getElementById('b')!.getAttributeNames()).toEqual(['id']);
     });
@@ -517,7 +527,7 @@ describe('broad review ST2: the renderer counts what it keeps against the room i
         const run = (html: string, room: { elements: number; depth: number }) => {
             const template = document.createElement('template');
             template.innerHTML = html;
-            return sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, KEEP_ALL, room);
+            return sanitizeRender(template.content, () => null, () => false, keptCss, RENDER_RULES, KEEP_ALL, room);
         };
         expect(run('<p></p>'.repeat(10), { elements: 10, depth: 5 })).toBe(10);
         expect(() => run('<p></p>'.repeat(11), { elements: 10, depth: 5 })).toThrowError(new RangeError('VIEW_MAX_ELEMENTS'));
@@ -633,7 +643,7 @@ describe('review round 1: R1-2, the renderer is linear and keeps no element whos
             const template = document.createElement('template');
             template.innerHTML = markup(n);
             return {
-                run: () => { sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, KEEP_ALL); return template; },
+                run: () => { sanitizeRender(template.content, () => null, () => false, keptCss, RENDER_RULES, KEEP_ALL); return template; },
                 verify: done => expect(done.content.querySelector('p')!.childNodes).toHaveLength(1),
             };
         };

@@ -4,7 +4,7 @@ import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { styleMarkup } from '@src/lib/style-markup';
 import { VIOLATION_DIRECTIVES, violationBucket } from '@src/lib/violation';
 import { scalingRatio, type ScalingSize } from './scaling';
-import { cssReferences, withoutNetworkReferences } from '@src/lib/css-references';
+import { cssReferences, keepsUrl, withKeptReferences } from '@src/lib/css-references';
 
 /**
  * S73 (class E-net and P; R5:M-3, a burst behind a slow server): every load the
@@ -416,7 +416,7 @@ describe('S73: the view prepays the CSS each operation applies, and a reported l
             return add.call(this, type, listener, options);
         } as typeof window.addEventListener;
         try {
-            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${spy}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
+            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${spy}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
         } finally {
             window.addEventListener = add;
         }

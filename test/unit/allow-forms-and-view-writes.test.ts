@@ -260,7 +260,8 @@ describe('R4-4: the strict view shows raster-image guest writes, minted by the v
             await write('gen/chart.png', 'image/png', PNG);
             expect(created).toEqual([expect.stringMatching(/^blob:view\/\d+#image\/png$/)]);
             await renderHtml('<img id="i" src="gen/chart.png"><img id="r" src="./gen/chart.png"><video id="v" src="gen/chart.png"></video><audio id="a" src="gen/chart.png"></audio><link id="l" rel="stylesheet" href="gen/chart.png"><video><track id="t" src="gen/chart.png"></video>');
-            expect([src('i'), src('r'), src('v'), src('a'), document.getElementById('l'), src('t')]).toEqual([created[0], created[0], 'gen/chart.png', 'gen/chart.png', null, 'gen/chart.png']);
+            // a path that names no file the load admits is a relative URL, which no position keeps (keepsUrl, BD7:ISO-1)
+            expect([src('i'), src('r'), src('v'), src('a'), document.getElementById('l'), src('t')]).toEqual([created[0], created[0], null, null, null, null]);
         });
 
         it('every raster type is minted; SVG, HTML, JavaScript, CSS, a type the host never sends, missing bytes: nothing is minted and the path names nothing', async () => {
@@ -271,8 +272,8 @@ describe('R4-4: the strict view shows raster-image guest writes, minted by the v
             await write('notbytes.png', 'image/png', 'iVBOR' as any);
             expect(created).toHaveLength(5);
             await renderHtml(Array.from({ length: 8 }, (_, i) => `<img id="n${i}" src="no${i}">`).join('') + '<img id="nb" src="nobytes.png"><img id="ns" src="notbytes.png">');
-            for (let i = 0; i < 8; i++) expect(src(`n${i}`)).toBe(`no${i}`);
-            expect([src('nb'), src('ns')]).toEqual(['nobytes.png', 'notbytes.png']);
+            for (let i = 0; i < 8; i++) expect(src(`n${i}`)).toBeNull();
+            expect([src('nb'), src('ns')]).toEqual([null, null]);
         });
 
         it('a later write to the path replaces the URL and revokes the old one; a removal revokes it; a registered file the guest replaced or removed names nothing after that', async () => {
@@ -287,11 +288,11 @@ describe('R4-4: the strict view shows raster-image guest writes, minted by the v
             expect(revoked).toEqual([created[1], created[2]]);
             await write('logo.png', 'image/png', PNG);
             await renderHtml('<img id="a" src="gen/chart.png"><img id="b" src="logo.png">');
-            expect([src('a'), src('b')]).toEqual(['gen/chart.png', created[3]]);
+            expect([src('a'), src('b')]).toEqual([null, created[3]]);
             await write('logo.png', 'text/plain', null);
             await renderHtml('<img id="b" src="logo.png"><img id="c" src="' + created[3] + '">');
             expect(revoked).toEqual([created[1], created[2], created[3]]);
-            expect([src('b'), document.getElementById('c')!.hasAttribute('src')]).toEqual(['logo.png', false]); // a revoked URL is not the view's (AR:A8)
+            expect([src('b'), document.getElementById('c')!.hasAttribute('src')]).toEqual([null, false]); // a revoked URL is not the view's (AR:A8)
         });
     });
 });

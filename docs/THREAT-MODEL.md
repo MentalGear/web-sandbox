@@ -60,7 +60,7 @@ cooperative mode's are ([S74](BACKLOG.md#s74)). `scriptUnsafe` is for testing an
 
 ## Trust boundaries
 
-<!-- describes: realms, channels sig:c25c9d12 -->
+<!-- describes: realms, channels sig:870a9d12 -->
 
 The realms and the channels between them are generated from the code in [ARCHITECTURE.md](../ARCHITECTURE.md#modes-and-realms)
 (which realm runs guest code, which library functions are stringified into it) and
@@ -178,7 +178,7 @@ so nothing of it depends on the page's URL).
 
 ### What a sealed guest can reach, row by row
 
-<!-- describes: sealed-reach sig:e9bc -->
+<!-- describes: sealed-reach sig:b637 -->
 The table above lists the channels found so far; this one closes the class by enumeration
 ([research 18](research/18_finding_classes/README.md#class-a-closed-by-enumeration)). In sealed mode guest code reaches the
 browser through two allowlists only: the worker's globals (`WORKER_GLOBALS`, with the library's own names `bridge`,
@@ -209,18 +209,18 @@ false on both (`secureContext`); and the view's residuals are what the table say
 | `cspScript` | 714 | 11: `codeFromStringRefusal`, `entryImportRefusal`, `strictWorkerAllowlist`, `webAssemblyRemoval` | 0 |
 | `cspWorker` | 725 | 0 | 0 |
 | `cspStyle` | 719 | 6: `adoptedSheets`, `cssomDeclaration`, `styleEncoding` | 0 |
-| `cspBaseUri` | 702 | 23: `baseCheck`, `entryImportRefusal`, `inertHref`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
-| `cspFetch` | 686 | 19: `createObjectUrlRemoval`, `entryImportRefusal`, `inertHref`, `linkRelations`, `navigationCancel`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `svgLocalReferences` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): a registered file's load in the view (a `blob:` URL the view minted) is checked against the page's `img-src`, `font-src`, `media-src` or `style-src`: one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show |
-| `cspPolicyText` | 685 | 40: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssomDeclaration`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `styleEncoding`, `viewPolicy`, `viewViolationRelay`, `violationFieldBlanking`, `violationStop`, `webAssemblyRemoval` | 0 |
-| `cspReporting` | 687 | 23: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssomDeclaration`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `styleEncoding`, `webAssemblyRemoval` | 15: `blobLoads` (from `loadKind`, `urlAttribute`, `viewApi`): each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice |
+| `cspBaseUri` | 702 | 23: `baseCheck`, `entryImportRefusal`, `inertHref`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
+| `cspFetch` | 686 | 19: `createObjectUrlRemoval`, `entryImportRefusal`, `inertHref`, `linkRelations`, `navigationCancel`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `svgLocalReferences`, `urlKeepRule` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): a registered file's load in the view (a `blob:` URL the view minted) is checked against the page's `img-src`, `font-src`, `media-src` or `style-src`: one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show |
+| `cspPolicyText` | 685 | 40: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssUrlDrop`, `cssomDeclaration`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `styleEncoding`, `urlKeepRule`, `viewPolicy`, `viewViolationRelay`, `violationFieldBlanking`, `violationStop`, `webAssemblyRemoval` | 0 |
+| `cspReporting` | 683 | 22: `codeFromStringRefusal`, `createObjectUrlRemoval`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `svgLocalReferences`, `urlKeepRule`, `webAssemblyRemoval` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice |
 | `trustedTypesRequirement` | 715 | 10: `codeFromStringRefusal`, `strictWorkerAllowlist`, `trustedTypesPolicy` | 0 |
 | `trustedTypesDefault` | 725 | 0 | 0 |
 | `coep` | 712 | 13: `isolationRefusal` | 0 |
-| `referrer` | 692 | 33: `cssUrlDrop`, `entryImportRefusal`, `forcedNoReferrer`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
+| `referrer` | 692 | 33: `cssUrlDrop`, `entryImportRefusal`, `forcedNoReferrer`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
 | `ancestorOrigins` | 725 | 0 | 0 |
 | `documentOrigin` | 697 | 28: `originCheck` | 0 |
-| `cookies` | 697 | 28: `cssUrlDrop`, `entryImportRefusal`, `forcedCrossorigin`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
-| `serviceWorker` | 707 | 18: `cssUrlDrop`, `entryImportRefusal`, `inertHref`, `originCheck`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist` | 0 |
+| `cookies` | 697 | 28: `cssUrlDrop`, `entryImportRefusal`, `forcedCrossorigin`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
+| `serviceWorker` | 707 | 18: `cssUrlDrop`, `entryImportRefusal`, `inertHref`, `originCheck`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
 | `hostRealmGlobals` | 707 | 18: `brokerCapture`, `logRelay` | 0 |
 | `permissionsPolicy` | 712 | 13: `autoplaySwitch`, `isolationRefusal`, `noDelegation`, `viewEventList` | 0 |
 | `permissionState` | 719 | 6: `originCheck`, `secureContextRemoval` | 0 |
@@ -249,8 +249,9 @@ The chokepoints the cells name, each a declaration or a statement of the code:
 | `isolationRefusal` | the element refuses to build on a host page that is cross-origin isolated, before any frame exists | `src/host.ts` |
 | `viewPolicy` | sealed mode's view policy: `script-src` is the bootstrap's hash alone and no source is a network one, so no guest script runs in the view | `src/lib/csp/csp-generator.ts` |
 | `viewViolationRelay` | the view relays a violation's directive, blocked URL and place to the element, never its policy text, and never to the worker | `src/lib/in-sandbox-view.ts` |
-| `rendererUrlDrop` | the renderer keeps no network URL the view policy refuses (sealed mode: none) and keeps a `blob:` URL only where the view minted it, before insertion | `src/lib/in-sandbox-view.ts` |
-| `cssUrlDrop` | every network URL in guest CSS (`url()`, `image-set()`, `@import`, `@font-face`) is dropped before the view applies it | `src/lib/css-references.ts` |
+| `urlKeepRule` | the one rule for a URL in the view (keepsUrl, BD7:ISO-1): a URL attribute, a CSS reference or a registered stylesheet's reference is kept only when it is a URL the view minted, the empty URL, a fragment of the view's document in an SVG reference property, or text that names no URL; everything else goes, whatever its scheme or spelling | `src/lib/css-references.ts` |
+| `rendererUrlDrop` | the renderer keeps a URL attribute only as the URL rule allows (a `blob:` URL the view minted; sealed mode lists no origin), before insertion | `src/lib/in-sandbox-view.ts` |
+| `cssUrlDrop` | every reference of guest CSS the URL rule does not keep (`url()`, `image-set()`, `@import`, `@font-face`, a string) becomes `""` before the view applies it, and every one of a registered stylesheet before the view gets it | `src/lib/css-references.ts` |
 | `styleEncoding` | the view's parser is given the guest's markup with no `style` attribute and no `<style>` element in it, in any context (styleMarkup renames them first): Chromium checks a style attribute as it parses it | `src/lib/style-markup.ts` |
 | `cssomDeclaration` | a guest style attribute's text becomes the element's CSSOM declaration (the `cssText` setter), which no `style-src` checks, on any engine; no attribute named style is written from guest text | `src/lib/in-sandbox-view.ts` |
 | `adoptedSheets` | a guest `<style>` is an inert `noframes` holding its text, which the view applies as a constructed stylesheet it adopts, in tree order; no `style-src` checks one, on any engine, and no `<style>` element of the guest's is ever in the view | `src/lib/in-sandbox-view.ts` |

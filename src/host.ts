@@ -692,16 +692,16 @@ interface ViewNetwork {
     fetchBridge: { timeoutMs: number } | null;
 }
 
-// The warning for a registered stylesheet the view of strict or sealed mode gets without its network URLs, or not at all
-// (files.ts, viewStylesheets): once per element and text, as the build's other warnings about the files (_warnOnce).
-// Sealed mode has no origin to show such a file from, so it names none.
+// The warning for a registered stylesheet the view of strict or sealed mode gets without the URLs it may not keep, or not
+// at all (files.ts, viewStylesheets; keepsUrl): once per element and text, as the build's other warnings about the files
+// (_warnOnce). Sealed mode has no origin to show such a file from, so it names none.
 function viewStylesheetWarning(mode: 'strict' | 'sealed', path: string, urls: readonly string[], unreadable: string | null): string {
     const file = `[Sandbox] ${mode} mode: the registered stylesheet ${JSON.stringify(path.slice(0, 256))}`;
-    if (unreadable !== null) return `${file} gets no URL in the view: ${unreadable}, so the view could not take its network URLs out of it.`;
+    if (unreadable !== null) return `${file} gets no URL in the view: ${unreadable}, so the view could not read the URLs it names.`;
     const first = JSON.stringify(urls[0]!.slice(0, 256));
-    const names = `${file} names ${urls.length === 1 ? 'a network URL' : `${urls.length} network URLs`} (${first}${urls.length > 1 ? ', …' : ''}); the view drops ${urls.length === 1 ? 'it' : 'them'}`;
+    const names = `${file} names ${urls.length === 1 ? 'a URL that is' : `${urls.length} URLs that are`} no registered file (${first}${urls.length > 1 ? ', …' : ''}); the view drops ${urls.length === 1 ? 'it' : 'them'}`;
     if (mode === 'sealed') return `${names}: sealed mode has no network. Register the file instead.`;
-    return `${names}: a load that CSS makes cannot be sent without cookies. Register the file instead, or show it with an element (<img>, <video>) from an origin listed in origins.`;
+    return `${names}: CSS in the view loads registered files only (a load that CSS makes cannot be sent without cookies). Register the file instead, or show it with an element (<img>, <video>) from an origin listed in origins.`;
 }
 
 // The host page as the config's rules about it read it (config-schema.ts, NormaliseContext), read only when such a rule
@@ -2412,7 +2412,7 @@ export class WebSandbox extends ElementBase {
         this._warnAboutStrictHtml(mode, html);
         const sandboxFlags = this._getSandboxFlags();
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
-        // never a type that opens as a document (BR:ST1); stylesheets without a network URL (S74, files.ts viewStylesheets)
+        // never a type that opens as a document (BR:ST1); stylesheets with only the URLs the view keeps (files.ts viewStylesheets)
         const viewFiles = viewStylesheets(files.filter(candidate => isViewFileType(candidate[1])));
         for (const drop of viewFiles.dropped) this._warnOnce(viewStylesheetWarning(mode, drop.path, drop.urls, drop.unreadable));
         const strictInit: StrictInit = {

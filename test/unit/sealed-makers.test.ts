@@ -117,7 +117,7 @@ describe('sealed mode\'s request makers: one enumeration, tied to the library\'s
 
     it('every kind of URL a CSS reference makes is a maker in every place guest CSS reaches the view, by url() and image-set() for images', () => {
         // the kinds, as the library's own scanner finds them: a stylesheet holds every one; a declaration list only images
-        const kindsIn = (css: string) => [...new Set(cssReferences(css, 'network').map(reference => reference.kind))].sort() as CssKind[];
+        const kindsIn = (css: string) => [...new Set(cssReferences(css, 'loads').map(reference => reference.kind))].sort() as CssKind[];
         const sheet = kindsIn('@import "https://x.test/a.css"; @font-face { src: url(https://x.test/f.woff2) } a { background: url(https://x.test/i.png) }');
         const declarations = kindsIn('background: url(https://x.test/i.png); --x: image-set("https://x.test/s.png" 1x)');
         expect(sheet).toEqual(['font', 'image', 'style']);
@@ -134,7 +134,7 @@ describe('sealed mode\'s request makers: one enumeration, tied to the library\'s
             const css = maker.realm === 'set-css' ? Object.values(new Function(`return ${code}`)() as Record<string, string>).join('; ')
                 : maker.realm === 'stylesheet' ? code
                 : (/<style>([\s\S]*?)<\/style>/.exec(code) ?? /style="([^"]*)"/.exec(code))![1]!;
-            expect(cssReferences(css, 'network').map(reference => reference.kind), maker.id).toContain(cover.kind);
+            expect(cssReferences(css, 'loads').map(reference => reference.kind), maker.id).toContain(cover.kind);
         }
     });
 
