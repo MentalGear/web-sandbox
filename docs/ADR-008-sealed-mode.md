@@ -72,7 +72,7 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
    pure WebAssembly loop when the worker is terminated or its frame removed (research 24, M4), so `terminate()` would
    lose its promise there. An `allowWebAssembly` opt-in may follow once that residual is accepted or fixed.
 6. **The review board's scope is sealed mode** at its default configuration, with its own opt-ins (`allowAnimations`,
-   `allowAutoplay`, `guestWrites`, `autoResize`, `watchdogTimeout`, `workerExecutionTimeout`, `capabilities`,
+   `allowAutoplay`, `guestWrites`, `autoResize`, `watchdogTimeout`, `capabilities`,
    `callLimits`). A data finding that reaches only strict mode's network options does not count against a clean pass:
    it is fixed, or documented as a limit of those options, as cooperative mode's findings are
    ([S74](BACKLOG.md#s74)).

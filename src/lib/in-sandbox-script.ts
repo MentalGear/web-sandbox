@@ -1684,7 +1684,8 @@ export function inSandboxScript(
         }
 
         // posted as it is, never swallowed: a port that cannot carry it is no port, and attach() throws (onInit)
-        post({ type: 'LOG', level: 'info', args: [`${mode} Ready`], own: true });
+        // the line names the build's own mode: a sealed worker is strict mode's prelude, and its line says sealed (BD7:NEW-1)
+        post({ type: 'LOG', level: 'info', args: [`${sealedMode ? 'sealed' : mode} Ready`], own: true });
         stopPastUncaught(); // a guest past the budget of uncaught errors before the port arrived: its frame has just left
     };
 

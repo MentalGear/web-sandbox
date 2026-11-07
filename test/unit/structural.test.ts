@@ -122,7 +122,7 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['LOG', 'own', 'true'],
     ['LOG', 'args', 'line'],
     ['LOG', 'level', "'info'"],
-    ['LOG', 'args', '[`${mode} Ready`]'],
+    ['LOG', 'args', "[`${sealedMode ? 'sealed' : mode} Ready`]"],
     ['UNCAUGHT_PAST_BUDGET', 'type', "'UNCAUGHT_PAST_BUDGET'"],
     ['PONG', 'type', "'PONG'"],
     ['PONG', 'n', 'n'],

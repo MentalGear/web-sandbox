@@ -189,6 +189,8 @@ describe('T4: a sealed build wires no network source: its policy, its gate list,
         expect(features.connect).toEqual([]);
         expect(features.sealed).toBe(true);
         expect(features).not.toHaveProperty('fetchBridge');
+        // the prelude's text: the ready line names the build's own mode, and the prelude is built as strict mode's (BD7:NEW-1)
+        expect(el._strictInit.workerSource).toMatch(/\? ?['"]sealed['"] ?: ?mode\} Ready/);
         expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(1);
         expect(Object.keys(el._strictInit)).not.toContain('origins');
         expect(prepared.network).toBeNull();

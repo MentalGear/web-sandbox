@@ -93,7 +93,7 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 ## Configuration
 
-<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig, api:SealedSandboxConfig, api:NetworkSandboxOptions sig:2daf5a254f4fbd6cdaecf42e3088f2f1cb46 -->
+<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig, api:SealedSandboxConfig, api:NetworkSandboxOptions sig:bf365a254f4fbd6cdaecf42e3088f2f1cb46 -->
 [`setConfig(config)`](#setconfigconfig) takes a `SandboxConfig`, a union keyed by `mode` (`StrictSandboxConfig`,
 `SealedSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the
 options every mode takes; all but `SealedSandboxConfig` also extend `NetworkSandboxOptions`, the options that open the
@@ -102,7 +102,7 @@ network: `origins` and `fetchBridge`): strict mode's `origins` has no `scripts`,
 `mode: 'strict'`, so `{ origins }` without it does not type-check). How a call is applied (over the defaults, copied,
 validated, and what a config that cannot be used does) is under [`setConfig()`](#setconfigconfig) below.
 
-- `SandboxConfig` narrows each mode: `entry`, `allowAnimations` and `allowAutoplay` only in strict and sealed mode, `workerExecutionTimeout` not in cooperative mode,
+- `SandboxConfig` narrows each mode: `entry`, `allowAnimations` and `allowAutoplay` only in strict and sealed mode, `workerExecutionTimeout` not in cooperative mode (sealed mode has no `execute()`, so it ignores it),
   `html` and `autoResize` not in worker mode, `unsafeCapabilities` not in strict or sealed mode, `origins` and
   `fetchBridge` not in sealed mode. A config from JSON is held to the same rules at run time: an option outside its
   modes (the Modes column) is ignored and takes its default, with one warning for `entry`, `allowAnimations`,
@@ -136,7 +136,7 @@ validated, and what a config that cannot be used does) is under [`setConfig()`](
 | `hostContentSecurityPolicy` | `string \| false` | none: `origins.connect` and `fetchBridge.allow` are dropped | all | Your page's Content-Security-Policy as text (one or more policies, as a header or `<meta>` carries them), so that the library drops the `origins.connect` and `fetchBridge.allow` entries it refuses, on every engine; `false` when your page sends none. Left out, every `origins.connect` and `fetchBridge.allow` entry is dropped, with one warning: the library never asks the page for its policy. A browser without Trusted Types (Firefox) applies your page's `require-trusted-types-for` and `trusted-types` only from the text you pass ([Trusted Types without the browser](#trusted-types-without-the-browser)). See [Host page policy](#host-page-policy). |
 | `entry` | `string` | none | strict, sealed | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry is not a registered JavaScript file`; the reason does not quote the entry), and so it does if its text holds `import` followed by `(`, in code, a string or a comment (`the guest entry calls import(), …`): the worker's policy admits no module, and your page's policy would report the URL. |
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off, with a warning unless it is `0`. Bounds a looping guest in strict, sealed and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
-| `workerExecutionTimeout` | `number` (ms) | `0` (off) | strict, sealed, worker | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off, with a warning unless it is `0`. |
+| `workerExecutionTimeout` | `number` (ms) | `0` (off) | strict, worker | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Sealed mode has no `execute()`, so the option is ignored there, silently: `watchdogTimeout` is the bound for an app that loops. Anything but a finite number `> 0` is off, with a warning unless it is `0`. |
 | `autoResize` | `boolean` | `false` | strict, sealed, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | strict, cooperative, worker | Opens [`sandboxFetch()`](#sandboxfetch); the host decides each request, and a hidden frame with an opaque origin makes it (the target sees `Origin: null`). A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). Not in sealed mode: a sealed config that names it is refused. [ADR-006](ADR-006-fetch-bridge.md) |
 | `callLimits` | `CallLimits` | 1000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
@@ -557,7 +557,7 @@ code ran. Nothing reaches the host: no return value and no report that it return
 - While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the
  guest document is parsed (see [Ready and the startup gate](#ready-and-the-startup-gate)), in order with calls.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
-- In worker, strict and sealed mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
+- In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
  the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a
  handler guest code cannot reach, and only a free event loop can run it. No answer within
  `EXECUTION_TIMEOUT_GRACE_MS` terminates the sandbox.
@@ -773,7 +773,7 @@ listGuestWrites(): GuestWrite[]
 ```
 
 The guest's pending writes and removals (see `guestWrites` and [Guest writes](#guest-writes)), sorted by path. They belong
-to the current environment and survive its termination; the next build and the element's removal discard them.
+to the current environment; how long they live is stated once, at [Guest writes lifetime](#guest-writes-lifetime).
 
 **Returns:** One `GuestWrite` per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
 (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
@@ -879,7 +879,7 @@ Lines with `source: 'guest'`, from one relay in every mode: the guest's `console
 `debug`, `dir`, `dirxml`, `table`, `group` and `groupCollapsed` as `log`; `trace` as `log` after `console.trace()`; a
 failed `assert` as `error` after `Assertion failed:`); `Uncaught …` for an uncaught error (strict mode: after the entry
 ran) and `Uncaught (in promise) …` for an unhandled rejection; a throw from `execute()`; one `info` line
-`<mode> Ready` per environment. Guest code can post anything here. The guest's console never throws: a value
+`<mode> Ready` per environment (`<mode>` is the build's own mode: `sealed`, `strict`, `cooperative` or `worker`). Guest code can post anything here. The guest's console never throws: a value
 structured clone refuses (a function, a Symbol, a DOM node, an `Event`, a `Response`, a `Proxy`, a `WeakMap`, a
 `Promise`) arrives as a string naming its kind (`[function]`, `[object HTMLDivElement]`), and an `Error` or
 `DOMException` as `{ name, message, stack }`. `count`, `countReset`, `time`, `timeLog`, `timeEnd`, `timeStamp`,
@@ -1115,8 +1115,8 @@ cannot open the gate early.
 | :--- | :--- |
 | Host-exposed methods, registered files, the configuration, the `autoResize` height (until the new guest reports) | The guest's realm and exposed methods, pending calls, queued `execute()` code, in-flight requests, uncommitted guest writes |
 
-A termination keeps the guest's pending writes (listable and committable) until the next build; removing the
-element discards them.
+A termination keeps the guest's pending writes until the next build; removing the element discards them
+([how long pending writes live](#guest-writes-lifetime)).
 
 [ADR-003](ADR-003-lifecycle-and-liveness.md)
 
@@ -1297,6 +1297,11 @@ reject with `FILES_NOT_ALLOWED`, and so does the element for any request that re
 content as the guest's data, and so its path and type: show them with `textContent`, never in an HTML, URL, template or `console`
 format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,` and `@`, so one written into a
 single-quoted attribute can end it and add one). [ADR-004](ADR-004-files-as-blob-urls.md)
+
+<a id="guest-writes-lifetime"></a>**How long pending writes live.** Each build (`setConfig()`, `load()`, `reset()`, a
+rebuild) makes a new, empty overlay and discards the last one's pending writes. Only `terminate()` (and so a budget that
+ends the sandbox) keeps them: they stay listable and committable until the next build, and the element's removal
+discards them. This is the one statement of the rule; the other passages link here.
 
 **The bytes are the guest's too, and a URL made of them is a document of your origin.** Bytes the app wrote or returned
 (`GuestWrite.content`, a `Blob` or `File` a method returns to `call()`) become a page of **your** origin when you make an
@@ -1599,7 +1604,7 @@ page in Chromium and Firefox, with no user activation (measured; cooperative mod
 | The host page's policy, which the guest's realm inherits | never checked by guest code: no violation reaches it, and it makes the browser send your page's report endpoint nothing | as sealed, unless `scriptUnsafe` | checked, and reported to the guest and to your endpoint | checked (`execute()`'s strings), and reported to your endpoint |
 | Network | none: the view's fetch directives are `'none'` or `blob:` for registered files, `connect-src 'none'`; a config that names `origins` or `fetchBridge` is refused | `origins`, `fetchBridge` | `origins`, `fetchBridge` | `origins`, `fetchBridge` |
 | `autoResize` | ✓ | ✓ | ✓ | — |
-| `workerExecutionTimeout` | ✓ | ✓ | — | ✓ |
+| `workerExecutionTimeout` | — (no `execute()`) | ✓ | — | ✓ |
 | Watchdog bounds a loop | ✓ | ✓ | where the frame runs in its own process | ✓ |
 | `unsafeCapabilities` | — | — | ✓ | ✓ |
 | Files named from markup | `src`, `href`, `poster` in rendered markup | as sealed | ✓ | — |
@@ -1624,8 +1629,9 @@ What changes for an embed written when strict mode was the default:
 
 | You have | Now | What to do |
 | :--- | :--- | :--- |
-| no `mode`, and no `origins` or `fetchBridge` | sealed mode: the same view, worker and API, nothing visible changes. A `<script>` or `on…` handler in `html` behaves as in strict mode: it never runs, and the one warning says `sealed mode (the default) runs no script in html; …`. `connect-src` has no `blob:`, so a guest `fetch()` of its own file's URL is refused: read the file with `sandboxFiles.read()` or `text()` | nothing |
+| no `mode`, and no `origins`, `fetchBridge`, `scriptUnsafe: true` and no `execute()` | sealed mode: the same view, worker and API, nothing visible changes. A `<script>` or `on…` handler in `html` behaves as in strict mode: it never runs, and the one warning says `sealed mode (the default) runs no script in html; …`. `connect-src` has no `blob:`, so a guest `fetch()` of its own file's URL is refused: read the file with `sandboxFiles.read()` or `text()` | nothing |
 | no `mode`, with `origins` or `fetchBridge` | refused: nothing is built, and the sandbox terminates with the reason `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``; in TypeScript, a type error | add `mode: 'strict'` |
+| no `mode`, with `scriptUnsafe: true` (which `execute()` needs) | refused: nothing is built, and the sandbox terminates with the reason `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'` ``; in TypeScript, a type error. Sealed mode runs only the registered `entry`: without `scriptUnsafe`, `execute()` does nothing | add `mode: 'strict'` |
 | `mode: 'strict'`, `'cooperative'` or `'worker'` | unchanged | nothing |
 | TypeScript that types a config with no mode as `StrictSandboxConfig` | `mode` is required there | add `mode: 'strict'`, or type it `SealedSandboxConfig` |
 | a host page policy that lists origins for the sandbox in `img-src`, `connect-src` and so on | sealed mode needs none of them | keep `blob:`; drop the origins if nothing else of the page needs them |
@@ -1856,10 +1862,12 @@ The host publishes methods with `sandbox.expose()` and the app calls them with `
   quotes the data it was handling. A result that cannot be copied reaches it as `RESULT_NOT_TRANSFERABLE` with the
   library's text. Each text the app does not receive is written to your page's console (`console.warn`, once per call).
 - **An element is one app's for its life; to run another app, use a new element.** The element is the unit of isolation:
-  its files, its exposed methods, its pending guest writes and every handle a host method holds (`sandbox.call`) belong to
-  the element, not to the app. They survive `reset()`, `load()`, `setConfig()` and `terminate()`, so an app you load next
-  on the same element can call the methods you exposed for the last one and read its files, a `commitGuestWrites()` or a
-  late `call()` meant for the first app lands in the second, and two mounts that overlap (the first still waiting for your
+  its files, its exposed methods and every handle a host method holds (`sandbox.call`) belong to the element, not to the
+  app. They survive `reset()`, `load()`, `setConfig()` and `terminate()`, so an app you load next on the same element can
+  call the methods you exposed for the last one and read its files, and a late `call()` meant for the first app lands in
+  the second (its pending guest writes are the exception: only `terminate()` keeps them, [and only until the next
+  build](#guest-writes-lifetime), so a `commitGuestWrites()` meant for the first app can still commit what a terminated
+  first app left), and two mounts that overlap (the first still waiting for your
   store) meet. `mountTodoApp` therefore makes an element for each mount, and `stop()` terminates it and removes it.
   After `stop()`:
   - the app is ended and its element is out of the page: its pending guest writes are gone with it, and a `call()` that a
@@ -1954,6 +1962,7 @@ input](#sandboxview-strict-mode) describes them, and [research 23](research/23_v
 | Evaluate strings (`eval`, `new Function`, a timer given a string: each throws the library's `EvalError`) or call `execute()` | write the code in the entry. `mode: 'strict'` with `scriptUnsafe`, for testing: sealed mode refuses it, because a string run as code is checked against your page's policy, which reports the refusal with its text to the guest and with the string to your report endpoint |
 | Load a module with `import()` (the build refuses an entry whose text holds `import` followed by `(`, in a string or a comment too, with the reason `entryImport`) | bundle the modules into the entry |
 | Open a link or a window | an exposed method that takes a key and opens the address you hold for it (the `openExternal` example) |
+| Be stopped by a deadline of `execute()` (`workerExecutionTimeout` is ignored: sealed mode has no `execute()`) | an app that loops is bounded by `watchdogTimeout` (the sandbox ends when the worker stops answering), and `terminate()` ends it at any time |
 
 ---
 

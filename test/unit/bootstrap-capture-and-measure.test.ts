@@ -602,6 +602,20 @@ describe("M-1, M-2: the relay's own lines always reach the host, and its budgets
         }
         host.done();
     });
+
+    it("a sealed worker (strict mode's bootstrap with `sealed`) says 'sealed Ready', a strict one 'strict Ready'", () => {
+        vi.spyOn(performance, 'now').mockImplementation(() => 1000);
+        const host = withPlatform(originals, hostOf);
+        for (const [features, label] of [[{ externalPort: true, sealed: true }, 'sealed Ready'], [{ externalPort: true }, 'strict Ready']] as const) {
+            const { console } = recordingConsole();
+            const comms = inSandboxScript(false, 'strict', console, createBroker, features, createSizeOf);
+            const port = new ClonePort();
+            comms.attach(port as any);
+            const dispatched = withPlatform(originals, () => host.deliver(port.frames));
+            expect(dispatched.filter(line => line.endsWith(' Ready')), label).toEqual([label]);
+        }
+        host.done();
+    });
 });
 
 describe("M-5: in a worker (worker and strict mode) the relay is the only sink: nothing goes to the worker's own console", () => {
