@@ -168,11 +168,11 @@ test.describe('sealed mode: the host page\'s policy can never be checked by the 
         const steps = STYLE_MAKERS.filter(maker => maker.then !== undefined).map(maker => `${maker.then};`).join('\n');
         await host.sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(STYLE_MAKERS.map(maker => maker.markup).join('') + '<p id="s-done-slot"></p>')});
 ${steps}
-sandboxView.render('<b id="s-done">done</b>', 's-done-slot');
+sandboxView.text('s-done-slot', 'done'); // not a render: a render would sync the sheets the operations before it left (BD7:LIM-4)
 console.log(${JSON.stringify(name)} + 'sent');` });
         expect((await host.configure({ entry: 'main.js' })).at(-1), 'the default sealed build is ready').toEqual({ type: 'ready', reason: null });
         await host.sandbox.waitForLog(name, 30000);
-        await waitInView(host.page, browserName, "!!document.getElementById('s-done')", 15000);
+        await waitInView(host.page, browserName, "document.getElementById('s-done-slot').textContent === 'done'", 15000);
         await host.page.waitForTimeout(2000); // a report the browser sends after the check
 
         // every style applies, with no sheet left over from a <style> that was replaced or removed

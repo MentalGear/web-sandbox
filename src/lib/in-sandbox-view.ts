@@ -71,7 +71,10 @@ export const VIEW_MAX_CHARACTERS = 4 * VIEW_RENDER_MAX_LENGTH;
  * The most characters of markup the view parses per second, renders refused included (R1:R1-1): flow
  * control alone (one render in flight) lets a worker keep the host busy with renders that each fit every budget. A
  * render past it waits until the budget has refilled, and the worker's next render waits for that one's VIEW_ACK, so
- * nothing is dropped: renders are slowed to this rate. At least VIEW_RENDER_MAX_LENGTH, so every render is applied.
+ * nothing is dropped: renders are slowed to this rate. A render is charged the characters its parser is given (BD7:LIM-5):
+ * the markup with each `<style>` and `style` attribute renamed (style-markup.ts), longer than the guest's where it holds
+ * them. At least VIEW_RENDER_MAX_LENGTH, so every render is applied; one whose parsed form is longer than a second's worth
+ * waits for the budget to cover it.
  */
 export const VIEW_RENDER_CHARACTERS_PER_SECOND = 4 * VIEW_RENDER_MAX_LENGTH;
 
@@ -2514,7 +2517,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             if (!new RegExp(nonce, 'i').test(html)) return nonce;
         }
     };
-    const parserInput = (html: string): { text: string; markup: StyleMarkup | null } => {
+    type ParserInput = { text: string; markup: StyleMarkup | null };
+    const parserInput = (html: string): ParserInput => {
         const markup = encodeStyles(nonceFor(html));
         const text = markup.encode(html);
         return { text, markup: text === html ? null : markup };
@@ -2529,9 +2533,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // stylesheets: the still stylesheet (VIEW_STILL_STYLE, which must stay the first layer) and every stylesheet <link>.
     // A sheet has its element's `media`, and no rules where an SVG <style>'s `type` is not CSS, as an element's own sheet
     // would; it has no `@import` (a constructed stylesheet has none), and no `title` makes it an alternative one.
-    // Each operation keeps them in step: a render removes the sheets of the <style>s inside its target and adds those of
-    // the ones it kept (RenderContext.sheets) in their place; a text() or a render into a <style> replaces its sheet's
-    // rules. A change no operation made (`forget`, the body's observer) has the next one read them from the body again.
+    // Every operation that changes an element's content keeps them in step at its end, in one place (`sheetsAfter`, BD7:LIM-4):
+    // the sheets of the <style>s that left the body go, those of the ones a render kept (RenderContext.sheets) take their
+    // place, and a <style> whose text changed (a text() or a render into it) gets its new rules; so a text() or a
+    // set({ value }) over an element that held a <style> takes its sheet away, as a render over it does. A change no
+    // operation made (`forget`, the body's observer) has the next one read them from the body again.
     // Without constructable stylesheets (none of the engines the library supports lacks them) no guest stylesheet applies.
     const sheets = new Map<Element, CSSStyleSheet>();
     let sheetOrder: Element[] = [];
@@ -2613,17 +2619,22 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             if (sheet && replaceSync) call(replaceSync, sheet, [sheetText(n)]);
         }
     };
+    // The guest's sheets after an operation that changed `target`'s content (a render, a text(), a set({ value })), and
+    // `added`, the <style>s a render kept: the one place they follow the document (BD7:LIM-4), whatever the operation.
+    const sheetsAfter = (target: Element, added: readonly Element[]) => {
+        syncSheets(target, added);
+        if (inStyle(target)) refreshSheet(target);
+    };
 
     // template.innerHTML parses into an inert fragment (no script runs, nothing loads); the renderer cleans
     // it; replaceChildren MOVES its nodes into the document (A2) — never a clone or an import. The renderer gets the
     // room the view's budget leaves (BR:ST2): the body's elements outside the target stay, the target's own
     // are replaced, and the target's depth below the body counts; past it the renderer throws before insertion.
-    const apply = (html: string, into: string | null) => {
+    const apply = (input: ParserInput, into: string | null) => {
         const body = call(bodyOf, document, []);
         const target = into === null ? body : call(D.getElementById, document, [into]);
         if (!target || !body || (target !== body && !call(containsNode, body, [target]))) return;
         const template = call(D.createElement, document, ['template']) as HTMLTemplateElement;
-        const input = parserInput(html);
         trusted((value) => { template.innerHTML = value as string; }, input.text, 'createHTML');
         const before = counts(body);
         const ownElements = target === body ? before.elements : countOf(target);
@@ -2656,8 +2667,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const css = cssLoadsOf(template.content, target, context.css!, context.sheets!); // before the move empties the fragment
         call(E.replaceChildren, target, [template.content]);
         settle(target);
-        if (inStyle(target)) refreshSheet(target);
-        else syncSheets(target, context.sheets!);
+        sheetsAfter(target, context.sheets!);
         urlWork += context.urls;
         cssWork += css;
         for (let i = 0; i < context.loads.length; i++) renderedLoads.add(context.loads[i]!);
@@ -2780,6 +2790,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         assertCharacters(before.characters - ownCharacters + textLength(text));
         call(setTextContent, target, [text]);
         settle(target);
+        sheetsAfter(target, []); // a <style> it held is gone, or its own text changed
         if (bodyCharacters === null) return;
         bodyCharacters = before.characters - ownCharacters + innerLength(target);
         bodyElements = before.elements - ownElements;
@@ -2794,7 +2805,6 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (!switches.animations && sheet) stillNamed(text); // a stylesheet's new text
         const css = sheet ? countLoads(text, options.rates.urls) : 0; // a stylesheet's new text (S73)
         replaceText(target, text);
-        if (sheet) refreshSheet(target);
         cssWork += css;
         reportAll(refused);
     };
@@ -2899,7 +2909,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // the host page's that the event loop runs before the meter's task is in it too: both are charged to the view and
     // count towards its operation, which slows the guest, and makes it an overrun only past VIEW_MAX_OPERATION_MS: one
     // reason why one overrun does not end the sandbox (VIEW_OVERRUN_WINDOW_MS).
-    type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: SetFields | null };
+    // A render's `input` is its markup as the view's parser is given it (parserInput), made when the render arrives: what it
+    // is charged, and what it parses.
+    type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: SetFields | null; input?: ParserInput };
     let pending: Job[] = [];
     let scheduled = false;
     // What a measure's verdict does (viewBudget, the repeated-overrun rule; S72, class P). An overrun that is not
@@ -2973,8 +2985,10 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         let cost = 0;
         for (let i = 0; i < jobs.length; i++) {
             const job = jobs[i]!;
+            // what the parser is given (BD7:LIM-5: the encoded markup, which a <style> or a style attribute makes longer), or
+            // what a text() assigns
             if (job.kind !== 'set') {
-                cost += job.html.length;
+                cost += job.input ? job.input.text.length : job.html.length;
                 continue;
             }
             cost += (job.fields!.value || '').length;
@@ -3013,7 +3027,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         for (let i = 0; i < jobs.length; i++) {
             const job = jobs[i]!;
             try {
-                if (job.kind === 'render') apply(job.html, job.target);
+                if (job.kind === 'render') apply(job.input!, job.target);
                 else if (job.kind === 'text') applyText(job.html, job.target!);
                 else applySet(job.target!, job.fields!);
             } catch (error: any) {
@@ -3117,7 +3131,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         }
         let job: Job | null = null;
         if (data.type === 'VIEW_RENDER') {
-            if (isText(data.html) && (data.into === null || isTarget(data.into))) job = { kind: 'render', target: data.into, html: data.html, fields: null };
+            if (isText(data.html) && (data.into === null || isTarget(data.into))) job = { kind: 'render', target: data.into, html: data.html, fields: null, input: parserInput(data.html) };
         } else if (data.type === 'VIEW_TEXT') {
             if (isText(data.text) && isTarget(data.into)) job = { kind: 'text', target: data.into, html: data.text, fields: null };
         } else if (data.type === 'VIEW_SET') {
@@ -3423,7 +3437,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             work = 0;
             const started = performance.now();
             try {
-                apply(initial, null);
+                apply(parserInput(initial), null);
             } catch {
                 // past the budget, or anything else the renderer refused: the initial view stays empty
             }

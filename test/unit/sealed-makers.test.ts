@@ -151,7 +151,7 @@ describe('sealed mode\'s request makers: one enumeration, tied to the library\'s
         for (const namespace of elements) expect(STYLE_MAKERS.some(maker => maker.way === 'element' && maker.namespace === namespace), `a <style> in ${namespace}`).toBe(true);
         // every sandboxView operation that can change what a style applies: text() and render() into a <style>, a render that
         // replaces or removes one, and set({ css }); each maker's own call is the one its way names
-        const calls: Record<StyleWay, string | null> = { attribute: null, element: null, text: 'sandboxView.text(', 'render-into': 'sandboxView.render(', replace: 'sandboxView.render(', remove: 'sandboxView.render(', 'set-css': 'sandboxView.set(' };
+        const calls: Record<StyleWay, string | null> = { attribute: null, element: null, text: 'sandboxView.text(', 'render-into': 'sandboxView.render(', replace: 'sandboxView.render(', remove: 'sandboxView.render(', 'remove-text': 'sandboxView.text(', 'remove-value': 'sandboxView.set(', 'set-css': 'sandboxView.set(' };
         for (const [way, call] of Object.entries(calls) as [StyleWay, string | null][]) {
             const makers = STYLE_MAKERS.filter(maker => maker.way === way);
             expect(makers.length, way).toBeGreaterThan(0);
@@ -160,7 +160,7 @@ describe('sealed mode\'s request makers: one enumeration, tied to the library\'s
         // each maker's markup holds the element its check reads, and the check's value is not what the element computes unstyled
         for (const maker of STYLE_MAKERS) {
             expect(maker.markup, maker.id).toContain(`id="${maker.check.id}"`);
-            if (maker.way !== 'remove') expect(maker.check.value, maker.id).not.toBe('rgb(0, 0, 0)');
+            if (!maker.way.startsWith('remove')) expect(maker.check.value, maker.id).not.toBe('rgb(0, 0, 0)');
         }
     });
 

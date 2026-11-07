@@ -214,13 +214,13 @@ export const makerCode = (maker: Maker, url: string) => maker.realm === 'worker'
  * BD6:ISO-2; docs/research/25_cssom_styles/README.md): a style attribute of an element of each namespace the renderer
  * gives one (RENDER_ATTRIBUTES), a `<style>` in each namespace the renderer keeps one in (RENDER_ELEMENTS), and every
  * operation that changes a style after a render: `text()` and a render into a `<style>`, a render that replaces one, a
- * render that removes one, and `set({ css })`. As a style attribute or a `<style>` element, each would be an inline style
+ * render, a `text()` and a `set({ value })` that remove one (BD7:LIM-4: its sheet goes with it), and `set({ css })`. As a style attribute or a `<style>` element, each would be an inline style
  * that the host page's `style-src` checks, refuses and reports; the view applies each through the CSSOM.
  * test/e2e/sealed-host-policy.spec.ts renders them on the realistic host with a `style-src` of hashes only, `'report-sample'`
  * and a keyed report endpoint, on every engine: the endpoint receives nothing, no violation is raised, and each style
  * applies. test/unit/sealed-makers.test.ts ties the list to the renderer's.
  */
-export type StyleWay = 'attribute' | 'element' | 'text' | 'render-into' | 'replace' | 'remove' | 'set-css';
+export type StyleWay = 'attribute' | 'element' | 'text' | 'render-into' | 'replace' | 'remove' | 'remove-text' | 'remove-value' | 'set-css';
 
 export interface StyleMaker {
     readonly id: string;
@@ -253,6 +253,8 @@ export const STYLE_MAKERS: readonly StyleMaker[] = Object.freeze([
     { id: 'render-into', way: 'render-into', namespace: 'svg', markup: `<svg width="9" height="9"><style id="s-into-sheet">#s-into { fill: ${OVERRIDDEN} }</style><rect id="s-into" width="9" height="9"/></svg>`, then: `sandboxView.render('#s-into { fill: ${APPLIED} }', 's-into-sheet')`, check: { id: 's-into', property: 'fill', value: APPLIED } },
     { id: 'replace', way: 'replace', namespace: 'html', markup: `<div id="s-replace-slot"><style>#s-replace { color: ${OVERRIDDEN} }</style></div><p id="s-replace">r</p>`, then: `sandboxView.render('<style>#s-replace { color: ${APPLIED} }</style>', 's-replace-slot')`, check: { id: 's-replace', property: 'color', value: APPLIED } },
     { id: 'remove', way: 'remove', namespace: 'html', markup: `<div id="s-remove-slot"><style>#s-remove { color: ${OVERRIDDEN} }</style></div><p id="s-remove">x</p>`, then: "sandboxView.render('', 's-remove-slot')", check: { id: 's-remove', property: 'color', value: UNSTYLED } },
+    { id: 'remove-text', way: 'remove-text', namespace: 'html', markup: `<div id="s-remove-text-slot"><style>#s-remove-text { color: ${OVERRIDDEN} }</style></div><p id="s-remove-text">x</p>`, then: "sandboxView.text('s-remove-text-slot', 'gone')", check: { id: 's-remove-text', property: 'color', value: UNSTYLED } },
+    { id: 'remove-value', way: 'remove-value', namespace: 'html', markup: `<output id="s-remove-value-slot"><style>#s-remove-value { color: ${OVERRIDDEN} }</style></output><p id="s-remove-value">x</p>`, then: "sandboxView.set('s-remove-value-slot', { value: 'gone' })", check: { id: 's-remove-value', property: 'color', value: UNSTYLED } },
     { id: 'set-css', way: 'set-css', namespace: 'html', markup: '<p id="s-set">s</p>', then: "sandboxView.set('s-set', { css: { opacity: '0.5' } })", check: { id: 's-set', property: 'opacity', value: '0.5' } },
     // CSS that names URLs of no network (BD7:ISO-1): each one the view keeps no URL of goes, the style applies, and no report reaches the page
     { id: 'element-urls', way: 'element', namespace: 'html', markup: `<style>@import "zqimport:x"; @font-face { font-family: zq; src: url(zqfont:x) } #s-urls { color: ${APPLIED}; background-image: url(mailto:a@b.example), image-set("about:x" 1x) }</style><p id="s-urls">u</p>`, check: { id: 's-urls', property: 'color', value: APPLIED }, drops: ['zqimport:x', 'zqfont:x', 'mailto:a@b.example', 'about:x'] },

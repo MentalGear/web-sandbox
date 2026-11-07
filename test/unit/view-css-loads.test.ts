@@ -381,6 +381,7 @@ describe('S73: the view prepays the CSS each operation applies, and a reported l
         delete (globalThis as any).__sandboxViewRuns;
         delete (globalThis as any).__budget;
         delete (globalThis as any).__calls;
+        delete (globalThis as any).__characters;
         document.body.replaceChildren();
     });
     async function startView() {
@@ -406,6 +407,8 @@ describe('S73: the view prepays the CSS each operation applies, and a reported l
             const prepay = budget.prepay, observed = budget.observed;
             budget.prepay = (loads, now) => { if (loads > 0) globalThis.__calls.push(['prepay', loads]); prepay(loads, now); };
             budget.observed = (loads, now) => { globalThis.__calls.push(['observed', loads]); observed(loads, now); };
+            const charge = budget.charge;
+            budget.charge = (kind, amount, now) => { if (kind === 'characters' && globalThis.__characters) globalThis.__characters.push(amount); charge(kind, amount, now); };
             return (globalThis.__budget = budget);
         }`;
         // the listener the view registers for violations, called directly (jsdom makes no trusted event of its own)
@@ -453,6 +456,29 @@ describe('S73: the view prepays the CSS each operation applies, and a reported l
         };
         return { send, loaded, violation, refused, reported, budget: () => (globalThis as any).__budget, close: () => { render.close(); view.port2.close(); logic.port2.close(); } };
     }
+
+    // BD7:LIM-5 (class P, a budget that counts a proxy): the parse budget charges what the view parses, the markup as the
+    // view encodes it for its parser (styleMarkup: each <style> and style attribute renamed, with the render's nonce), never
+    // the markup it was given, which a <style> makes several times shorter
+    it('a render is charged the characters its parser is given: the encoded markup (BD7:LIM-5)', async () => {
+        const parsed: number[] = [];
+        const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML')!;
+        Object.defineProperty(Element.prototype, 'innerHTML', { ...descriptor, set(this: Element, value: string) { if (this instanceof HTMLTemplateElement) parsed.push(String(value).length); descriptor.set!.call(this, value); } });
+        try {
+            const { send, close } = await startView();
+            const html = '<style></style><b style="">x</b>'.repeat(50);
+            (globalThis as any).__characters = [];
+            parsed.length = 0;
+            await send({ type: 'VIEW_RENDER', html, into: 'a' });
+            close();
+            const [charged] = (globalThis as any).__characters as number[];
+            expect(parsed.length, 'the render was parsed').toBeGreaterThan(0);
+            expect(charged, 'the operation is charged the length of what the parser was given').toBe(parsed[0]);
+            expect(charged).toBeGreaterThan(html.length * 2);
+        } finally {
+            Object.defineProperty(Element.prototype, 'innerHTML', descriptor);
+        }
+    });
 
     it('the view caps its violation reports by the host\'s buckets: each known directive apart, every other name together (BD3:LIM-3)', async () => {
         const { refused, reported, close } = await startView();

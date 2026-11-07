@@ -2235,7 +2235,7 @@ The first three rows are (a)'s and (b)'s; the rest bound what the view's meter c
 | `VIEW_MAX_ELEMENTS` | 50000 | Elements the body holds: what any restyle, relayout or repaint, seen or not, covers. |
 | `VIEW_MAX_DEPTH` | 256 | Nesting below the body. |
 | `VIEW_MAX_CHARACTERS` | 1048576 | Characters the body holds (its serialization: text, attributes and markup). |
-| `VIEW_RENDER_CHARACTERS_PER_SECOND` | 1048576 | Characters of markup the view parses per second, refused renders included. |
+| `VIEW_RENDER_CHARACTERS_PER_SECOND` | 1048576 | Characters of markup the view parses per second, refused renders included, counted as its parser is given them: with each `<style>` and `style` attribute renamed (the view applies them through the CSSOM), which makes such markup longer than the guest wrote it. |
 | `VIEW_RENDER_MAX_LENGTH` | 262144 | Characters of one operation. |
 | `VIEW_INPUT_IN_FLIGHT` | 1 | Frames of the view's events the worker has not acknowledged, past which the continuous ones wait, coalesced: what the guest's events cost the worker's queue and the view, whatever the engine delivers. |
 | `LOG_EVENTS_PER_SECOND` | 1000 | The guest's error texts the view posts to the host page per second (GUEST_ERROR and GUEST_UNCAUGHT frames, each cut to 2048 characters before posting). |
