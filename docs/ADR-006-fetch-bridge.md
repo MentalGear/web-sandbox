@@ -63,10 +63,11 @@ embedder also allows direct connections.
      survives any later widening of the allowlist. Every spelling the URL parser canonicalises (`127.1`, `2130706433`,
      `0x7f.1`, `[::ffff:127.0.0.1]`) is caught. **DNS rebinding is a limit, not a guarantee**: a page cannot see DNS
      answers, so a listed public name that resolves to a private address is not detected.
-   - **One refusal text for every unlisted origin.** The guest is told `<origin> is not in fetchBridge.allow`, whatever the
-     reason; what the host knows beyond that (the host page's own origin; a loopback, private or link-local host) is the
-     `fetch` record's `reason` field, never sent to the guest. Otherwise a guest could find the origin that embeds it by
-     probing.
+   - **One refusal text for every unlisted origin.** The guest is told the code and the library's one fixed text for it
+     (`FETCH_NOT_ALLOWED: …`, the same for every refusal with that code; BD7:CHL-2), whatever the reason; what the host
+     knows beyond that (the origin, and why: the host page's own origin; a loopback, private or link-local host) is the
+     `fetch` record's `reason` field and the host page's console, never sent to the guest. Otherwise a guest could find
+     the origin that embeds it by probing.
    - **Methods** from an allowlist: `GET`, `HEAD`, `POST` by default; `PUT`, `PATCH`, `DELETE` when listed.
    - **Request headers** from an allowlist: the CORS-safelisted names (`accept`, `accept-language`, `content-language`,
      `content-type`) plus names the embedder lists. `Cookie` can never be listed (nor any name `fetch` forbids, `proxy-*`,

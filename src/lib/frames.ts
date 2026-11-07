@@ -185,6 +185,11 @@ export const FRAMES = {
             stillStyleRefused: { bound: 'not a string', how: "true when the host page's style-src refused the still stylesheet" },
         },
     },
+    VIEW_INITIAL: {
+        purpose: "What the initial view (the configuration's `html`) dropped that the author may not expect: the element warns once from it, and reads no markup itself (BD7:LIM-1). Posted once a build, after the initial render, when it dropped something.",
+        routes: [{ channel: 'view-port', from: ['view'], to: ['host'] }],
+        fields: { dropped: { bound: 'constant', how: "at most 'script', 'handler' and 'reference' (RenderContext.dropped), once each" } },
+    },
     VIEW_PING: {
         purpose: "The view's liveness probe (VIEW_LIVENESS_TIMEOUT_MS).",
         routes: [{ channel: 'view-port', from: ['host'], to: ['view'] }],
@@ -294,7 +299,7 @@ export const FRAMES = {
         routes: [{ channel: 'render-port', from: ['view'], to: ['strict-worker'] }],
         fields: {
             refused: { bound: 'constant', how: 'names from a fixed list (VIEW_MAX_ELEMENTS …)' },
-            dropped: { bound: 'constant', how: "at most 'script' and 'reference' (RenderContext.dropped), once each" },
+            dropped: { bound: 'constant', how: "at most 'script', 'handler' and 'reference' (RenderContext.dropped), once each" },
         },
     },
     VIEW_EVENT: {

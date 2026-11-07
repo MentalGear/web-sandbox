@@ -63,6 +63,16 @@ export interface StyleMarkup {
     readonly sheet: string;
     /** The name the parse gives the guest's own `noframes` element. */
     readonly noframes: string;
+    /** The tokenizer's character sets the encoding reads (BD7:TST-1): a test walks every member of every set. */
+    readonly sets: TokenizerSets;
+}
+
+/** The sets of characters that end or start a name in the HTML tokenizer's states, as styleMarkup reads them. */
+export interface TokenizerSets {
+    readonly WHITE_SPACE: string;
+    readonly TAG_NAME_END: string;
+    readonly ATTRIBUTE_NAME_END: string;
+    readonly ATTRIBUTE_NAME_START: string;
 }
 
 /** The encoding for `nonce` (lowercase letters and digits, at least 8, starting with a letter). See the top of this file. */
@@ -109,5 +119,5 @@ export function styleMarkup(nonce: string): StyleMarkup {
         return parts.join('');
     };
     const decode = (text: string): string => (text.indexOf(nonce) < 0 ? text : text.replace(inserted, '$1'));
-    return { nonce, encode, decode, attribute: nonce + 'astyle', sheet: nonce + 'tstyle', noframes: nonce + 'nnoframes' };
+    return { nonce, encode, decode, attribute: nonce + 'astyle', sheet: nonce + 'tstyle', noframes: nonce + 'nnoframes', sets: { WHITE_SPACE, TAG_NAME_END, ATTRIBUTE_NAME_END, ATTRIBUTE_NAME_START } };
 }

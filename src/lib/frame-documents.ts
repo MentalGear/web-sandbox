@@ -1,4 +1,5 @@
 import { assertHashableScript, assertParserSafeScript } from './csp/script-hash';
+import { mintUncodedError } from './minted-errors';
 
 /**
  * Builds the documents the sandbox is made of:
@@ -122,7 +123,7 @@ export function buildGuestDocument(parts: GuestDocumentParts): string {
     ].join('');
 
     if (parts.bootstrapWritesContent) {
-        if (parts.content) throw new Error('[Sandbox] guest markup is either written by the bootstrap or embedded, not both');
+        if (parts.content) throw mintUncodedError(Error, '[Sandbox] guest markup is either written by the bootstrap or embedded, not both');
         return `<!DOCTYPE html><html><head>${securityBlock}`;
     }
     return `<!DOCTYPE html><html><head>${securityBlock}</head>${parts.content ?? ''}`;
@@ -217,7 +218,7 @@ export const BRIDGE_FRAME_SANDBOX = 'allow-scripts';
  * check (environment-check.ts, S74) reads about:blank there as in every document of the library's.
  */
 export function buildBridgeDocument(csp: string, bootstrap: string, role: string): string {
-    if (!csp.startsWith(BRIDGE_POLICY_START)) throw new Error('[Sandbox] the bridge frame document needs the bridge frame policy');
+    if (!csp.startsWith(BRIDGE_POLICY_START)) throw mintUncodedError(Error, '[Sandbox] the bridge frame document needs the bridge frame policy');
     assertHashableScript(bootstrap);
     return `${BRIDGE_PREFIX}${escapeAttribute(csp.slice(BRIDGE_POLICY_START.length))}"><meta name="referrer" content="${FRAME_REFERRER_POLICY}"><base href="${WRAPPER_BASE}"><script data-role="${escapeAttribute(role)}">${bootstrap}</script></head><body></body></html>`;
 }

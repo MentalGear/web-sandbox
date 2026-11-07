@@ -17,7 +17,7 @@ import { scriptInMarkup } from "./lib/markup-scripts";
 import { LOAD_KINDS } from "./lib/load-kinds";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
-import { isMinted, markMinted } from "./lib/minted-errors";
+import { crossingText, mintError, mintUncodedError } from "./lib/minted-errors";
 import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
@@ -36,7 +36,7 @@ import { buildGuestDocument, buildWrapperDocument, permissionAttributes, setWrap
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { hostPageOrigin, hostSiteOrigins } from "./lib/host-site";
-import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
+import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, htmlRefusal, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
 import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from "./lib/environment";
@@ -390,10 +390,11 @@ export interface SandboxConfigOptions {
      */
     allowAutoplay?: boolean;
     /**
-     * A deadline in ms for each `execute()`, in worker, strict and sealed mode. At the deadline the guest's event
+     * A deadline in ms for each `execute()`, in worker and strict mode. At the deadline the guest's event
      * loop must be free: the element pings the guest, and if no answer arrives within
      * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).
-     * Anything but a finite number above 0 is off, with a warning unless it is `0`. Not read in cooperative mode.
+     * Anything but a finite number above 0 is off, with a warning unless it is `0`. Not read in cooperative mode, nor in sealed mode, which has no `execute()` (ignored silently; `watchdogTimeout` bounds
+     * a sealed app that loops).
      *
      * @defaultValue `0` (off)
      */
@@ -814,16 +815,19 @@ export class WebSandbox extends ElementBase {
     // flushes them. Answers to the guest never use it — they go back on the port the request arrived on.
     // Results go back with their snapshot's ArrayBuffers transferred (R2:C-3: rpc.ts, sendResult).
     // A guest's request past its environment's per-second budget is answered BUSY (R3:M-2: _admitGuestCall).
-    // A handler's error text reaches the guest only by the broker's allow-list; what it withholds is written to the
+    // A handler's error text reaches the guest only by the broker's rule: the embedder's own words, or for an error the
+    // library made the fixed text its factory chose (BD7:CHL-2: minted-errors.ts); what it withholds is written to the
     // console here, once per call (BD5:LIM-2, BD5:DOC-1: rpc.ts, reportWithheld).
     private _broker = createBroker((frame) => this._postRpc(frame), {
         sizeOf: createSizeOf(),
         transferResults: true,
         admitInbound: (bytes) => this._admitGuestCall(bytes),
-        markMinted,
-        isMinted,
-        reportWithheld: (method, refusal, text) => {
-            console.warn(`[Sandbox] "${method.slice(0, 64)}" failed, and the other side received "${refusal}" in place of its error, which was:`, text);
+        host: {
+            mint: mintError,
+            crossingText,
+            reportWithheld: (method, refusal, text) => {
+                console.warn(`[Sandbox] "${method.slice(0, 64)}" failed, and the other side received "${refusal}" in place of its error, which was:`, text);
+            },
         },
         takeUnexpose: (unexpose) => { this._unexposeMethod = unexpose; },
     });
@@ -1022,7 +1026,8 @@ export class WebSandbox extends ElementBase {
      * - The whole batch is validated first. It fires `fileschanged` when something changed; registering identical content
      *   again changes nothing.
      * - A path is relative (`src/main.js`): segments of letters, digits and the characters of `._~!$&'()*+,;=@-`,
-     *   separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised.
+     *   separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised;
+     *   a refusal's message names the rule the path breaks.
      * - A file's type comes from its extension (`.js` and `.mjs` `text/javascript`, `.css` `text/css`, `.json`
      *   `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4` and the like); an unknown extension is
      *   `application/octet-stream`.
@@ -1069,7 +1074,7 @@ export class WebSandbox extends ElementBase {
 
     /**
      * The guest's pending writes and removals (see `guestWrites` and docs/API.md#guest-writes), sorted by path. They belong
-     * to the current environment and survive its termination; the next build and the element's removal discard them.
+     * to the current environment; how long they live is stated once, at docs/API.md#guest-writes-lifetime.
      *
      * @returns One {@link GuestWrite} per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
      * (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
@@ -1168,7 +1173,7 @@ export class WebSandbox extends ElementBase {
         if (!diff.listed) return new Promise((resolve, reject) => this._showInView(shown, () => resolve(answer), reject));
         return new Promise((resolve, reject) => {
             const acted = runNotices(lifecycleHost(this), [() => this._dispatchFilesWritten(answer.path)], () => this._showInView(shown, () => resolve(answer), reject));
-            if (!acted) reject(new Error('[Sandbox] the sandbox was reset or terminated while this write was announced.'));
+            if (!acted) reject(mintError('TERMINATED', '[Sandbox] the sandbox was reset or terminated while this write was announced.'));
         });
     }
 
@@ -1198,11 +1203,19 @@ export class WebSandbox extends ElementBase {
      * rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still
      * rebuilds.
      *
+     * @remarks
+     * In sealed and strict mode, markup longer than {@link VIEW_RENDER_MAX_LENGTH} characters is not stored: the build
+     * ends with the reason `html is longer than … characters`, and the element keeps the html it had, as `setConfig()`
+     * refuses such an `html`.
+     *
      * @param html - The markup, as for the `html` option of {@link SandboxConfigOptions}.
      */
     load(html: string) {
-        this._config.html = html;
-        step(this, { t: 'build', why: 'load', ctx: this._buildContext() }); // the reducer counts the change of `html`
+        // checked before it is stored (BD7:LIM-3): markup longer than the view takes refuses the build with its reason, as
+        // setConfig() refuses it, and the element keeps the html it had
+        const refusal = htmlRefusal(this._config.mode, html);
+        if (refusal === null) this._config.html = html;
+        step(this, { t: 'build', why: 'load', ctx: this._buildContext(refusal?.reason ?? null) }); // the reducer counts the change of `html`
     }
 
     /**
@@ -1217,7 +1230,7 @@ export class WebSandbox extends ElementBase {
      * - While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the
      *   guest document is parsed (see docs/API.md#ready-and-the-startup-gate), in order with calls.
      * - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
-     * - In worker, strict and sealed mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
+     * - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
      *   the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a
      *   handler guest code cannot reach, and only a free event loop can run it. No answer within
      *   {@link EXECUTION_TIMEOUT_GRACE_MS} terminates the sandbox.
@@ -1275,13 +1288,17 @@ export class WebSandbox extends ElementBase {
      *
      * @remarks
      * What a failure tells the guest: a throw or rejection reaches it as `HANDLER_ERROR`, and its text is
-     * your own words only. The guest receives the message of a plain `Error` (`throw new Error(text)`, whose prototype is
-     * this window's `Error.prototype`) or a thrown string, verbatim up to 65536 characters (a longer one is cut, and ends
-     * `[… cut at 65536 characters]`): put nothing in it you would not show the guest. Any other throw (an engine's
-     * `TypeError` or `SyntaxError` from `JSON.parse`, a `DOMException`, a subclass of `Error`, an error from another
-     * window, an object) arrives as `the method failed (<name>)` with its name only, because an engine's message quotes
-     * the data it was handling. A result that cannot be copied is refused `RESULT_NOT_TRANSFERABLE` with the library's
-     * own text. Each text the guest does not receive is written to this page's console with
+     * your own words only. The guest receives the message of a plain `Error` your code made (`throw new Error(text)`,
+     * whose prototype is this window's `Error.prototype`) or a thrown string, verbatim up to 65536 characters (a longer
+     * one is cut, and ends `[… cut at 65536 characters]`): put nothing in it you would not show the guest. An error of the
+     * library's that the handler lets through (a refusal of `registerFiles()`, `unregisterFiles()` or
+     * `commitGuestWrites()`, of its own `call()` to this guest or another element's, a `TypeError` of `expose()`) arrives
+     * as its code and the library's fixed text for that code (`INVALID_PATH: …`; `the method failed (TypeError)` for one
+     * without a code), never its message, which quotes what you gave the library or what another app answered. Any other
+     * throw (an engine's `TypeError` or `SyntaxError` from `JSON.parse`, a `DOMException`, a subclass of `Error`, an error
+     * from another window, an object) arrives as `the method failed (<name>)` with its name only, because an engine's
+     * message quotes the data it was handling. A result that cannot be copied is refused `RESULT_NOT_TRANSFERABLE` with
+     * the library's own text. Each text the guest does not receive is written to this page's console with
      * `console.warn`, once per call.
      *
      * Methods belong to the element: they survive `reset()`, `load()`,
@@ -1300,10 +1317,10 @@ export class WebSandbox extends ElementBase {
     expose(name: string, fn: (...args: any[]) => unknown): void {
         // A name that is not a string, or a handler that is not a function, is a mistake to say at once (R1:R3-9): ignored,
         // it would fail the guest's call with UNKNOWN_METHOD far from the cause.
-        if (typeof name !== 'string') throw new TypeError('[Sandbox] expose(): the name must be a string');
+        if (typeof name !== 'string') throw mintUncodedError(TypeError, '[Sandbox] expose(): the name must be a string');
         // the broker's longest method name (rpc.ts, R3:C-1): a longer one could never be called
-        if (name.length > 256) throw new TypeError(`[Sandbox] expose(): the name "${name.slice(0, 64)}…" is longer than 256 characters`);
-        if (typeof fn !== 'function') throw new TypeError(`[Sandbox] expose(): the handler for "${name.slice(0, 64)}" must be a function`);
+        if (name.length > 256) throw mintUncodedError(TypeError, `[Sandbox] expose(): the name "${name.slice(0, 64)}…" is longer than 256 characters`);
+        if (typeof fn !== 'function') throw mintUncodedError(TypeError, `[Sandbox] expose(): the handler for "${name.slice(0, 64)}" must be a function`);
         if (name.startsWith(RESERVED_METHOD_PREFIX)) {
             console.warn(`[Sandbox] expose(): names starting with "${RESERVED_METHOD_PREFIX}" are reserved for the library; "${name}" was not exposed.`);
             return;
@@ -1336,7 +1353,7 @@ export class WebSandbox extends ElementBase {
         }
         const list: unknown[] = typeof names === 'string' ? [names] : Array.isArray(names) ? [...names] : [names];
         for (const name of list) {
-            if (typeof name !== 'string') throw new TypeError('[Sandbox] unexpose(): names must be a string or an array of strings');
+            if (typeof name !== 'string') throw mintUncodedError(TypeError, '[Sandbox] unexpose(): names must be a string or an array of strings');
         }
         for (const name of list as string[]) {
             if (name.startsWith(RESERVED_METHOD_PREFIX)) {
@@ -1385,7 +1402,8 @@ export class WebSandbox extends ElementBase {
      * @returns The guest method's return value (awaited if it is a promise).
      * @throws Never synchronously: the promise rejects with an {@link RpcError}, an `Error` whose `code` is an
      * {@link RpcErrorCode}. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and
-     * their message is the guest's text.
+     * their message is the guest's text. A host method that lets the rejection propagate hands its own caller the code
+     * and the library's fixed text for it, never this message (see `expose()`).
      */
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
         const refusal = this._noEnvironmentError();
@@ -1710,6 +1728,10 @@ export class WebSandbox extends ElementBase {
             // The view's check-in, the first frame on the port only its bootstrap holds (R1:R3-1): the strict build is ready,
             // if it is still loading (the reducer's `viewReady`), and what the view measured is checked then (`checkView`).
             step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true });
+            return;
+        }
+        if (data?.type === 'VIEW_INITIAL') {
+            this._warnAboutStrictHtml(data.dropped); // what the initial view dropped: its scripts and handlers, once per element
             return;
         }
         if (data?.type === 'TRUSTED_TYPES_REFUSED') {
@@ -2056,11 +2078,12 @@ export class WebSandbox extends ElementBase {
     // to a window the element does not listen to), so they stop the environment instead, as insertion there does, and
     // the element stays idle. Asked first: in another document the element may have lost its prototype (BR:CB7), and
     // nothing else here is asked there.
-    private _buildContext(): BuildContext {
+    // `refused`: why the input that starts this build could not be used (load()'s html), which blocks it before anything else.
+    private _buildContext(refused: string | null = null): BuildContext {
         if (!buildsHere(this)) return NOT_HERE;
         const strict = hasStrictView(this._config.mode);
         // a bootstrap runs, and announces its port, exactly where the inline script can run (_getMarkupPlan's test, BR:CB1)
-        return { buildsHere: true, blocked: this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
+        return { buildsHere: true, blocked: refused ?? this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
     }
 
     // `loading` is bounded (BR:CB3): a build that has not completed within LOAD_TIMEOUT_MS of host ticks ends with a
@@ -2301,7 +2324,6 @@ export class WebSandbox extends ElementBase {
     // the element's until `attach`, and the reducer attaches only the build that is still the element's (`built{gen}`):
     // an outer build that a nested one replaced is dropped whole.
     private _prepareBuild(): PreparedBuild {
-        const isWorkerMode = this._config.mode === 'worker';
         // The embedder's own inline height, back as soon as a build without auto-sizing starts (R1:R3-8), whether or not it
         // then completes: the element's, not a resource of the build, and written without embedder code.
         if (!this._autoResizeEnabled()) this._releaseAutoHeight();
@@ -2319,7 +2341,17 @@ export class WebSandbox extends ElementBase {
         const reach = this._reach();
         this._refuseByTrustedTypes();
         if (this._config.mode === 'strict') return this._prepareStrictFrame(built, files, reach);
+        return this._prepareDocumentFrame(built, files, reach);
+    }
 
+    /**
+     * Cooperative and worker mode: the guest document (cooperative mode's is `html`, which runs as it is: that is the mode;
+     * worker mode's has no markup) under the guest policy, in the wrapper. Cooperative mode reads `html` with an inert
+     * parser here, for its warning and its file references (HOST_PASSES.cooperativeDocument); a strict or sealed build
+     * never reaches this (_prepareBuild returns before it).
+     */
+    private _prepareDocumentFrame(built: FileStore, files: FileSnapshotEntry[], reach: NarrowedReach): PreparedBuild {
+        const isWorkerMode = this._config.mode === 'worker';
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
         const policy = this._guestPolicy(files, reach.origins);
@@ -2363,7 +2395,7 @@ export class WebSandbox extends ElementBase {
     // it does where it has them.
     private _refuseByTrustedTypes() {
         const trustedTypes = this._trustedTypes();
-        if (trustedTypes && buildRefused(trustedTypes, this._config.mode as TrustedTypesMode)) throw new TrustedTypesRefusal("the host page's trusted-types directive does not name the policy");
+        if (trustedTypes && buildRefused(trustedTypes, this._config.mode as TrustedTypesMode)) throw mintUncodedError(TrustedTypesRefusal, "the host page's trusted-types directive does not name the policy");
     }
 
     /**
@@ -2404,12 +2436,11 @@ export class WebSandbox extends ElementBase {
         const entry = this._config.entry;
         if (typeof entry === 'string' && entry !== '') {
             const file = files.find(candidate => candidate[0] === entry);
-            if (!file || !isJavaScriptType(file[1])) throw new Error('the entry was not refused before the build'); // _buildRefusal decides
+            if (!file || !isJavaScriptType(file[1])) throw mintUncodedError(Error, 'the entry was not refused before the build'); // _buildRefusal decides
             entrySource = entryText(file[2]);
         }
 
         const html = this._config.html || '<div id="root"></div>';
-        this._warnAboutStrictHtml(mode, html);
         const sandboxFlags = this._getSandboxFlags();
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
         // never a type that opens as a document (BR:ST1); stylesheets without a network URL (S74, files.ts viewStylesheets)
@@ -2504,11 +2535,14 @@ export class WebSandbox extends ElementBase {
 
     // Sealed mode is the default and its view is strict mode's, so markup written for cooperative mode reaches that view
     // unchanged: its scripts and handlers never run (the renderer drops them, and the view's policy admits only the
-    // bootstrap). Said once per element and mode, in the mode's words, read with an inert parser (markup-scripts.ts); not
-    // again once said, so a big view is parsed only until then.
-    private _warnAboutStrictHtml(mode: 'strict' | 'sealed', html: string) {
-        const warning = mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING;
-        if (this._warnedStrict.has(warning) || !scriptInMarkup(html)) return;
+    // bootstrap). Said once per element and mode, in the mode's words, from what the view's renderer noted it dropped of
+    // the initial view (VIEW_INITIAL). The element reads no markup of a strict or sealed build itself: a parser of the host
+    // page's realm would check the guest's markup against the host page's policy, and report it (BD7:LIM-1; HOST_PASSES,
+    // host-passes.ts).
+    private _warnAboutStrictHtml(dropped: unknown) {
+        if (!hasStrictView(this._config.mode)) return;
+        const warning = this._config.mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING;
+        if (this._warnedStrict.has(warning) || !dropsScript(dropped)) return;
         this._warnedStrict.add(warning);
         console.warn(warning);
     }
@@ -2768,6 +2802,15 @@ function buildsHere(element: WebSandbox): boolean {
     return element.isConnected && element.ownerDocument === document;
 }
 
+// Whether the view's notes of what it dropped (VIEW_INITIAL: at most three constants) name a script or a handler.
+function dropsScript(dropped: unknown): boolean {
+    if (!Array.isArray(dropped)) return false;
+    for (let i = 0; i < dropped.length && i < 3; i++) {
+        if (dropped[i] === 'script' || dropped[i] === 'handler') return true;
+    }
+    return false;
+}
+
 // Insertion: the reducer's `connect` builds, or, where the element may not build, stops and warns once (`initialize`,
 // `warnForeignDocument`). Neither dispatches anything synchronously: a build's failure comes in a task (R1:R3-2).
 function connected(element: WebSandbox) {
@@ -2812,7 +2855,7 @@ function adopted(element: WebSandbox) {
  */
 export function defineWebSandbox(tagName = 'web-sandbox'): typeof WebSandbox {
     const existing = customElements.get(tagName);
-    if (existing && existing !== WebSandbox) throw new Error(`<${tagName}> is already defined by another element`);
+    if (existing && existing !== WebSandbox) throw mintUncodedError(Error, `<${tagName}> is already defined by another element`);
     if (!existing) customElements.define(tagName, WebSandbox);
     return WebSandbox;
 }

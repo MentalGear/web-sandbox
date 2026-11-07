@@ -58,7 +58,7 @@ export type MakerCovers =
  *   - `warned`: the element drops the URL from a registered stylesheet when it builds, and warns once, naming the file;
  *   - `string`: the prelude's code-from-string refusal throws the library's EvalError in the guest before the platform sees the
  *     string, which would have made the request: nothing is checked, reported or sent;
- *   - `unbuildable`: the build refuses an entry that holds it (`import()`, entry-imports.ts), with the reason `entryImport`:
+ *   - `unbuildable`: the build refuses an entry that holds it (`import()` or a phase of it, entry-imports.ts), with the reason `entryImport`:
  *     no worker runs, so nothing is checked, reported or sent. The spec builds each one on its own.
  */
 export type SealedOutcome = 'gate' | 'refused' | 'absent' | 'dropped' | 'removed' | 'warned' | 'string' | 'unbuildable';
@@ -123,6 +123,9 @@ const WORKER: Maker[] = [
     { id: 'import', realm: 'worker', covers: [], scheme: 'https', code: "import(U).then(() => 'sent', (e) => e.name)", outcome: 'unbuildable', sees: 'entryImport', strict: false, frame: true },
     { id: 'import-file', realm: 'worker', covers: [], scheme: 'https', code: "import('./main.js').then(() => 'sent', (e) => e.name)", outcome: 'unbuildable', sees: 'entryImport', strict: false, frame: false, note: "a registered file by a literal specifier: the view's script-src admits no module, so it loads nothing in strict mode either, and a document has no registered files" },
     { id: 'import-data', realm: 'worker', covers: [], scheme: 'https', code: "import('data:text/javascript,0').then(() => 'sent', (e) => e.name)", outcome: 'unbuildable', sees: 'entryImport', strict: false, frame: false, note: 'a data: URL names no server' },
+    // the phases of an import (BD7:CHL-1): no engine of the suite runs them unflagged, and the build refuses them as import()
+    { id: 'import-source', realm: 'worker', covers: [], scheme: 'https', code: "import.source(U).then(() => 'sent', (e) => e.name)", outcome: 'unbuildable', sees: 'entryImport', strict: false, frame: false, note: 'a phase of an import: a SyntaxError on every engine of the suite, which runs it only behind a flag' },
+    { id: 'import-defer', realm: 'worker', covers: [], scheme: 'https', code: "import.defer(U).then(() => 'sent', (e) => e.name)", outcome: 'unbuildable', sees: 'entryImport', strict: false, frame: false, note: 'as import-source' },
     { id: 'import-scripts', realm: 'worker', covers: [{ global: 'importScripts' }, { compiler: 'importScripts' }], scheme: 'https', code: absent('importScripts(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: 'a document has no importScripts()' },
     { id: 'worker', realm: 'worker', covers: [{ global: 'Worker' }, { carrier: 'frames' }, { compiler: 'Worker' }], scheme: 'https', code: absent('new Worker(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: "a frame's Worker of another origin's URL is refused before any request" },
     { id: 'shared-worker', realm: 'worker', covers: [{ global: 'SharedWorker' }, { carrier: 'frames' }, { compiler: 'SharedWorker' }], scheme: 'https', code: absent('new SharedWorker(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: "a frame's SharedWorker of another origin's URL is refused before any request" },

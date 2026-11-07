@@ -32,9 +32,11 @@ import { hostSiteUndecided, onHostSite } from './host-site';
 import type { Origin } from './origin';
 import { RPC_MAX_BYTES, type BudgetRefusal } from './rpc';
 import { MAX_TOTAL_BYTES } from './files';
+import { VIEW_RENDER_MAX_LENGTH } from './in-sandbox-view';
 import { defineData, hasOwnField, ownField, type Complete, type Holds } from './utils';
 import { watchdogBudget } from './watchdog';
 import { fixedDetail, reasonText, type LibraryDetail } from './reasons';
+import { mintUncodedError } from './minted-errors';
 
 /** The per-second budget of the calls the guest makes, per environment: what both ends count. */
 export interface CallBudget {
@@ -166,7 +168,7 @@ export class ConfigRefusal extends Error {
  */
 export function sealedNetworkRefusal(mode: unknown, source: Record<string, unknown>): ConfigRefusal | null {
     if (mode !== 'sealed') return null;
-    return NETWORK_OPTIONS.some(name => ownField(source, name) !== undefined) ? new ConfigRefusal(reasonText('sealedNetwork')) : null;
+    return NETWORK_OPTIONS.some(name => ownField(source, name) !== undefined) ? mintUncodedError(ConfigRefusal, reasonText('sealedNetwork')) : null;
 }
 
 /**
@@ -178,7 +180,19 @@ export function sealedNetworkRefusal(mode: unknown, source: Record<string, unkno
  */
 export function sealedScriptUnsafeRefusal(mode: unknown, source: Record<string, unknown>): ConfigRefusal | null {
     if (mode !== 'sealed') return null;
-    return ownField(source, 'scriptUnsafe') === true ? new ConfigRefusal(reasonText('sealedScriptUnsafe')) : null;
+    return ownField(source, 'scriptUnsafe') === true ? mintUncodedError(ConfigRefusal, reasonText('sealedScriptUnsafe')) : null;
+}
+
+/**
+ * Strict and sealed mode's `html` longer than one render may be (VIEW_RENDER_MAX_LENGTH: the initial view is a render) is
+ * refused with its reason (`htmlTooLong`), by setConfig() (normaliseConfig) and load() (host.ts) alike, before anything
+ * stores or reads it (BD7:LIM-3): the view parses the whole of its initial markup before its renderer can refuse any of
+ * it, so the bound is decided here, where the markup arrives. Cooperative mode's `html` is its guest document, which the
+ * browser parses as it is, and worker mode's is ignored.
+ */
+export function htmlRefusal(mode: unknown, html: unknown): ConfigRefusal | null {
+    if (!hasStrictView(mode) || typeof html !== 'string') return null;
+    return html.length > VIEW_RENDER_MAX_LENGTH ? mintUncodedError(ConfigRefusal, reasonText('htmlTooLong')) : null;
 }
 
 // Old names of modes: refused like any other value that is not a mode, never an alias (nothing is published, so no
@@ -445,7 +459,8 @@ export const CONFIG_SCHEMA = {
     },
     html: {
         default: '', documented: "`''`", modes: ['strict', 'sealed', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
-        // a string or nothing (R1:R1-3): anything else is dropped with a warning, never refuses the config
+        // a string or nothing (R1:R1-3): anything else is dropped with a warning, never refuses the config; in strict and
+        // sealed mode one longer than VIEW_RENDER_MAX_LENGTH refused it before any rule ran (htmlRefusal, BD7:LIM-3)
         read: ({ given, present, warn }) => {
             if (typeof given === 'string') return given;
             if (present) warn(`[Sandbox] "html" must be a string; ${shown(given)} was dropped.`);
@@ -509,8 +524,9 @@ export const CONFIG_SCHEMA = {
         // the guard rail (S4): on in most presets and every e2e spec, so it says once what it costs
         notice: (_, read) => (read === true ? ["[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content."] : []),
     },
-    // not in cooperative mode: the guest document can share the host's thread, so no timer could fire meanwhile
-    workerExecutionTimeout: { default: 0, documented: '`0` (off)', modes: ['strict', 'sealed', 'worker'], ignoredIn: (mode) => mode === 'cooperative', read: delay('workerExecutionTimeout', 'no execute() deadline applies') },
+    // not in cooperative mode: the guest document can share the host's thread, so no timer could fire meanwhile; not in
+    // sealed mode, whose deadline would be an execute() call's, and sealed mode has no execute() (BD7:DOC-3)
+    workerExecutionTimeout: { default: 0, documented: '`0` (off)', modes: ['strict', 'worker'], ignoredIn: (mode) => mode === 'cooperative' || mode === 'sealed', read: delay('workerExecutionTimeout', 'no execute() deadline applies') },
     watchdogTimeout: { default: 0, documented: '`0` (off)', modes: ALL_MODES, read: delay('watchdogTimeout', 'no watchdog runs') },
     guestWrites: { default: false, documented: '`false`', modes: ALL_MODES, read: literalTrue },
 } satisfies Record<string, OptionRule>;
@@ -554,7 +570,7 @@ export interface Normalised {
 export function normaliseConfig(copy: unknown, hostPage: HostPage): Normalised {
     const warnings: string[] = [];
     const warn = (message: string) => { warnings.push(message); };
-    if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return { value: null, warnings, refusal: new TypeError('setConfig() takes an object') };
+    if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return { value: null, warnings, refusal: mintUncodedError(TypeError, 'setConfig() takes an object') };
     const source = copy as Record<string, unknown>;
     let asked: NormaliseContext | null = null;
     const host = (): NormaliseContext => (asked ??= typeof hostPage === 'function' ? hostPage() : hostPage);
@@ -567,6 +583,8 @@ export function normaliseConfig(copy: unknown, hostPage: HostPage): Normalised {
     if (sealedNetwork !== null) return { value: null, warnings, refusal: sealedNetwork };
     const sealedScriptUnsafe = sealedScriptUnsafeRefusal(mode, source);
     if (sealedScriptUnsafe !== null) return { value: null, warnings, refusal: sealedScriptUnsafe };
+    const htmlTooLong = htmlRefusal(mode, ownField(source, 'html'));
+    if (htmlTooLong !== null) return { value: null, warnings, refusal: htmlTooLong };
     const values = Object.create(null) as Record<OptionName, unknown>;
     for (const name of SCHEMA_NAMES) values[name] = RULES[name].default; // what readIn(mode) leaves out holds its default
     try {
@@ -651,7 +669,7 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
             && config.unsafeCapabilities.every(capability => (UNSAFE_CAPABILITIES as readonly string[]).includes(capability)),
     },
     {
-        name: 'an option outside its modes holds its default (entry, allowAnimations, allowAutoplay outside strict and sealed; unsafeCapabilities in strict and sealed; html and autoResize in worker; workerExecutionTimeout in cooperative)',
+        name: 'an option outside its modes holds its default (entry, allowAnimations, allowAutoplay outside strict and sealed; unsafeCapabilities in strict and sealed; html and autoResize in worker; workerExecutionTimeout in cooperative and sealed)',
         holds: ({ config }) => CONFIG_OPTIONS.every(name => PARSED_APART.includes(name) || !ignoredIn(name, config.mode) || sameValue((config as unknown as Record<string, unknown>)[name], RULES[name].default)),
     },
     {

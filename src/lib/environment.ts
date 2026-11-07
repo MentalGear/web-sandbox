@@ -24,6 +24,7 @@ import type { BridgeFrame } from './bridge-frame';
 import type { FetchBridge } from './fetch-bridge';
 import type { LongTimeout } from './long-timer';
 import type { Watchdog } from './watchdog';
+import { mintError } from './minted-errors';
 
 /** Why a guest write the view never confirmed was answered as lost. */
 const UNSHOWN_WRITE_MESSAGE = '[Sandbox] the sandbox was reset or terminated before the view showed this write.';
@@ -85,7 +86,7 @@ export const ENVIRONMENT_RELEASES: Releases = {
     _loadDeadline: (deadline) => deadline.stop(),
     _port: (port) => port.close(),
     _viewPort: (port) => port.close(),
-    _viewWrites: (write) => { for (const { lost } of write) lost(new Error(UNSHOWN_WRITE_MESSAGE)); },
+    _viewWrites: (write) => { for (const { lost } of write) lost(mintError('TERMINATED', UNSHOWN_WRITE_MESSAGE)); },
     _executionTimers: (timers) => { for (const timer of timers) timer.cancel(); },
     _executionProbes: (ends) => { for (const end of ends) end(); },
     _watchdog: (watchdog) => watchdog.stop(),

@@ -1,4 +1,5 @@
 import { test, expect } from './fixture';
+import { CROSSING_TEXTS, type LibraryErrorCode } from '@src/lib/minted-errors';
 
 /**
  * What crosses a call is what the value and the API show (class P; rpc.ts, compactViews and handlerErrorText), in the
@@ -10,11 +11,23 @@ import { test, expect } from './fixture';
  *      Chromium error quotes the function's source), gives the app its name or the library's text only; the host's
  *      console has the engine's text (BD5:LIM-2, BD5:DOC-1);
  *   3. a host method that lets the refusal of its own call() propagate (arguments clone cannot carry: a function, a
- *      symbol, a getter that throws) gives the app the library's text, never the engine's (BD6:LIM-1).
+ *      symbol, a getter that throws) gives the app the code's fixed text, never the engine's (BD6:LIM-1);
+ *   4. a host method that lets any other library error propagate, whose message quotes the host's data or another app's
+ *      text (a registerFiles() or unregisterFiles() refusal of the host's path, a relayed call to another element whose
+ *      app threw, or lacks the name, or never answers), gives the app the code and a fixed text; the embedder's own
+ *      words still cross as written (BD7:CHL-2).
  * unit tests: test/unit/rpc-what-crosses.test.ts; the property test over the posted snapshot: test/unit/structural.test.ts.
  */
 
 const SECRET = 'HOSTSECRET42';
+
+// Another app, on its own element: a method that throws its own words, and one that never answers.
+const OTHER_ENTRY = `
+bridge.expose('fail', () => { throw new Error("APPB-${SECRET}: the other app's own words"); });
+bridge.expose('HOSTMETHOD-${SECRET}-hang', () => new Promise(() => {}));
+`;
+
+const fixed = (code: LibraryErrorCode) => `${code}: ${CROSSING_TEXTS[code]}`;
 
 // The app: reads every case from the host, describes what arrived, calls the host's throwing methods, sends a partial
 // view of its own, and reports all of it.
@@ -52,8 +65,18 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
     void sandbox; // the fixture opens the harness page
     const warnings: string[] = [];
     page.on('console', (message) => { if (message.type() === 'warning') warnings.push(message.text()); });
-    const report = await page.evaluate(async ({ entry, secret }) => {
+    const report = await page.evaluate(async ({ entry, otherEntry, secret }) => {
         const s = document.querySelector('web-sandbox') as any;
+        // the other app's element, ready before the first app starts
+        const other = document.createElement('web-sandbox') as any;
+        other.id = 'other';
+        document.body.appendChild(other);
+        other.registerFiles({ 'main.js': otherEntry });
+        const otherSettled = await new Promise(resolve => {
+            other.addEventListener('ready', () => resolve('ready'), { once: true });
+            other.addEventListener('terminated', () => resolve('terminated'), { once: true });
+            other.setConfig({ entry: 'main.js' });
+        });
         const buffer = new Uint8Array(64);
         buffer.set(new TextEncoder().encode(`PUB${secret}-token=abc123`));
         const doubles = new Float64Array(8);
@@ -104,6 +127,13 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
             relaySymbol: async () => await s.call('apply', Symbol(secret)),
             relayGetterJson: () => s.call('apply', { get x() { return JSON.parse(secret); } }),
             relayGetterNull: () => s.call('apply', { get x() { return (null as any)[secret]; } }),
+            // a library error whose message quotes the host's data or another app's text (BD7:CHL-2)
+            registerFilesPath: () => s.registerFiles({ [`HOSTFOLDER-${secret}/..`]: 'x' }),
+            registerFilesType: () => s.registerFiles({ [`HOSTFOLDER-${secret}/notes.txt`]: { content: 'x', type: 'not a type' } }),
+            unregisterFiles: () => s.unregisterFiles([`HOSTFOLDER-${secret}/..`]),
+            relayOtherApp: () => other.call('fail'),
+            relayUnknownName: () => other.call(`HOSTMETHOD-${secret}-unknown`),
+            relayTimeout: () => other.callWithTimeout(300, `HOSTMETHOD-${secret}-hang`),
         };
         s.registerFiles({ 'main.js': entry });
         s.expose('labels', () => Object.keys(cases));
@@ -118,10 +148,10 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
             try { takes[label] = await s.call('take', cases[label]!()); } catch (e: any) { takes[label] = { error: e.code, message: e.message }; }
         }
         const app = await fromApp as { results: Record<string, Described>; failures: Record<string, Described & { resolved?: string }>; guestToHost: unknown };
-        return { settled, takes, ...app, hostBufferAfter: new TextDecoder().decode(buffer.subarray(0, 15)) };
-    }, { entry: ENTRY, secret: SECRET });
+        return { settled, otherSettled, takes, ...app, hostBufferAfter: new TextDecoder().decode(buffer.subarray(0, 15)) };
+    }, { entry: ENTRY, otherEntry: OTHER_ENTRY, secret: SECRET });
 
-    expect(report.settled).toBe('ready');
+    expect([report.settled, report.otherSettled]).toEqual(['ready', 'ready']);
     const own = (view: Described | undefined, bytes: number, text?: string) => {
         expect(view).toMatchObject({ byteOffset: 0, byteLength: bytes, bufferLength: bytes });
         if (text !== undefined) expect(view!.whole).toBe(text);
@@ -176,13 +206,22 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
     for (const label of ['resultFunction', 'resultNode']) {
         expect(failures[label], label).toEqual({ error: 'RESULT_NOT_TRANSFERABLE', message: 'result is not transferable: it holds a value structured clone cannot carry' });
     }
-    // the host's console has each withheld text, with the method's name: the embedder can still debug
-    const withheld = warnings.filter(text => text.startsWith('[Sandbox] "fail" failed'));
-    expect(withheld).toHaveLength(11);
-    expect(withheld.some(text => text.includes(SECRET))).toBe(true);
-    // a refusal of the host's own call() carries the library's text on every engine; the engine's goes to the console
+    // a refusal of the host's own call() carries its code and fixed text on every engine; the engine's goes to the console
     for (const label of ['relayFunction', 'relaySymbol', 'relayGetterJson', 'relayGetterNull']) {
-        expect(failures[label], label).toEqual({ error: 'HANDLER_ERROR', message: 'RPC arguments are not transferable: they hold a value structured clone cannot carry' });
+        expect(failures[label], label).toEqual({ error: 'HANDLER_ERROR', message: fixed('ARGS_NOT_TRANSFERABLE') });
     }
     expect(warnings.filter(text => text.startsWith('[Sandbox] "apply" failed'))).toHaveLength(4);
+    // a library error whose message quotes the host's path, its method name or the other app's text: the code and a
+    // fixed text (BD7:CHL-2)
+    const LIBRARY: Record<string, LibraryErrorCode> = {
+        registerFilesPath: 'INVALID_PATH', registerFilesType: 'INVALID_FILE', unregisterFiles: 'INVALID_PATH',
+        relayOtherApp: 'HANDLER_ERROR', relayUnknownName: 'UNKNOWN_METHOD', relayTimeout: 'TIMEOUT',
+    };
+    for (const [label, code] of Object.entries(LIBRARY)) expect(failures[label], label).toEqual({ error: 'HANDLER_ERROR', message: fixed(code) });
+    // the host's console has each withheld text, with the method's name: the embedder can still debug
+    const withheld = warnings.filter(text => text.startsWith('[Sandbox] "fail" failed'));
+    expect(withheld).toHaveLength(11 + 4 + Object.keys(LIBRARY).length);
+    for (const marker of [`HOSTFOLDER-${SECRET}`, `APPB-${SECRET}`, `HOSTMETHOD-${SECRET}-unknown`, `HOSTMETHOD-${SECRET}-hang`]) {
+        expect(withheld.some(text => text.includes(marker)), marker).toBe(true);
+    }
 });
