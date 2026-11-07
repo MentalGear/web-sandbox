@@ -67,9 +67,9 @@ const LISTED = 'https://cdn.listed.example';
 const API = 'https://api.listed.example';
 /** Strict mode with every network option: the positive control. `false`: the page sends no policy, so the lists stay. */
 const STRICT_NETWORK = { mode: 'strict', origins: { images: [LISTED], media: [LISTED], connect: [API] }, fetchBridge: { allow: [API] }, hostContentSecurityPolicy: false };
-/** Every option sealed mode takes, each set. */
+/** Every option sealed mode takes, each set (scriptUnsafe to the one value sealed mode takes: true refuses the config). */
 const SEALED_EVERY = {
-    mode: 'sealed', html: '<p onclick="x()">x</p><script>y()</script>', capabilities: ['allow-scripts'], scriptUnsafe: true, hostContentSecurityPolicy: "default-src 'self'",
+    mode: 'sealed', html: '<p onclick="x()">x</p><script>y()</script>', capabilities: ['allow-scripts'], scriptUnsafe: false, hostContentSecurityPolicy: "default-src 'self'",
     entry: 'main.js', watchdogTimeout: 10_000, workerExecutionTimeout: 10_000, autoResize: true, callLimits: { maxPerSecond: 5 }, allowAnimations: true, allowAutoplay: true, guestWrites: true,
 };
 
@@ -183,7 +183,7 @@ describe('T4: a sealed build wires no network source: its policy, its gate list,
     it('sealed: the view policy is sealedViewPolicy over its file kinds, the gate list is [], sandboxFetch() refuses in the guest, one frame, INIT_VIEW names no origins, the build has no network', async () => {
         const { el, prepared, features } = await build({ mode: 'sealed' });
         const kinds = new Set<SealedFileKind>(['styles', 'images', 'fonts', 'media']);
-        expect(policyOf(el)).toBe(sealedViewPolicy({ fileKinds: kinds, bootstrapHash: HASH, scriptUnsafe: false }));
+        expect(policyOf(el)).toBe(sealedViewPolicy({ fileKinds: kinds, bootstrapHash: HASH }));
         expect(networkSources(policyOf(el))).toEqual([]);
         expect(directives(policyOf(el)).get('connect-src')).toEqual(["'none'"]);
         expect(features.connect).toEqual([]);
@@ -549,7 +549,7 @@ describe("T6: the egress table's sealed column: every surface of sealed mode is 
 // ---- T9: INHERITED_CONTEXT's sealed field
 
 describe("T9: every row of the host page's context says what it is in sealed mode, and the build bears out the rows sealed mode drops", () => {
-    it('every row has its standing; a row that does not apply says why; 13 remain, 1 is reduced, 5 do not apply (research 24, §1.4)', () => {
+    it('every row has its standing; a row that does not apply says why; 14 remain, 2 are reduced, 5 do not apply (research 24, §1.4)', () => {
         const rows = inheritedContextRows();
         for (const row of rows) {
             expect(['remains', 'reduced', 'not-applicable'], row.id).toContain(row.sealed?.standing);
@@ -558,8 +558,8 @@ describe("T9: every row of the host page's context says what it is in sealed mod
         }
         const by = (standing: string) => rows.filter(row => row.sealed.standing === standing).map(row => row.id).sort();
         expect(by('not-applicable')).toEqual(['ancestorOrigins', 'cookies', 'referrer', 'serviceWorker', 'uiSurfaces']);
-        expect(by('reduced')).toEqual(['cspFetch']);
-        expect(by('remains')).toHaveLength(13);
+        expect(by('reduced')).toEqual(['cspFetch', 'cspReporting']);
+        expect(by('remains')).toHaveLength(14);
         expect(rows).toHaveLength(Object.keys(INHERITED_CONTEXT).length);
     });
 

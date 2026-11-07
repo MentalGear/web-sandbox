@@ -8,9 +8,18 @@
  * of URL a CSS reference makes in every place guest CSS reaches the view. A maker the library learns about without a maker
  * here fails that test, so none is missed silently.
  *
+ * The enumeration is also every way a sealed worker could make the browser check the policy list it inherits from the host
+ * page (S74, class A: INHERITED_CONTEXT.cspPolicyText, cspReporting; BD6:ISO-1, BD6:ISO-2): a check that refuses reports the
+ * page's policy text to the guest and the action's URL or string to the page's report endpoint. Each worker maker is stopped
+ * by the library before the platform checks anything: the request gate, the allowlist, the code-from-string refusal
+ * (CODE_FROM_STRING_SINKS, with the compilers the worker does not have, ABSENT_COMPILERS), or the build, which refuses an
+ * entry that calls `import()`. test/e2e/sealed-host-policy.spec.ts runs them on the realistic host, whose report endpoint
+ * must receive nothing from the guest.
+ *
  * Plain data and types: imported by a unit test as well as by the spec, so it imports nothing at run time.
  */
 import type { CookieCarrierId } from '@src/lib/cookie-facts';
+import type { ABSENT_COMPILERS, CodeFromStringSinkId } from '@src/lib/code-from-strings';
 
 /** Where the guest makes the request. */
 export type MakerRealm = 'worker' | 'view' | 'set-css' | 'stylesheet';
@@ -31,7 +40,9 @@ export type MakerCovers =
     | { readonly carrier: CookieCarrierId } // a row of COOKIE_CARRIERS
     | { readonly attribute: readonly [element: string, attribute: string] } // a URL attribute the renderer governs (RENDER_URL_ATTRIBUTES, links)
     | { readonly linkRel: string } // a <link> relation (LINK_REL_KINDS, RENDER_RULES.linkRelations)
-    | { readonly css: CssPlace; readonly kind: CssKind; readonly via: 'url' | 'image-set' | '@import' | '@font-face' };
+    | { readonly css: CssPlace; readonly kind: CssKind; readonly via: 'url' | 'image-set' | '@import' | '@font-face' }
+    | { readonly sink: CodeFromStringSinkId } // a code-from-string sink the prelude refuses (CODE_FROM_STRING_SINKS)
+    | { readonly compiler: keyof typeof ABSENT_COMPILERS }; // a compiler the worker does not have (ABSENT_COMPILERS)
 
 /**
  * How sealed mode stops it and where that is reported:
@@ -40,15 +51,17 @@ export type MakerCovers =
  *   - `refused`: the library refuses it in the guest with its own code and sends nothing anywhere (`sandboxFetch()`:
  *     FETCH_NOT_ALLOWED, D4);
  *   - `absent`: the worker has no such global or member (the allowlist), so the attempt throws in the guest;
- *   - `policy`: the browser's policy refuses it (a module script outside `script-src`); the guest's promise rejects, and the
- *     engine's own report reaches the element where the engine raises one in a worker (Chromium, Firefox; not WebKit);
  *   - `dropped`: the renderer drops the URL before insertion and reports it as a violation of its kind's directive;
  *   - `removed`: the renderer keeps no such element or attribute, so nothing names the URL and nothing is reported: a
  *     navigation (a link's href becomes INERT_HREF, a form loses its action), a frame, a ping, and a `<link>` that names no
  *     file the view minted (removed whole, in strict mode too);
- *   - `warned`: the element drops the URL from a registered stylesheet when it builds, and warns once, naming the file.
+ *   - `warned`: the element drops the URL from a registered stylesheet when it builds, and warns once, naming the file;
+ *   - `string`: the prelude's code-from-string refusal throws the library's EvalError in the guest before the platform sees the
+ *     string, which would have made the request: nothing is checked, reported or sent;
+ *   - `unbuildable`: the build refuses an entry that holds it (`import()`, entry-imports.ts), with the reason `entryImport`:
+ *     no worker runs, so nothing is checked, reported or sent. The spec builds each one on its own.
  */
-export type SealedOutcome = 'gate' | 'refused' | 'absent' | 'policy' | 'dropped' | 'removed' | 'warned';
+export type SealedOutcome = 'gate' | 'refused' | 'absent' | 'dropped' | 'removed' | 'warned' | 'string' | 'unbuildable';
 
 /** The scheme of the listener a maker is aimed at. */
 export type MakerScheme = 'https' | 'http' | 'wss';
@@ -88,6 +101,10 @@ const xhr = (sync: boolean) => sync
     ? attempt("const x = new XMLHttpRequest(); x.open('GET', U, false); x.send(); return 'sent ' + x.status;")
     : `new Promise((resolve) => { const x = new XMLHttpRequest(); x.onload = () => resolve('sent'); x.onerror = () => resolve('error ' + x.readyState + ' ' + x.status); x.open('GET', U); x.send(); })`;
 const absent = (expression: string) => attempt(`${expression}; return 'made';`);
+// The text of a dynamic import of U, spelt so that the entry itself holds no `import` followed by `(` (the build refuses
+// that, entry-imports.ts): what a sink would compile and run, if it reached the platform.
+const IMPORTS_U = "'imp' + 'ort(' + JSON.stringify(U) + ')'";
+const compiled = (call: string) => attempt(`const S = ${IMPORTS_U}; ${call}; return 'ran';`);
 const at = (top: number) => `position:absolute;left:0;top:${top}px;width:120px;height:20px;display:block;margin:0`;
 
 /** The worker's makers: the platform's, the library's, and the ones the allowlist keeps out. */
@@ -102,16 +119,34 @@ const WORKER: Maker[] = [
     { id: 'websocket', realm: 'worker', covers: [{ gate: 'WebSocket' }, { carrier: 'websocket' }], scheme: 'wss', code: absent('new WebSocket(U)'), outcome: 'gate', directive: 'connect-src', sees: 'SecurityError', strict: false, frame: false, note: "not on every engine: Chromium's handshake from a sandboxed srcdoc frame did not reach the listener (measured; Firefox's and WebKit's did); the request gate's own spec has a socket's positive control" },
     { id: 'websocket-https', realm: 'worker', covers: [{ gate: 'WebSocket' }], scheme: 'https', code: absent('new WebSocket(U)'), outcome: 'gate', directive: 'connect-src', reportedAs: 'wss', sees: 'SecurityError', strict: false, frame: false, note: "not on every engine: Chromium's handshake from a sandboxed srcdoc frame did not reach the listener (measured; Firefox's and WebKit's did); the request gate's own spec has a socket's positive control" },
     { id: 'sandbox-fetch', realm: 'worker', covers: [{ reserved: 'sandboxFetch' }], scheme: 'https', code: 'sandboxFetch(U).then(() => \'sent\', (e) => e.code)', outcome: 'refused', sees: 'FETCH_NOT_ALLOWED', strict: false, frame: false, note: "the library's own maker: a document has none" },
-    { id: 'import', realm: 'worker', covers: [], scheme: 'https', code: "import(U).then(() => 'sent', (e) => e.name)", outcome: 'policy', sees: 'TypeError', strict: false, frame: true },
-    { id: 'import-scripts', realm: 'worker', covers: [{ global: 'importScripts' }], scheme: 'https', code: absent('importScripts(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: 'a document has no importScripts()' },
-    { id: 'worker', realm: 'worker', covers: [{ global: 'Worker' }, { carrier: 'frames' }], scheme: 'https', code: absent('new Worker(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: "a frame's Worker of another origin's URL is refused before any request" },
-    { id: 'shared-worker', realm: 'worker', covers: [{ global: 'SharedWorker' }, { carrier: 'frames' }], scheme: 'https', code: absent('new SharedWorker(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: "a frame's SharedWorker of another origin's URL is refused before any request" },
+    // import() is syntax: the build refuses the entry that holds one (each built on its own; sees: the build's reason)
+    { id: 'import', realm: 'worker', covers: [], scheme: 'https', code: "import(U).then(() => 'sent', (e) => e.name)", outcome: 'unbuildable', sees: 'entryImport', strict: false, frame: true },
+    { id: 'import-file', realm: 'worker', covers: [], scheme: 'https', code: "import('./main.js').then(() => 'sent', (e) => e.name)", outcome: 'unbuildable', sees: 'entryImport', strict: false, frame: false, note: "a registered file by a literal specifier: the view's script-src admits no module, so it loads nothing in strict mode either, and a document has no registered files" },
+    { id: 'import-data', realm: 'worker', covers: [], scheme: 'https', code: "import('data:text/javascript,0').then(() => 'sent', (e) => e.name)", outcome: 'unbuildable', sees: 'entryImport', strict: false, frame: false, note: 'a data: URL names no server' },
+    { id: 'import-scripts', realm: 'worker', covers: [{ global: 'importScripts' }, { compiler: 'importScripts' }], scheme: 'https', code: absent('importScripts(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: 'a document has no importScripts()' },
+    { id: 'worker', realm: 'worker', covers: [{ global: 'Worker' }, { carrier: 'frames' }, { compiler: 'Worker' }], scheme: 'https', code: absent('new Worker(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: "a frame's Worker of another origin's URL is refused before any request" },
+    { id: 'shared-worker', realm: 'worker', covers: [{ global: 'SharedWorker' }, { carrier: 'frames' }, { compiler: 'SharedWorker' }], scheme: 'https', code: absent('new SharedWorker(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: "a frame's SharedWorker of another origin's URL is refused before any request" },
     { id: 'event-source', realm: 'worker', covers: [{ global: 'EventSource' }, { carrier: 'eventsource' }], scheme: 'https', code: absent('new EventSource(U, { withCredentials: true })'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: true },
     { id: 'send-beacon', realm: 'worker', covers: [{ navigator: 'sendBeacon' }, { carrier: 'beacon' }], scheme: 'https', code: absent("navigator.sendBeacon(U, 'x')"), outcome: 'absent', sees: 'TypeError', strict: false, frame: true },
     { id: 'web-transport', realm: 'worker', covers: [{ global: 'WebTransport' }], scheme: 'https', code: absent('new WebTransport(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: 'WebTransport needs HTTP/3, which the listener does not speak' },
     { id: 'websocket-stream', realm: 'worker', covers: [{ global: 'WebSocketStream' }], scheme: 'wss', code: absent('new WebSocketStream(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: 'no engine of the suite sends its handshake to the listener from a frame (measured)' },
     { id: 'font-face', realm: 'worker', covers: [{ global: 'FontFace' }], scheme: 'https', code: absent("new FontFace('f', 'url(' + U + ')').load()"), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: true },
     { id: 'caches', realm: 'worker', covers: [{ global: 'caches' }], scheme: 'https', code: absent('caches.open(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: 'Cache Storage makes no request' },
+    // strings run as code: each compiles a dynamic import of U, if it reaches the platform (a document's run, where the
+    // page admits them: `frame`; the sandbox's frame control runs with no 'unsafe-eval', so it makes none)
+    { id: 'eval', realm: 'worker', covers: [{ sink: 'eval' }], scheme: 'https', code: compiled('eval(S)'), outcome: 'string', sees: 'EvalError', strict: false, frame: false, note: "a string run as code: the frame control's policy, like the sandbox's, admits no 'unsafe-eval'" },
+    { id: 'eval-indirect', realm: 'worker', covers: [{ sink: 'eval' }], scheme: 'https', code: compiled('(0, eval)(S)'), outcome: 'string', sees: 'EvalError', strict: false, frame: false, note: "a string run as code: the frame control's policy, like the sandbox's, admits no 'unsafe-eval'" },
+    { id: 'function', realm: 'worker', covers: [{ sink: 'Function' }], scheme: 'https', code: compiled('new Function(S)()'), outcome: 'string', sees: 'EvalError', strict: false, frame: false, note: "a string run as code: the frame control's policy, like the sandbox's, admits no 'unsafe-eval'" },
+    { id: 'function-constructor', realm: 'worker', covers: [{ sink: 'Function.prototype.constructor' }], scheme: 'https', code: compiled('(() => {}).constructor(S)()'), outcome: 'string', sees: 'EvalError', strict: false, frame: false, note: "a string run as code: the frame control's policy, like the sandbox's, admits no 'unsafe-eval'" },
+    { id: 'async-function-constructor', realm: 'worker', covers: [{ sink: 'AsyncFunction.prototype.constructor' }], scheme: 'https', code: compiled('(async () => {}).constructor(S)()'), outcome: 'string', sees: 'EvalError', strict: false, frame: false, note: "a string run as code: the frame control's policy, like the sandbox's, admits no 'unsafe-eval'" },
+    { id: 'generator-function-constructor', realm: 'worker', covers: [{ sink: 'GeneratorFunction.prototype.constructor' }], scheme: 'https', code: compiled('(function* () {}).constructor(S)().next()'), outcome: 'string', sees: 'EvalError', strict: false, frame: false, note: "a string run as code: the frame control's policy, like the sandbox's, admits no 'unsafe-eval'" },
+    { id: 'async-generator-function-constructor', realm: 'worker', covers: [{ sink: 'AsyncGeneratorFunction.prototype.constructor' }], scheme: 'https', code: compiled('(async function* () {}).constructor(S)().next()'), outcome: 'string', sees: 'EvalError', strict: false, frame: false, note: "a string run as code: the frame control's policy, like the sandbox's, admits no 'unsafe-eval'" },
+    { id: 'set-timeout-string', realm: 'worker', covers: [{ sink: 'setTimeout' }], scheme: 'https', code: compiled('setTimeout(S)'), outcome: 'string', sees: 'EvalError', strict: false, frame: false, note: "a string run as code: the frame control's policy, like the sandbox's, admits no 'unsafe-eval'" },
+    { id: 'set-interval-string', realm: 'worker', covers: [{ sink: 'setInterval' }], scheme: 'https', code: compiled('clearInterval(setInterval(S, 1000000))'), outcome: 'string', sees: 'EvalError', strict: false, frame: false, note: "a string run as code: the frame control's policy, like the sandbox's, admits no 'unsafe-eval'" },
+    // the compilers the worker does not have
+    { id: 'webassembly', realm: 'worker', covers: [{ compiler: 'WebAssembly' }], scheme: 'https', code: absent('WebAssembly.compile(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: 'compiles bytes, makes no request' },
+    { id: 'shadow-realm', realm: 'worker', covers: [{ compiler: 'ShadowRealm' }], scheme: 'https', code: absent(`new ShadowRealm().evaluate(${IMPORTS_U})`), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: 'no engine of the suite ships ShadowRealm' },
+    { id: 'trusted-types', realm: 'worker', covers: [{ compiler: 'trustedTypes' }, { compiler: 'TrustedScript' }], scheme: 'https', code: absent("trustedTypes.createPolicy('p', { createScript: (s) => s })"), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: 'makes a value a sink accepts, no request' },
 ];
 
 /** The view's makers: every URL the renderer governs, and the ones it removes. */
