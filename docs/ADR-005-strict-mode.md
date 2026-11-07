@@ -444,7 +444,9 @@ animations, a pointer moving over `:hover ~` rules, animated images, indetermina
   - the renderer takes every `animation*` and `transition*` declaration, prefixed ones included, out of every kept `style`
     attribute's declaration, which it applies through the element's own CSSOM declaration and then reads: an inline
     `!important` beats any layer. Which are read is decided by their text alone: one without `animation`, `transition` or
-    a backslash is applied as written and never read, and one with a backslash or a declaration of `all` goes whole;
+    a backslash is applied as written and never read, and one with a backslash goes whole; one that declares `all` goes
+    whole whatever the switch, since through the CSSOM `all` is hundreds of longhands set and serialized per element in
+    Firefox and WebKit;
   - the view checks that the sheet is in force (a probe element's inline transition and animation must compute to none). A
     host page whose `style-src` refuses it (neither `'unsafe-inline'` nor its constant hash, API.md "Host page policy") gets a
     view that drops the guest's `<style>` and stylesheet `<link>` elements instead, and one warning with the hash.

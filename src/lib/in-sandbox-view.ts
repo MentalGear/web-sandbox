@@ -1089,6 +1089,12 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     // The element carries the declaration's serialization as its `style` attribute from then on (the engine writes it), and
     // the attribute goes when the declaration is empty.
     //
+    // A text that declares `all` goes whole, whatever the switches (R4:C-2): `all` expands into hundreds of longhands in
+    // Firefox and WebKit (one in Chromium), and an element's declaration sets and serializes each of them, per element:
+    // 10 000 elements of `all:unset` took WebKit 0.7 s to set and 0.7 s more to serialize, Firefox 0.1 s and 0.05 s, where
+    // the same attributes parsed by the engine itself took a fifth of it (research 25). Whether it does is read from the text
+    // as the CSS tokenizer reads names (`declaredNames`: comments, strings and escapes), and errs only toward removing.
+    //
     // Without animations and transitions (switches.animations false; R4:C-2, R5:L-2, R5:N-7), what happens to the text
     // depends on the text alone, never on how an engine stores it:
     //   1. The text decides whether there is anything to read. A declaration names its property with an identifier,
@@ -1099,11 +1105,8 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     //      invalid). So a text without "animation", "transition" (in any case) or a backslash declares no animation, and
     //      is applied as the guest wrote it: nothing is read back. "transform", "transparent" or
     //      "text-transform" alone never take the slower path (a test for "anim" or "trans" would send them there).
-    //   2. A text that does, and has a backslash (an escape the engine's parser would read as any name), or declares
-    //      `all` (the word as a property name: after the start, a `;`, whitespace or a comment, before an optional
-    //      whitespace and a colon; comments are skipped), goes whole. `all` expands into hundreds of longhands in Firefox
-    //      and WebKit and into one in Chromium, so reading and rewriting it would be work out of proportion to what the
-    //      guest sent, and its result would differ per engine. Either errs only toward removing.
+    //   2. A text that does, and has a backslash (an escape the engine's parser would read as any name), goes whole; one
+    //      that declares `all` has gone already (above). Either errs only toward removing.
     //   3. Otherwise the text is applied and the element's own CSSOM declaration is read, so the engine's parser decides
     //      what it declares (case, `!important`, var() in a shorthand: every engine stores longhands, under their own names).
     //      Without `all` a declaration holds at most a few longhands per character of its text (`font` the most), so
@@ -1123,35 +1126,49 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     // An element whose namespace has no `style` (jsdom's MathML, an engine without MathMLElement) gets nothing of it: fail
     // closed.
     const MAY_ANIMATE = /animation|transition|\\/i;
+    // `all` as a property name: after the start, a `;`, whitespace or a comment, before an optional whitespace and a colon
     const ALL_PROPERTY = /(^|[^a-z0-9_-])all[\t\n\f\r ]*:/i;
-    // The text without its comments and strings, each a space, in one pass: a comment runs to its "*/" or the end of
-    // the text, a string to its closing quote, a newline or the end (no escape is left to read: a text with a backslash
-    // goes before this). So neither a comment nor a quote can hide `all` from ALL_PROPERTY, nor show it one.
-    const outsideCommentsAndStrings = (text: string) => {
+    const NAME_CHARACTER = /^[a-z0-9_-]$/i;
+    const HEX_ESCAPE = /^([0-9a-f]{1,6})(\r\n|[\t\n\f\r ])?/i;
+    const NEWLINE = /^[\n\r\f]$/;
+    // The text as the tokenizer reads names in it, in one pass: each comment and each string a space (a comment runs to
+    // its "*/" or the end of the text, a string to its unescaped closing quote, a newline or the end), and each escape
+    // outside them the character it stands for where that is a letter, a digit, `-` or `_`, else `x` (an escape is always
+    // part of a name: never a comment, a string, a colon or a separator). So neither a comment, a quote nor an escape can
+    // hide `all` from ALL_PROPERTY, or show it one.
+    const slice = String.prototype.slice;
+    const declaredNames = (text: string) => {
         const parts = list<string>();
         let from = 0;
         let i = 0;
         while (i < text.length) {
             const c = text[i]!;
             let end = -1;
+            let read = ' ';
             if (c === '/' && text[i + 1] === '*') {
                 const close = text.indexOf('*/', i + 2);
                 end = close < 0 ? text.length : close + 2;
             } else if (c === '"' || c === "'") {
                 end = i + 1;
-                while (end < text.length && text[end] !== c && text[end] !== '\n' && text[end] !== '\r' && text[end] !== '\f') end++;
-                end = end < text.length ? end + 1 : end;
+                while (end < text.length && text[end] !== c && !NEWLINE.test(text[end]!)) end += text[end] === '\\' ? 2 : 1;
+                end = Math.min(end + 1, text.length);
+            } else if (c === '\\') {
+                const hex = HEX_ESCAPE.exec(call(slice, text, [i + 1, i + 9]) as string);
+                const code = hex ? parseInt(hex[1]!, 16) : -1;
+                const escaped = hex ? (code < 128 ? String.fromCharCode(code) : 'x') : text[i + 1];
+                end = hex ? i + 1 + hex[0].length : escaped === undefined || NEWLINE.test(escaped) ? i + 1 : i + 2;
+                read = escaped !== undefined && NAME_CHARACTER.test(escaped) ? escaped : end === i + 1 ? ' ' : 'x';
             }
             if (end < 0) {
                 i++;
                 continue;
             }
-            parts[parts.length] = call(String.prototype.slice, text, [from, i]) as string;
-            parts[parts.length] = ' ';
+            parts[parts.length] = call(slice, text, [from, i]) as string;
+            parts[parts.length] = read;
             from = end;
             i = end;
         }
-        parts[parts.length] = call(String.prototype.slice, text, [from]) as string;
+        parts[parts.length] = call(slice, text, [from]) as string;
         return call(joinList, parts, ['']) as string;
     };
     const CSS_WIDE_KEYWORDS = setOf(['initial', 'inherit', 'unset', 'revert', 'revert-layer']);
@@ -1176,9 +1193,9 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         const css = withoutNetwork(text);
         if (context.css) context.css[context.css.length] = css; // before the still rules (cssLoadsOf)
         const styleOf = typeof namespace === 'string' ? styleGetters[namespace] : null;
-        if (!styleOf) return;
+        if (!styleOf || ALL_PROPERTY.test(declaredNames(css))) return;
         const still = !switches.animations && MAY_ANIMATE.test(css);
-        if (still && (css.indexOf('\\') >= 0 || ALL_PROPERTY.test(outsideCommentsAndStrings(css)))) return;
+        if (still && css.indexOf('\\') >= 0) return;
         const style = call(styleOf, element, []) as CSSStyleDeclaration;
         call(setCssText, style, [css]);
         for (let i = 0; still && i < animating.length; i++) {

@@ -141,7 +141,7 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
     // the view runs on it; in Chromium it may not, and the numbers are the view's own then). The still stylesheet itself
     // costs style work per element with `false` (its rules for every pseudo-element), whatever the elements carry, so
     // the control is the same number of plain <i> elements: the style attributes must cost the renderer nothing on top.
-    test('one render of 262 000 characters of <i style="all:unset"></i>: false costs what false costs for plain <i>, and it is applied', async ({ sandbox, page, browserName }) => {
+    test('one render of 262 000 characters of <i style="all:unset"></i>: false costs what false costs for plain <i>, and the declaration goes whole (through the CSSOM `all` is hundreds of longhands per element)', async ({ sandbox, page, browserName }) => {
         test.setTimeout(240000);
         const count = Math.floor(262000 / 26);
         // Each configuration's stall is the least of SAMPLES renders, the samples of all four interleaved (best of N, as
@@ -160,8 +160,8 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
                     gaps[key] = Math.min(gaps[key] ?? Infinity, (await ticks(page, 4000, { execute: 'go()' })).longest);
                     const held = await waitInView<number>(page, browserName, `document.querySelectorAll('#a > i').length`, 30000);
                     expect(held, key).toBe(count);
-                    // applied as written: nothing of it was read or rewritten (the case of 'all: unset;' with false)
-                    if (name === 'all:unset') expect(await inView<string>(page, browserName, `document.querySelector('#a > i').getAttribute('style')`)).toEqual((await declaredInView(page, browserName, ['all:unset']))[0]);
+                    // gone whole, nothing of it set or read, whatever the switch (sanitizeRender, `declare`)
+                    if (name === 'all:unset') expect(await inView<string | null>(page, browserName, `document.querySelector('#a > i').getAttribute('style')`)).toBeNull();
                 }
             }
         }
@@ -171,13 +171,14 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
-        test('a style attribute that names no animation is left exactly as written; one that does loses only its animations', async ({ sandbox, page, browserName }) => {
+        test('a style attribute that names no animation is applied exactly as written; one that does loses only its animations; one that declares `all` goes whole', async ({ sandbox, page, browserName }) => {
             await mountEntry(sandbox, `sandboxView.render('<p id="a" style="all:unset">a</p><p id="b" style="COLOR:red;margin:0">b</p><p id="c" style="color: red; transition: color 1s; animation: spin 1s">c</p><p id="d" style="all:unset;animation:spin 1s">d</p><p id="e" style="transform: rotate(1deg); color: transparent">e</p>');`, { ...{ allowAnimations: false }, mode });
             await waitInView(page, browserName, `!!document.getElementById('e')`);
             const styles = await inView<(string | null)[]>(page, browserName, `['a', 'b', 'c', 'd', 'e'].map(id => document.getElementById(id).getAttribute('style'))`);
             // as written: the engine's own serialization of the text (the view applies it through the element's declaration)
-            const [allUnset, colorMargin, transform] = await declaredInView(page, browserName, ['all:unset', 'COLOR:red;margin:0', 'transform: rotate(1deg); color: transparent']);
-            expect(styles.slice(0, 3)).toEqual([allUnset, colorMargin, 'color: red;']);
+            const [colorMargin, transform] = await declaredInView(page, browserName, ['COLOR:red;margin:0', 'transform: rotate(1deg); color: transparent']);
+            // `all` goes whole on every switch: through the element's declaration it is hundreds of longhands per element
+            expect(styles.slice(0, 3)).toEqual([null, colorMargin, 'color: red;']);
             // `all` beside an animation: gone whole, on every engine (R5:L-2: Chromium kept `all: unset;`, as it
             // stores `all` as one property)
             expect(styles[3]).toBeNull();

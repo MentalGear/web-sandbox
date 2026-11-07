@@ -444,8 +444,8 @@ supports that an animation applies to (not `::first-letter`, `::first-line`, the
 parts, on which no animation runs), and the renderer removes every animation and transition declaration that holds
 anything but a CSS-wide keyword from `style` attributes (an inline `!important` would beat any layer). A `style`
 attribute whose text contains neither `animation` nor `transition` (in any case) nor a backslash is applied exactly as
-written. One that does, and also has a backslash or declares `all` (outside comments and strings), is removed whole;
-any other loses only its animation and transition declarations. Nothing the guest declares overrides it: its own
+written. One that does, and also has a backslash, is removed whole; any other loses only its animation and transition
+declarations. One that declares `all` is removed whole whatever the switch ([below](#guest-styles)). Nothing the guest declares overrides it: its own
 `!important`, its own layers, `@starting-style`, `@property`, scroll-driven animations, registered stylesheets and
 their `@import`s. Your page's `style-src` must allow that stylesheet (`'unsafe-inline'`, or its hash: see
 [Host page policy](#host-page-policy)); where it does not, the view removes the guest's stylesheets instead
@@ -1390,7 +1390,9 @@ constructed stylesheet: the `<style>`s cascade among themselves in the order of 
 `<link>` (a document's own stylesheets come before the ones it adopts); a `media` applies as it would; an SVG `<style>`
 whose `type` is not CSS applies nothing; an `@import` in a `<style>` loads nothing (link a registered stylesheet with
 `<link rel="stylesheet">`, whose `@import`s load); a `title` makes no alternative style sheet; and a selector that names
-`style` matches none of them.
+`style` matches none of them. A `style` attribute that declares `all` (outside its comments and strings, however its
+name is escaped) is removed whole: through an element's declaration `all` is hundreds of properties set and serialized
+per element in Firefox and WebKit, where a stylesheet's `all` is not; write it in a `<style>`.
 
 Not available in strict mode: `use`, markers, SVG filters, SVG `image`, `foreignObject` and animation; `canvas`,
 `slot`, `selectedcontent` (customizable `select`); popovers (`popover`, `popovertarget`) and invoker commands
