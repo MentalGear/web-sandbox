@@ -1025,7 +1025,8 @@ export class WebSandbox extends ElementBase {
      * - The whole batch is validated first. It fires `fileschanged` when something changed; registering identical content
      *   again changes nothing.
      * - A path is relative (`src/main.js`): segments of letters, digits and the characters of `._~!$&'()*+,;=@-`,
-     *   separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised.
+     *   separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised;
+     *   a refusal's message names the rule the path breaks.
      * - A file's type comes from its extension (`.js` and `.mjs` `text/javascript`, `.css` `text/css`, `.json`
      *   `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4` and the like); an unknown extension is
      *   `application/octet-stream`.

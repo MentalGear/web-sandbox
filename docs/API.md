@@ -722,7 +722,8 @@ running. Files survive every rebuild and `terminate()`.
 - The whole batch is validated first. It fires `fileschanged` when something changed; registering identical content
  again changes nothing.
 - A path is relative (`src/main.js`): segments of letters, digits and the characters of `._~!$&'()*+,;=@-`,
- separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised.
+ separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised;
+ a refusal's message names the rule the path breaks.
 - A file's type comes from its extension (`.js` and `.mjs` `text/javascript`, `.css` `text/css`, `.json`
  `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4` and the like); an unknown extension is
  `application/octet-stream`.
@@ -1180,7 +1181,7 @@ why this one was refused is the `fetch` record's `reason`, and the host page's c
 <!-- describes: codes:files, api:FileErrorCode, api:FileError sig:43e68c1b813b -->
 | Code | Where | Meaning |
 | :--- | :--- | :--- |
-| `INVALID_PATH` | `registerFiles()`, `unregisterFiles()`, `commitGuestWrites()`, guest `write()` / `remove()` | A path is not valid, or a list of paths is not an array. |
+| `INVALID_PATH` | `registerFiles()`, `unregisterFiles()`, `commitGuestWrites()`, guest `write()` / `remove()` | A path is not valid (the element's message names the rule it breaks), or a list of paths is not an array. |
 | `INVALID_FILE` | `registerFiles()`, guest `write()` | The batch is not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a valid MIME type (in the guest: a string, `Blob`, `ArrayBuffer` or typed array). |
 | `FILES_QUOTA_EXCEEDED` | `registerFiles()`, `commitGuestWrites()`, guest `write()` | The files would exceed `MAX_FILES` files or `MAX_TOTAL_BYTES` (a rewritten JavaScript or CSS file counts what its rewrite adds; a guest write counts the files with every pending change applied). |
 | `FILES_NOT_ALLOWED` | `commitGuestWrites()`, guest `write()` / `remove()` | An opt-in is missing: `guestWrites` is off, or a non-inert file is committed without `{ code: true }`. |

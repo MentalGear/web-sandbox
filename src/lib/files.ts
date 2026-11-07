@@ -137,27 +137,62 @@ export function fileError(code: FileErrorCode, message: string): FileError {
     return mintError(code, `[Sandbox] ${message}`);
 }
 
-// One segment: the RFC 3986 unreserved and sub-delims characters, plus '@'. Nothing that a URL
+// One segment's characters: the RFC 3986 unreserved and sub-delims characters, plus '@'. Nothing that a URL
 // parser decodes, folds or treats as a delimiter: no %, \, :, ?, #, whitespace, controls or non-ASCII.
 const SEGMENT = /^[A-Za-z0-9._~!$&'()*+,;=@-]+$/;
 const ROUND_TRIP_BASE = 'https://vfs.invalid/';
 
+const segmentsOf = (path: string) => path.split('/');
+
 /**
- * Whether `path` may name a file. Paths are validated, never normalised: a path the guest could
- * spell two ways, or that a URL parser would rewrite, is refused rather than repaired. So `a/./b`,
- * `a//b`, `/a` and `%2e%2e` are refused, and an accepted path is exactly what new URL() keeps.
+ * The rules a path keeps, each with the text a refusal names it by (BD7:NEW-2), in the order they are checked: a path is
+ * valid when every rule holds (isValidPath), and a refusal names the first rule it breaks (checkPath). Paths are
+ * validated, never normalised: a path the guest could spell two ways, or that a URL parser would rewrite, is refused
+ * rather than repaired. So `a/./b`, `a//b`, `/a` and `%2e%2e` are refused, and an accepted path is exactly what new URL()
+ * keeps. `string` is checked first; every other rule is given a string.
  */
-export function isValidPath(path: unknown): path is string {
-    if (typeof path !== 'string') return false;
-    if (path.length === 0 || path.length > MAX_PATH_LENGTH) return false;
+export const PATH_RULES = {
+    string: { text: 'a path must be a string', holds: (path: unknown) => typeof path === 'string' },
+    length: { text: `a path must have 1 to ${MAX_PATH_LENGTH} characters`, holds: (path: string) => path.length > 0 && path.length <= MAX_PATH_LENGTH },
+    characters: {
+        text: "a path must hold only ASCII letters, digits and the characters ._~!$&'()*+,;=@- between its slashes (nothing a URL parser decodes or treats as a delimiter: no %, \\, :, ?, #, whitespace, controls or non-ASCII)",
+        holds: (path: string) => segmentsOf(path).every(segment => segment === '' || SEGMENT.test(segment)),
+    },
+    leadingSlash: { text: 'a path must not start with "/": it is relative to the root of the files', holds: (path: string) => !path.startsWith('/') },
+    trailingSlash: { text: 'a path must not end with "/": it names a file', holds: (path: string) => !path.endsWith('/') },
+    emptySegment: { text: 'a path must not hold "//": its segments are separated by single slashes', holds: (path: string) => !path.includes('//') },
+    dotSegment: { text: 'a path must not have a "." or ".." segment: a path is never normalised', holds: (path: string) => !segmentsOf(path).some(segment => segment === '.' || segment === '..') },
+    // Belt and braces: the rules above already imply it.
+    urlRoundTrip: { text: 'a path must be exactly what a URL parser keeps of it', holds: (path: string) => new URL(path, ROUND_TRIP_BASE).href === ROUND_TRIP_BASE + path },
+} as const;
 
-    for (const segment of path.split('/')) {
-        if (!SEGMENT.test(segment)) return false; // also refuses empty segments: leading, trailing or doubled '/'
-        if (segment === '.' || segment === '..') return false;
+/** The name of a rule of {@link PATH_RULES}. */
+export type PathRule = keyof typeof PATH_RULES;
+
+/** The first rule of {@link PATH_RULES} that `path` breaks, or null when it keeps every one. */
+export function brokenPathRule(path: unknown): PathRule | null {
+    if (!PATH_RULES.string.holds(path)) return 'string';
+    const text = path as string;
+    for (const rule of Object.keys(PATH_RULES) as PathRule[]) {
+        if (rule === 'string') continue;
+        if (!PATH_RULES[rule].holds(text)) return rule;
     }
+    return null;
+}
 
-    // Belt and braces: the character rules above already imply this.
-    return new URL(path, ROUND_TRIP_BASE).href === ROUND_TRIP_BASE + path;
+/** Whether `path` may name a file: it keeps every rule of {@link PATH_RULES}. */
+export function isValidPath(path: unknown): path is string {
+    return brokenPathRule(path) === null;
+}
+
+/**
+ * Refuses `path` with INVALID_PATH unless it keeps every rule of {@link PATH_RULES}; the message, for the library's
+ * caller, names the first rule it breaks (BD7:NEW-2). A guest never receives it: it receives the code and a fixed text.
+ */
+export function checkPath(path: unknown, caller: string): asserts path is string {
+    const broken = brokenPathRule(path);
+    if (broken === null) return;
+    throw fileError('INVALID_PATH', `${caller} refused the path ${describePath(path)}: ${PATH_RULES[broken].text}.`);
 }
 
 // Never empty: a blob with an empty type is applied as a stylesheet by every engine
@@ -319,7 +354,7 @@ export class CheckedFile {
 
     /** Checks `path` and `entry` (a FileEntry); throws INVALID_PATH or INVALID_FILE. `caller` names the API in messages. */
     static from(path: unknown, entry: unknown, caller: string): CheckedFile {
-        if (!isValidPath(path)) throw fileError('INVALID_PATH', `${caller} refused the path ${describePath(path)}.`);
+        checkPath(path, caller);
         const { type, bytes } = parseEntry(path, entry, caller);
         return new CheckedFile(type, bytes);
     }
@@ -473,7 +508,7 @@ export class FileStore {
         }
         const remove = new Set<string>();
         for (const path of changes.remove ?? []) {
-            if (!isValidPath(path)) throw fileError('INVALID_PATH', `${caller} refused the path ${describePath(path)}.`);
+            checkPath(path, caller);
             if (put.has(path)) throw fileError('INVALID_PATH', `${caller} refused the path ${describePath(path)}: it is both written and removed.`);
             remove.add(path);
         }
