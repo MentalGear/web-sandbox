@@ -40,6 +40,14 @@ describe('the attacker-text lists', () => {
         expect(paragraph, 'and the console, where the first argument is a format string').toContain('format-string');
     });
 
+    // BD6:DOC-2, BD6:CHL-4: the app's text also reaches a page that forwards events to a server it can read
+    it.each(places)('%s says not to forward the app\'s text to a network sink, a reporter or analytics', (_, file, marker) => {
+        const paragraph = paragraphWith(read(file), marker);
+        expect(paragraph).toContain('sendBeacon');
+        expect(paragraph).toMatch(/error reporter|reporter/);
+        expect(paragraph).toContain('analytics');
+    });
+
     it('docs/API.md says it where the guest-writes surface is described too', () => {
         const paragraph = paragraphWith(read('docs/API.md'), 'Treat written content as the guest');
         for (const word of ['path', 'type', 'textContent', 'single-quoted attribute']) expect(paragraph, word).toContain(word);
@@ -152,6 +160,48 @@ sandbox.expose('openExternal', (text) => { const url = new URL(text); if (!OPENA
         expect(call('https://example.com/docs?n=SECRET')).toBe('opened');
         expect([...open.mock.calls].some(([href]) => !ADDRESSES.has(href as string))).toBe(true);
         expect(old).toMatch(/new URL\(/);
+    });
+});
+
+describe('the docs\' image snippet runs when the app has written nothing, a PNG, or something else (BD6:DOC-4)', () => {
+    const snippet = (() => {
+        const block = [...read('docs/API.md').matchAll(/```js\n([^]*?)```/g)].map(match => match[1]!).find(code => code.includes('const PNG = ['));
+        expect(block, 'the image snippet is a js block of docs/API.md').toBeDefined();
+        return block!;
+    })();
+
+    function run(writes: object[]) {
+        const created: Array<{ bytes: number[]; type: string }> = [];
+        const sandbox = { listGuestWrites: () => writes };
+        const img: { src?: string } = {};
+        const link: { href?: string; download?: string } = {};
+        class FakeBlob { constructor(readonly parts: Uint8Array[], readonly options: { type: string }) {} }
+        const fakeURL = { createObjectURL: (blob: FakeBlob) => (created.push({ bytes: [...blob.parts[0]!], type: blob.options.type }), `blob:${created.length}`) };
+        new Function('sandbox', 'img', 'link', 'URL', 'Blob', `return (() => { ${snippet} })();`)(sandbox, img, link, fakeURL, FakeBlob);
+        return { img, link, created };
+    }
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2]);
+
+    it('does nothing, and does not throw, when nothing was written', () => {
+        for (const writes of [[], [{ path: 'other.bin', change: 'write', content: png }], [{ path: 'progress.png', change: 'remove' }]]) {
+            const { img, link, created } = run(writes);
+            expect({ img, link, created }, JSON.stringify(writes).slice(0, 50)).toEqual({ img: {}, link: {}, created: [] });
+        }
+    });
+
+    it('shows a PNG in an <img> typed image/png, and nothing as a link', () => {
+        const { img, link, created } = run([{ path: 'progress.png', change: 'write', type: 'text/html', content: png }]);
+        expect(created).toEqual([{ bytes: [...png], type: 'image/png' }]); // the type is the host's, never the write's
+        expect(img.src).toBe('blob:1');
+        expect(link).toEqual({});
+    });
+
+    it('offers anything else as a download of an octet-stream blob, never as an image', () => {
+        const html = new TextEncoder().encode('<script>1</script>');
+        const { img, link, created } = run([{ path: 'progress.png', change: 'write', type: 'image/png', content: html }]);
+        expect(created).toEqual([{ bytes: [...html], type: 'application/octet-stream' }]);
+        expect(img).toEqual({});
+        expect(link).toEqual({ href: 'blob:1', download: 'export.bin' });
     });
 });
 
