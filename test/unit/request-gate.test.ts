@@ -239,6 +239,16 @@ describe('a relative URL resolves against the realm\'s base, as the platform res
     });
 });
 
+describe("a refusal in strict and worker mode names the option that admits an origin (BD6:NEW-1; sealed mode's words: request-gate-sealed-refuses.test.ts)", () => {
+    it('fetch() and a synchronous XMLHttpRequest say the origin is not in origins.connect', async () => {
+        const error = await fetch('https://elsewhere.example/x').then(() => null, (refused: Error) => refused);
+        expect(error?.message).toBe('fetch() refused by the sandbox: the origin is not in its origins.connect');
+        const request = new XMLHttpRequest();
+        request.open('GET', 'https://elsewhere.example/x', false);
+        expect(() => request.send()).toThrow(expect.objectContaining({ message: 'XMLHttpRequest refused by the sandbox: the origin is not in its origins.connect' }));
+    });
+});
+
 describe('no credentials on fetch() or XMLHttpRequest', () => {
     it("fetch() sends every request with credentials 'omit', whatever the init or the Request says", async () => {
         clear();

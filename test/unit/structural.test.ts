@@ -955,9 +955,9 @@ describe('what the broker posts is what the value shows: every view in a posted 
         }
     });
 
-    // The refusal texts (BD5:LIM-2, BD5:DOC-1): no refusal frame is given an error's text except through handlerErrorText,
-    // the one gate of a handler's throw. An error's text is otherwise read only to withhold it, or for a refusal of this
-    // side's own call (localRefusal), which never crosses.
+    // The refusal texts (BD5:LIM-2, BD5:DOC-1, BD6:LIM-1): no refusal frame is given an error's text except through
+    // handlerErrorText, the one gate of a handler's throw. An error's text is otherwise read only to withhold it: a refusal
+    // of this side's own call carries a fixed text too, since a host method can let it propagate to the guest.
     it("no refusal frame carries an error's text except through handlerErrorText's allow-list", () => {
         const tokens = tokenize(createBroker.toString());
         const [gateOpen, gateClose] = bodyOf(tokens, 'handlerErrorText');
@@ -978,10 +978,53 @@ describe('what the broker posts is what the value shows: every view in a posted 
             if (!isCall(i, 'errorMessage') || (i > gateOpen && i < gateClose) || (i > definitionOpen && i < definitionClose)) continue;
             read++;
             const caller = enclosing(i);
-            if (caller !== 'withhold' && caller !== 'localRefusal') found.push(`errorMessage( in ${caller}(`);
+            if (caller !== 'withhold') found.push(`errorMessage( in ${caller}(`);
         }
         expect(found).toEqual([]);
         expect(read).toBeGreaterThan(2);
         expect(tokens.flatMap((_, i) => (isCall(i, 'handlerErrorText') ? [enclosing(i)] : []))).toEqual(['refusalFrame']);
+    });
+
+    // BD6:LIM-1, class P: an error the library makes in host code is made with a text of its own. A host method can let
+    // any such error propagate to the guest, so the message of one reads no other error: not a variable that holds one,
+    // not its `message`, not errorMessage(). The messages checked are those of the error classes and of the library's
+    // minting functions (the argument that is the message); a `cause` argument is the one place an error goes.
+    // in-sandbox-*.ts run in the guest's realms, where an error never reaches a host handler.
+    it("no error the library makes in host code is built from another error's text", () => {
+        const MESSAGE_ARGUMENT: Record<string, number> = { fileError: 1, fetchRefusal: 1, localRefusal: 1, codedError: 0 };
+        const OTHER_ERROR = new Set(['error', 'err', 'e', 'ex', 'exception', 'reason', 'cause', 'errorMessage']);
+        // Reads of an error that carry no engine text: the name of a browser error is one identifier of a closed set.
+        const ALLOWED = new Set(["src/lib/fetch-bridge.ts: `the browser refused the request (${ error instanceof Error ? error . name : 'error' })`"]);
+        const files = sourceFiles('src').filter(file => !path.basename(file).startsWith('in-sandbox-'));
+        const found: string[] = [];
+        let constructors = 0;
+        for (const file of files) {
+            const tokens = tokenize(read(file));
+            for (let i = 0; i < tokens.length; i++) {
+                const token = tokens[i]!;
+                const before = tokens[i - 1]?.kind;
+                const isClass = before === SyntaxKind.NewKeyword && /Error$|^DOMException$/.test(token.text);
+                const isMinting = Object.hasOwn(MESSAGE_ARGUMENT, token.text) && before !== SyntaxKind.FunctionKeyword && before !== SyntaxKind.DotToken;
+                if (!(isClass || isMinting) || tokens[i + 1]?.kind !== SyntaxKind.OpenParenToken) continue;
+                constructors++;
+                // the tokens of each argument, split at the commas of the call's own level
+                const args: Token[][] = [[]];
+                for (let end = i + 2, depth = 0; ; end++) {
+                    const part = tokens[end]!;
+                    if (part.kind === SyntaxKind.OpenParenToken || part.kind === SyntaxKind.OpenBracketToken || part.kind === SyntaxKind.OpenBraceToken) depth++;
+                    if (part.kind === SyntaxKind.CloseParenToken || part.kind === SyntaxKind.CloseBracketToken || part.kind === SyntaxKind.CloseBraceToken) depth--;
+                    if (depth < 0) break;
+                    if (depth === 0 && part.kind === SyntaxKind.CommaToken) args.push([]);
+                    else args.at(-1)!.push(part);
+                }
+                const message = args[MESSAGE_ARGUMENT[token.text] ?? 0] ?? [];
+                const reads = message.some((part, at) => OTHER_ERROR.has(part.text) || (part.text === 'message' && message[at - 1]?.kind === SyntaxKind.DotToken));
+                if (!reads) continue;
+                const shown = `${file}: ${message.map(part => part.text).join(' ')}`;
+                if (!ALLOWED.has(shown)) found.push(shown);
+            }
+        }
+        expect(found).toEqual([]);
+        expect(constructors).toBeGreaterThan(40);
     });
 });

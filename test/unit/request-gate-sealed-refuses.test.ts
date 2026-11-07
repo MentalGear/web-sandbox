@@ -56,3 +56,20 @@ describe('sealed mode\'s gate admits nothing: the platform\'s fetch, XMLHttpRequ
         expect(reports()).toHaveLength(3);
     });
 });
+
+// BD6:NEW-1: sealed mode refuses the `origins` option, so a refusal that points at origins.connect points at nothing; it
+// says what sealed mode is, and what the app can do instead.
+const SEALED_REFUSAL = 'refused by the sandbox: sealed mode has no network; call a method the host page exposes instead';
+
+describe("sealed mode's refusals name sealed mode, never an option it refuses (BD6:NEW-1)", () => {
+    it('fetch() rejects with a TypeError in sealed words', async () => {
+        const error = await fetch('https://api.example/x').then(() => null, (refused: Error) => refused);
+        expect([error?.name, error?.message]).toEqual(['TypeError', `fetch() ${SEALED_REFUSAL}`]);
+    });
+
+    it('a synchronous XMLHttpRequest send() throws a NetworkError in sealed words', () => {
+        const request = new XMLHttpRequest();
+        request.open('GET', 'https://api.example/x', false);
+        expect(() => request.send()).toThrow(expect.objectContaining({ name: 'NetworkError', message: `XMLHttpRequest ${SEALED_REFUSAL}` }));
+    });
+});

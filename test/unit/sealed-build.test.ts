@@ -464,7 +464,7 @@ describe('T5: the call graph of the sealed build path reaches no network code', 
 
     it("the attach runs the network only for a build that has one: without that statement it reaches no network code, and a sealed build has none (T4)", () => {
         const attach = member('_attachBuild');
-        const guarded = 'if (prepared.network) this._startFetchBridge(prepared.network);';
+        const guarded = 'prepared.network ? this._startFetchBridge(prepared.network) : null;';
         expect(attach.split(guarded)).toHaveLength(2);
         expect(forbiddenIn(reach('src/host.ts', attach.replace(guarded, '')))).toEqual([]);
     });

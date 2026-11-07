@@ -369,6 +369,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/long-timer.ts` | The one timer for a delay that a config or a caller chooses |
 | `src/lib/markup-references.ts` | Markup references to registered files |
 | `src/lib/markup-scripts.ts` | Finds whether guest markup asks to run script |
+| `src/lib/minted-errors.ts` | The errors the library makes |
 | `src/lib/module-specifiers.ts` | The module graph |
 | `src/lib/origin.ts` | The one parser for an origin an embedder lists |
 | `src/lib/presets.ts` | Presets: the scenarios the playground offers for manual testing, and the payloads and rules the regression specs run |

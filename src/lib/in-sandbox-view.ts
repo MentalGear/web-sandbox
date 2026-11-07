@@ -3271,6 +3271,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     const freeze = Object.freeze;
     const isArray = Array.isArray;
     const isFiniteNumber = Number.isFinite;
+    const hasOwnField = Object.prototype.hasOwnProperty;
     const addListener = EventTarget.prototype.addEventListener;
     const dataOf = getOwn(MessageEvent.prototype, 'data')!.get!;
     const portsOf = getOwn(MessageEvent.prototype, 'ports')!.get!;
@@ -3575,16 +3576,20 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         defineOwn(copy, 'rect', { value: rect, writable: true, enumerable: true, configurable: true });
         return copy;
     };
+    // A field of a frame from the view, its own only (BD6:CHL-2; class G): a frame that lacks the field would otherwise
+    // read it through the worker's Object.prototype, where guest code can put a getter. The frames are structured
+    // clones, so an own field is a plain data property. Every read of a received frame goes through this.
+    const fieldOf = (record: any, name: string): any => (apply(hasOwnField, record, [name]) ? record[name] : undefined);
     const dispatch = (detail: any) => {
-        if (!detail || typeof detail !== 'object' || !isEventType(detail.type)) return;
-        const ids = detail.ids;
-        const rects = detail.rects;
+        if (!detail || typeof detail !== 'object' || !isEventType(fieldOf(detail, 'type'))) return;
+        const ids = fieldOf(detail, 'ids');
+        const rects = fieldOf(detail, 'rects');
         if (rects !== undefined) deleteOwn(detail, 'rects');
         const current = list<Handler>();
         for (let i = 0; i < handlers.length; i++) current[i] = handlers[i]!;
         for (let i = 0; i < current.length; i++) {
             const entry = current[i]!;
-            if (!entry.active || entry.type !== detail.type) continue;
+            if (!entry.active || entry.type !== fieldOf(detail, 'type')) continue;
             if (entry.id !== null) {
                 let found = false;
                 for (let k = 0; ids && k < ids.length; k++) if (ids[k] === entry.id) found = true;
@@ -3603,10 +3608,11 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     const onRenderMessage = (event: MessageEvent) => {
         const data = apply(dataOf, event, []);
         if (!data || typeof data !== 'object') return;
-        if (data.type === 'VIEW_ACK') {
+        const type = fieldOf(data, 'type');
+        if (type === 'VIEW_ACK') {
             // what the view refused of the one operation in flight (an operation past the view's budget, BR:ST2;
             // focus without the user's focus, R1:R4-5): said here, to the guest's own log
-            const refused = data.refused;
+            const refused = fieldOf(data, 'refused');
             const kind = inFlight ? inFlight.kind : 'render';
             for (let i = 0; refused && i < refused.length; i++) {
                 if (refused[i] === 'VIEW_FOCUS') {
@@ -3626,7 +3632,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             }
             // what an applied render dropped (BD5:NEW-3), as the element's html notice says it of `html`: one line per
             // render at most, in the guest's own log and its budget
-            const dropped = data.dropped;
+            const dropped = fieldOf(data, 'dropped');
             let script = false;
             let reference = false;
             for (let i = 0; dropped && i < dropped.length && i < 2; i++) {
@@ -3644,12 +3650,12 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             sendNext();
             return;
         }
-        if (data.type === 'VIEW_EVENT') {
+        if (type === 'VIEW_EVENT') {
             // One frame of the view's events, in the order they were raised (research 23): each dispatched to its handlers,
             // which have all returned (a throwing one reported) when the frame is acknowledged. The view sends no further
             // continuous events before VIEW_EVENT_ACK (VIEW_INPUT_IN_FLIGHT), and only the prelude posts it: guest code
             // cannot reach the render port.
-            const details = data.details;
+            const details = fieldOf(data, 'details');
             for (let i = 0; isArray(details) && i < details.length; i++) dispatch(details[i]);
             apply(post, renderPort, [{ type: 'VIEW_EVENT_ACK' }]);
         }
@@ -3663,7 +3669,9 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         apply(stopImmediate, event, []);
         if (initialised) return;
         const data = apply(dataOf, event, []);
-        if (!data || data.type !== 'INIT_WORKER') return;
+        if (!data || typeof data !== 'object') return;
+        const type = fieldOf(data, 'type');
+        if (type !== 'INIT_WORKER') return;
         const ports = apply(portsOf, event, []);
         if (!ports || ports.length !== 2) return;
         initialised = true;

@@ -39,6 +39,7 @@
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
 import type { RpcLibraryCode } from './rpc';
+import { markMinted } from './minted-errors';
 import { ownField, type Complete, type Holds } from './utils';
 import { parseOrigin, type Origin, type OriginRules } from './origin';
 import { shown } from './csp/origins';
@@ -238,7 +239,7 @@ const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
 export function fetchRefusal(code: FetchErrorCode, message: string): FetchRefusal {
     const error = new Error(`[sandboxFetch] ${code}: ${message}`) as FetchRefusal;
     error.code = code;
-    return error;
+    return markMinted(error);
 }
 
 const boundedInteger = (value: unknown, fallback: number, max: number): number => {

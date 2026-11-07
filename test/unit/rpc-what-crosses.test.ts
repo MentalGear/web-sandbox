@@ -4,6 +4,7 @@ import { defineWebSandbox } from '@src/host';
 import { createBroker, type RpcFrame, type RpcSend } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { fileError } from '@src/lib/files';
+import { isMinted, markMinted } from '@src/lib/minted-errors';
 
 /**
  * What crosses a call is what the value and the API show (class P, research 18), at the broker (rpc.ts, createBroker):
@@ -138,7 +139,7 @@ describe('a typed array or DataView crosses with its own bytes only (BD5:LIM-1)'
 
 describe("a host handler's failure carries the embedder's words only (BD5:LIM-2, BD5:DOC-1)", () => {
     const withheld: [string, string, string][] = [];
-    const HOST = { transferResults: true, reportWithheld: (method: string, refusal: string, text: string) => { withheld.push([method, refusal, text]); } };
+    const HOST = { transferResults: true, markMinted, isMinted, reportWithheld: (method: string, refusal: string, text: string) => { withheld.push([method, refusal, text]); } };
     beforeEach(() => { withheld.length = 0; });
 
     class StoreError extends Error {}
@@ -187,6 +188,52 @@ describe("a host handler's failure carries the embedder's words only (BD5:LIM-2,
         await new Promise(resolve => setTimeout(resolve, 0));
         expect([replies[0].code, replies[0].error]).toEqual(['FILES_QUOTA_EXCEEDED', '[Sandbox] the quota is spent']);
         expect(withheld).toEqual([]);
+    });
+
+    // BD6:LIM-1: the refusal of this side's own call() holds the library's text, so a method that lets it propagate to the guest
+    // hands the guest that text; the clone's error, which quotes the data it was handling, is the refusal's cause and the console's.
+    const UNCLONEABLE: [string, () => unknown][] = [
+        ['a function whose source holds the secret', () => ({ save() { return `${SECRET}-inline-token`; } })],
+        ['a symbol described by the secret', () => Symbol(SECRET)],
+        ['a getter whose JSON.parse error quotes the secret', () => ({ get x() { return JSON.parse(SECRET); } })],
+        ['a getter that reads a property of null named by the secret', () => ({ get x() { return (null as any)[SECRET]; } })],
+    ];
+    const NOT_TRANSFERABLE = 'RPC arguments are not transferable: they hold a value structured clone cannot carry';
+
+    it.each(UNCLONEABLE)("a method that lets the refusal of its own call() with %s propagate: the guest receives the library's text, never the engine's", async (_label, make) => {
+        const { broker } = recordingBroker(HOST);
+        broker.expose('m', () => broker.call('apply', make()));
+        const replies: any[] = [];
+        broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'm', args: [] }, (frame: RpcFrame) => { replies.push(frame); });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(replies).toHaveLength(1);
+        expect([replies[0].ok, replies[0].code, replies[0].error]).toEqual([false, 'HANDLER_ERROR', NOT_TRANSFERABLE]);
+        expect(JSON.stringify(replies[0])).not.toContain(SECRET);
+        expect(withheld).toHaveLength(1);
+        expect(withheld[0]!.slice(0, 2)).toEqual(['apply', NOT_TRANSFERABLE]);
+    });
+
+    it("the refusal of call() keeps the engine's error as its cause, host side, and the code the caller branches on", async () => {
+        const { broker } = recordingBroker(HOST);
+        const refusal: any = await broker.call('apply', Symbol(SECRET)).catch((error: any) => error);
+        expect([refusal.code, refusal.message, refusal.cause instanceof Error]).toEqual(['ARGS_NOT_TRANSFERABLE', NOT_TRANSFERABLE, true]);
+        expect(Object.keys(refusal)).toEqual(['code']);
+        expect(isMinted(refusal)).toBe(true);
+    });
+
+    it("a send that throws is refused 'RPC call could not be sent' with the transport's error as the cause", async () => {
+        const broker = createBroker(() => { throw new Error(SECRET); }, { timeoutMs: 0, sizeOf: createSizeOf(), ...HOST });
+        const refusal: any = await broker.call('apply').catch((error: any) => error);
+        expect([refusal.code, refusal.message, refusal.cause.message]).toEqual(['SEND_FAILED', 'RPC call could not be sent', SECRET]);
+        expect(withheld).toEqual([['apply', 'RPC call could not be sent', SECRET]]);
+    });
+
+    it('an error the library made crosses as its fixed message whatever its prototype; its cause is not read', async () => {
+        class Refusal extends Error {}
+        const minted = markMinted(new Refusal('fixed library text'));
+        Object.defineProperty(minted, 'cause', { get() { throw new Error(SECRET); } });
+        expect((await answer(() => { throw minted; }, [], HOST)).frame.error).toBe('fixed library text');
+        expect((await answer(() => { throw new Refusal('not registered'); }, [], HOST)).frame.error).toBe('the method failed (Error)');
     });
 
     it("the guest's broker (no reportWithheld) forwards its handlers' texts as they are: the host receives them as guest data", async () => {
@@ -239,7 +286,7 @@ describe('the element: what a guest learns of a failed host method, and unexpose
         expect(await call('parse', `{"note": ${SECRET}}`)).toEqual({ code: 'HANDLER_ERROR', error: 'the method failed (SyntaxError)' });
         expect(warn).toHaveBeenCalledTimes(1);
         const [line, text] = warn.mock.calls[0]!;
-        expect(line).toBe('[Sandbox] the host method "parse" failed, and the guest received "the method failed (SyntaxError)" in place of its error, which was:');
+        expect(line).toBe('[Sandbox] "parse" failed, and the other side received "the method failed (SyntaxError)" in place of its error, which was:');
         expect(text).toMatch(/^SyntaxError: /);
         done();
     });
