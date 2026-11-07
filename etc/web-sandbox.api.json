@@ -4296,7 +4296,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#load:member(1)",
-              "docComment": "/**\n * Sets `html` (the guest document, or the initial view in sealed and strict mode), keeps the rest of the configuration and\n * rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still\n * rebuilds.\n *\n * @param html - The markup, as for the `html` option of {@link SandboxConfigOptions}.\n */\n",
+              "docComment": "/**\n * Sets `html` (the guest document, or the initial view in sealed and strict mode), keeps the rest of the configuration and\n * rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still\n * rebuilds.\n *\n * @remarks\n *\n * In sealed and strict mode, markup longer than {@link VIEW_RENDER_MAX_LENGTH} characters is not stored: the build\n * ends with the reason `html is longer than … characters`, and the element keeps the html it had, as `setConfig()`\n * refuses such an `html`.\n *\n * @param html - The markup, as for the `html` option of {@link SandboxConfigOptions}.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",

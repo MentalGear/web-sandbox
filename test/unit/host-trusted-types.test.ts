@@ -18,6 +18,7 @@ describe('TRUSTED_TYPES_RULES: every example of every rule', () => {
         it.each(rule.examples.map(example => [...example]))(`${rule.source}: %s`, (policy, strictAndWorker, cooperative, execute) => {
             const text = policy as string;
             expect(ends(text, 'strict') ? 'ends' : 'ready', 'strict').toBe(strictAndWorker);
+            expect(ends(text, 'sealed') ? 'ends' : 'ready', 'sealed').toBe(strictAndWorker); // sealed mode's view is strict mode's
             expect(ends(text, 'worker') ? 'ends' : 'ready', 'worker').toBe(strictAndWorker);
             expect(ends(text, 'cooperative') ? 'ends' : 'ready', 'cooperative').toBe(cooperative);
             expect(executeRefused(stance(text)) ? 'refused' : 'runs', 'execute()').toBe(execute);
@@ -69,7 +70,7 @@ describe('the properties of the rules', () => {
     it('a page that does not require Trusted Types for scripts ends nothing and refuses nothing, whatever its trusted-types list says', () => {
         fc.assert(fc.property(lists, fc.boolean(), (list, withDefault) => {
             const policy = `trusted-types ${[...list, ...(withDefault ? ['default'] : [])].join(' ')}`;
-            for (const mode of ['strict', 'cooperative', 'worker'] as const) expect(ends(policy, mode)).toBe(false);
+            for (const mode of ['strict', 'sealed', 'cooperative', 'worker'] as const) expect(ends(policy, mode)).toBe(false);
             expect(executeRefused(stance(policy))).toBe(false);
         }));
     });
@@ -77,14 +78,15 @@ describe('the properties of the rules', () => {
     it('with the requirement, a list that names the policy or * never ends the build, wherever the name stands and whatever else is listed', () => {
         fc.assert(fc.property(lists, lists, fc.constantFrom(TRUSTED_TYPES_POLICY, '*'), (before, after, token) => {
             const policy = `require-trusted-types-for 'script'; trusted-types ${[...before, token, ...after].join(' ')}`;
-            for (const mode of ['strict', 'cooperative', 'worker'] as const) expect(ends(policy, mode)).toBe(false);
+            for (const mode of ['strict', 'sealed', 'cooperative', 'worker'] as const) expect(ends(policy, mode)).toBe(false);
         }));
     });
 
-    it('with the requirement, a list that names neither always ends strict and worker mode, and ends cooperative mode unless it names default', () => {
+    it('with the requirement, a list that names neither always ends strict, sealed and worker mode, and ends cooperative mode unless it names default', () => {
         fc.assert(fc.property(lists, fc.boolean(), (list, withDefault) => {
             const policy = `require-trusted-types-for 'script'; trusted-types ${[...list, ...(withDefault ? ['default'] : [])].join(' ')}`;
             expect(ends(policy, 'strict')).toBe(true);
+            expect(ends(policy, 'sealed')).toBe(true); // sealed mode's view is strict mode's (BD7:TST-2)
             expect(ends(policy, 'worker')).toBe(true);
             expect(ends(policy, 'cooperative')).toBe(!withDefault);
         }));
@@ -94,7 +96,7 @@ describe('the properties of the rules', () => {
         fc.assert(fc.property(lists, lists, (first, second) => {
             const one = `require-trusted-types-for 'script'; trusted-types ${first.join(' ')}`;
             const two = `trusted-types ${second.join(' ')}`;
-            for (const mode of ['strict', 'cooperative', 'worker'] as const) {
+            for (const mode of ['strict', 'sealed', 'cooperative', 'worker'] as const) {
                 if (ends(one, mode)) expect(ends(`${one}, ${two}`, mode), mode).toBe(true);
             }
             expect(executeRefused(stance(`${one}, ${two}`))).toBe(true);
@@ -104,7 +106,7 @@ describe('the properties of the rules', () => {
     it('text it does not understand changes nothing: no requirement is read from it, and a list of an unknown kind refuses the name', () => {
         for (const policy of ['', ';;;', 'garbage', "require-trusted-types-for script", 'require-trusted-types-for', 'trusted-types']) {
             expect(executeRefused(stance(policy)), policy).toBe(false);
-            for (const mode of ['strict', 'cooperative', 'worker'] as const) expect(ends(policy, mode), `${policy} ${mode}`).toBe(false);
+            for (const mode of ['strict', 'sealed', 'cooperative', 'worker'] as const) expect(ends(policy, mode), `${policy} ${mode}`).toBe(false);
         }
         expect(trustedTypesStance([], TRUSTED_TYPES_POLICY)).toEqual({ requires: false, admitsName: true, namesDefault: true });
     });

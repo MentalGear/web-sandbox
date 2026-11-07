@@ -36,7 +36,7 @@ import { buildGuestDocument, buildWrapperDocument, permissionAttributes, setWrap
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { hostPageOrigin, hostSiteOrigins } from "./lib/host-site";
-import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
+import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, htmlRefusal, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
 import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from "./lib/environment";
@@ -1203,11 +1203,19 @@ export class WebSandbox extends ElementBase {
      * rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still
      * rebuilds.
      *
+     * @remarks
+     * In sealed and strict mode, markup longer than {@link VIEW_RENDER_MAX_LENGTH} characters is not stored: the build
+     * ends with the reason `html is longer than … characters`, and the element keeps the html it had, as `setConfig()`
+     * refuses such an `html`.
+     *
      * @param html - The markup, as for the `html` option of {@link SandboxConfigOptions}.
      */
     load(html: string) {
-        this._config.html = html;
-        step(this, { t: 'build', why: 'load', ctx: this._buildContext() }); // the reducer counts the change of `html`
+        // checked before it is stored (BD7:LIM-3): markup longer than the view takes refuses the build with its reason, as
+        // setConfig() refuses it, and the element keeps the html it had
+        const refusal = htmlRefusal(this._config.mode, html);
+        if (refusal === null) this._config.html = html;
+        step(this, { t: 'build', why: 'load', ctx: this._buildContext(refusal?.reason ?? null) }); // the reducer counts the change of `html`
     }
 
     /**
@@ -1722,6 +1730,10 @@ export class WebSandbox extends ElementBase {
             step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true });
             return;
         }
+        if (data?.type === 'VIEW_INITIAL') {
+            this._warnAboutStrictHtml(data.dropped); // what the initial view dropped: its scripts and handlers, once per element
+            return;
+        }
         if (data?.type === 'TRUSTED_TYPES_REFUSED') {
             // The view could not create its Trusted Types policy (R2:C-6): the host page's trusted-types
             // directive does not name it, though the host page itself never needed it (its own default policy took the
@@ -2066,11 +2078,12 @@ export class WebSandbox extends ElementBase {
     // to a window the element does not listen to), so they stop the environment instead, as insertion there does, and
     // the element stays idle. Asked first: in another document the element may have lost its prototype (BR:CB7), and
     // nothing else here is asked there.
-    private _buildContext(): BuildContext {
+    // `refused`: why the input that starts this build could not be used (load()'s html), which blocks it before anything else.
+    private _buildContext(refused: string | null = null): BuildContext {
         if (!buildsHere(this)) return NOT_HERE;
         const strict = hasStrictView(this._config.mode);
         // a bootstrap runs, and announces its port, exactly where the inline script can run (_getMarkupPlan's test, BR:CB1)
-        return { buildsHere: true, blocked: this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
+        return { buildsHere: true, blocked: refused ?? this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
     }
 
     // `loading` is bounded (BR:CB3): a build that has not completed within LOAD_TIMEOUT_MS of host ticks ends with a
@@ -2311,7 +2324,6 @@ export class WebSandbox extends ElementBase {
     // the element's until `attach`, and the reducer attaches only the build that is still the element's (`built{gen}`):
     // an outer build that a nested one replaced is dropped whole.
     private _prepareBuild(): PreparedBuild {
-        const isWorkerMode = this._config.mode === 'worker';
         // The embedder's own inline height, back as soon as a build without auto-sizing starts (R1:R3-8), whether or not it
         // then completes: the element's, not a resource of the build, and written without embedder code.
         if (!this._autoResizeEnabled()) this._releaseAutoHeight();
@@ -2329,7 +2341,17 @@ export class WebSandbox extends ElementBase {
         const reach = this._reach();
         this._refuseByTrustedTypes();
         if (this._config.mode === 'strict') return this._prepareStrictFrame(built, files, reach);
+        return this._prepareDocumentFrame(built, files, reach);
+    }
 
+    /**
+     * Cooperative and worker mode: the guest document (cooperative mode's is `html`, which runs as it is: that is the mode;
+     * worker mode's has no markup) under the guest policy, in the wrapper. Cooperative mode reads `html` with an inert
+     * parser here, for its warning and its file references (HOST_PASSES.cooperativeDocument); a strict or sealed build
+     * never reaches this (_prepareBuild returns before it).
+     */
+    private _prepareDocumentFrame(built: FileStore, files: FileSnapshotEntry[], reach: NarrowedReach): PreparedBuild {
+        const isWorkerMode = this._config.mode === 'worker';
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
         const policy = this._guestPolicy(files, reach.origins);
@@ -2419,7 +2441,6 @@ export class WebSandbox extends ElementBase {
         }
 
         const html = this._config.html || '<div id="root"></div>';
-        this._warnAboutStrictHtml(mode, html);
         const sandboxFlags = this._getSandboxFlags();
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
         // never a type that opens as a document (BR:ST1); stylesheets without a network URL (S74, files.ts viewStylesheets)
@@ -2514,11 +2535,14 @@ export class WebSandbox extends ElementBase {
 
     // Sealed mode is the default and its view is strict mode's, so markup written for cooperative mode reaches that view
     // unchanged: its scripts and handlers never run (the renderer drops them, and the view's policy admits only the
-    // bootstrap). Said once per element and mode, in the mode's words, read with an inert parser (markup-scripts.ts); not
-    // again once said, so a big view is parsed only until then.
-    private _warnAboutStrictHtml(mode: 'strict' | 'sealed', html: string) {
-        const warning = mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING;
-        if (this._warnedStrict.has(warning) || !scriptInMarkup(html)) return;
+    // bootstrap). Said once per element and mode, in the mode's words, from what the view's renderer noted it dropped of
+    // the initial view (VIEW_INITIAL). The element reads no markup of a strict or sealed build itself: a parser of the host
+    // page's realm would check the guest's markup against the host page's policy, and report it (BD7:LIM-1; HOST_PASSES,
+    // host-passes.ts).
+    private _warnAboutStrictHtml(dropped: unknown) {
+        if (!hasStrictView(this._config.mode)) return;
+        const warning = this._config.mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING;
+        if (this._warnedStrict.has(warning) || !dropsScript(dropped)) return;
         this._warnedStrict.add(warning);
         console.warn(warning);
     }
@@ -2776,6 +2800,15 @@ function refuseGuestWrite(): Promise<never> {
 // in its own document. The one predicate every build asks (R2:L-1: _buildContext).
 function buildsHere(element: WebSandbox): boolean {
     return element.isConnected && element.ownerDocument === document;
+}
+
+// Whether the view's notes of what it dropped (VIEW_INITIAL: at most three constants) name a script or a handler.
+function dropsScript(dropped: unknown): boolean {
+    if (!Array.isArray(dropped)) return false;
+    for (let i = 0; i < dropped.length && i < 3; i++) {
+        if (dropped[i] === 'script' || dropped[i] === 'handler') return true;
+    }
+    return false;
 }
 
 // Insertion: the reducer's `connect` builds, or, where the element may not build, stops and warns once (`initialize`,

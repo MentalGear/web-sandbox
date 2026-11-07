@@ -28,6 +28,7 @@
  * Internal: not exported from the package.
  */
 import { CODE_FROM_STRING_SINKS } from './code-from-strings';
+import { sealedHostPasses } from './host-passes';
 import { RENDER_ATTRIBUTES, RENDER_ELEMENTS, VIEW_LOAD_KINDS } from './in-sandbox-view';
 import type { InheritedContextId } from './inherited-context';
 import { SECURE_CONTEXT_ONLY, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
@@ -61,7 +62,7 @@ export const CHOKEPOINTS = {
         token: 'export function refuseCodeFromStrings(',
     },
     entryImportRefusal: {
-        what: 'the build refuses an entry that calls `import()`, with the reason `entryImport`, so no worker runs it',
+        what: 'the build refuses an entry that holds an import expression (`import()`, or a phase of one: `import.source()`, `import.defer()`), with the reason `entryImport`, so no worker runs it',
         file: 'src/lib/entry-imports.ts',
         token: 'export function dynamicImportAt(',
     },
@@ -210,6 +211,11 @@ export const CHOKEPOINTS = {
         file: 'src/lib/environment.ts',
         token: 'export function detachEnvironment(',
     },
+    hostPassRule: {
+        what: "every pass of the host realm over guest content a sealed build runs is library code over strings and bytes: it hands nothing of the guest's to a platform parser, loader or policy-checked API, and its cost is linear in what it takes (HOST_PASSES; test/unit/host-passes.test.ts scans every pass and the view's frame builders)",
+        file: 'src/lib/host-passes.ts',
+        token: 'export const HOST_PASSES = {',
+    },
     secureContextRemoval: {
         what: "strict and sealed mode's worker has nothing only a secure context has, and reads `isSecureContext` as false, on every engine and page (SECURE_CONTEXT_ONLY): its globals and navigator members are off the strict allowlists, and the prelude deletes its members and pins `isSecureContext`; the surface Chromium's worker has on every page",
         file: 'src/lib/worker-globals.ts',
@@ -246,16 +252,29 @@ export const secureContextOnlyNames = (): string[] => [
 /** `import()`: syntax, which nothing at run time can take from the language. */
 export const DYNAMIC_IMPORT = 'import()';
 
+/**
+ * The phases of an import (TC39 proposals an engine may run behind a flag): syntax too, which the build refuses with
+ * `import()` (entry-imports.ts; BD7:CHL-1).
+ */
+export const IMPORT_PHASES = ['import.source()', 'import.defer()'] as const;
+
+/** Every import expression: `import()` and its phases. */
+export const IMPORT_EXPRESSIONS: readonly string[] = [DYNAMIC_IMPORT, ...IMPORT_PHASES];
+
 /** Where a name is found. */
-export const REACH_DOMAINS = ['global', 'navigator', 'library', 'member', 'syntax', 'element', 'attribute', 'loadKind'] as const;
+export const REACH_DOMAINS = ['global', 'navigator', 'library', 'member', 'syntax', 'element', 'attribute', 'loadKind', 'hostPass'] as const;
 export type ReachDomain = (typeof REACH_DOMAINS)[number];
 
-/** The realm a domain belongs to: the guest's worker, or the view. */
-export const REACH_SIDES = ['worker', 'view'] as const;
+/**
+ * The realm a domain belongs to: the guest's worker, the view, or the host page's own, where the element runs the passes
+ * over guest content a sealed build makes (HOST_PASSES, host-passes.ts; BD7:LIM-1): the third realm that handles guest
+ * content, where the browser consults the host page's policy for what the host realm parses or loads.
+ */
+export const REACH_SIDES = ['worker', 'view', 'host'] as const;
 export type ReachSide = (typeof REACH_SIDES)[number];
 const SIDE_OF: Readonly<Record<ReachDomain, ReachSide>> = {
     global: 'worker', navigator: 'worker', library: 'worker', member: 'worker', syntax: 'worker',
-    element: 'view', attribute: 'view', loadKind: 'view',
+    element: 'view', attribute: 'view', loadKind: 'view', hostPass: 'host',
 };
 export const sideOf = (domain: ReachDomain): ReachSide => SIDE_OF[domain];
 
@@ -280,9 +299,9 @@ function attributeNames(): string[] {
     return names;
 }
 
-/** The syntax that reaches a compiler: `import()`, and each function kind's constructor (CODE_FROM_STRING_SINKS). */
+/** The syntax that reaches a compiler: the import expressions, and each function kind's constructor (CODE_FROM_STRING_SINKS). */
 function syntaxNames(): string[] {
-    const names: string[] = [DYNAMIC_IMPORT];
+    const names: string[] = [...IMPORT_EXPRESSIONS];
     for (const [id, sink] of Object.entries(CODE_FROM_STRING_SINKS)) {
         if (sink.kind === 'function-kind') names.push(id);
     }
@@ -303,8 +322,12 @@ export function sealedReachNames(): ReachName[] {
     for (const ns of namespaces) add('element', RENDER_ELEMENTS[ns].map(element => `${ns}:${element}`));
     add('attribute', attributeNames());
     add('loadKind', Object.keys(VIEW_LOAD_KINDS).map(kind => `load:${kind}`));
+    add('hostPass', hostPassNames());
     return names;
 }
+
+/** The passes of the host realm over guest content a sealed build runs, as the table names them: `host:<row of HOST_PASSES>`. */
+const hostPassNames = (): string[] => sealedHostPasses().map(id => `host:${id}`);
 
 /** A string of names separated by white space, as a list. */
 const words = (text: string): readonly string[] => text.trim().split(/\s+/);
@@ -340,10 +363,10 @@ export const SURFACES = {
     code: {
         side: 'worker',
         what: 'compile a string as code: `eval`, `Function` and the constructor of every function kind',
-        names: words(`eval Function ${syntaxNames().filter(name => name !== DYNAMIC_IMPORT).join(' ')}`),
+        names: words(`eval Function ${syntaxNames().filter(name => !IMPORT_EXPRESSIONS.includes(name)).join(' ')}`),
     },
     timers: { side: 'worker', what: 'schedule a handler, and compile it when it is a string', names: words('setTimeout setInterval') },
-    dynamicImport: { side: 'worker', what: 'load and run a module by URL', names: [DYNAMIC_IMPORT] },
+    dynamicImport: { side: 'worker', what: 'load and run a module by URL, in any phase', names: IMPORT_EXPRESSIONS },
     scheduling: {
         side: 'worker',
         what: 'schedule work the guest gives as a function',
@@ -528,6 +551,9 @@ export const SURFACES = {
 
     // ---- the view: load kinds
     loadKind: { side: 'view', what: "a load of a registered file the view makes (a `blob:` URL it minted), checked against its kind's directive", names: Object.keys(VIEW_LOAD_KINDS).map(kind => `load:${kind}`) },
+
+    // ---- the host realm: the passes over guest content a sealed build runs
+    hostPass: { side: 'host', what: "a pass of the element's host code over guest content (`html`, the entry, the files, the guest's frames), in the host page's realm and on its thread", names: hostPassNames() },
 } as const satisfies Record<string, Surface>;
 export type SurfaceId = keyof typeof SURFACES;
 
@@ -563,6 +589,10 @@ const VIEW_FOCUS_ON_TEARDOWN = neutralised(['teardownDetach'], 'a focused elemen
 const STYLE_ATTRIBUTE_CSSOM = neutralised(['styleEncoding', 'cssomDeclaration'], "the view applies its text as the element's declaration: no inline style, so no check of the host page's `style-src`");
 const STYLE_ELEMENT_CSSOM = neutralised(['styleEncoding', 'adoptedSheets'], 'the view applies its text as an adopted constructed stylesheet: no inline style, so no check of the host page\'s `style-src`');
 const STYLES_CSSOM = neutralised(['styleEncoding', 'cssomDeclaration', 'adoptedSheets'], 'what it renders: its style attributes and `<style>`s, each applied through the CSSOM');
+// The host realm's passes (HOST_PASSES): none of them parses, loads or writes a sink the browser would check against the host
+// page's policy; and none of them starts, loads or reads anything the other rows govern.
+const HOST_PURE = neutralised(['hostPassRule'], "it hands nothing of the guest's to a parser, a loader or a sink of the host realm, so the browser checks none of it against the host page's policy (BD7:LIM-1)");
+const HOST_NOTHING = none("it reads and builds strings and bytes in the host page's realm, and starts, loads and reads nothing this row governs");
 // Every name that would make a request or load by URL, if the library let it: the rows a request reaches share these.
 const REQUEST_MAKERS = { requests: REQUESTS_GATED, fetchBridge: NO_FETCH_BRIDGE, importScripts: NO_IMPORT_SCRIPTS, dynamicImport: IMPORT_REFUSED } as const;
 
@@ -570,19 +600,20 @@ const REQUEST_MAKERS = { requests: REQUESTS_GATED, fetchBridge: NO_FETCH_BRIDGE,
 export const SEALED_REACH = {
     cspScript: {
         rest: "compiles and loads no script: the host page's `script-src` is asked only for the library's bootstrap",
-        cells: { code: STRINGS_REFUSED, timers: STRINGS_REFUSED, dynamicImport: IMPORT_REFUSED, importScripts: NO_IMPORT_SCRIPTS, webAssembly: NO_WEBASSEMBLY },
+        cells: { host: HOST_PURE, code: STRINGS_REFUSED, timers: STRINGS_REFUSED, dynamicImport: IMPORT_REFUSED, importScripts: NO_IMPORT_SCRIPTS, webAssembly: NO_WEBASSEMBLY },
     },
     cspWorker: {
         rest: "starts no worker: the host page's `worker-src` is asked once, for the library's own `blob:` worker (no `Worker` or `SharedWorker` is on the allowlist)",
-        cells: {},
+        cells: { host: HOST_NOTHING },
     },
     cspStyle: {
         rest: "applies no style the host page's `style-src` checks",
-        cells: { styleElement: STYLE_ELEMENT_CSSOM, styleAttribute: STYLE_ATTRIBUTE_CSSOM, viewApi: STYLES_CSSOM },
+        cells: { host: HOST_PURE, styleElement: STYLE_ELEMENT_CSSOM, styleAttribute: STYLE_ATTRIBUTE_CSSOM, viewApi: STYLES_CSSOM },
     },
     cspBaseUri: {
         rest: "resolves no URL against the document's base",
         cells: {
+            host: HOST_PURE,
             urlAttribute: neutralised(['baseCheck', 'rendererUrlDrop'], "a registered path is resolved by the library, a network URL is dropped, and what is left resolves against `about:blank`"),
             linkHref: neutralised(['inertHref'], 'the href is replaced before insertion'),
             ...REQUEST_MAKERS,
@@ -593,6 +624,7 @@ export const SEALED_REACH = {
     cspFetch: {
         rest: 'makes no request and no load',
         cells: {
+            host: HOST_PURE,
             ...REQUEST_MAKERS,
             preludeRemoved: NO_GUEST_URL,
             urlAttribute: remains(['blobLoads'], "a network URL is dropped before insertion (rendererUrlDrop); a registered file's `blob:` URL loads under the host page's directive of its kind"),
@@ -608,6 +640,7 @@ export const SEALED_REACH = {
     cspPolicyText: {
         rest: "raises no violation of the host page's policy, and reads none",
         cells: {
+            host: HOST_PURE,
             code: STRINGS_REFUSED,
             timers: STRINGS_REFUSED,
             webAssembly: NO_WEBASSEMBLY,
@@ -625,6 +658,7 @@ export const SEALED_REACH = {
     cspReporting: {
         rest: 'raises no violation, so the browser sends no report',
         cells: {
+            host: HOST_PURE,
             code: STRINGS_REFUSED,
             timers: STRINGS_REFUSED,
             webAssembly: NO_WEBASSEMBLY,
@@ -640,6 +674,7 @@ export const SEALED_REACH = {
     trustedTypesRequirement: {
         rest: 'hands no string to a Trusted Types sink: no element or attribute the renderer keeps is one (no script, handler, frame or srcdoc)',
         cells: {
+            host: HOST_PURE,
             code: STRINGS_REFUSED,
             timers: STRINGS_REFUSED,
             importScripts: NO_IMPORT_SCRIPTS,
@@ -648,11 +683,12 @@ export const SEALED_REACH = {
     },
     trustedTypesDefault: {
         rest: "runs in the guest's realm or the view, where the host page's default policy does not exist; the library's host code writes no string to a sink",
-        cells: {},
+        cells: { host: HOST_PURE },
     },
     coep: {
         rest: 'reads nothing cross-origin isolation changes, and loads nothing an embedder policy checks (a `blob:` load is not cross-origin)',
         cells: {
+            host: HOST_NOTHING,
             isolation: neutralised(['isolationRefusal'], 'no sandbox runs on an isolated host page: shared memory is absent and `crossOriginIsolated` reads false on every engine (probe: test/e2e/sealed-reach.spec.ts)'),
             performance: neutralised(['isolationRefusal'], "no sandbox runs on an isolated host page, so the clock keeps the coarse resolution of a page that is not"),
         },
@@ -660,6 +696,7 @@ export const SEALED_REACH = {
     referrer: {
         rest: 'makes no request, so sends no referrer',
         cells: {
+            host: HOST_PURE,
             ...REQUEST_MAKERS,
             viewApi: NO_NETWORK_RENDERED,
             urlAttribute: neutralised(['rendererUrlDrop', 'forcedNoReferrer'], 'no network URL is kept; a `blob:` load sends no referrer'),
@@ -671,11 +708,12 @@ export const SEALED_REACH = {
     },
     ancestorOrigins: {
         rest: "the row is a document's `location.ancestorOrigins`: the view runs no guest code, and the worker's `WorkerLocation` has no such member",
-        cells: { scope: none("`WorkerLocation` has no `ancestorOrigins` on any engine (probe: test/e2e/sealed-reach.spec.ts)") },
+        cells: { host: HOST_NOTHING, scope: none("`WorkerLocation` has no `ancestorOrigins` on any engine (probe: test/e2e/sealed-reach.spec.ts)") },
     },
     documentOrigin: {
         rest: 'reads no origin, URL or storage',
         cells: {
+            host: HOST_NOTHING,
             scope: neutralised(['originCheck'], "it reads the worker's own origin, `'null'`, and its own URL, `blob:null/<uuid>` (probe: test/e2e/sealed-reach.spec.ts)"),
             originStorage: neutralised(['originCheck'], "the opaque origin's own: a database or a lock is refused with a SecurityError, and a channel reaches only the guest's own realms (measured, BD5:ISO-1)"),
         },
@@ -683,6 +721,7 @@ export const SEALED_REACH = {
     cookies: {
         rest: 'makes no request, so carries no cookie',
         cells: {
+            host: HOST_PURE,
             ...REQUEST_MAKERS,
             viewApi: NO_NETWORK_RENDERED,
             urlAttribute: neutralised(['rendererUrlDrop', 'forcedCrossorigin'], 'no network URL is kept, and no element load carries credentials; a `blob:` load carries no cookie'),
@@ -695,6 +734,7 @@ export const SEALED_REACH = {
     serviceWorker: {
         rest: 'makes no request a Service Worker could answer',
         cells: {
+            host: HOST_PURE,
             ...REQUEST_MAKERS,
             viewApi: NO_NETWORK_RENDERED,
             urlAttribute: neutralised(['rendererUrlDrop', 'originCheck'], 'no network URL is kept, and the view is an opaque origin no Service Worker controls'),
@@ -704,6 +744,7 @@ export const SEALED_REACH = {
     hostRealmGlobals: {
         rest: "runs no code of the library's in the host page's realm",
         cells: {
+            host: none("it runs in the host page's realm with that realm's built-ins, which the guest can neither reach nor replace; what the host page itself replaces there is the embedder's own code"),
             bridge: neutralised(['brokerCapture'], "a call runs the embedder's method; the broker reads it through captured intrinsics"),
             files: neutralised(['brokerCapture'], 'a write reaches the host as a call of the broker'),
             viewApi: neutralised(['brokerCapture'], "what the view sends the host is read the same way"),
@@ -714,6 +755,7 @@ export const SEALED_REACH = {
     permissionsPolicy: {
         rest: 'uses no feature a permissions policy gates',
         cells: {
+            host: HOST_NOTHING,
             autoplay: neutralised(['autoplaySwitch', 'noDelegation', 'viewEventList'], 'dropped by default; with `allowAutoplay` the frame has no `autoplay` delegated, and the guest hears no media event'),
             mediaControls: neutralised(['noDelegation'], 'fullscreen, picture-in-picture and remote playback are delegated to no frame, so the host page\'s policy decides nothing for them'),
             isolation: neutralised(['isolationRefusal'], "`cross-origin-isolated` is the feature behind `crossOriginIsolated`, which no sandbox runs with"),
@@ -771,6 +813,7 @@ export const SEALED_REACH = {
         // potentially trustworthy and one on a loopback host give it the same names on every engine
         // (test/e2e/sealed-reach.spec.ts, which fails on any name that differs).
         cells: {
+            host: HOST_NOTHING,
             ...Object.fromEntries(secureContextOnlyNames().map(name => [name, SECURE_CONTEXT_REMOVED])),
             'isSecureContext': neutralised(['secureContextRemoval'], 'reads false on every engine and page: the answer Chromium gives on every page'),
         },
@@ -778,6 +821,7 @@ export const SEALED_REACH = {
     uiSurfaces: {
         rest: 'reaches no shared surface of the browser: focus, the clipboard, history, top-level navigation, the host window',
         cells: {
+            host: HOST_NOTHING,
             hyperlink: neutralised(['inertHref', 'navigationCancel'], 'a link navigates nowhere, and its href names nothing of the guest\'s'),
             linkHref: neutralised(['inertHref', 'navigationCancel'], 'a link navigates nowhere, and its href names nothing of the guest\'s'),
             form: neutralised(['navigationCancel'], 'a submission is cancelled, and no form target is kept (no `action`, `formaction` or `target`)'),
@@ -787,6 +831,7 @@ export const SEALED_REACH = {
     eventDispatch: {
         rest: "the row's events are the host page's own, dispatched when the element removes its frames, whatever the guest holds",
         cells: {
+            host: HOST_NOTHING,
             hyperlink: VIEW_FOCUS_ON_TEARDOWN,
             form: VIEW_FOCUS_ON_TEARDOWN,
             disclosure: VIEW_FOCUS_ON_TEARDOWN,
@@ -797,6 +842,7 @@ export const SEALED_REACH = {
     thread: {
         rest: 'runs on the worker\'s own thread; what it sends the view is charged to the view\'s budgets',
         cells: {
+            host: remains(['hostPasses'], "it runs on the host page's thread, linear in what it takes, which a cap of the library's bounds (HOST_PASSES `cost`)"),
             view: remains(['viewRendering'], "rendered in the view, on the host page's thread where the engine shares it"),
             viewApi: remains(['viewRendering'], "what it renders, and every `set()`, is applied in the view, on the host page's thread where the engine shares it"),
         },

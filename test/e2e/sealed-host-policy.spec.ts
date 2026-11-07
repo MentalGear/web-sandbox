@@ -139,7 +139,7 @@ test.describe('sealed mode: the host page\'s policy can never be checked by the 
         const secrets = { nonce: `HN${tag()}`, key: `RK${tag()}` };
         const host = await RealisticHost.open(sandbox, { mode: 'sealed', directives: withSecrets(secrets) });
         await host.hits(true);
-        expect(unbuildable.length).toBe(3);
+        expect(unbuildable.length).toBe(5); // import(): a URL, a registered file, a data: URL; import.source(), import.defer()
         for (const maker of unbuildable) {
             await sandbox.registerFiles({ 'main.js': `sandboxView.render('<p>x</p>'); ${makerCode(maker, makerTarget(host, maker))};` });
             const events = await host.configure({ entry: 'main.js' });

@@ -46,8 +46,13 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
    `Function` and the constructor of every function kind, a timer given a string: `CODE_FROM_STRING_SINKS`), an
    `EvalError` with the library's text that never calls the platform; the worker has no other compiler
    (`importScripts`, nested workers, `WebAssembly`, `ShadowRealm` and Trusted Types are off its allowlist or removed).
-   `import()` is syntax, so the build refuses an entry whose text holds `import` followed by `(`, with the reason
-   `entryImport` (the view's `script-src` admits no module, so no `import()` could load anything). A sealed config with
+   `import()` is syntax, and so is every phase of it (`import.source()`, `import.defer()`), so the build refuses an
+   entry whose text holds `import` followed by `(` or `.`, with the reason `entryImport` (the view's `script-src` admits
+   no module, so no import could load anything; in a classic script a static import and `import.meta` do not compile);
+   the scan is linear in the entry. The element's own code, in the host page's realm, hands nothing of the guest's to a
+   parser, a loader or a markup sink of that realm, which the browser would check against the page's policy: every
+   function of it that receives guest content is a row of `HOST_PASSES`, the third side of the class-A table
+   (`SEALED_REACH`, `host`). A sealed config with
    `scriptUnsafe: true` is refused whole, with the reason `sealedScriptUnsafe`, as one with a network option is. With
    the request gate and the allowlist, nothing guest code does in the worker reaches a check of the inherited list: no
    violation, no engine message, no report. What would still raise one there is relayed and stopped by the bootstrap's
@@ -103,7 +108,8 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
   ([migration](API.md#migrating-to-sealed-as-the-default)). A guest `fetch()` of its own file's URL is refused in sealed
   mode (`connect-src` has no `blob:`); `sandboxFiles.read()` reads the file.
 - **What the app gives up**: every request, every string run as code (`eval`, `new Function`, a timer given a string:
-  each throws the library's `EvalError`), `import()` (bundle the modules into the entry), and `execute()`. The only code of the host page it can run is the methods the host `expose()`s, so those
+  each throws the library's `EvalError`), `import()` and its phases (bundle the modules into the entry), an initial view
+  longer than one render (`htmlTooLong`: render the rest from the entry), and `execute()`. The only code of the host page it can run is the methods the host `expose()`s, so those
   methods are the whole surface an attacker reaches: copy arguments with spread and validate each one. What else reaches
   the host page is the app's data and attacker text: its log lines (`sandbox-log`), the details of `violation` events,
   its guest writes (`fileswritten`) and the auto-resize height. None is a request or runs code, and an embedder that

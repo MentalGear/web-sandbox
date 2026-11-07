@@ -85,7 +85,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:c25cf2f642cb49d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:c25cb45f42cb49d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
@@ -149,7 +149,7 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 
 ## Channels and frames
 
-<!-- describes: channels, frames sig:9d12cc18 -->
+<!-- describes: channels, frames sig:37948eea -->
 
 Realms talk on channels, and every message on them is a frame of a declared type. A frame is declared once, with the
 channels it may cross, the realms at its ends, and for each field what bounds it. What a frame carries out of a guest
@@ -171,7 +171,7 @@ How a field is bounded:
 | :--- | :--- | :--- | :--- | :--- |
 | `announcement` | window message | `host`, `cooperative`, `worker-frame`, `view`, `bridge-frame` | A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), and any bootstrap's refusal of an environment other than the one built. | 2 |
 | `logic-port` | MessagePort | `host`, `cooperative`, `worker`, `strict-worker` | The host and the guest: calls both ways, execute(), liveness, and the guest bootstrap's lines and reports. | 9 |
-| `view-port` | MessagePort | `host`, `view` | Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness. | 15 |
+| `view-port` | MessagePort | `host`, `view` | Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness. | 16 |
 | `render-port` | MessagePort | `view`, `strict-worker` | Strict mode: the view and the guest's worker; the host is not on this path. | 8 |
 | `view-init` | window message | `host`, `view` | Strict mode: the host hands the view its two ports, once per build. | 1 |
 | `worker` | worker message | `worker-frame`, `worker`, `view`, `strict-worker` | A frame and the worker it spawned: the worker gets its ports, and worker mode's worker says it started. | 3 |
@@ -198,6 +198,7 @@ How a field is bounded:
 | `RESIZE` | `logic-port`: cooperative → host<br>`view-port`: view → host | `height` (not a string) | The content's height, for autoResize: from cooperative mode's bootstrap, or strict mode's view. |
 | `UNCAUGHT_PAST_BUDGET` | `logic-port`: worker, strict-worker → host<br>`view-port`: view → host | — | The guest raised more uncaught errors and rejections in a second than their budget: the sandbox ends. |
 | `VIEW_READY` | `view-port`: view → host | `width` (not a string), `height` (not a string), `stillStyleRefused` (not a string) | The view's check-in, its first frame: the strict build is ready. |
+| `VIEW_INITIAL` | `view-port`: view → host | `dropped` (constant) | What the initial view (the configuration's `html`) dropped that the author may not expect: the element warns once from it, and reads no markup itself (BD7:LIM-1). Posted once a build, after the initial render, when it dropped something. |
 | `VIEW_PING` | `view-port`: host → view | `n` (not a string) | The view's liveness probe (VIEW_LIVENESS_TIMEOUT_MS). |
 | `VIEW_PONG` | `view-port`: view → host | `n` (not a string) | The view's answer to a VIEW_PING. |
 | `VIEW_WRITE` | `view-port`: host → view | `id` (host), `path` (host), `mime` (host), `bytes` (host) | A guest write the host recorded, for the view to show (a raster image gets a URL of its own there). |
@@ -364,7 +365,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/egress.ts` | The egress table |
 | `src/lib/element-events.ts` | The element's events |
 | `src/lib/engine-ledger.ts` | The engine-difference ledger |
-| `src/lib/entry-imports.ts` | The dynamic `import()` of a strict or sealed entry |
+| `src/lib/entry-imports.ts` | The import expressions of a strict or sealed entry |
 | `src/lib/environment-check.ts` | The environment check |
 | `src/lib/environment.ts` | The resources of one environment, declared once |
 | `src/lib/fetch-bridge.ts` | The host-mediated fetch bridge, host side |
@@ -372,6 +373,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/frame-documents.ts` | Builds the documents the sandbox is made of |
 | `src/lib/frames.ts` | The frame table |
 | `src/lib/guest-writes.ts` | Guest writes, host side: the overlay of one environment |
+| `src/lib/host-passes.ts` | The host realm's passes over guest content, as data |
 | `src/lib/host-site.ts` | The host page's origin and its site for cookies |
 | `src/lib/import-map.ts` | The guest's own import maps |
 | `src/lib/in-bridge-frame.ts` | The fetch bridge's frame, frame side: the only code that performs a request of the bridge |

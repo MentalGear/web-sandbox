@@ -201,7 +201,7 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
     test('every import() maker: the build refuses its entry with the reason that names it, and the listener sees nothing', async ({ sandbox, page }) => {
         test.setTimeout(60000);
         const makers = SEALED_MAKERS.filter(maker => !builds(maker));
-        expect(makers.length).toBe(3);
+        expect(makers.length).toBe(5); // import(): a URL, a registered file, a data: URL; import.source(), import.defer()
         for (const maker of makers) {
             expect(await sandbox.registerFiles({ 'main.js': `sandboxView.render('<p id="m-done">done</p>'); ${makerCode(maker, makerUrl(maker, listener.origins))};` })).toBe('ok');
             expect(await apply(page, { mode: 'sealed', entry: 'main.js' }), maker.id).toBe('terminated');

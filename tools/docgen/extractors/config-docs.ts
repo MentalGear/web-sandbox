@@ -3,7 +3,8 @@
  * option's type and what it does. The option, its default and its modes come from CONFIG_SCHEMA (`documented`, `modes`).
  * The keys are the schema's options but the removed ones, so a new option fails to type-check here until it has a row;
  * the order is the table's. In `what`, `{safeCapabilities}` and `{unsafeCapabilities}` stand for the lists in
- * src/csp-directives.ts. Prose, edited here and rendered by extractors/config.ts.
+ * src/csp-directives.ts, and `{VIEW_RENDER_MAX_LENGTH}` for that limit's value. Prose, edited here and rendered by
+ * extractors/config.ts.
  */
 import type { OptionName, CONFIG_SCHEMA } from '../../../src/lib/config-schema';
 
@@ -24,7 +25,7 @@ export const OPTION_WORDS: Record<Documented, OptionWords> = {
     mode: { type: "`'strict' | 'sealed' | 'cooperative' | 'worker'`", modes: '—',
         what: "Where guest code runs; see [Modes](#modes). `'sealed'`, the default, is strict mode with no network: a sealed config that names `origins` or `fetchBridge`, with the mode written or left out, is refused, and the sandbox terminates with the reason `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``. To open the network, name `mode: 'strict'`. Any other value starts no environment: the sandbox terminates with the reason `unknown mode: not strict, sealed, cooperative or worker` until a valid mode is configured. `'iframe'` was renamed `'cooperative'`: refused the same way, and the reason says so." },
     html: { type: "`string`",
-        what: "The initial view (strict and sealed mode) or the guest document (cooperative mode). In strict and sealed mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element: ``sealed mode (the default) runs no script in `html`; …`` (in strict mode ``strict mode runs no script in `html`; …``). Empty means `<div id=\"root\"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml)." },
+        what: "The initial view (strict and sealed mode) or the guest document (cooperative mode). In strict and sealed mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element, once the view has rendered it: ``sealed mode (the default) runs no script in `html`; …`` (in strict mode ``strict mode runs no script in `html`; …``); and markup longer than `VIEW_RENDER_MAX_LENGTH` ({VIEW_RENDER_MAX_LENGTH}) characters, the most one render takes, refuses the config (and `load()`) with its reason, before anything reads it. Empty means `<div id=\"root\"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml)." },
     capabilities: { type: "`SafeCapability[]`",
         what: "Sandbox flags that keep the guest inside the frame: {safeCapabilities}. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict and sealed mode always have `allow-scripts allow-forms` (listing either there changes nothing)." },
     unsafeCapabilities: { type: "`UnsafeCapability[]`",

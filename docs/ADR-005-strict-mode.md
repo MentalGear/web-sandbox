@@ -44,12 +44,12 @@ all, with the realms named as there (`strict-worker` is the guest's worker). `VI
 on, and the render port is the view's and the worker's alone
 ([ADR-002](ADR-002-host-guest-broker.md#strict-mode-renders-bypass-the-host)).
 
-<!-- describes: adr005:ports sig:47ca -->
+<!-- describes: adr005:ports sig:1cc6 -->
 <!-- generated:begin adr005-ports -->
 | Port | Ends | Carries |
 | :--- | :--- | :--- |
 | logic | host ↔ strict-worker | `EXECUTE`, `PING`, `PONG`, `RPC_REQ`, `RPC_RES`, `LOG`, `VIOLATION`, `UNCAUGHT_PAST_BUDGET` |
-| view | host ↔ view | `VIOLATION`, `RESIZE`, `UNCAUGHT_PAST_BUDGET`, `VIEW_READY`, `VIEW_PING`, `VIEW_PONG`, `VIEW_WRITE`, `VIEW_WRITTEN`, `VIEW_FIRST_OVERRUN`, `VIEW_OVERRUN`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `GUEST_TEXT_DROPPED`, `TRUSTED_TYPES_REFUSED`, `WORKER_REFUSED` |
+| view | host ↔ view | `VIOLATION`, `RESIZE`, `UNCAUGHT_PAST_BUDGET`, `VIEW_READY`, `VIEW_INITIAL`, `VIEW_PING`, `VIEW_PONG`, `VIEW_WRITE`, `VIEW_WRITTEN`, `VIEW_FIRST_OVERRUN`, `VIEW_OVERRUN`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `GUEST_TEXT_DROPPED`, `TRUSTED_TYPES_REFUSED`, `WORKER_REFUSED` |
 | render | view ↔ strict-worker (the host is not on this path) | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_TEXT`, `VIEW_SET`, `VIEW_LISTEN`, `VIEW_ACK`, `VIEW_EVENT`, `VIEW_EVENT_ACK` |
 <!-- generated:end -->
 
@@ -74,8 +74,14 @@ creates the render port, spawns the worker from a `blob:` URL (`worker-src blob:
 - **Markup written for cooperative mode is said to run nothing.** When a strict or sealed build's `html` holds a script
   element or an `on…` handler attribute, the element warns once, in the mode's words: ``strict mode runs no script in
   `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.`` (``sealed mode (the default) runs no
-  script in `html`; …`` in sealed mode). It reads the markup with the host's `DOMParser`, which runs and loads
-  nothing (`src/lib/markup-scripts.ts`), and never changes what is rendered: the renderer drops both.
+  script in `html`; …`` in sealed mode). It decides that from what the view's renderer noted it dropped of the initial
+  view (`VIEW_INITIAL`: its `<script>`s and handlers), and never changes what is rendered: the renderer drops both.
+  The host page's realm runs and loads nothing of the markup by construction: no parser, sink or loader of that realm
+  is given the guest's `html`, entry or files, whose every pass there is a row of `HOST_PASSES`
+  (`src/lib/host-passes.ts`), and `test/unit/host-passes.test.ts` fails on a parser or a sink reachable from the view's
+  frame builders. A `DOMParser` of the host realm would have the browser check the guest's styles and `<base>` against
+  the host page's policy, and report them (Chromium; BD7:LIM-1). `html` longer than `VIEW_RENDER_MAX_LENGTH`, the most
+  one render takes, is refused at configuration (`htmlTooLong`).
 - **Cooperative mode's limits are a frozen list.** No new guest-realm patch is made in cooperative mode; a new finding there
   is documented as a limit (README "Cooperative-mode limits", the same in API.md and backlog S44). The list: the
   same-thread execution budget (S6); the pre-policy window over guest markup (S8); frames the guest creates (S13: WebRTC;

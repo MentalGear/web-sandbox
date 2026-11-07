@@ -817,17 +817,20 @@ export function viewStylesheets(entries: readonly FileSnapshotEntry[]): { entrie
             continue;
         }
         const slots = entry[3] ?? [];
-        const taken = (start: number, end: number) => {
-            for (let i = 0; i < slots.length; i += 3) if ((slots[i] as number) < end && start < (slots[i + 1] as number)) return true;
-            return false;
-        };
+        const slotted = slotRanges(slots);
         const toBytes = utf8Offsets(source);
         const drops: [start: number, end: number][] = [];
         const urls: string[] = [];
-        for (const reference of cssReferences(source, 'network')) {
+        // The slots and the network references, both in source order, are read in one walk (HOST_PASSES.viewStylesheets,
+        // class E-cpu: a host pass over guest content is linear in it): the slots that end before a reference starts end
+        // before every later one starts too.
+        const references = cssReferences(source, 'network').sort((a, b) => a.start - b.start);
+        let next = 0;
+        for (const reference of references) {
             const start = toBytes(reference.start);
             const end = toBytes(reference.end);
-            if (taken(start, end)) continue; // a registered file's slot (https://vfs.invalid/…): the view's blob: URL
+            while (next < slotted.length && slotted[next]![1] <= start) next++;
+            if (next < slotted.length && slotted[next]![0] < end) continue; // a registered file's slot (https://vfs.invalid/…): the view's blob: URL
             drops.push([start, end]);
             urls.push(reference.url);
         }
@@ -843,6 +846,13 @@ export function viewStylesheets(entries: readonly FileSnapshotEntry[]): { entrie
         dropped.push({ path, urls, unreadable: null });
     }
     return { entries: out, dropped };
+}
+
+// The byte ranges of a stylesheet's slots (its snapshot edits: [start, end, slot] triples), sorted by where they start.
+function slotRanges(edits: ByteEdits): [start: number, end: number][] {
+    const ranges: [start: number, end: number][] = [];
+    for (let i = 0; i < edits.length; i += 3) ranges.push([edits[i] as number, edits[i + 1] as number]);
+    return ranges.sort((a, b) => a[0] - b[0]);
 }
 
 interface ParsedFile {
