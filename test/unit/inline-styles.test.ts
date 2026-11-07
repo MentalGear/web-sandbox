@@ -4,7 +4,7 @@ import { cssLoadBound, inSandboxView, isStyleProperty, RENDER_RULES, sanitizeRen
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { cssReferences, dropNetworkCss, withoutNetworkReferences } from '@src/lib/css-references';
 import { styleMarkup, type StyleMarkup } from '@src/lib/style-markup';
-import { declared, parseAsView } from './view-parse';
+import { declared, parseAsIs, parseAsView } from './view-parse';
 
 /**
  * The view applies every guest style through the CSSOM, never as an inline style (S74, class A: INHERITED_CONTEXT.cspReporting;
@@ -88,12 +88,26 @@ function readBack(fragment: DocumentFragment, markup: StyleMarkup): Tree[] {
     return [...fragment.childNodes].map(node => treeOf(node, name, attributes, markup.decode));
 }
 
+/** The parse of the markup as written, to compare with readBack: the attributes a renderer could keep. */
+function writtenTree(html: string): Tree[] {
+    const attributes = (element: Element) => keepable([...element.attributes].map(a => [a.name, a.value]));
+    return [...parse(html).childNodes].map(node => treeOf(node, undefined, attributes));
+}
+
 /**
  * Whether a `<` ended a tag or attribute name of the parse (`<p </style>`: an attribute `<`): the one context where an end
- * tag `</style` reads as an attribute named style, which the encoding turns into an attribute named `noframes` (and a
- * style there gives up its value, if one follows after white space). No renderer keeps either.
+ * tag `</style` reads as an attribute named style, which the encoding turns into an attribute named `noframes`. No
+ * renderer keeps either.
  */
 const strayLessThan = (fragment: DocumentFragment) => [...elementsOf(fragment)].some(element => element.localName.endsWith('<') || [...element.attributes].some(attribute => attribute.name.endsWith('<')));
+
+/**
+ * A `<style` or `</style` followed by white space and `=`: after a stray `<` in a tag, the marker's value ends the name, so
+ * the `=` starts an attribute instead of giving a value, and a quote after it can move the tag's end (style-markup.ts). An
+ * end tag's attributes are dropped by the parse, so there the stray `<` leaves no trace strayLessThan could see: the
+ * markup is excluded by its text, the tag contexts it holds too, which the cases below take one by one.
+ */
+const styleTagThenEquals = (html: string) => /<\/?style[\t\n\f\r ]+=/i.test(html);
 
 /** Markup made of the pieces the tokenizer's contexts turn on, around `style` and `noframes` in every case. */
 const PIECES = [
@@ -133,18 +147,23 @@ describe('styleMarkup: the parse of the encoded markup has no style attribute an
 
     it('and is the parse of the markup in every other respect, read back: names, values, texts and the tree (no table, no noframes)', () => {
         fc.assert(fc.property(markupOf(PIECES), (html) => {
-            fc.pre(!strayLessThan(parse(html)));
+            fc.pre(!strayLessThan(parse(html)) && !styleTagThenEquals(html));
             const markup = markupFor();
-            const original = (element: Element) => keepable([...element.attributes].map(a => [a.name, a.value]));
-            expect(readBack(parse(markup.encode(html)), markup), html).toEqual([...parse(html).childNodes].map(node => treeOf(node, undefined, original)));
+            expect(readBack(parse(markup.encode(html)), markup), html).toEqual(writtenTree(html));
         }), { numRuns: 3000 });
     });
 
-    it('where the tree differs: a style in a table is moved out before it, the guest\'s own noframes is an element of another name, an end tag inside a tag an attribute of another name', () => {
+    it('where the tree differs: a style in a table is moved out before it, the guest\'s own noframes is an element of another name, an end tag inside a tag an attribute of another name, and a value after a stray `<style` a name', () => {
         const markup = markupFor();
         expect(readBack(parse(markup.encode('<table><style>a</style></table>')), markup).map(node => node[1])).toEqual(['style', 'table']);
         expect([...parse(markup.encode('<noframes>x</noframes>')).children].map(element => element.localName)).toEqual([markup.noframes]);
         expect(parse(markup.encode('<p </style>')).firstElementChild!.getAttributeNames()).toEqual(['<', 'noframes', `${markup.nonce}estyle`]);
+        const stray = "<p <style ='a>b' c>x";
+        expect(writtenTree(stray)).toEqual([['http://www.w3.org/1999/xhtml', 'p', 'c=', [['3', 'x']]]]);
+        expect(readBack(parse(markup.encode(stray)), markup)).toEqual([['http://www.w3.org/1999/xhtml', 'p', [['3', "b' c>x"]]]]); // the tag ends at the quoted `>`
+        for (const html of ["<style ='a>b' c>x</style>y", "<p>x</style ='a>b' c>y", "<style\t=x>a</style>b"]) {
+            expect(readBack(parse(markup.encode(html)), markup), `a tag of its own reads as written: ${html}`).toEqual(writtenTree(html));
+        }
     });
 
     it('nothing is changed where no name can be made: the end of the input, other words, other letters around', () => {
@@ -164,9 +183,12 @@ describe('styleMarkup: the parse of the encoded markup has no style attribute an
 describe('the renderer: a style attribute becomes a declaration, a <style> a noframes the view applies; neither is written as an inline style', () => {
     afterEach(() => vi.restoreAllMocks());
 
-    /** Renders `html` as the view does, recording every attribute the renderer writes by name. */
-    function render(html: string, switches: RenderSwitches = KEEP_ALL) {
-        const { template, markup } = parseAsView(html);
+    /**
+     * Renders `html` as the view does (or, with `encoded` false, parsed as it is, as a caller that only cleans markup would),
+     * recording every attribute the renderer writes by name.
+     */
+    function render(html: string, switches: RenderSwitches = KEEP_ALL, encoded = true) {
+        const { template, markup } = encoded ? parseAsView(html) : parseAsIs(html);
         const written: string[] = [];
         const record = (name: unknown) => { written.push(String(name).toLowerCase()); };
         const setAttribute = Element.prototype.setAttribute, setAttributeNS = Element.prototype.setAttributeNS;
@@ -217,12 +239,13 @@ describe('the renderer: a style attribute becomes a declaration, a <style> a nof
         expect(stylesIn(template).filter(found => found.startsWith('element'))).toEqual([]);
     });
 
-    it('whatever the markup, the renderer writes no attribute named style and keeps no <style> element', () => {
-        fc.assert(fc.property(markupOf([...PIECES, ...TABLES, ...NOFRAMES]), (html) => {
-            const { fragment, written } = render(html, { animations: false, autoplay: false, stylesheets: true });
+    it('whatever the markup, encoded or parsed as it is, the renderer writes no attribute named style and keeps no <style> element', () => {
+        const pieces = [...PIECES, ...TABLES, ...NOFRAMES, 'animation: x 1s', 'url(https://x.example/y.png)', ' style="color: red; animation: x 1s" '];
+        fc.assert(fc.property(markupOf(pieces), fc.boolean(), (html, encoded) => {
+            const { fragment, written } = render(html, { animations: false, autoplay: false, stylesheets: true }, encoded);
             expect(written, html).not.toContain('style');
             expect(stylesIn(fragment).filter(found => found.startsWith('element')), html).toEqual([]);
-        }), { numRuns: 1000 });
+        }), { numRuns: 1500 });
     });
 });
 

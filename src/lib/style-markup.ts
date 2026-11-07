@@ -29,7 +29,10 @@
  *   - every end tag `</style` followed by white space, `/` or `>` becomes `</noframes/<nonce>estyle=v` (or `…estyle` before
  *     a `/`), the end tag of that raw text, its marker an attribute of the end tag, which the parser ignores: a style's text
  *     ends where it ended. Inside a tag, where `</style` would start an attribute named `style` (`<p </style>`: `<` is a
- *     name, `/` ends it), it starts one named `noframes`;
+ *     name, `/` ends it), it starts one named `noframes`. There, after a stray `<` in a tag (`<p </style =x>`, `<p <style
+ *     =x>`), the marker's value also ends the name the markup had: a `=` after white space starts an attribute instead of
+ *     giving a value, so a quote after it is part of a name, and the tag can end at another `>` than the markup's. Only
+ *     malformed markup (a `<` inside a tag) parses differently this way, and its names hold a `<`, which no renderer keeps;
  *   - the guest's own `<noframes` and `</noframes` (followed by white space, `/` or `>`) become `<<nonce>nnoframes`: an
  *     unknown element, removed by the renderer as a `noframes` is (RENDER_REMOVED_ELEMENTS), whose content is parsed as
  *     markup and not as raw text; and no guest end tag can end a renamed style early.

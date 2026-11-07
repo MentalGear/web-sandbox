@@ -15,6 +15,13 @@ export function parseAsView(html: string): { template: HTMLTemplateElement; mark
     return { template, markup: text === html ? undefined : encoding };
 }
 
+/** Parses `html` into an inert template as it is, unencoded: what a caller of the renderer that only cleans markup gives it. */
+export function parseAsIs(html: string): { template: HTMLTemplateElement; markup: undefined } {
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    return { template, markup: undefined };
+}
+
 /** The `style` attribute the engine writes for `css` given to an element's declaration: what the renderer leaves for it. */
 export function declared(css: string): string | null {
     const element = document.createElement('p');
