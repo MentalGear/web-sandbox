@@ -786,7 +786,7 @@ export interface RenderContext {
      * Filled by the renderer when given, each at most once (BD5:NEW-3): what it dropped or left inert that the author may
      * not expect, for the one notice a render gets (the view's acknowledgement carries them, and the worker's prelude
      * logs one line: inStrictWorker): `script`, a `<script>` (HTML or SVG) removed;
-     * `reference`, a URL attribute that names a path of the sandbox's files and no file the view shows, kept as written.
+     * `reference`, a URL attribute that names a path of the sandbox's files and no file the view shows, dropped (keepsUrl).
      */
     dropped?: string[];
 }
@@ -3859,7 +3859,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
                 log('warn', ['[Sandbox] sandboxView.render: '
                     + (script ? 'the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker)' : '')
                     + (script && reference ? '; and ' : '')
-                    + (reference ? 'a reference that names no file the view shows was kept as written and loads nothing (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>)' : '')
+                    + (reference ? 'a reference that names no file the view shows was dropped (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>)' : '')
                     + '.']);
             }
             inFlight = null;

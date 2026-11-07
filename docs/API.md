@@ -726,7 +726,7 @@ running. Files survive every rebuild and `terminate()`.
  `@import` only `text/css`; `img`, `srcset`, `poster`, icon links and CSS `url()` only `image/*`; `url()` in
  `@font-face` and `preload as=font` only `font/*`; `audio`, `video` and `source` only `audio/*` and `video/*`;
  `track` only `text/vtt`. A reference to a file of another type stays as written and fails closed, with one
- warning. This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
+ warning (strict and sealed mode's view drops it: [The url rule](#the-url-rule)). This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
  script. Code that passes `sandboxFiles.url()` to a script element or `importScripts()` itself decides what it
  loads (Chromium runs such a file whatever its type; Firefox and WebKit refuse it in `importScripts()`).
 - How the guest names files (markup, module imports, stylesheets) is described in the README's Files section; why:
@@ -1367,8 +1367,8 @@ The renderer is an allowlist: what it does not list is gone before insertion.
 Any other HTML element is unwrapped (its content takes its place and is checked in turn: `wbr`, `ruby`, `rt` and `rp`
 are, for what their layout costs); a custom element name with a hyphen (`my-card`) is kept as an inert element; `iframe`, `frame`, `frameset`, `object`, `embed`, `applet`,
 `portal`, `fencedframe`, `script`, `noscript`, `noembed`, `noframes`, `template`, `meta`, `base` and `title` go with
-their content. A `sandboxView.render()` that dropped a `<script>`, or kept as written a reference that names no file
-the view shows (below), logs one `warn` line in the guest's `sandbox-log` saying which, at most one per render, as
+their content. A `sandboxView.render()` that dropped a `<script>`, or a reference that names no file the view shows
+(below), logs one `warn` line in the guest's `sandbox-log` saying which, at most one per render, as
 the element's own notice says it of a script in `html`.
 
 **SVG**: `svg`, `g`, `defs`, `symbol`, `title`, `desc`, `style`, `a`, `rect`, `circle`, `ellipse`, `line`,
@@ -1467,7 +1467,7 @@ Registered files are named by path in `src`, `href` and `poster`. The view shows
 document: CSS, PNG, JPEG, GIF, WebP, AVIF, APNG, BMP and ICO images, WOFF, WOFF2, TTF and OTF fonts, MP3, WAV, Ogg,
 MP4, FLAC, WebM and AAC audio, MP4, WebM and Ogg video, and WebVTT; and the raster images the guest wrote (see
 [Guest writes](#guest-writes)). Any other file (SVG, HTML, XML, JSON …) is the worker's through `sandboxFiles` only; a
-reference to it stays as written and loads nothing, and the render that holds it logs one `warn` line saying so. Show
+reference to it is dropped ([the URL rule](#the-url-rule)), and the render that holds it logs one `warn` line saying so. Show
 vector graphics as inline `<svg>`.
 
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes

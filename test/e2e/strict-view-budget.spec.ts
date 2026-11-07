@@ -177,7 +177,7 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
             const scanCss = (${cssReferences.toString()});
             const keepCss = (${withKeptReferences.toString()});
             const keepsUrl = (${keepsUrl.toString()});
-            const keptCss = (css, dropped, property) => keepCss(css, scanCss, (url, of) => keepsUrl(url, of, () => false), dropped, property);
+            const keptCss = (css, dropped, property) => keepCss(css, scanCss, (url, of, text) => keepsUrl(url, () => false, of, text), dropped, property);
             const encoding = (${styleMarkup.toString()})('wmeasure0001');
             const rules = ${JSON.stringify(RENDER_RULES)};
             const half = ${VIEW_RENDER_MAX_LENGTH / 2};

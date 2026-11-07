@@ -1031,7 +1031,7 @@ export class WebSandbox extends ElementBase {
      *   `@import` only `text/css`; `img`, `srcset`, `poster`, icon links and CSS `url()` only `image/*`; `url()` in
      *   `@font-face` and `preload as=font` only `font/*`; `audio`, `video` and `source` only `audio/*` and `video/*`;
      *   `track` only `text/vtt`. A reference to a file of another type stays as written and fails closed, with one
-     *   warning. This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
+     *   warning (strict and sealed mode's view drops it: docs/API.md#the-url-rule). This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
      *   script. Code that passes `sandboxFiles.url()` to a script element or `importScripts()` itself decides what it
      *   loads (Chromium runs such a file whatever its type; Firefox and WebKit refuse it in `importScripts()`).
      * - How the guest names files (markup, module imports, stylesheets) is described in the README's Files section; why:
