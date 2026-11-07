@@ -21,10 +21,12 @@ import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { keepOnlyWorkerGlobals, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
+import { dynamicImportAt } from "./lib/entry-imports";
+import { CODE_FROM_STRING_REFUSAL, FUNCTION_KINDS_SOURCE, REFUSED_GLOBALS, REFUSED_TIMERS, refuseCodeFromStrings } from "./lib/code-from-strings";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { setLongTimeout, type LongTimeout } from "./lib/long-timer";
 import { createRateLimiter, type RateLimiter } from "./lib/rate-limit";
-import { toViolationDetail, VIOLATION_EVENT_LIMIT, violationBucket, type SandboxViolation } from "./lib/violation";
+import { toViolationDetail, VIOLATION_EVENT_FIELDS, VIOLATION_EVENT_LIMIT, violationBucket, type SandboxViolation } from "./lib/violation";
 import { createLogLimiter, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
@@ -101,6 +103,19 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
     origins?: never;
     /** Not in sealed mode, which has no network: a config that names it is refused. */
     fetchBridge?: never;
+    /**
+     * Not in sealed mode, which runs no string as code: `true` refuses the config.
+     *
+     * @remarks
+     * A string run as code is checked against the host page's policy, which the guest's worker inherits; a policy that
+     * refuses it reports the refusal with the page's policy text, and to the page's report endpoint with a sample of the
+     * string. So in sealed mode `eval`, `Function`, the other function constructors and a timer given a string throw
+     * the library's `EvalError` before the browser sees the string, and `execute()` does nothing. Strict mode keeps the
+     * option, for testing.
+     *
+     * @defaultValue `false`
+     */
+    scriptUnsafe?: false;
     /** Not in sealed mode: no capability reaches outside the view. Dropped at run time. */
     unsafeCapabilities?: never;
 }
@@ -297,7 +312,12 @@ export interface SandboxConfigOptions {
     /**
      * Whether the guest policy allows `'unsafe-eval'` (strings run as code, WebAssembly too) and
      * `execute()` runs code. For testing: each element that enables it warns once. Only a literal `true`
-     * enables it.
+     * enables it. Sealed mode refuses it ({@link SealedSandboxConfig}).
+     *
+     * @remarks
+     * The host page's policy still applies: the guest's realm inherits it, so a string it refuses fails, and the page's
+     * policy reports the refusal to the guest's realm (its text) and to the page's report endpoint (a sample of the
+     * string). Without it, strict mode's worker refuses every string itself, before the browser sees it.
      *
      * @defaultValue `false`
      */
@@ -569,6 +589,17 @@ const workerGlobalsCall = (global: string, globals: readonly string[] = WORKER_G
     `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(globals)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)})`;
 const workerGlobalsStatement = (global: string) => `${workerGlobalsCall(global, STRICT_WORKER_GLOBALS)};`;
 
+// The strict prelude's last statement, before the guest's entry, unless scriptUnsafe (code-from-strings.ts; BD6:ISO-1,
+// class A): every code-from-string sink of the worker becomes the library's refusal, so no guest string reaches a check of
+// the policy list the worker inherited from the host page. One function of each kind is written as text here, where no
+// bundler rewrites it.
+const refuseCodeFromStringsStatement = (global: string) =>
+    `(${refuseCodeFromStrings.toString()})(${global}, ${FUNCTION_KINDS_SOURCE}, ${toInlineScriptLiteral(REFUSED_GLOBALS)}, ${toInlineScriptLiteral(REFUSED_TIMERS)}, ${toInlineScriptLiteral(CODE_FROM_STRING_REFUSAL)});`;
+
+// The text of a strict or sealed entry as the worker runs it, from its registered bytes (base64): what the build scans
+// (dynamicImportAt) is what the worker's source holds.
+const entryText = (base64: string) => new TextDecoder().decode(Uint8Array.from(atob(base64), c => c.charCodeAt(0)));
+
 // The guest frame's window: the wrapper's frames[0], or null. Read by length first: the wrapper is cross-origin to
 // the host, and reading an index a cross-origin window does not have throws a SecurityError.
 function guestWindowOf(iframe: HTMLIFrameElement | null): Window | null {
@@ -626,6 +657,7 @@ interface BootstrapFeatures {
     uncaught?: { count: number; characters: number };
     connect: string[];
     sealed?: true;
+    violationFields?: Readonly<Record<string, string | number>>;
 }
 
 // What the host posts to a strict view with its two ports (INIT_VIEW).
@@ -2057,6 +2089,10 @@ export class WebSandbox extends ElementBase {
         if (hasStrictView(this._config.mode) && typeof entry === 'string' && entry !== '') {
             const file = this._files.list().find(candidate => candidate.path === entry);
             if (!file || !isJavaScriptType(file.type)) return reasonText('entryNotRegistered'); // names the problem, not the entry (BD5:DOC-2)
+            // An import() would be checked against the host page's policy list, which the worker inherits, and reported to
+            // its endpoint with the URL the guest chose; the view's script-src admits nothing it could load (entry-imports.ts;
+            // BD6:ISO-2, class A).
+            if (dynamicImportAt(entryText(this._files.base64(entry) ?? '')) >= 0) return reasonText('entryImport');
         }
         return null;
     }
@@ -2071,7 +2107,10 @@ export class WebSandbox extends ElementBase {
         // The listeners the bootstrap installs are the egress table's rows for this mode (egress.ts), and worker mode's guest also
         // counts its uncaught errors and rejections against their budget (R5:N-1).
         const features: BootstrapFeatures = { callBudget: { ...this._callBudget }, listeners: bootstrapListeners(mode), connect: [...connect] };
-        if (mode === 'worker') features.uncaught = { ...UNCAUGHT_BUDGET };
+        if (mode === 'worker') {
+            features.uncaught = { ...UNCAUGHT_BUDGET };
+            features.violationFields = { ...VIOLATION_EVENT_FIELDS };
+        }
         if (mode === 'cooperative' && this._autoResizeEnabled()) features.autoResize = true;
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
@@ -2159,7 +2198,7 @@ export class WebSandbox extends ElementBase {
     // origins input, so no network source; blob: only for the kinds of load the view's files need, as in strict mode.
     private _sealedPolicy(files: FileSnapshotEntry[]): string {
         const kinds = this._viewFileKinds(files);
-        return sealedViewPolicy({ fileKinds: new Set(SEALED_FILE_KINDS.filter(kind => kinds.has(kind))), bootstrapHash: viewBootstrapHash(), scriptUnsafe: this._config.scriptUnsafe === true });
+        return sealedViewPolicy({ fileKinds: new Set(SEALED_FILE_KINDS.filter(kind => kinds.has(kind))), bootstrapHash: viewBootstrapHash() });
     }
 
     // The sources of that policy's connect-src, from the same input: what the bootstrap's request gate admits (S74), so
@@ -2357,7 +2396,7 @@ export class WebSandbox extends ElementBase {
         if (typeof entry === 'string' && entry !== '') {
             const file = files.find(candidate => candidate[0] === entry);
             if (!file || !isJavaScriptType(file[1])) throw new Error('the entry was not refused before the build'); // _buildRefusal decides
-            entrySource = new TextDecoder().decode(Uint8Array.from(atob(file[2]), c => c.charCodeAt(0)));
+            entrySource = entryText(file[2]);
         }
 
         const html = this._config.html || '<div id="root"></div>';
@@ -2419,7 +2458,8 @@ export class WebSandbox extends ElementBase {
 
     // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
     // the fetch bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
-    // ports), then the guest's entry in a function scope of its own, then the line that marks the entry as having
+    // ports), the code-from-string refusal unless scriptUnsafe (code-from-strings.ts), then the guest's entry in a
+    // function scope of its own, then the line that marks the entry as having
     // run to its end (it raises the marker error that tells the view so: in-sandbox-view.ts). The entry's own scope
     // (AR:C2): its top-level declarations are local to it, so none can
     // replace a global before the prelude has captured or deleted it; an entry that wants a global assigns it
@@ -2430,8 +2470,8 @@ export class WebSandbox extends ElementBase {
     // default, in sealed mode, whose bootstrap gets an empty list and `sealed`, so its sandboxFetch() refuses in the guest.
     private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string, marker = entryDoneName(), network: ViewNetwork | null = null): string {
         const features: BootstrapFeatures = network
-            ? { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [...network.connect] }
-            : { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [], sealed: true };
+            ? { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [...network.connect], violationFields: { ...VIOLATION_EVENT_FIELDS } }
+            : { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [], sealed: true, violationFields: { ...VIOLATION_EVENT_FIELDS } };
         if (network?.fetchBridge) features.fetchBridge = { ...network.fetchBridge };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
@@ -2441,6 +2481,7 @@ export class WebSandbox extends ElementBase {
             + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}, ${this._config.guestWrites === true ? 'comms.writeFiles' : 'null'}, ${toInlineScriptLiteral(VIEW_FILE_TYPES)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)}, ${isStyleProperty.toString()});`
+            + (options.scriptUnsafe ? '' : refuseCodeFromStringsStatement('g'))
             + '})(this);';
         return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${marker}();\n`;
     }

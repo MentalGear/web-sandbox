@@ -97,19 +97,28 @@ describe('the table', () => {
 
     it('rejections are cancelled after relaying, and counted, in worker and strict mode; errors in worker mode; rejectionhandled counted', () => {
         expect(bootstrapListeners('worker')).toEqual(expect.arrayContaining([
-            { type: 'error', target: 'global', relay: true, cancel: true, budget: true },
-            { type: 'unhandledrejection', target: 'global', relay: true, cancel: true, budget: true },
-            { type: 'rejectionhandled', target: 'global', relay: false, cancel: false, budget: true },
+            { type: 'error', target: 'global', relay: true, cancel: true, budget: true, stop: false },
+            { type: 'unhandledrejection', target: 'global', relay: true, cancel: true, budget: true, stop: false },
+            { type: 'rejectionhandled', target: 'global', relay: false, cancel: false, budget: true, stop: false },
         ]));
         expect(bootstrapListeners('strict')).toEqual(expect.arrayContaining([
-            { type: 'error', target: 'global', relay: false, cancel: false, budget: true },
-            { type: 'unhandledrejection', target: 'global', relay: true, cancel: true, budget: true },
-            { type: 'rejectionhandled', target: 'global', relay: false, cancel: false, budget: true },
+            { type: 'error', target: 'global', relay: false, cancel: false, budget: true, stop: false },
+            { type: 'unhandledrejection', target: 'global', relay: true, cancel: true, budget: true, stop: false },
+            { type: 'rejectionhandled', target: 'global', relay: false, cancel: false, budget: true, stop: false },
         ]));
         expect(bootstrapListeners('cooperative')).toEqual(expect.arrayContaining([
-            { type: 'error', target: 'global', relay: true, cancel: false, budget: false },
-            { type: 'unhandledrejection', target: 'global', relay: true, cancel: false, budget: false },
+            { type: 'error', target: 'global', relay: true, cancel: false, budget: false, stop: false },
+            { type: 'unhandledrejection', target: 'global', relay: true, cancel: false, budget: false, stop: false },
         ]));
+    });
+
+    // BD6:ISO-1 (class A: INHERITED_CONTEXT.cspPolicyText): the guest's worker inherits the host page's policy list, so a
+    // violation there carries the page's policy text; the bootstrap relays it and stops it, in every mode with a worker.
+    it("violations are relayed and stopped in the guest's worker (strict, sealed, worker mode); relayed in cooperative mode", () => {
+        for (const mode of ['strict', 'sealed', 'worker'] as const) {
+            expect(bootstrapListeners(mode).filter(row => row.type === 'securitypolicyviolation'), mode).toEqual([{ type: 'securitypolicyviolation', target: 'global', relay: true, cancel: false, budget: false, stop: true }]);
+        }
+        expect(bootstrapListeners('cooperative').filter(row => row.type === 'securitypolicyviolation')).toEqual([{ type: 'securitypolicyviolation', target: 'global', relay: true, cancel: false, budget: false, stop: false }]);
     });
 });
 

@@ -127,13 +127,15 @@ export function strictViewPolicy(input: PolicyInput & { bootstrapHash: string })
 export const SEALED_FILE_KINDS = ['styles', 'images', 'fonts', 'media'] as const satisfies readonly OriginKind[];
 export type SealedFileKind = (typeof SEALED_FILE_KINDS)[number];
 
-/** What sealed mode's view policy is made from. No origins: there is no input a network source could come from. */
+/**
+ * What sealed mode's view policy is made from. No origins: there is no input a network source could come from. No
+ * `scriptUnsafe` either: sealed mode runs no string as code (config-schema.ts, sealedScriptUnsafeRefusal), so its
+ * `script-src` is the bootstrap's hash alone.
+ */
 export interface SealedPolicyInput {
     /** The kinds of load this build's registered files need blob: for. */
     fileKinds: ReadonlySet<SealedFileKind>;
     bootstrapHash: string;
-    /** Adds 'unsafe-eval' to script-src. */
-    scriptUnsafe: boolean;
 }
 
 /**
@@ -147,7 +149,7 @@ export function sealedViewPolicy(input: SealedPolicyInput): string {
     const files = (kind: SealedFileKind): string[] => (input.fileKinds.has(kind) ? [BLOB] : []);
     return format([
         ['default-src', []],
-        ['script-src', [input.bootstrapHash, ...(input.scriptUnsafe ? [UNSAFE_EVAL] : [])]],
+        ['script-src', [input.bootstrapHash]],
         ['script-src-attr', []],
         ['style-src', [UNSAFE_INLINE, ...files('styles')]],
         ['img-src', files('images')],

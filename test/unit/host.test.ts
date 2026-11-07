@@ -224,7 +224,7 @@ describe('the scriptUnsafe guard rail (backlog S4)', () => {
   it('warns exactly once per instance across setConfig(), reset() and load(), naming eval in the guest', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const first = await mount();
-    first.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true });
+    first.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
     first.reset();
     first.load('<p>again</p>');
     first.setConfig({ scriptUnsafe: false });
@@ -238,8 +238,14 @@ describe('the scriptUnsafe guard rail (backlog S4)', () => {
 
     // a second instance has its own guard rail
     const second = await mount();
-    second.setConfig({ scriptUnsafe: true });
+    second.setConfig({ mode: 'strict', scriptUnsafe: true });
     expect(scriptUnsafeWarnings(warn)).toHaveLength(2);
+    // sealed mode, the default, refuses it (BD6:ISO-1): no warning, the config refused with its reason
+    const third = await mount();
+    third.setConfig({ scriptUnsafe: true });
+    expect(scriptUnsafeWarnings(warn)).toHaveLength(2);
+    expect(third.state).toBe('terminated');
+    third.remove();
     first.remove();
     second.remove();
     warn.mockRestore();

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { VIOLATION_EVENT_FIELDS } from '@src/lib/violation';
 import { buildGuestDocument, buildWrapperDocument, escapeAttribute, toInlineScriptLiteral } from '@src/lib/frame-documents';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { environmentGate } from '@src/lib/in-sandbox-view';
@@ -33,7 +34,7 @@ const ungated = (script: string, stopParsing = true) => {
 // The features every bootstrap is given: the default call budget (R3:M-2; docs/API.md, Limits), the egress
 // table's listeners for its mode, and in worker mode the budget of uncaught errors (R5:N-1; egress.ts).
 // `connect`: the request gate's list, the policy's connect-src sources (blob: once a file is registered)
-const FEATURES = (mode: string, connect: string[] = []) => toInlineScriptLiteral({ callBudget: { calls: 1000, bytes: 67108864 }, listeners: bootstrapListeners(mode as EgressMode), connect, ...(mode === 'worker' ? { uncaught: UNCAUGHT_BUDGET } : {}) });
+const FEATURES = (mode: string, connect: string[] = []) => toInlineScriptLiteral({ callBudget: { calls: 1000, bytes: 67108864 }, listeners: bootstrapListeners(mode as EgressMode), connect, ...(mode === 'worker' ? { uncaught: UNCAUGHT_BUDGET, violationFields: VIOLATION_EVENT_FIELDS } : {}) });
 
 // The guest document's security block as the element writes it: the policy, the DNS-prefetch switch (BR:PD3), then the bootstrap. Returns the head's children without the switch, after checking it is the second one.
 const DNS_PREFETCH_OFF = '<meta http-equiv="x-dns-prefetch-control" content="off">';

@@ -65,7 +65,7 @@ export const REALMS = {
         egress: 'view',
     },
     'strict-worker': {
-        summary: "Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap and the prelude, then the guest's entry.",
+        summary: "Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap, the prelude and the code-from-string refusal, then the guest's entry.",
         guestCode: true,
         builder: 'src/host.ts, _getStrictWorkerSource',
         channels: ['logic-port', 'render-port', 'worker'],
@@ -119,6 +119,7 @@ export const STRINGIFIED = {
     workerBootstrap: { module: 'src/lib/worker-bootstrap.ts', realms: ['worker-frame'], capture: NO_GUEST, readOnce: true, typeofRead: true },
     assertEntryScoped: { module: 'src/lib/in-sandbox-view.ts', realms: ['strict-worker'], capture: RUNS_FIRST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     inStrictWorker: { module: 'src/lib/in-sandbox-view.ts', realms: ['strict-worker'], capture: true, readOnce: VIEW_STATEMENTS, typeofRead: true },
+    refuseCodeFromStrings: { module: 'src/lib/code-from-strings.ts', realms: ['strict-worker'], capture: true, readOnce: true, typeofRead: true },
     inSandboxView: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     sanitizeRender: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     viewBudget: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },

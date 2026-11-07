@@ -490,6 +490,11 @@ export class FileStore {
         return { put, remove, totalBytes };
     }
 
+    /** The registered bytes of the file at `path`, as base64, or null when none is stored. */
+    base64(path: string): string | null {
+        return this._files.get(path)?.base64 ?? null;
+    }
+
     /** Every file, sorted by path, as fresh objects. */
     list(): FileInfo[] {
         const infos: FileInfo[] = [];
