@@ -18,6 +18,8 @@ const chromiumExecutable = process.env.CHROMIUM_EXECUTABLE
 export default defineConfig({
     testDir: '.',
     testMatch: ['probe.spec.ts'],
+    // the installed Firefox's Juggler gets a channel name per channel before any run (S86)
+    globalSetup: '../../../test/e2e/firefox-juggler.ts',
     timeout: 60000,
     fullyParallel: false,
     workers: 1, // P7 measures host responsiveness: no concurrent browsers competing for the CPU

@@ -190,7 +190,7 @@ sandbox.setConfig({ mode: 'strict', origins: { connect: ['https://api.example.co
   every engine.** In every mode the guest's three request makers are the library's, put in its realm before any guest
   code runs. Each request's URL is resolved as the browser resolves it and admitted only when its scheme, host and port
   are exactly those of a `connect-src` source of the guest policy (the `connect` origins as kept, and `blob:` when files
-  are registered), which is the list the policy is written from; in strict mode a `WebSocket` is never admitted. A
+  are registered; in sealed mode the list is empty, and so is its `connect-src`), which is the list the policy is written from; in strict mode a `WebSocket` is never admitted. A
   refused request never reaches the browser: `fetch()`
   rejects with a `TypeError`, an `XMLHttpRequest` fails as a network error does (`loadstart`, then `readystatechange`,
   `error` and `loadend` with `readyState` 4 and `status` 0; a synchronous `send()` throws a `NetworkError`), and
@@ -591,7 +591,9 @@ own text. Each text the guest does not receive is written to this page's console
 `console.warn`, once per call.
 
 Methods belong to the element: they survive `reset()`, `load()`,
-`setConfig()` and `terminate()`, until `unexpose()` removes them. Exposing a name again replaces its handler. Names that
+`setConfig()` and `terminate()`, until `unexpose()` removes them. A handler that started keeps running after
+`terminate()`, `reset()` or `setConfig()`: only its answer is dropped. One that writes should check a flag you set
+when you stop the app, right before the write. Exposing a name again replaces its handler. Names that
 start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
 validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
 survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
@@ -648,6 +650,9 @@ Calls a method the guest exposed with `bridge.expose()` and resolves with its re
  new buffer that holds exactly its bytes, and one that covers its whole buffer crosses with that buffer. So
  `heap.subarray(ptr, ptr + n)` sends `n` bytes, never the rest of `heap`. Two views of one buffer arrive with a
  buffer each; one view passed twice arrives as one view.
+- What comes back is the guest's data, a `Blob` or `File` included: its `type` and its bytes are the guest's. Never make an
+ object URL of them with that type (or none) and open it, since an SVG or HTML file is then a document of your origin;
+ see [Guest writes](#guest-writes).
 - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
  `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
  call's timeout.
@@ -788,6 +793,12 @@ from the next build on. Fires `fileschanged` when the files changed.
  name.
 - All checks come first, the quota included (with what module and stylesheet rewrites add, against the files as they
  are now), so a refusal changes neither the files nor the pending list.
+- It commits what is pending now, not what `listGuestWrites()` showed earlier. To commit exactly what you validated, list,
+ validate and commit in one synchronous task (the guest's writes arrive in tasks of their own), or register your own
+ copy of the validated bytes with `registerFiles()` when validating has to wait.
+- The type is the guest's claim, and so is the name: a file named `evil.html` written with the type `image/png`
+ commits without `code`, and the library loads it only as an image. If you store or serve the bytes elsewhere, choose
+ the name and the type yourself.
 - A committed file loads only as what its type is for (see `registerFiles()`): an inert file never runs as a script.
  Committed `text/css` is inert but still CSS: markup of the next build that links it is styled by it.
 
@@ -1173,25 +1184,28 @@ In the guest, the codes other than `NOT_FOUND` come from the element through the
 What guest code can use, by mode. Everything here is installed by the library's bootstrap before any guest code
 runs; in cooperative mode that needs `allow-scripts` (the policy always admits it).
 
-| Global | strict (worker) | cooperative | worker |
-| :--- | :--- | :--- | :--- |
-| `bridge` | ✓ | ✓ | ✓ |
-| `sandboxFiles` | ✓ | ✓ | ✓ |
-| `sandboxFetch` | ✓ (refused without `fetchBridge`) | ✓ (refused without `fetchBridge`) | ✓ (refused without `fetchBridge`) |
-| `sandboxView` | ✓ | — | — |
-| `console` relayed | every method ([`sandbox-log`](#sandbox-log--sandboxlog)) | every method | every method |
+| Global | sealed (default) | strict (worker) | cooperative | worker |
+| :--- | :--- | :--- | :--- | :--- |
+| `bridge` | ✓ | ✓ | ✓ | ✓ |
+| `sandboxFiles` | ✓ | ✓ | ✓ | ✓ |
+| `sandboxFetch` | ✓ (always refused: `FETCH_NOT_ALLOWED`, sealed mode has no network) | ✓ (refused without `fetchBridge`) | ✓ (refused without `fetchBridge`) | ✓ (refused without `fetchBridge`) |
+| `sandboxView` | ✓ | ✓ | — | — |
+| `console` relayed | every method ([`sandbox-log`](#sandbox-log--sandboxlog)) | every method | every method | every method |
 
-Removed before guest code runs: `RTCPeerConnection` (and prefixed variants) in every mode. In strict and worker mode
+Sealed mode is strict mode's view and worker with no network, so what is said below of strict mode's worker and view holds
+in sealed mode too.
+
+Removed before guest code runs: `RTCPeerConnection` (and prefixed variants) in every mode. In strict, sealed and worker mode
 also `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without `'wasm-unsafe-eval'` but refuses to instantiate it, so
 nothing runs there either; deleting it keeps WebKit's compiler away from guest bytes, [research 24](research/24_sealed_mode/README.md);
-cooperative mode keeps it, a frozen limit), and in strict mode `URL.createObjectURL`. In strict mode the view document
+cooperative mode keeps it, a frozen limit), and in strict and sealed mode `URL.createObjectURL`. In strict and sealed mode the view document
 runs no guest code at all, and acts only on trusted events: a synthetic event is never forwarded to `sandboxView.on`.
 
-**The worker's globals are an allowlist** (worker and strict mode): before anything else runs in it, the worker keeps
+**The worker's globals are an allowlist** (worker, strict and sealed mode): before anything else runs in it, the worker keeps
 only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WORKER_NAVIGATOR_MEMBERS` for
 `navigator`) and deletes every other one, so a platform API that is not listed is absent. The listed globals that can
 make a request are `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`), which are the library's
-[request gate](#the-request-gate) in every mode (in strict mode `WebSocket` is kept as a name but refuses every
+[request gate](#the-request-gate) in every mode (in strict and sealed mode `WebSocket` is kept as a name but refuses every
 socket: [no `WebSocket`](#strict-no-websocket)), and in worker mode `importScripts` (`script-src`). Strict mode's worker
 has no `importScripts`: its policy's `script-src` is the view's hash, so it could never load anything. Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
 encoding, streams, `crypto`, `Blob`, `File`, `URL`, `OffscreenCanvas` with 2D and WebGL, WebCodecs,
@@ -1251,6 +1265,22 @@ reject with `FILES_NOT_ALLOWED`, and so does the element for any request that re
 content as the guest's data, and so its path and type: show them with `textContent`, never in an HTML, URL, template or `console`
 format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,` and `@`, so one written into a
 single-quoted attribute can end it and add one). [ADR-004](ADR-004-files-as-blob-urls.md)
+
+**The bytes are the guest's too, and a URL made of them is a document of your origin.** Bytes the app wrote or returned
+(`GuestWrite.content`, a `Blob` or `File` a method returns to `call()`) become a page of **your** origin when you make an
+object URL of them and it is opened: an SVG or HTML file there runs script with your page's storage and cookies. Never give
+`new Blob` or `URL.createObjectURL` the guest's `type`, or no type (Firefox sniffs a typeless blob). Show an image the app
+made inside the sandbox view (`render('<img src="path">')`), or in your page as a `Blob` you typed yourself as
+`image/png` after checking the file's signature, in an `<img>` only. Offer anything else as a download: an `<a download>`
+of an `application/octet-stream` blob, never `target="_blank"`, an `<iframe>`, an `<object>` or `location`. The
+[recipe](#images-the-app-makes) shows both.
+
+**A committed write's type is the guest's claim, and so is its name.** `commitGuestWrites()` checks the type a file will
+be loaded as, never its name: a file named `evil.html` written with the type `image/png` commits without
+`{ code: true }`, is listed by `listFiles()` as `image/png`, and the library loads it only as an image, never as a document.
+If you store or serve the bytes anywhere else (a server that chooses the type from the extension, an export, a download
+named by the path), choose the name and the type yourself, and send `X-Content-Type-Options: nosniff` and
+`Content-Disposition: attachment`.
 
 In strict mode the view shows the raster images the guest writes: a write whose type is `image/png`, `image/jpeg`,
 `image/gif`, `image/webp` or `image/avif` (as the files would give it, never SVG) can be named by path in `img`,
@@ -1385,28 +1415,28 @@ vector graphics as inline `<svg>`.
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
 `about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and
 Enter still reach `sandboxView.on`, and the browser's own actions on it (copy link address, open in a new tab,
-drag) carry no URL of the guest's. To open external URLs, expose a host method and call it from a click handler. The
-address is the guest's text, so parse it, allow only `https:` and the exact origins you list, and open the parsed `href`,
-never the text (a `javascript:` or `data:` URL given to `window.open` runs in or takes over your page, and
-`https://example.com@evil.example` is another host):
+drag) carry no URL of the guest's. To open an external page, expose a host method and call it from a click handler.
+**An address you open is a request your page makes, and every part of it (path, query, fragment) can carry the app's data
+to that server**, so the app never supplies the address: it names one of a fixed set of links, and your page holds the
+addresses. (Opening text the app wrote, even after checking its scheme and origin, lets the app send what it holds to that
+origin in the path or query, one tab per click.)
 
 ```js
-const OPENABLE = new Set(['https://example.com']); // the origins you mean to open, exactly
-function openable(text) {
-    if (typeof text !== 'string' || text.length > 2048) return null;
-    let url;
-    try { url = new URL(text); } catch { return null; }
-    return url.protocol === 'https:' && OPENABLE.has(url.origin) ? url.href : null;
-}
-sandbox.expose('openExternal', (text) => {
-    const href = openable(text);
-    if (href === null) throw new Error('openExternal: address not allowed');
+const LINKS = new Map([ // every address the app may open, written by you
+    ['docs', 'https://example.com/docs'],
+    ['help', 'https://example.com/help'],
+]);
+sandbox.expose('openExternal', (name) => {
+    const href = typeof name === 'string' ? LINKS.get(name) : undefined;
+    if (href === undefined) throw new Error('openExternal: unknown link');
     window.open(href, '_blank', 'noopener');
 });
-// in the worker: sandboxView.on('click', 'docs', () => bridge.call('openExternal', 'https://example.com/docs'));
+// in the worker: sandboxView.on('click', 'docs', () => bridge.call('openExternal', 'docs'));
 ```
 
-`test/unit/attacker-text-docs.test.ts` runs this snippet as written against hostile addresses.
+What is left to the app is which of your links it opens and when: a few bits per user click. Never build the address from
+the app's text, and do not list an address whose server forwards its query (a redirector).
+`test/unit/attacker-text-docs.test.ts` runs this snippet as written and holds that no address but a listed one is opened.
 
 An event handler receives:
 
@@ -1594,10 +1624,19 @@ li { list-style: none; font: 14px sans-serif; }
 
 ### The host
 
+`mountTodoApp` takes your own id for the app (`appId`) and returns `stop()`, which ends the app and clears the element for
+the next one.
+
 <!-- generated:begin example:sealed-app-host -->
 ```js
 // The embedder's side: register the bundle, answer the app's calls, feed it data.
-export async function mountTodoApp(sandbox, { bundle, store }) {
+const MAX_TODOS = 1000; // the app stops adding at the same number (app.js)
+
+// `appId` is yours: your own id for this app, never a name the bundle gives itself. It keys the app's state in your store,
+// so one app is never handed another's. Returns stop(), which ends the app and clears the element for the next one.
+export async function mountTodoApp(sandbox, { bundle, appId, store }) {
+    const key = `todos:${appId}`;
+    let running = true;
     const get = (name) => fetch(`${bundle}/${name}`);
     sandbox.registerFiles({
         'app.js': await (await get('app.js')).text(),
@@ -1607,17 +1646,27 @@ export async function mountTodoApp(sandbox, { bundle, store }) {
 
     // The app's call runs here with your page's rights, and its argument is the app's data: check its type and size,
     // and keep a copy of what you expect, not the object itself.
-    sandbox.expose('save', (todos) => {
-        if (!Array.isArray(todos) || todos.length > 1000) throw new Error('save: expected at most 1000 todos');
+    sandbox.expose('save', async (todos) => {
+        if (!Array.isArray(todos) || todos.length > MAX_TODOS) throw new Error(`save: expected at most ${MAX_TODOS} todos`);
         const clean = todos.map((todo) => {
             if (typeof todo?.text !== 'string' || todo.text.length > 200 || typeof todo.done !== 'boolean') throw new Error('save: bad todo');
             return { text: todo.text, done: todo.done };
         });
-        store.setItem('todos', JSON.stringify(clean));
+        // A call that started before stop() runs on: only its answer is dropped. Check the flag right before the write.
+        if (!running) return;
+        await store.setItem(key, JSON.stringify(clean));
     });
 
     sandbox.setConfig({ entry: 'app.js', html: await (await get('app.html')).text(), guestWrites: true });
-    await sandbox.call('load', JSON.parse(store.getItem('todos') ?? '[]')); // queued until the app is ready
+    await sandbox.call('load', JSON.parse((await store.getItem(key)) ?? '[]')); // queued until the app is ready
+
+    // Stopping the app, or giving the element to another one: methods and files belong to the element, not to the app.
+    return function stop() {
+        running = false;
+        sandbox.terminate();
+        sandbox.unexpose();
+        sandbox.unregisterFiles();
+    };
 }
 
 // A stream: the host sends a batch when it has one, and the next only after the app took the last.
@@ -1632,6 +1681,10 @@ export async function pushAll(sandbox, todos, batchSize = 50) {
 <!-- generated:begin example:sealed-app-guest -->
 ```js
 let todos = [];
+const MAX_TODOS = 1000; // the host refuses a longer list (host.js), so the app stops adding at the same number
+
+// a refused save is shown to the user, never left as an unhandled rejection
+const save = () => bridge.call('save', todos).catch((e) => sandboxView.text('count', `not saved: ${e.message}`));
 
 async function show() {
     const open = todos.filter((todo) => !todo.done).length;
@@ -1659,13 +1712,14 @@ bridge.expose('push', (batch) => { todos.push(...batch); return show(); });
 sandboxView.on('submit', 'add', (event) => {
     const text = event.form.find(([name]) => name === 'text')[1].trim().slice(0, 200);
     if (text === '') return;
+    if (todos.length >= MAX_TODOS) return void sandboxView.text('count', `the list is full (${MAX_TODOS} todos)`);
     todos.push({ text, done: false });
     sandboxView.set('new', { value: '' });
-    show().then(() => bridge.call('save', todos));
+    show().then(save);
 });
 sandboxView.on('change', 'list', (event) => {
     todos[Number(event.ids[0].slice('done-'.length))].done = event.target.checked;
-    show().then(() => bridge.call('save', todos));
+    show().then(save);
 });
 ```
 <!-- generated:end -->
@@ -1701,23 +1755,35 @@ The host publishes methods with `sandbox.expose()` and the app calls them with `
 - **Validate every argument**: its type, its length and the shape of what it holds, as `save` does, and keep a copy of what
   you expect (spread or a new object), not the object you were given.
 - **Never pass the app's text to a sink that reads it as code or as an address**: not `innerHTML`, `eval`, `new Function`,
-  `window.open`, `location` or a link `href`. Show it with `textContent`. When the app has to open a URL, expose
-  one method with the guard of the [`openExternal` example](#sandboxview-strict-mode) (parse it with `new URL()`, admit
-  `https:` and an exact list of origins, open the parsed `href`).
+  `window.open`, `location` or a link `href`. Show it with `textContent`. When the app has to open a page, expose one
+  method that takes a key, never an address, and opens the address your page holds for it (the
+  [`openExternal` example](#sandboxview-strict-mode): a `Map` of keys to fixed URLs, an unknown key refused). An address
+  you open is a request, and its path and query carry the app's data to that server.
 - **Never expose a generic proxy**: no `fetch(url)`, no `get(key)`/`set(key, value)` over `localStorage` or IndexedDB, no
   `run(name, ...args)` dispatcher. Each method does one thing the app needs, to a destination you fixed (this app's own
   storage key, a listed endpoint), at a size you capped. Sealed mode has no network, so what you expose is the app's only
   way out: a proxy hands it your page's network, cookies and storage.
+- **Never make a URL of the app's bytes with the app's type.** What the app wrote (`listGuestWrites()`) or returned (a `Blob`
+  from `call()`) becomes a document of your origin when its object URL is opened. Show images in the sandbox view, or in
+  an `<img>` from a `Blob` you typed `image/png` after checking its signature; offer anything else as a download of an
+  `application/octet-stream` blob ([Guest writes](#guest-writes)).
 - **What a failure tells the app.** A throw or rejection reaches it as `HANDLER_ERROR`. The message of a plain `Error`
   (`throw new Error(text)`) or a thrown string reaches it as you wrote it: put nothing in it you would not tell the app.
   Any other throw, such as the `SyntaxError` of a `JSON.parse` of your data, a `TypeError`, a `DOMException` or a
   subclass of `Error`, reaches it as `the method failed (<name>)`, with no text of its own, because an engine's message
   quotes the data it was handling. A result that cannot be copied reaches it as `RESULT_NOT_TRANSFERABLE` with the
   library's text. Each text the app does not receive is written to your page's console (`console.warn`, once per call).
-- **Methods and files belong to the element, not to the app.** They survive `reset()`, `load()` and `setConfig()`, so an
-  app you load next on the same element can call the methods you exposed for the last one and read its files. Give
-  each app its own element, or call `unexpose()` and `unregisterFiles()` before the next app: a method removed so is
-  refused `UNKNOWN_METHOD` as one that was never exposed.
+- **One element per app; to switch apps on one element, clear it first.** Methods and files belong to the element, not to
+  the app. They survive `reset()`, `load()` and `setConfig()`, so an app you load next on the same element can call the
+  methods you exposed for the last one and read its files. Give each app its own element, or call `unexpose()` and
+  `unregisterFiles()` first (`stop()` in the example does): a method removed so is refused `UNKNOWN_METHOD` as one that
+  was never exposed.
+- **Key each app's state by an id you choose.** The store key carries your own id for the app (`appId` in the example),
+  never a fixed key and never a name from the bundle: a fixed key hands every app mounted next the state of the last,
+  and lets it overwrite it, on a new element as much as on the same one.
+- **A handler that started outlives the app.** `terminate()`, `reset()` and `setConfig()` drop the answer of a call that
+  is running; they do not stop the handler. A handler that writes (`save` here) should check a flag you clear when you
+  stop the app, right before the write, and you should delete the app's data only after its handlers have settled.
 
 ### Saving the app's state
 
@@ -1729,8 +1795,16 @@ Two routes, and the host decides what is kept in both:
   `listGuestWrites()` (and `fileswritten`), and `commitGuestWrites(paths)` makes the ones it accepts registered files for the
   next build, where the app reads them with `sandboxFiles.text()`. Treat what the app wrote as the app's data, its
   path and type as well as its bytes: check the size, parse it in a `try`, check its shape, show it with `textContent`.
-  Only inert types commit without `{ code: true }`; leave code out for an app's data
-  ([Guest writes](#guest-writes)).
+  Only inert types commit without `{ code: true }`; leave code out for an app's data. The type is the app's claim, like
+  the name: a file named `evil.html` written as `image/png` commits, and is loaded as a PNG only
+  ([Guest writes](#guest-writes)). Committed files belong to the element, so they are one app's only with one element
+  per app.
+
+**`commitGuestWrites(paths)` commits what is pending now, not what you listed.** To commit exactly what you validated,
+list, validate and commit in one synchronous task: the app's writes arrive in tasks of their own, so none lands in
+between. If validating has to wait (an image decode, a digest), do not commit afterwards: register your own copy of the
+bytes you checked, `registerFiles({ [path]: bytes })`, or list again and commit only the paths whose `type` and `content`
+still equal what you checked.
 
 ### Images the app makes
 
@@ -1739,6 +1813,20 @@ The view shows the **raster images the app wrote** (PNG, JPEG, GIF, WebP or AVIF
 `guestWrites: true`) and named in the next `render()`. A later write to the path replaces the image. The view has no
 `<canvas>`, so the pixels are made in the worker, or the host sends bytes with `call()` and the app writes them. Registered
 images are fixed at the build; see [Guest writes](#guest-writes) for what the view shows.
+
+To show such an image **in your page** (outside the view), make the type yourself and check the bytes; offer anything else
+as a download. Never `new Blob([content], { type })` with the app's `type`, and never open the URL in a tab or a frame:
+
+```js
+const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const write = sandbox.listGuestWrites().find((w) => w.path === 'progress.png' && w.change === 'write');
+if (write && PNG.every((byte, i) => write.content[i] === byte)) {
+    img.src = URL.createObjectURL(new Blob([write.content], { type: 'image/png' })); // an <img> only, never a link target
+}
+// anything else the app made: a download, typed so that it cannot be shown as a page
+link.href = URL.createObjectURL(new Blob([write.content], { type: 'application/octet-stream' }));
+link.download = 'export.bin'; // a name you chose
+```
 
 The app cannot `fetch()` its own files either: sealed mode's `connect-src` is `'none'`, so `fetch(sandboxFiles.url(path))` is
 refused. Read them with `sandboxFiles.read()` or `text()`, which make no request.
@@ -1758,8 +1846,9 @@ input](#sandboxview-strict-mode) describes them, and [research 23](research/23_v
 | Reach the network: `fetch`, `XMLHttpRequest`, `WebSocket`, an `<img>` or a font from a URL | `mode: 'strict'` with [`origins`](#origins) or [`fetchBridge`](#fetchbridge), or have the host fetch and pass the data with `call()`, or register it as a file |
 | Run a `<script>` or a handler in `html` | put the code in `entry` |
 | Use a `<canvas>`, SVG animation, SVG filters, `contenteditable`, popovers | draw with `OffscreenCanvas` and write a raster image; inline `<svg>` for static vector graphics; `<textarea>` or `<input>` for editing; CSS animations with [`allowAnimations`](#allowanimations-and-allowautoplay) |
-| Use WebAssembly (`WebAssembly` is removed from the worker, [research 24](research/24_sealed_mode/README.md)) | write the code in JavaScript, or run the module in your page and pass the results with `call()` |
-| Open a link or a window | an exposed method with the `openExternal` guard |
+| Use WebAssembly (`WebAssembly` is removed from the worker, [research 24](research/24_sealed_mode/README.md)) | write the code in JavaScript. A module **you** wrote and trust may run in your page and hand its results over with `call()` as copies of exactly the bytes they cover (a view arrives with a buffer of its own bytes, not the module's heap). Never the app's own module: running the app's code in your page gives it your page's rights, and the JavaScript glue a toolchain such as Emscripten ships would run as your page |
+| Evaluate strings or call `execute()` | `scriptUnsafe` turns both on, and WebAssembly with them, in the worker (it is not part of the sealed baseline); an app that needs neither leaves it off |
+| Open a link or a window | an exposed method that takes a key and opens the address you hold for it (the `openExternal` example) |
 
 ---
 
@@ -2084,7 +2173,7 @@ policy must allow:
 | `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
 | `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
 | `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; while `allowAnimations` is `false` (the default), also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
-| `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; strict mode: every origin in `origins` (in `connect-src`, named by scheme and host, not `'self'`: [below](#your-connect-src)); sealed mode: no origin, it has none | `blob:` for registered files of that kind; every origin in `origins` | the same |
+| `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind (sealed mode needs none in `connect-src`, which is `'none'` there); strict mode: every origin in `origins` (in `connect-src`, named by scheme and host, not `'self'`: [below](#your-connect-src)); sealed mode: no origin, it has none | `blob:` for registered files of that kind; every origin in `origins` | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | `base-uri` | `about:` (for example `base-uri 'self' about:`), or omit the directive: the wrapper sets `<base href="about:blank">` so the guest never sees your page's URL, and a policy that refuses it (`'self'`, `'none'`) ends the build, because every bootstrap first checks its document's base URL | the same | the same |
 | With `fetchBridge` (not in sealed mode) | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy; name each origin by scheme and host, [below](#your-connect-src)) | the same: `'unsafe-inline'` admits the frame's script | the same |
@@ -2349,7 +2438,11 @@ specs.
 
 ```js
 const sandbox = document.querySelector('web-sandbox');
-sandbox.expose('save', (record) => store.put({ ...record }));
+sandbox.expose('save', (record) => {
+    // one thing, to a destination you fixed, with the fields you expect (never `store.put({ ...record })`: the app would pick the key)
+    if (typeof record?.at !== 'number') throw new Error('save: bad record');
+    store.put({ id: 'last-save', at: record.at });
+});
 sandbox.setConfig({
     mode: 'cooperative',
     capabilities: ['allow-scripts'],

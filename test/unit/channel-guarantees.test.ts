@@ -332,6 +332,25 @@ describe('B6: the platform validates a request before the bridge records it (fol
         expect(records.map(r => [r.outcome, r.code])).toEqual([['refused', 'FETCH_NOT_ALLOWED']]);
     });
 
+    it('a shared-memory body is refused by the bridge itself, whatever the runtime\'s Request constructor does', async () => {
+        const { bridge, records, fetchImpl } = bridgeWith();
+        const RealRequest = globalThis.Request;
+        const constructed = vi.fn();
+        // a runtime whose Request accepts any body, as a newer Node does for a SharedArrayBuffer view
+        vi.stubGlobal('Request', class { constructor(...args: unknown[]) { constructed(...args); } });
+        try {
+            const memory = new SharedArrayBuffer(4);
+            for (const body of [new Uint8Array(memory), new DataView(memory), new Uint16Array(memory, 0, 2)]) {
+                await expect(bridge.handle({ url: 'https://api.example/x', method: 'POST', body })).rejects.toMatchObject({ code: 'FETCH_NOT_ALLOWED' });
+            }
+        } finally {
+            vi.stubGlobal('Request', RealRequest);
+        }
+        expect(constructed).not.toHaveBeenCalled(); // refused before a Request exists
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(records.map(r => [r.outcome, r.code])).toEqual(Array(3).fill(['refused', 'FETCH_NOT_ALLOWED']));
+    });
+
     it('fetch() is given the one Request the bridge built and checked, pinned to the bridge discipline: what was validated is what is sent', async () => {
         const { bridge, fetchImpl } = bridgeWith();
         await bridge.handle({ url: 'https://api.example/x#f', method: 'POST', headers: [['content-type', 'text/plain']], body: 'hi', credentials: 'include', mode: 'no-cors' });

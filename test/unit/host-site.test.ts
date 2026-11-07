@@ -308,6 +308,17 @@ describe('host-side code reads the host page only through host-site.ts', () => {
         walk('src/lib');
         return files;
     };
+    // Other state of the host page that the sealed build must not carry into the worker, the view or the html (BD5:TST-2):
+    // its title and markup, its name, its storage, its viewport. The element creates elements and reads its own shadow
+    // root; it reads none of these. (A list of what the page holds cannot be complete, so the dynamic test in
+    // sealed-build.test.ts sets a marker in each of them and looks for it in everything the build hands the guest.)
+    const PAGE_STATE = {
+        document: ['title', 'documentElement', 'body', 'head', 'forms', 'links', 'images', 'scripts', 'all', 'fonts', 'lastModified', 'characterSet', 'contentType', 'dir', 'designMode',
+            'querySelector', 'querySelectorAll', 'getElementById', 'getElementsByName', 'getElementsByTagName', 'getElementsByClassName', 'getSelection', 'activeElement', 'fullscreenElement',
+            'cookieStore', 'adoptedStyleSheets', 'styleSheets', 'visibilityState', 'hidden', 'hasFocus'],
+        window: ['name', 'localStorage', 'sessionStorage', 'history', 'screen', 'innerWidth', 'innerHeight', 'outerWidth', 'outerHeight', 'devicePixelRatio', 'scrollX', 'scrollY',
+            'getComputedStyle', 'matchMedia', 'getSelection', 'performance', 'navigator', 'indexedDB', 'caches', 'cookieStore', 'visualViewport', 'screenX', 'screenY'],
+    } as const;
     // a global (not a member of something else) and the members of it that read the host page; '*' is every member
     const FORBIDDEN: Record<string, readonly string[]> = {
         location: ['*'],
@@ -315,10 +326,15 @@ describe('host-side code reads the host page only through host-site.ts', () => {
         parent: ['*'],
         frames: ['*'],
         opener: ['*'],
-        document: ['cookie', 'domain', 'baseURI', 'URL', 'documentURI', 'referrer', 'location'],
-        window: ['origin', 'location', 'top', 'parent', 'frames', 'opener', 'frameElement'],
-        self: ['origin', 'location', 'top', 'parent', 'frames', 'opener', 'frameElement'],
-        globalThis: ['origin', 'location', 'top', 'parent', 'frames', 'opener', 'frameElement'],
+        document: ['cookie', 'domain', 'baseURI', 'URL', 'documentURI', 'referrer', 'location', ...PAGE_STATE.document],
+        window: ['origin', 'location', 'top', 'parent', 'frames', 'opener', 'frameElement', ...PAGE_STATE.window],
+        self: ['origin', 'location', 'top', 'parent', 'frames', 'opener', 'frameElement', ...PAGE_STATE.window],
+        globalThis: ['origin', 'location', 'top', 'parent', 'frames', 'opener', 'frameElement', ...PAGE_STATE.window],
+        // the page's own storage, history and screen, read as a bare global
+        localStorage: ['*'],
+        sessionStorage: ['*'],
+        history: ['*'],
+        screen: ['*'],
     };
     // a member that reads the host page whatever it is read from
     const MEMBERS = ['ancestorOrigins'];
@@ -351,9 +367,13 @@ describe('host-side code reads the host page only through host-site.ts', () => {
             'globalThis.location?.origin', "location['hostname']", "document.cookie = 'x'", 'location.host', 'location.href', 'document.domain', 'document.baseURI',
             'window.origin', 'self.origin', 'globalThis.origin', 'document.URL', 'document.documentURI', 'document.referrer', 'parent.location.href', 'top.location',
             'window.top', 'frames[0]', 'x.ancestorOrigins', 'location.ancestorOrigins',
+            // other state of the page (BD5:TST-2)
+            'document.title', 'document.documentElement', "document['body']", 'document.querySelector', 'window.name', 'self.innerWidth', 'globalThis.matchMedia',
+            'localStorage.getItem', 'sessionStorage.length', 'history.state', 'screen.width',
         ];
         for (const form of forms) expect(reads(`const a = ${form};`), form).not.toEqual([]);
         expect(reads("// location.origin\n/* document.cookie */ const c = 'location.origin'; setup.parent.appendChild(x); const o = { top: 1, parent: 2 }; o.top; window.addEventListener('x', f); self.crypto;")).toEqual([]);
+        expect(reads("// document.title\nconst c = 'window.name'; document.createElement('div'); this.shadowRoot; o.history.push(1); o.title; window.crossOriginIsolated;")).toEqual([]);
     });
 
     it("no host-side file but host-site.ts reads the page's location, URL, origin, domain, referrer, cookie jar or ancestors", () => {

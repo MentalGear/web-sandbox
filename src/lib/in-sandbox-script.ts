@@ -54,7 +54,7 @@ export function inSandboxScript(
     // `connect`: the sources of the guest policy's connect-src, exactly (csp-generator.ts, connectSources): the request
     // gate admits these and nothing else; absent, it admits nothing.
     // `sealed` (sealed mode, strict mode's worker with no network): sandboxFetch() refuses here, FETCH_NOT_ALLOWED, and
-    // sends nothing to the host.
+    // sends nothing to the host (a raw call of the reserved method reaches the host, which refuses it).
     features?: {
         autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean; callBudget?: { calls: number; bytes: number };
         listeners?: readonly { type: string; relay: boolean; cancel: boolean; budget: boolean }[]; uncaught?: { count: number; characters: number };
@@ -824,8 +824,9 @@ export function inSandboxScript(
     // Defined in every environment (R1:R4-8): without the bridge the host refuses every request with FETCH_NOT_ALLOWED
     // ("the fetch bridge is off"), as docs/API.md says, rather than a call throwing a ReferenceError. One path either way:
     // the host decides. Except in sealed mode, which has no network (docs/research/24_sealed_mode): there it refuses
-    // every request here, with the code the host would give, reads nothing of its arguments and sends nothing, so no
-    // request of the guest's reaches the host's reserved method.
+    // every request here, with the code the host would give, reads nothing of its arguments and sends nothing. A guest can
+    // still call the reserved method itself, `bridge.call('sandbox:fetch', …)`: the host's handler has no bridge in a sealed
+    // build and refuses it the same way (FETCH_NOT_ALLOWED), and no request is made (test/e2e/sealed.spec.ts).
     if (sealedMode) {
         publish('sandboxFetch', () => {
             const refusal = construct(ErrorConstructor, ['[sandboxFetch] FETCH_NOT_ALLOWED: sealed mode has no network']);

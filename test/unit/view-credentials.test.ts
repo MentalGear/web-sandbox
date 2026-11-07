@@ -274,10 +274,21 @@ describe('cssReferences, network scope, and withoutNetworkReferences', () => {
         expect(dropped).toEqual([['image', 'ht\ttps://x/3']]);
     });
 
-    it('agrees with the URL parser: a value is a network reference exactly when `new URL(value, "about:blank")` is http: or https:', () => {
-        const values = ['https://x/a', 'HtTpS://x/a', 'ht\ttps://x/a', 'h\nt\rtps://x/a', '\t https://x/a', '\u0001\u0002https://x/a', ' https://x/a ', 'http:x', 'https:/x', 'blob:null/a', 'data:,x', 'javascript:x', 'ftp://x/a', 'x.png', '//x/a', '/x/a', 'ht tps://x/a', 'https\u00a0://x/a', 'https\u0000://x/a'];
+    // BD5:TST-6: the schemes that name a server or wrap a URL that does, as the renderer drops them. blob:, data: and the rest name none.
+    const NETWORK_SCHEMES = /^(?:https?|wss?|ftp|view-source|filesystem|jar):$/;
+
+    it('drops the other schemes that spell a server (ws:, wss:, ftp:, view-source:, filesystem:, jar:) from a style value, and reports each as written (BD5:TST-6)', () => {
+        const dropped: [string, string][] = [];
+        const css = 'a{b:url(ftp://h/1);c:url("wss://h/2");d:url(view-source:https://h/3);e:image-set("filesystem:https://h/temporary/4" 1x);f:url(jar:https://h/5.jar!/x);g:url(ws://h/6);h:url(blob:null/7);i:url(data:,8);j:url(rel.png)}';
+        expect(withoutNetworkReferences(css, cssReferences, dropped as any)).toBe('a{b:url("");c:url("");d:url("");e:image-set("" 1x);f:url("");g:url("");h:url(blob:null/7);i:url(data:,8);j:url(rel.png)}');
+        expect(dropped.map(([, url]) => url)).toEqual(['ftp://h/1', 'wss://h/2', 'view-source:https://h/3', 'filesystem:https://h/temporary/4', 'jar:https://h/5.jar!/x', 'ws://h/6']);
+    });
+
+    it('agrees with the URL parser: a value is a network reference exactly when `new URL(value, "about:blank")` is one of those schemes', () => {
+        const values = ['https://x/a', 'HtTpS://x/a', 'ht\ttps://x/a', 'h\nt\rtps://x/a', '\t https://x/a', '\u0001\u0002https://x/a', ' https://x/a ', 'http:x', 'https:/x', 'blob:null/a', 'data:,x', 'javascript:x', 'ftp://x/a', 'x.png', '//x/a', '/x/a', 'ht tps://x/a', 'https\u00a0://x/a', 'https\u0000://x/a',
+            'WSS://x/a', 'ws://x/a', 'wss://x/a', 'ftp://x/a', 'FTP://x/a', 'v\tiew-source:https://x/a', 'view-source:https://x/a', 'filesystem:https://x/temporary/a', 'jar:https://x/a.jar!/b', 'about:blank', 'mailto:x@y'];
         for (const value of values) {
-            const expected = (() => { try { return /^https?:$/.test(new URL(value, 'about:blank').protocol); } catch { return false; } })();
+            const expected = (() => { try { return NETWORK_SCHEMES.test(new URL(value, 'about:blank').protocol); } catch { return false; } })();
             // a raw newline ends a CSS string badly, so every control character is written as a hex escape
             const escaped = `a{b:"${[...value].map(ch => (ch.charCodeAt(0) < 32 ? `\\${ch.charCodeAt(0).toString(16)} ` : ch === '"' ? '\\"' : ch === '\\' ? '\\\\' : ch)).join('')}"}`;
             expect(cssReferences(escaped, 'network').length > 0, JSON.stringify(value)).toBe(expected);

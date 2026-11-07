@@ -1,4 +1,5 @@
 import type { Frame, Page } from '@playwright/test';
+import { createRequire } from 'node:module';
 
 /**
  * Reading strict mode's documents from outside the page (ADR-005), for evidence that does not depend on
@@ -200,13 +201,59 @@ export async function inView<T = unknown>(page: Page, browserName: string, expre
     return found ? found.value : 'no-context';
 }
 
-/** Polls the view until `expression` is truthy; returns its value. */
+// The driver runs in the test's own process: its debug module is the one Playwright's server logs through.
+const { debug } = createRequire(import.meta.url)('playwright-core/lib/utilsBundle') as { debug: { enable(namespaces: string): void; disable(): string; log: (...args: unknown[]) => void } };
+const FRAME_EVENT = /"method":"(Page\.frame(Attached|Detached)|Page\.navigation(Started|Committed|Aborted)|Runtime\.executionContext(Created|Destroyed|sCleared))"|WARNING: /;
+let frameEvents: string[] | null = null;
+
+/**
+ * Firefox: records the driver's frame events (attach, detach, navigation, execution contexts) and the browser's
+ * warnings, as the protocol carries them, until the returned function is called; a failure of waitInView in between
+ * lists them, so a view missing from the driver's frame tree says which event lost it (S86). Other engines: nothing.
+ */
+export function recordFrameEvents(browserName: string): () => void {
+    // ledger: view-frame-access
+    if (browserName !== 'firefox') return () => {};
+    const previous = debug.disable();
+    const previousLog = debug.log;
+    const recorded: string[] = [];
+    frameEvents = recorded;
+    debug.log = (...args: unknown[]) => {
+        const line = args.map(String).join(' ');
+        if (FRAME_EVENT.test(line)) recorded.push(line.replace(/\x1b\[[0-9;]*m/g, '').replace(/,"sessionId":"[^"]*"/, '').replace(/^\s*pw:protocol ◀ RECV /, '').trim().slice(0, 300));
+        else if (previous) previousLog(...args);
+    };
+    debug.enable([previous, 'pw:protocol', 'pw:browser'].filter(Boolean).join(','));
+    return () => {
+        debug.disable();
+        if (previous) debug.enable(previous);
+        debug.log = previousLog;
+        if (frameEvents === recorded) frameEvents = null;
+    };
+}
+
+/**
+ * Each frame the driver knows, with its path, name, URL, whether it is detached and what a 1 s evaluation in it
+ * answers (its readyState and whether it holds #hello, or the error), then the frame events recorded since
+ * recordFrameEvents: a 'no-context' failure then says whether the frame was missing or had no context, and why.
+ */
+async function describeFrames(page: Page): Promise<string> {
+    const lines: string[] = [];
+    for (const frame of page.frames()) {
+        const state = await withTimeout(frame.evaluate(`document.readyState + (document.getElementById('hello') ? ' #hello' : '')`).then(String, (error: Error) => `error: ${error.message.split('\n')[0]}`), 1000, 'no answer in 1 s');
+        lines.push(`  ${framePath(frame)} name=${JSON.stringify(frame.name())} ${frame.url().slice(0, 60)}${frame.isDetached() ? ' (detached)' : ''}: ${state}`);
+    }
+    if (frameEvents) lines.push(`the driver's frame events (${frameEvents.length}):`, ...frameEvents.map(line => `  ${line}`));
+    return lines.join('\n');
+}
+
+/** Polls the view until `expression` is truthy; returns its value. On failure, the error lists the frames (describeFrames). */
 export async function waitInView<T = unknown>(page: Page, browserName: string, expression: string, timeout = 5000): Promise<T> {
     const deadline = Date.now() + timeout;
     for (;;) {
         const value = await inView<T>(page, browserName, expression);
         if (value !== 'no-context' && value) return value as T;
-        if (Date.now() > deadline) throw new Error(`the view never satisfied: ${expression} (last: ${JSON.stringify(value)})`);
+        if (Date.now() > deadline) throw new Error(`the view never satisfied: ${expression} (last: ${JSON.stringify(value)})\nthe page's frames:\n${await describeFrames(page)}`);
         await page.waitForTimeout(50);
     }
 }

@@ -1,7 +1,7 @@
 import { test, expect, ORIGIN } from './fixture';
 import { BRIDGE_FRAME_REFUSED } from '@src/lib/bridge-frame';
 import { TERMINATION_REASONS } from '@src/lib/reasons';
-import { inFrames, waitInView } from './strict-view';
+import { inFrames, recordFrameEvents, waitInView } from './strict-view';
 import { RealisticHost, covering, guestBattery, hitsNamed, type Directives, type HostOptions } from './realistic-host';
 import { DIRECTIVE_CASES, HEADER_CASES, outcomeOn, type MatrixCase, type MatrixWarning, type Outcome } from './directive-matrix';
 import { VIEW_MODES, type ViewMode } from './view-modes';
@@ -113,6 +113,11 @@ async function runCase(
     expect(await host.state(), covering(row, `${label}: terminate() ends it`)).toBe('terminated');
     expect(await host.frames(), covering(row, `${label}: and leaves no frame`)).toBe(0);
 }
+
+// Firefox: the driver's frame events, so a view missing from its frame tree says which event lost it (S86)
+let stopRecording = () => {};
+test.beforeEach(({ browserName }) => { stopRecording = recordFrameEvents(browserName); });
+test.afterEach(() => stopRecording());
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
     test.describe('directive matrix: CSP directives', () => {

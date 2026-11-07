@@ -113,7 +113,9 @@ with its network options left empty: the sealed path never reaches the code that
   `connect-src` stays `'none'`).
 - **The worker.** Its bootstrap gets an empty request-gate list and `sealed`: `fetch`, `XMLHttpRequest` and `WebSocket`
   refuse every request and report it as a `violation`, and `sandboxFetch()` rejects in the guest with
-  `FETCH_NOT_ALLOWED` and sends nothing to the host.
+  `FETCH_NOT_ALLOWED` and sends nothing to the host. A guest can still call the reserved method itself
+  (`bridge.call('sandbox:fetch')`); the host's handler has no bridge in a sealed build and refuses it with the same code,
+  and no request is made.
 - **The view.** `INIT_VIEW` carries no origins, so the renderer keeps no network URL; what it shows loads from `blob:`.
 - **The host page.** The one value of the page's a sealed build reads is `crossOriginIsolated`, only to refuse (as in
   every mode); `hostContentSecurityPolicy` serves only Trusted Types where the browser has none. Which inherited channels
