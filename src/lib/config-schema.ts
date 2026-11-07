@@ -169,6 +169,18 @@ export function sealedNetworkRefusal(mode: unknown, source: Record<string, unkno
     return NETWORK_OPTIONS.some(name => ownField(source, name) !== undefined) ? new ConfigRefusal(reasonText('sealedNetwork')) : null;
 }
 
+/**
+ * A sealed config that turns `scriptUnsafe` on (a literal `true`, the one value that enables it) is refused whole, with
+ * its reason (`sealedScriptUnsafe`), as one that names a network option is: never read as strict mode, never stripped
+ * (S74, class A: INHERITED_CONTEXT.cspPolicyText; BD6:ISO-1). The option asks the platform to run strings as code, and
+ * the platform checks every string against the policy list the worker inherits from the host page, which reports the
+ * refusal with the page's policy text and to its endpoint; sealed mode runs no string as code (code-from-strings.ts).
+ */
+export function sealedScriptUnsafeRefusal(mode: unknown, source: Record<string, unknown>): ConfigRefusal | null {
+    if (mode !== 'sealed') return null;
+    return ownField(source, 'scriptUnsafe') === true ? new ConfigRefusal(reasonText('sealedScriptUnsafe')) : null;
+}
+
 // Old names of modes: refused like any other value that is not a mode, never an alias (nothing is published, so no
 // config needs one), and the refusal names the new one: a note of the library's own for each old name, so the reason
 // carries the library's text and never the configured value (BD5:DOC-2).
@@ -490,6 +502,7 @@ export const CONFIG_SCHEMA = {
         read: viewSwitch('allowAutoplay'),
         ignoredWarning: ({ given }) => (given !== undefined ? '[Sandbox] "allowAutoplay" is used only in strict and sealed mode and was ignored.' : null),
     },
+    // in sealed mode, a literal true refuses the config (sealedScriptUnsafeRefusal), so it is always false there
     scriptUnsafe: {
         default: false, documented: '`false`', modes: ALL_MODES,
         read: literalTrue,
@@ -552,6 +565,8 @@ export function normaliseConfig(copy: unknown, hostPage: HostPage): Normalised {
     const mode = RULES.mode.read!(inputOf('mode', undefined));
     const sealedNetwork = sealedNetworkRefusal(mode, source);
     if (sealedNetwork !== null) return { value: null, warnings, refusal: sealedNetwork };
+    const sealedScriptUnsafe = sealedScriptUnsafeRefusal(mode, source);
+    if (sealedScriptUnsafe !== null) return { value: null, warnings, refusal: sealedScriptUnsafe };
     const values = Object.create(null) as Record<OptionName, unknown>;
     for (const name of SCHEMA_NAMES) values[name] = RULES[name].default; // what readIn(mode) leaves out holds its default
     try {
@@ -646,6 +661,10 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
     {
         name: 'a sealed config opens no network: no origin and no fetch bridge',
         holds: ({ config, origins, fetchPolicy }) => config.mode !== 'sealed' || (fetchPolicy === null && ORIGIN_KINDS.every(kind => origins[kind].length === 0)),
+    },
+    {
+        name: 'a sealed config runs no string as code: scriptUnsafe is false',
+        holds: ({ config }) => config.mode !== 'sealed' || config.scriptUnsafe === false,
     },
     ...CALL_INVARIANTS.map(({ name, holds }): ConfigInvariant => ({ name: `callLimits: ${name}`, holds: ({ callBudget }) => holds(callBudget) })),
     {

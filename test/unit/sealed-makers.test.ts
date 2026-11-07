@@ -5,6 +5,8 @@ import { STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from 
 import { RENDER_ATTRIBUTES, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES } from '@src/lib/in-sandbox-view';
 import { LINK_REL_KINDS } from '@src/lib/load-kinds';
 import { cssReferences } from '@src/lib/css-references';
+import { ABSENT_COMPILERS, CODE_FROM_STRING_SINKS } from '@src/lib/code-from-strings';
+import { dynamicImportAt } from '@src/lib/entry-imports';
 import { CSS_PLACES, SEALED_MAKERS, makerCode, makerUrl, type CssKind, type CssPlace, type Maker, type MakerCovers } from '../e2e/sealed-makers';
 
 /**
@@ -63,6 +65,28 @@ describe('sealed mode\'s request makers: one enumeration, tied to the library\'s
             expect(maker.outcome, maker.id).toBe('absent');
         }
         expect(covered('reserved').map(({ maker }) => maker.outcome)).toEqual(['refused']);
+    });
+
+    // BD6:ISO-1, BD6:ISO-2 (class A: INHERITED_CONTEXT.cspPolicyText, cspReporting): every way the worker could make the
+    // browser check the policy list it inherits from the host page is a maker the library stops before the platform
+    it('every code-from-string sink the prelude refuses is a maker, refused with the library\'s EvalError; every compiler the worker lacks is one, absent', () => {
+        const sinks = covered('sink');
+        for (const id of Object.keys(CODE_FROM_STRING_SINKS)) expect(sinks.some(({ cover }) => cover.sink === id), id).toBe(true);
+        for (const { maker } of sinks) expect([maker.outcome, maker.sees], maker.id).toEqual(['string', 'EvalError']);
+        const compilers = covered('compiler');
+        for (const name of Object.keys(ABSENT_COMPILERS)) expect(compilers.some(({ cover }) => cover.compiler === name), name).toBe(true);
+        for (const { maker } of compilers) expect([maker.outcome, maker.sees], maker.id).toEqual(['absent', 'ReferenceError']);
+    });
+
+    it('every import() is a maker the build refuses, and no other maker holds one, so the entry of the rest builds', () => {
+        const origins = { https: 'https://l.test', http: 'http://l.test', wss: 'wss://l.test' };
+        const unbuildable = SEALED_MAKERS.filter(maker => maker.outcome === 'unbuildable');
+        expect(unbuildable.map(maker => maker.id)).toEqual(['import', 'import-file', 'import-data']);
+        for (const maker of SEALED_MAKERS.filter(maker => maker.realm === 'worker')) {
+            const found = dynamicImportAt(makerCode(maker, makerUrl(maker, origins))) >= 0;
+            expect(found, maker.id).toBe(maker.outcome === 'unbuildable');
+            if (maker.outcome === 'unbuildable') expect(maker.sees, maker.id).toBe('entryImport');
+        }
     });
 
     it('every row of COOKIE_CARRIERS is a maker', () => {

@@ -34,19 +34,17 @@ function unlisted(found: readonly string[] | null, realm: EgressRealm, mode: Egr
     return [...new Set([...found, ...reported])].filter(surface => !rows.has(surface)).map(surface => `${realm}: ${surface}`);
 }
 
-async function mountMode(sandbox: SandboxDriver, mode: 'worker' | ViewMode) {
-    if (mode === 'worker') {
-        expect(await sandbox.mount({ mode: 'worker', scriptUnsafe: true })).toBe('ready');
-        return;
-    }
-    await sandbox.registerFiles({ 'main.js': 'void 0' });
-    expect(await sandbox.mount({ mode, entry: 'main.js', scriptUnsafe: true })).toBe('ready');
+// The worker's surfaces, read by guest code: through execute() in worker mode, and as the entry in strict and sealed mode
+// (sealed mode has no execute()).
+async function workerSurfaces(sandbox: SandboxDriver, mode: 'worker' | ViewMode): Promise<Surfaces> {
+    if (mode !== 'worker') return sandbox.inEntry<Surfaces>({ mode }, `return ${SURFACES};`);
+    expect(await sandbox.mount({ mode: 'worker', scriptUnsafe: true })).toBe('ready');
+    return sandbox.inGuest<Surfaces>(`return ${SURFACES};`);
 }
 
 for (const mode of ['worker', ...VIEW_MODES] as const) {
     test(`${mode} mode: every surface of the guest's worker, of its parent document and of the Worker and MessagePort objects is a row of the egress table`, async ({ sandbox, page, browserName }) => {
-        await mountMode(sandbox, mode);
-        const worker = await sandbox.inGuest<Surfaces>(`return ${SURFACES};`);
+        const worker = await workerSurfaces(sandbox, mode);
         // the worker's parent document: worker mode's frame, the view of strict and sealed mode (main/wrapper/view either way)
         const parent = (await inFrames<Surfaces>(page, browserName, SURFACES, path => path === 'main/wrapper/view')).find(frame => frame.path === 'main/wrapper/view')?.value;
         expect(parent && parent !== 'no-context', 'the parent document was read').toBe(true);

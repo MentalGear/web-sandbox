@@ -494,6 +494,68 @@ describe("inSandboxScript", () => {
             for (let i = 0; i < 250; i++) listener('securitypolicyviolation').cb(violation({ lineNumber: i + 1 }));
             expect(violationFrames(port)).toHaveLength(100);
         });
+
+        // BD6:ISO-1 (class A: INHERITED_CONTEXT.cspPolicyText): the guest's worker inherits the host page's policy list,
+        // so a violation there carries the page's policy text. Where its row stops it (worker, strict and sealed mode),
+        // the listener relays it and then stops it, past the cap too, and the interface's fields read blank to guest code.
+        it("stops every trusted violation once relayed, past the cap too, where its row says so; never a synthetic one", () => {
+            const { listener } = install();
+            const port = createMockPort();
+            listener('message').cb(initPort(port));
+            const events = Array.from({ length: 150 }, (_, i) => new (FakeEvent as any)() as Record<string, unknown>);
+            for (let i = 0; i < events.length; i++) {
+                Object.assign(events[i]!, violation({ lineNumber: i + 1 }));
+                listener('securitypolicyviolation').cb(events[i]);
+            }
+            expect(violationFrames(port)).toHaveLength(100);
+            expect(events.every(event => event.stopped === true)).toBe(true);
+            const synthetic = Object.assign(new (FakeEvent as any)(), violation({ isTrusted: false }));
+            listener('securitypolicyviolation').cb(synthetic);
+            expect(synthetic.stopped).toBe(false);
+        });
+
+        it("cooperative mode relays and does not stop: the guest document is the guest's own (a documented limit)", () => {
+            const registered: { type: string; cb: Function }[] = [];
+            (globalThis as any).addEventListener = (type: string, cb: Function) => { registered.push({ type, cb }); };
+            inSandboxScript(false, 'cooperative', createMockConsole(), createBroker, { listeners: bootstrapListeners('cooperative') });
+            const event = Object.assign(new (FakeEvent as any)(), violation());
+            registered.find(r => r.type === 'securitypolicyviolation')!.cb(event);
+            expect(event.stopped).toBe(false);
+        });
+
+        it("blanks every field of SecurityPolicyViolationEvent.prototype to guest code, and still relays what the platform's getters read", () => {
+            const fields = { originalPolicy: 'POLICY nonce-SECRET', sample: 'SAMPLE', documentURI: 'blob:x', referrer: 'REF', disposition: 'enforce', lineNumber: 9, futureField: 'FUTURE' };
+            class FakeViolationEvent extends FakeEvent {
+                readonly isTrusted = true;
+                get effectiveDirective() { return 'script-src-elem'; }
+                get violatedDirective() { return 'script-src-elem'; }
+                get blockedURI() { return 'https://x.example/'; }
+                get sourceFile() { return 'blob:null/1'; }
+                get columnNumber() { return 4; }
+                get originalPolicy() { return fields.originalPolicy; }
+                get sample() { return fields.sample; }
+                get documentURI() { return fields.documentURI; }
+                get referrer() { return fields.referrer; }
+                get disposition() { return fields.disposition; }
+                get lineNumber() { return fields.lineNumber; }
+                get futureField() { return fields.futureField; }
+            }
+            (globalThis as any).SecurityPolicyViolationEvent = FakeViolationEvent;
+            try {
+                const registered: { type: string; cb: Function }[] = [];
+                (globalThis as any).addEventListener = (type: string, cb: Function) => { registered.push({ type, cb }); };
+                inSandboxScript(false, 'worker', createMockConsole(), createBroker, { listeners: bootstrapListeners('worker'), violationFields: { originalPolicy: '', sample: '', documentURI: '', referrer: '', disposition: '', lineNumber: 0, effectiveDirective: '', violatedDirective: '', blockedURI: '', sourceFile: '', columnNumber: 0 } });
+                const event = new FakeViolationEvent() as any;
+                expect([event.originalPolicy, event.sample, event.documentURI, event.referrer, event.disposition, event.lineNumber, event.futureField, event.blockedURI, event.columnNumber]).toEqual(['', '', '', '', '', 0, '', '', 0]);
+                const port = createMockPort();
+                registered.find(r => r.type === 'message')!.cb(initPort(port));
+                registered.find(r => r.type === 'securitypolicyviolation')!.cb(event);
+                expect(violationFrames(port)).toEqual([{ type: 'VIOLATION', directive: 'script-src-elem', blockedURI: 'https://x.example/', sourceFile: 'blob:null/1', lineNumber: 9, columnNumber: 4 }]);
+                expect(event.stopped).toBe(true);
+            } finally {
+                delete (globalThis as any).SecurityPolicyViolationEvent;
+            }
+        });
     });
 
     describe("content auto-sizing (backlog B6)", () => {

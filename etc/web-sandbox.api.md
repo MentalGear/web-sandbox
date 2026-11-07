@@ -238,6 +238,7 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
     fetchBridge?: never;
     mode?: 'sealed';
     origins?: never;
+    scriptUnsafe?: false;
     unsafeCapabilities?: never;
 }
 

@@ -40,6 +40,14 @@ const SANDBOX_REALM_LISTENERS: Readonly<Record<string, string>> = {
     'src/lib/in-sandbox-view.ts': "the strict view's own document reports its violations (egress.ts, the view's row)",
 };
 
+/**
+ * Files that name `originalPolicy` as a key of an object literal, to write what the field reads to guest code, never to
+ * read it, with why.
+ */
+const BLANKED_FIELDS: Readonly<Record<string, string>> = {
+    'src/lib/violation.ts': "VIOLATION_EVENT_FIELDS: the blank the field reads to guest code in the guest's worker (BD6:ISO-1)",
+};
+
 const isString = (token: Token | undefined): boolean => token !== undefined && (token.kind === SyntaxKind.StringLiteral || token.kind === SyntaxKind.NoSubstitutionTemplateLiteral);
 const unquoted = (token: Token): string => token.text.slice(1, -1);
 
@@ -54,7 +62,8 @@ function asksThePage(file: string, text: string): string[] {
         if (token.kind === SyntaxKind.Identifier && READ_NAMES.includes(token.text)) say(token.text);
         if (isString(token) && /host-csp/.test(token.text)) say(`a module of the read (${token.text})`);
         // the one API that reports a page's policy text: a violation's `originalPolicy`
-        if (token.kind === SyntaxKind.Identifier && token.text === 'originalPolicy') say('originalPolicy');
+        const writesBlank = file in BLANKED_FIELDS && next?.kind === SyntaxKind.ColonToken && tokens[i - 1]?.kind !== SyntaxKind.DotToken;
+        if (token.kind === SyntaxKind.Identifier && token.text === 'originalPolicy' && !writesBlank) say('originalPolicy');
         if (isString(token) && unquoted(token) === 'originalPolicy') say("'originalPolicy'");
         // a listener for the violations of a document of the host page's
         const listens = token.text === 'addEventListener' && next?.kind === SyntaxKind.OpenParenToken && isString(tokens[i + 2]) && unquoted(tokens[i + 2]!).toLowerCase() === 'securitypolicyviolation';

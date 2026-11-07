@@ -70,7 +70,7 @@ self.addEventListener('fetch', (event) => {
 `;
 
 /** The headers of the page that a spec can set or replace (`h-<name>` in the query). */
-export const PAGE_HEADERS = ['cross-origin-opener-policy', 'cross-origin-embedder-policy', 'referrer-policy', 'permissions-policy'] as const;
+export const PAGE_HEADERS = ['cross-origin-opener-policy', 'cross-origin-embedder-policy', 'referrer-policy', 'permissions-policy', 'reporting-endpoints'] as const;
 export type PageHeader = (typeof PAGE_HEADERS)[number];
 
 const PAGE = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Realistic host</title>'

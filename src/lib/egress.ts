@@ -56,8 +56,10 @@ export type EgressOwner = 'guest-script' | 'worker-bootstrap' | 'view' | 'bridge
  *   unheard      no library listener hears it there; what raises it is bounded where it is caused (the bound says where)
  *   own          the library's own message or gate: one only library code can raise is acted on, once; one the guest
  *                raises is not trusted, or comes from no window of the library's, and is ignored at once
+ *   stopped      a trusted one stops at the library's capture listener, the first on its path, so no listener of the
+ *                guest's receives it; and the fields of its interface read blank to guest code
  */
-export type EgressHandling = 'relayed' | 'cancelled' | 'budgeted' | 'capped' | 'removed' | 'unreachable' | 'unheard' | 'own';
+export type EgressHandling = 'relayed' | 'cancelled' | 'budgeted' | 'capped' | 'removed' | 'unreachable' | 'unheard' | 'own' | 'stopped';
 
 /**
  * The modes, the table's columns: a row lists those whose environments have its surface. Sealed mode's environment is
@@ -157,8 +159,8 @@ const own: EgressRow[] = [
         bound: `${RELAY_BOUND}; cancelled once relayed (Chromium then reports nothing to the page; Firefox reports it all the same, hence the budget); ${UNCAUGHT_BOUND}`, test: N1 },
     { realm: 'worker', surface: 'rejectionhandled', modes: WORKER_MODES, owner: 'guest-script', handling: ['budgeted'],
         bound: `counted with the rejections (Firefox's host page: 4–7% busy at 1000 a second); ${UNCAUGHT_BOUND}`, test: N1 },
-    { realm: 'worker', surface: 'securitypolicyviolation', modes: WORKER_MODES, owner: 'guest-script', handling: ['relayed', 'capped'],
-        bound: 'one VIOLATION frame each, at most VIOLATION_EVENT_LIMIT per environment (the element counts them again)', test: 'src/lib/in-sandbox-script.test.ts (S5); test/e2e/violations.spec.ts' },
+    { realm: 'worker', surface: 'securitypolicyviolation', modes: WORKER_MODES, owner: 'guest-script', handling: ['relayed', 'capped', 'stopped'],
+        bound: "one VIOLATION frame each, at most VIOLATION_EVENT_LIMIT per environment (the element counts them again); stopped once relayed, so no guest listener reads a policy's text, and every field of SecurityPolicyViolationEvent.prototype reads blank to guest code (VIOLATION_EVENT_FIELDS; BD6:ISO-1)", test: 'src/lib/in-sandbox-script.test.ts (S5, BD6:ISO-1); test/e2e/violations.spec.ts; test/e2e/sealed-host-policy.spec.ts' },
     { realm: 'worker', surface: 'message', modes: ['worker'], owner: 'guest-script', handling: ['own'],
         bound: 'the one INIT_PORT: only the frame that made the worker can post to it, and only the library\'s frame does', test: 'test/unit/guest-realm-hardening.test.ts (B1)' },
     { realm: 'worker', surface: 'message', modes: VIEW_MODES, owner: 'view', handling: ['own'],
@@ -279,6 +281,8 @@ export interface BootstrapListener {
     relay: boolean;
     cancel: boolean;
     budget: boolean;
+    /** Stops a trusted event once handled, and blanks its interface's fields to guest code (the handling `stopped`). */
+    stop: boolean;
 }
 
 /**
@@ -294,8 +298,9 @@ export function bootstrapListeners(mode: EgressMode): BootstrapListener[] {
         const relay = row.handling.includes('relayed');
         const cancel = row.handling.includes('cancelled');
         const budget = row.handling.includes('budgeted');
-        if (!relay && !cancel && !budget) continue;
-        listeners.push({ type: row.surface, target: 'global', relay, cancel, budget });
+        const stop = row.handling.includes('stopped');
+        if (!relay && !cancel && !budget && !stop) continue;
+        listeners.push({ type: row.surface, target: 'global', relay, cancel, budget, stop });
     }
     return listeners;
 }
@@ -394,7 +399,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: 'each string cut at {VIOLATION_MAX_STRING} characters before it is posted, by the bootstrap and by the view, and again by the host on receipt',
         time: 'none of its own: the count',
         cost: 'none beyond the count',
-        sealed: "none: every request the guest tries is refused and reported here, the request gate's refusals included",
+        sealed: "none from the worker: every request the guest tries is refused by the library and reported here, the request gate's refusals included, and no string runs as code and no entry calls `import()`, so the host page's own policy, which the worker inherits, is never asked and its report endpoint receives nothing the worker caused (INHERITED_CONTEXT.cspReporting). The view runs no guest code: a load of a registered file or a guest's inline style the host page's policy refuses is reported to its endpoint as well, naming `blob` or `inline`",
         test: 'src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts; test/e2e/sealed-no-network.spec.ts' },
     { channel: "Content heights (`autoResize`), to the frame's height",
         surfaces: [['port', 'message']],

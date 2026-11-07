@@ -1,4 +1,4 @@
-import { test, expect } from './fixture';
+import { test, expect, SEALED_HAS_NO_EXECUTE } from './fixture';
 import { VIEW_MODES } from './view-modes';
 
 /**
@@ -12,6 +12,7 @@ const MODES = ['cooperative', 'worker', ...VIEW_MODES] as const;
 
 for (const mode of MODES) {
     test(`each sandbox element receives only its own logs; a window listener receives both, targeted at their element (${mode})`, async ({ sandbox, page }) => {
+        test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
         expect(await sandbox.mount({ mode })).toBe('ready');
         expect(await sandbox.mountSecond({ mode })).toBe('ready');
 

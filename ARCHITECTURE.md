@@ -14,7 +14,7 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 
 ## Modes and realms
 
-<!-- describes: realms sig:1d62 -->
+<!-- describes: realms sig:d682 -->
 
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
@@ -24,8 +24,8 @@ What differs between the modes is which realm the guest's code runs in, and whet
 - **sealed** (the default): strict mode's view and worker, with no network
   ([below](#sealed-mode-strict-mode-with-no-network), [ADR-008](docs/ADR-008-sealed-mode.md)).
 - **strict**: in a worker. The frame around it, the view, runs one script, the library's own, admitted by its hash, and
-  draws what the worker renders. No guest script ever runs in a document. Named with `mode: 'strict'`; it adds the
-  network options, `origins` and `fetchBridge`.
+  draws what the worker renders. No guest script ever runs in a document, and the worker runs no string as code. Named
+  with `mode: 'strict'`; it adds the network options, `origins` and `fetchBridge`, and keeps `scriptUnsafe` for testing.
 - **cooperative**: in the guest document, for content that cooperates, within a frozen list of documented limits.
 - **worker**: in a worker spawned by a frame with no guest markup. Frozen, to be folded into strict mode.
 
@@ -50,7 +50,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `worker-frame` | Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup. | no | `workerBootstrap`, `checkSandboxEnvironment` | `announcement`, `worker` |
 | `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeWebAssembly` | `logic-port`, `worker` |
 | `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `cssReferences`, `withoutNetworkReferences`, `viewInputOutbox`, `isStyleProperty`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
-| `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap and the prelude, then the guest's entry. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `assertEntryScoped`, `inStrictWorker`, `isStyleProperty` | `logic-port`, `render-port`, `worker` |
+| `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap, the prelude and the code-from-string refusal, then the guest's entry. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `assertEntryScoped`, `inStrictWorker`, `refuseCodeFromStrings`, `isStyleProperty` | `logic-port`, `render-port`, `worker` |
 | `bridge-frame` | The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it. | no | `checkSandboxEnvironment`, `inBridgeFrame` | `announcement`, `bridge-init`, `bridge-port` |
 <!-- generated:end -->
 
@@ -68,6 +68,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `workerBootstrap` | `src/lib/worker-bootstrap.ts` | `worker-frame` |
 | `assertEntryScoped` | `src/lib/in-sandbox-view.ts` | `strict-worker` |
 | `inStrictWorker` | `src/lib/in-sandbox-view.ts` | `strict-worker` |
+| `refuseCodeFromStrings` | `src/lib/code-from-strings.ts` | `strict-worker` |
 | `inSandboxView` | `src/lib/in-sandbox-view.ts` | `view` |
 | `sanitizeRender` | `src/lib/in-sandbox-view.ts` | `view` |
 | `viewBudget` | `src/lib/in-sandbox-view.ts` | `view` |
@@ -82,7 +83,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:1d62f2f642cb49d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:d682f2f642cb49d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
@@ -96,14 +97,15 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Sealed mode: strict mode with no network
 
-<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e2dafc42f70c7 -->
+<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e2dafc8c9cccc -->
 
 Sealed mode, the default (no `mode`, or `mode: 'sealed'`), is strict mode's view and worker with no network
 ([research 24](docs/research/24_sealed_mode/README.md), [ADR-008](docs/ADR-008-sealed-mode.md)). It is not strict mode
 with its network options left empty: the sealed path never reaches the code that would read or open a network, so there is nothing to leave empty.
 
 - **The config.** `origins` and `fetchBridge` are not sealed options: a sealed config that names either, with the mode
-  written or left out, is refused whole, with its reason, and their rules never run in sealed mode (`readIn`, `src/lib/config-schema.ts`). Those two rules are
+  written or left out, is refused whole, with its reason, and so is one that sets `scriptUnsafe: true`; the network
+  options' rules never run in sealed mode (`readIn`, `src/lib/config-schema.ts`). Those two rules are
   the only ones that read the host page (its origin and its site, from `src/lib/host-site.ts`, through `readHostPage` in
   `src/host.ts`, which `normaliseConfig` calls only when such a rule asks), so a sealed `setConfig()` reads nothing of it.
 - **The build.** `_prepareBuild` turns to sealed mode's own path, `_prepareSealedFrame`, before anything of the network
@@ -115,7 +117,11 @@ with its network options left empty: the sealed path never reaches the code that
   refuse every request and report it as a `violation`, and `sandboxFetch()` rejects in the guest with
   `FETCH_NOT_ALLOWED` and sends nothing to the host. A guest can still call the reserved method itself
   (`bridge.call('sandbox:fetch')`); the host's handler has no bridge in a sealed build and refuses it with the same code,
-  and no request is made.
+  and no request is made. The prelude's last statement puts the library's `EvalError` in place of every code-from-string
+  sink (`src/lib/code-from-strings.ts`), and the build refuses an entry that calls `import()`
+  (`src/lib/entry-imports.ts`), so nothing the worker does makes the browser check the host page's own policy, which the
+  worker inherits with its text and its report endpoints; a violation the browser still raises there is relayed and
+  stopped before guest code hears it.
 - **The view.** `INIT_VIEW` carries no origins, so the renderer keeps no network URL; what it shows loads from `blob:`.
 - **The host page.** The one value of the page's a sealed build reads is `crossOriginIsolated`, only to refuse (as in
   every mode); `hostContentSecurityPolicy` serves only Trusted Types where the browser has none. Which inherited channels
@@ -312,13 +318,14 @@ stateDiagram-v2
 
 ## Budgets
 
-<!-- describes: budgets:channels sig:70c7 -->
+<!-- describes: budgets:channels sig:cccc -->
 
 Everything the guest can make the host page, the view or the network do goes through a **channel**, and every channel has
 a bound in count, bytes and time. The surfaces a guest can reach are listed once (the egress table), each with how it is
 handled and the modes that have it (sealed mode has every surface of strict mode's but the bridge frame's); the bounds
 are listed once per channel (`CHANNEL_BUDGETS`), each naming the constants behind it in the limits registry, and what it
-reaches of the network in sealed mode, which is nothing; a test fails on a surface that relays, budgets or caps and
+reaches of the network in sealed mode, which is nothing from the guest's worker (the view's loads that the host page's
+own policy refuses are reported to the page's endpoint: the CSP channel's row); a test fails on a surface that relays, budgets or caps and
 belongs to no channel. A bound that depends on the
 platform (the view shares the host page's thread on Firefox, WebKit and Android) is stated as a bound, with the embedder's
 way out: `terminate()`, or removing the element. One gap is open (owner, 2026-10-21: backlogged, not
@@ -341,6 +348,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/auto-resize.ts` | Content auto-sizing, host side |
 | `src/lib/bridge-frame.ts` | The fetch bridge's frame, host side |
 | `src/lib/capabilities.ts` | Filtering of the capabilities an embedder lists: the allowed ones are kept, every other one dropped with a warning |
+| `src/lib/code-from-strings.ts` | Code from strings in the guest's worker |
 | `src/lib/config-schema.ts` | The config schema |
 | `src/lib/connect-facts.ts` | What each engine does with a `connect-src` source, as one table |
 | `src/lib/cookie-facts.ts` | Which cookies each engine sends with a request of the sandbox, as one table |
@@ -348,6 +356,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/egress.ts` | The egress table |
 | `src/lib/element-events.ts` | The element's events |
 | `src/lib/engine-ledger.ts` | The engine-difference ledger |
+| `src/lib/entry-imports.ts` | The dynamic `import()` of a strict or sealed entry |
 | `src/lib/environment-check.ts` | The environment check |
 | `src/lib/environment.ts` | The resources of one environment, declared once |
 | `src/lib/fetch-bridge.ts` | The host-mediated fetch bridge, host side |

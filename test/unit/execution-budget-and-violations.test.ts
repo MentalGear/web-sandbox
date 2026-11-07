@@ -126,7 +126,7 @@ describe('B8, focused review F2: workerExecutionTimeout requires a free event lo
 describe('B8: execute() and call() follow one rule while there is no environment', () => {
     it('idle (not in the document): call() rejects at once with TERMINATED, execute() warns and keeps nothing for later (before: the call waited for insertion, the code was dropped there)', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ scriptUnsafe: true, capabilities: ['allow-scripts'] }, false);
+        const el = await mount({ mode: 'cooperative', scriptUnsafe: true, capabilities: ['allow-scripts'] }, false);
         expect(el.state).toBe('idle');
         let settled: unknown = 'pending';
         el.call('anything').catch((error: any) => { settled = error.code; });
@@ -141,7 +141,7 @@ describe('B8: execute() and call() follow one rule while there is no environment
 
     it('terminated: the same refusals (unchanged)', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ scriptUnsafe: true });
+        const el = await mount({ mode: 'cooperative', scriptUnsafe: true });
         el.terminate();
         await expect(el.call('x')).rejects.toMatchObject({ code: 'TERMINATED' });
         el.execute('1');
@@ -151,7 +151,7 @@ describe('B8: execute() and call() follow one rule while there is no environment
 
     it('loading: both are queued for the environment being built (positive control)', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ scriptUnsafe: true });
+        const el = await mount({ mode: 'cooperative', scriptUnsafe: true });
         expect(el.state).toBe('loading');
         el.execute('1');
         const pending = el.call('x');
@@ -162,7 +162,7 @@ describe('B8: execute() and call() follow one rule while there is no environment
 
     it('execute() takes a string only', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ scriptUnsafe: true });
+        const el = await mount({ mode: 'cooperative', scriptUnsafe: true });
         el.execute(() => 1);
         expect(el._queue).toEqual([]);
         expect(warn.mock.calls.some(c => String(c[0]).includes('code must be a string'))).toBe(true);

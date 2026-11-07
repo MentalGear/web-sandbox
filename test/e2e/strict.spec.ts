@@ -442,6 +442,9 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
             ['a timer of code compiled from a string', `setTimeout(new Function("throw new Error('late one')"), 0);`],
         ] as const) {
             test(`an error of ${label} the entry queued, raised once its script ran to its end, is logged once and does not end the sandbox`, async ({ sandbox, page }) => {
+                // sealed mode compiles no string (it refuses scriptUnsafe): there `new Function` throws the library's
+                // EvalError (test/e2e/sealed-host-policy.spec.ts)
+                test.skip(mode === 'sealed' && label.includes('compiled from a string'), 'sealed mode runs no string as code');
                 await sandbox.registerFiles({ 'late.js': `${source} bridge.expose('alive', () => true);` });
                 expect(await sandbox.mount(inMode(mode, { entry: 'late.js', scriptUnsafe: true }))).toBe('ready');
                 await sandbox.waitForLog('late one');

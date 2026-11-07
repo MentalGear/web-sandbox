@@ -55,10 +55,12 @@ export function inSandboxScript(
     // gate admits these and nothing else; absent, it admits nothing.
     // `sealed` (sealed mode, strict mode's worker with no network): sandboxFetch() refuses here, FETCH_NOT_ALLOWED, and
     // sends nothing to the host (a raw call of the reserved method reaches the host, which refuses it).
+    // `violationFields`: what each field of SecurityPolicyViolationEvent.prototype reads to guest code where the violation
+    // listener's row stops the event (violation.ts, VIOLATION_EVENT_FIELDS).
     features?: {
         autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean; callBudget?: { calls: number; bytes: number };
-        listeners?: readonly { type: string; relay: boolean; cancel: boolean; budget: boolean }[]; uncaught?: { count: number; characters: number };
-        connect?: readonly string[]; sealed?: boolean;
+        listeners?: readonly { type: string; relay: boolean; cancel: boolean; budget: boolean; stop?: boolean }[]; uncaught?: { count: number; characters: number };
+        connect?: readonly string[]; sealed?: boolean; violationFields?: Readonly<Record<string, string | number>>;
     },
     // The byte measure (structured-size.ts), stringified in like createBroker: the console relay's budget and the
     // broker's are measured with it, made before any guest code runs.
@@ -259,6 +261,8 @@ export function inSandboxScript(
         'SecurityPolicyViolationEvent', 'blockedURI', 'SecurityPolicyViolationEvent', 'sourceFile',
         'SecurityPolicyViolationEvent', 'lineNumber', 'SecurityPolicyViolationEvent', 'columnNumber',
     ];
+    const ViolationEventFound = g.SecurityPolicyViolationEvent;
+    const violationPrototype: object | null = typeof ViolationEventFound === 'function' ? ViolationEventFound.prototype : null;
     const eventGetters: Record<string, ((this: unknown) => unknown) | null> = setPrototype({}, null);
     for (let i = 0; i + 1 < EVENT_READS.length; i += 2) {
         const found = g[EVENT_READS[i]!];
@@ -410,6 +414,34 @@ export function inSandboxScript(
             lineNumber: read.lineNumber,
             columnNumber: read.columnNumber,
         });
+    };
+    // Where the row stops it (the guest's worker: strict, sealed and worker mode; S74, class A:
+    // INHERITED_CONTEXT.cspPolicyText; BD6:ISO-1): the worker inherits the host page's policy list, and a violation of it
+    // carries the page's policy text, its nonce and its report endpoint. Relayed, then stopped, past the cap too, so no
+    // listener of the guest's receives a trusted violation; the guest's own events go on. This listener is the first on
+    // the event's path (a capture listener on the global, installed before any guest code).
+    const stopViolation = (event: Event) => {
+        if (event.isTrusted !== true) return;
+        relayViolation(event);
+        apply(stopImmediate, event, []);
+    };
+    // ...and every field of the interface reads blank to guest code (VIOLATION_EVENT_FIELDS), for what the guest could
+    // still hold of one; readEvent reads the platform's getters, captured above. A field the list does not name reads ''.
+    // One that cannot be redefined fails the bootstrap, and with it the worker, before any guest code.
+    const blankViolationFields = () => {
+        if (!violationPrototype) return;
+        const fields = features?.violationFields;
+        const names = namesOf(violationPrototype);
+        for (let i = 0; i < names.length; i++) {
+            const name = names[i]!;
+            const own = getOwn(violationPrototype, name);
+            if (!own || typeof own.get !== 'function') continue;
+            const blank = fields && apply(hasOwnProperty, fields, [name]) ? fields[name] : '';
+            const getter = function () {
+                return blank;
+            };
+            if (!defineOwn(violationPrototype, name, { get: getter, enumerable: own.enumerable === true, configurable: own.configurable === true })) throw construct(TypeErrorConstructor, ['[Sandbox] the bootstrap could not blank a violation field']);
+        }
     };
 
     // ---- The request gate (S74): one chokepoint for every request the guest's
@@ -1443,12 +1475,12 @@ export function inSandboxScript(
     };
     // One row's listener: what it reads of its event, and what the row says to do with it. Null for a type this
     // bootstrap has no listener for.
-    const listenerFor = (row: { type: string; relay: boolean; cancel: boolean; budget: boolean }): ((event: Event) => void) | null => {
+    const listenerFor = (row: { type: string; relay: boolean; cancel: boolean; budget: boolean; stop?: boolean }): ((event: Event) => void) | null => {
         const type = row.type;
         const relay = row.relay === true;
         const cancel = row.cancel === true;
         const budget = row.budget === true;
-        if (type === 'securitypolicyviolation') return relay ? relayViolation : null;
+        if (type === 'securitypolicyviolation') return row.stop === true ? stopViolation : relay ? relayViolation : null;
         if (type === 'rejectionhandled') return budget ? () => countUncaught(0) : null;
         if (type === 'error') {
             return (event: Event) => {
@@ -1489,6 +1521,7 @@ export function inSandboxScript(
         const listener = rows[i]!;
         const handler = listenerFor(listener);
         if (handler) apply(addGlobalListener, g, [listener.type, handler, true]);
+        if (handler && listener.type === 'securitypolicyviolation' && listener.stop === true) blankViolationFields();
     }
 
     // One frame from the host that runs guest code: an EXECUTE, or an RPC_REQ (the broker calls the exposed method).

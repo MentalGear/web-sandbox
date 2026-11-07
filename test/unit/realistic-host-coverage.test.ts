@@ -17,7 +17,8 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
-const SPEC = read('test/e2e/realistic-host.spec.ts');
+// the realistic-host spec, and the sealed guest's on the same host (sealed-host-policy.spec.ts: the host page's policy)
+const SPEC = read('test/e2e/realistic-host.spec.ts') + read('test/e2e/sealed-host-policy.spec.ts');
 const MATRIX_SPEC = read('test/e2e/directive-matrix.spec.ts');
 const API = read('docs/API.md');
 

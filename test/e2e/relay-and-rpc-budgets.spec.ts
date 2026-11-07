@@ -1,4 +1,4 @@
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, SEALED_HAS_NO_EXECUTE } from './fixture';
 import type { MountConfig } from './fixture';
 import { useRecorder } from './recorder';
 import { busyShare, describeShare, MARGIN } from './host-share';
@@ -94,6 +94,7 @@ test.describe('R4-2, R4-6, R4-7: uncaught errors and unhandled rejections reach 
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         test('an Error argument arrives as { name, message, stack }', async ({ sandbox, page }) => {
+            test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
             expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');
             // a plain object with its own name, message and stack (a cloned Error has no own enumerable fields)
             const detail = page.evaluate(() => new Promise(resolve => {

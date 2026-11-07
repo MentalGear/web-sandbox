@@ -126,7 +126,10 @@ run, and the element says so once (`sealed mode (the default) runs no script in 
 code in a registered file named by `entry`, or choose `mode: 'cooperative'`. `mode: 'iframe'` is not a mode: it starts
 nothing, and the `terminated` reason names `'cooperative'`.
 
-**The guest reaches nothing by default.** Sealed mode has no network at all. In strict mode, list the exact origins it
+**The guest reaches nothing by default.** Sealed mode has no network at all: guest code makes no request, and makes
+the browser send none for it, not even a report to your page's Content-Security-Policy endpoint (it runs no string as
+code and calls no `import()`, so your page's policy, which the sandbox inherits, is never asked; what of the view your
+policy refuses is reported to it: [Host page policy](docs/API.md#host-page-policy)). In strict mode, list the exact origins it
 may load each kind from in `origins` (`connect`, `images`, `styles`, `fonts`, `media`, `scripts`); everything else in
 its policy is fixed:
 
@@ -328,7 +331,9 @@ reason: a guest that holds the pointer lock can hide the cursor and capture rela
 **`scriptUnsafe` is for testing.** It adds `'unsafe-eval'` to the guest policy, so guest code can run
 strings as code (`eval`, `new Function`), and it enables `execute()`. The e2e suite and most playground
 presets turn it on; content you do not trust should run without it. Enabling it logs one warning per
-element.
+element. Sealed mode, the default, refuses it: your page's policy, which the sandbox inherits, checks every string
+run as code and reports a refusal to the guest (with your policy's text) and to your report endpoint (with the
+string). Without it, the worker of strict and sealed mode refuses every string itself, before the browser sees it.
 
 ## Calling between host and guest
 
