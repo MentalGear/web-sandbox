@@ -89,7 +89,7 @@ V1 …) are unique and keep no prefix.
 | **C**: config | A config's validity, including cross-field and platform-domain invariants, is decided in one place, before anything is stored or built. |
 | **B**: a browser decision re-derived | Where the library predicts a browser decision (what policy applies, what loads, what runs, what a mechanism changes later), the prediction agrees with the browser, or errs only toward refusing. |
 | **D**: derived state (lows only) | One state (the guest-write overlay) has several projections: the list, the announcement, the view's copy, the guest's answer. All of them come from one diff of that state. |
-| **A**: the host page's context a sandbox document inherits | Every piece of the host page's state that a document of the sandbox starts with (its policy container, base URL, the cookie jar's site, Service Worker scope, referrer, shared UI surfaces) is a row of one inventory (`INHERITED_CONTEXT`), with how it is neutralised or why it is documented, and a test that keeps it closed. |
+| **A**: the host page's context a sandbox document inherits | Every piece of the host page's state that a document of the sandbox starts with (its policy container, base URL, the cookie jar's site, Service Worker scope, referrer, shared UI surfaces) is a row of one inventory (`INHERITED_CONTEXT`), with how it is neutralised or why it is documented, and a test that keeps it closed; and every name a sealed guest can reach is classified against every row (`SEALED_REACH`; [closed by enumeration](#class-a-closed-by-enumeration)). |
 | **O**: packaging | — |
 
 ## Every medium-or-higher finding
@@ -254,6 +254,7 @@ fix adds a mechanism, and the mechanism has edges of its own.
 | G, intrinsic lookups | 2:C-1's `CAPTURE_POINT` and scan | 0 medium; 5:N-2 (low) slipped through the scan's accessor gap |
 | P, RPC measure | 2:C-3's snapshot measure, 3:C-1's frame builders | 0 since 3:C-1 |
 | O | Smoke test, baked literal | 0 since 2:C-8 |
+| A, in sealed mode | `SEALED_REACH`: every name of the worker's allowlist and of the renderer's, classified against every `INHERITED_CONTEXT` row ([below](#class-a-closed-by-enumeration)) | closed after board pass 6; the passes after it tell |
 
 **What the closures share.** Each one replaced "remove the bad things we know" with "keep only the listed things".
 Each comes with a test that enumerates the domain mechanically: 3000 random configs against the template, a 300-corpus
@@ -652,3 +653,60 @@ This confirms the recommendation, with two additions:
   mitigation whose cost is not measured is a new proxy.
 
 Round 5's totals: 1 high and 6 medium in our code, all in code an earlier per-instance fix added or changed.
+
+## Class A, closed by enumeration
+
+**Why: the drift check after board pass 6.** Class A produced data findings in board passes 4, 5 and 6, each through a
+channel the `INHERITED_CONTEXT` list did not have yet: [BD5:ISO-1](../../archive/reviews/BOARD-PASS-5-2026-10-25.md#bd5-iso-1)
+(WebKit answered the worker's `navigator.permissions` from the host origin's grants), then BD6:ISO-1 and BD6:ISO-2 (the
+host page's policy text and report endpoints, reached through `eval`, `import()` and the violation event). Each fix added a
+row. The list was a list of the channels found so far, a list of bad cases, which is how every class of this research
+looked before it closed, and the same class coming back after each fix is the sign of a local minimum
+([CLAUDE.md](../../../CLAUDE.md), "Checking for drift").
+
+**The domain.** In sealed mode guest code reaches the browser through two allowlists and nothing else: the worker's
+globals (`WORKER_GLOBALS`, with the library's own `bridge`, `sandboxFiles`, `sandboxView` and `sandboxFetch`, and the
+syntax the language gives: `import()` and the function-constructor family) and what the view's renderer admits
+(`RENDER_ELEMENTS`, `RENDER_ATTRIBUTES`, `VIEW_LOAD_KINDS`; the view runs no guest script). Both are closed lists, so class
+A's domain in sealed mode is finite: those names × the rows of `INHERITED_CONTEXT`. Each allowlisted name had been
+classified for one effect only (`WORKER_STATE_READS`: does it read per-origin state).
+
+**The list of allowed cases.** `SEALED_REACH` (`src/lib/sealed-reach.ts`) classifies every name against every row:
+`none`, with why; `neutralised`, naming the library's chokepoint, which the code must have; or `remains`, naming one of
+the row's residuals, each stated with the test that pins it. Each name has one surface (what it can do) and each row a
+column (what each surface is to it); `WORKER_STATE_READS` became the `permissionState` column. On 2026-11-07: 725 names ×
+22 rows, 15,950 cells: 15,115 `none`, 307 `neutralised`, 528 `remains`. Of the 528, 465 are the view's rendering on the
+host page's thread (availability), 46 the view's checks of the page's `style-src` and fetch directives against the guest's
+inline styles and registered files, and 17 one bit of the host page's secure context. THREAT-MODEL renders the table
+([What a sealed guest can reach](../../THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)).
+
+**The structural tests.**
+- `test/unit/sealed-reach.test.ts` fails on a name of either allowlist without a surface, on a row without a column, on a
+  chokepoint whose declaration or statement the code no longer has, and on a `remains` cell that names no residual of its
+  row; and it holds the cells to the code's own lists (every code-from-string sink, every compiler the worker lacks, every
+  request maker, every URL attribute of the renderer).
+- `test/e2e/sealed-reach.spec.ts`, on three engines: the sealed worker's global object is the allowlist and the library's
+  names; every member of every global it keeps (about 2,000 per engine, about 5,800 calls), called with a URL, a string of
+  code and nothing, on a host page whose policy has a nonce, `'report-sample'` and a keyed report endpoint, makes no
+  request, raises no violation, sends no report and puts no secret in an error's text; every name whose presence differs
+  between a host page on a URL that is not potentially trustworthy and one on a loopback host is a `remains` cell of
+  `secureContext`; and the view's residuals hold as the table says, per engine.
+
+**What the enumeration found.** Two things no review had found:
+- A row the list did not have, `secureContext`. A document's secure context is its top-level page's, and Firefox's and
+  WebKit's `blob:` worker of an opaque origin follows its owner, so a sealed guest learns whether the host page's URL is
+  potentially trustworthy, from `isSecureContext` and from which secure-context interfaces it has (Chromium counts that
+  worker as not secure on every page). One bit, which every visitor of the page sees in the address bar: documented. The
+  construction that would make it constant, refusing to build on a host page that is not a secure context, ends embedding
+  on plain `http:` pages, and is the owner's to decide.
+- A name the list called neutralised that was not: `XMLHttpRequest`. A refused `open()` hands the platform a placeholder,
+  and a later `open()` that threw left the platform holding it while the gate forgot the refusal, so `send()` reached the
+  platform; Chromium checked the host page's `connect-src` and reported the refusal to its endpoint (`cspReporting`). The
+  request gate hands the platform's `send()` an admitted request only, which makes the state unreachable; the sweep and a
+  unit test fail on the code before.
+
+**What keeps it closed.** A new allowlisted name, element, attribute or load kind fails the unit test until it has a
+surface; a new row fails until it has a column; a member an engine adds to a kept global is called by the sweep on every
+engine, so one that requests, raises a violation or reports fails it. The sweep does not reach members of interfaces it
+cannot construct from a URL, a string or nothing (a WebGL context, an IndexedDB object behind a refused `open()`): they
+are classified with their global.

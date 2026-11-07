@@ -43,6 +43,16 @@ export type SealedStanding =
     | { readonly standing: 'reduced'; readonly note: string }
     | { readonly standing: 'not-applicable'; readonly because: 'no-network' | 'no-guest-document'; readonly note: string };
 
+/**
+ * What of a row remains in sealed mode, stated with its bound, and the tests that pin it. A `remains` cell of SEALED_REACH
+ * (sealed-reach.ts) names one of its row's residuals, so whatever a sealed guest still reaches of the host page's context
+ * is one of these.
+ */
+export interface Residual {
+    readonly what: string;
+    readonly tests: readonly string[];
+}
+
 export interface InheritedContextRow {
     /** What is inherited (the host page's state and the channel it reaches the sandbox by). */
     readonly channel: string;
@@ -60,6 +70,8 @@ export interface InheritedContextRow {
     readonly tests: readonly string[];
     /** What it is in sealed mode (see {@link SealedStanding}); every row says. */
     readonly sealed: SealedStanding;
+    /** What remains of it in sealed mode, by id (see {@link Residual}). */
+    readonly residuals?: Readonly<Record<string, Residual>>;
 }
 
 const ALL = CONTEXT_ENGINES;
@@ -88,12 +100,18 @@ export const INHERITED_CONTEXT = {
     },
     cspStyle: {
         channel: "The host page's CSP `style-src` (and its fallbacks)",
-        inheritedBy: "every mode: the wrapper's style and the strict view's animation stylesheet",
-        how: 'The wrapper style and the animation stylesheet have documented hashes; a policy that refuses them leaves the frame 150 px high (or drops the guest stylesheets) and the element warns once, naming the hash',
+        inheritedBy: "every mode: the wrapper's style and the strict view's animation stylesheet; the guest's inline styles in the view",
+        how: "The wrapper style and the animation stylesheet have documented hashes; a policy that refuses them leaves the frame 150 px high (or drops the guest stylesheets) and the element warns once, naming the hash. The guest's own `style` attributes and `<style>` elements are inline styles the policy checks: docs/API.md#host-page-policy says to admit `'unsafe-inline'` for them (documented)",
         by: ['warn', 'documented'],
         engines: ALL,
-        tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/e2e/directive-matrix.spec.ts'],
+        tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/e2e/directive-matrix.spec.ts', 'test/e2e/sealed-reach.spec.ts'],
         sealed: { standing: 'remains' },
+        residuals: {
+            guestStyles: {
+                what: "the guest's `style` attributes and `<style>` elements are checked against the page's `style-src`: one that does not admit `'unsafe-inline'` (or carries a hash or a nonce, beside which the browser ignores it) refuses them, and the guest's styling is lost",
+                tests: ['test/e2e/sealed-reach.spec.ts'],
+            },
+        },
     },
     cspBaseUri: {
         channel: "The host page's CSP `base-uri`, and with it the document's base URL (a refused `<base>` leaves the host page's URL)",
@@ -111,8 +129,14 @@ export const INHERITED_CONTEXT = {
         how: "`connect-src` (else `default-src`) is neutralised by the library, uniformly, from the page's policy as the embedder gives it (`hostContentSecurityPolicy`) and from nothing else: every origin of `origins.connect` and `fetchBridge.allow` that the given policy refuses is dropped, with a warning, before the guest's and the bridge's policies are written, on every engine; without the option both lists are dropped, with one warning that says what to pass, so the library never guesses the page's policy (host-connect.ts, hostReach); `false` says the page sends none, and keeps the lists, and a policy the page does send is then applied by the browser alone, per engine (connect-facts.ts); a `wss://` entry is kept only beside its `https://` twin. The guest's `fetch()`, `XMLHttpRequest` and `WebSocket` then admit exactly the sources of the guest policy's `connect-src` (the bootstrap's request gate, S74), refuse anything else before the browser sees it, the same way on every engine, and report it as a `violation` of the library's own, so a refusal is reported on an engine that raises no report in a worker (WebKit); the browser's policy stays underneath, and a redirect it refuses is reported per engine. No policy of the library carries `upgrade-insecure-requests` (the engines disagree on what it does to the http: form of a listed https: origin, and one sent it in cleartext), so every engine refuses that form; a host page that sends the directive itself is inherited and is the embedder's choice. A policy text the parser does not understand admits nothing. The other fetch directives narrow in the browser, where the engine applies the inherited list, and are documented under `origins` and in the host-page policy section; a policy list only narrows (CSP3 intersects the lists), so the sandbox's own policy is never weakened",
         by: ['refuse', 'documented'],
         engines: ALL,
-        tests: ['test/unit/host-connect.test.ts', 'test/unit/host-policy-source.test.ts', 'test/unit/host.test.ts', 'test/unit/connect-facts.test.ts', 'test/e2e/connect-uniform.spec.ts', 'test/e2e/no-plaintext.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/unit/policy-guarantees.test.ts', 'test/unit/request-gate.test.ts', 'test/e2e/request-gate.spec.ts', 'test/unit/sealed-build.test.ts', 'test/e2e/directive-matrix.spec.ts', 'test/e2e/sealed-no-network.spec.ts'],
+        tests: ['test/unit/host-connect.test.ts', 'test/unit/host-policy-source.test.ts', 'test/unit/host.test.ts', 'test/unit/connect-facts.test.ts', 'test/e2e/connect-uniform.spec.ts', 'test/e2e/no-plaintext.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/unit/policy-guarantees.test.ts', 'test/unit/request-gate.test.ts', 'test/e2e/request-gate.spec.ts', 'test/unit/sealed-build.test.ts', 'test/e2e/directive-matrix.spec.ts', 'test/e2e/sealed-no-network.spec.ts', 'test/e2e/sealed-reach.spec.ts'],
         sealed: { standing: 'reduced', note: "no origin is narrowed and no `connect-src` is read: the view's policy has no network source and the request gate admits nothing. Left: the page's `img-src`, `font-src`, `media-src` and `style-src` must admit `blob:` for registered files of that kind, or those loads are refused in the view and reported as `violation`" },
+        residuals: {
+            blobLoads: {
+                what: "a registered file's load in the view (a `blob:` URL the view minted) is checked against the page's `img-src`, `font-src`, `media-src` or `style-src`: one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show",
+                tests: ['test/e2e/sealed-reach.spec.ts'],
+            },
+        },
     },
     cspPolicyText: {
         channel: "The host page's CSP list as text (its nonces and hashes, its report endpoint with any key in the URL, its `connect-src` origins, its Trusted Types names): every policy of the inherited list that refuses an action reports it with its text, to the realm (a `securitypolicyviolation` event's `originalPolicy`) and in the engine's error message (Chromium's `EvalError` quotes the refusing directive)",
@@ -129,8 +153,18 @@ export const INHERITED_CONTEXT = {
         how: "The worker of strict and sealed mode reaches no refusing check (the `cspPolicyText` row), so it makes the browser send no report: no `import()` (the build refuses the entry), no string run as code, no request past the gate. The view runs no guest code, and the renderer drops every network URL before the browser sees it, so no report names one; what the view still has checked against the host page's policy is the library's own loads of registered files (`blob:`, under the page's `img-src`, `font-src`, `media-src` and `style-src`) and the guest's inline styles (under its `style-src`): a page whose policy refuses them gets a report for each refusal, which names `blob` or `inline` as blocked, and the first characters of the style where its `style-src` has `'report-sample'` (documented, with what the embedder does: admit `blob:` and `'unsafe-inline'` for styles, docs/API.md#host-page-policy, or serve the embedding page without reporting). Strict mode with `scriptUnsafe`, worker mode and cooperative mode report what their guest code makes the platform refuse (documented)",
         by: ['construct', 'refuse', 'reason', 'documented'],
         engines: ['chromium', 'firefox'],
-        tests: ['test/e2e/sealed-host-policy.spec.ts', 'test/e2e/sealed-no-network.spec.ts', 'test/unit/entry-imports.test.ts', 'test/unit/code-from-strings.test.ts'],
+        tests: ['test/e2e/sealed-host-policy.spec.ts', 'test/e2e/sealed-no-network.spec.ts', 'test/unit/entry-imports.test.ts', 'test/unit/code-from-strings.test.ts', 'test/e2e/sealed-reach.spec.ts'],
         sealed: { standing: 'reduced', note: "no report from the worker; the view's checks of registered files and of the guest's inline styles remain, on a page whose policy refuses them" },
+        residuals: {
+            blobLoads: {
+                what: "each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice",
+                tests: ['test/e2e/sealed-reach.spec.ts'],
+            },
+            inlineStyles: {
+                what: "each refusal of a guest's inline style is reported to the page's endpoint, naming `inline` as blocked, with the style's first characters where the page's `style-src` has `'report-sample'`; how many there are, and when, is the guest's choice",
+                tests: ['test/e2e/sealed-reach.spec.ts'],
+            },
+        },
     },
     trustedTypesRequirement: {
         channel: "The host page's `require-trusted-types-for 'script'` and its `trusted-types` names",
@@ -227,11 +261,26 @@ export const INHERITED_CONTEXT = {
     permissionState: {
         channel: "The browser's per-origin state about the host page: the permissions the user granted its origin (geolocation, notifications, push; camera and microphone read `denied` once any is granted), which an engine may answer a realm of the sandbox from",
         inheritedBy: "strict, sealed and worker mode: the guest's `blob:` worker (WebKit answered `navigator.permissions.query()` there with the host origin's grants); cooperative mode: the guest document (Chromium and WebKit)",
-        how: "The worker has no permission API: `navigator.permissions`, `Permissions` and `PermissionStatus` are off the allowlist, and so are `navigator.storage` and `StorageManager` (WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS); no API a permission gates exists there. Every kept name that reads browser state keyed to an origin or the profile is classified with its measured answer, the same with and without the host origin's state (WORKER_STATE_READS). Cooperative mode's guest document is a sandboxed frame the library does not prune: there the grants are readable on Chromium and WebKit, a documented cooperative limit",
+        how: "The worker has no permission API: `navigator.permissions`, `Permissions` and `PermissionStatus` are off the allowlist, and so are `navigator.storage` and `StorageManager` (WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS); no API a permission gates exists there. Every kept name that reads browser state keyed to an origin or the profile is classified with its measured answer, the same with and without the host origin's state (SEALED_REACH, the `permissionState` column, sealed-reach.ts). Cooperative mode's guest document is a sandboxed frame the library does not prune: there the grants are readable on Chromium and WebKit, a documented cooperative limit",
         by: ['construct', 'documented'],
         engines: ['chromium', 'webkit'],
-        tests: ['test/e2e/realistic-host.spec.ts', 'src/lib/worker-globals.test.ts', 'test/e2e/worker-globals-and-termination.spec.ts'],
+        tests: ['test/e2e/realistic-host.spec.ts', 'test/unit/sealed-reach.test.ts', 'test/e2e/worker-globals-and-termination.spec.ts'],
         sealed: { standing: 'remains', note: 'closed by construction: the worker has no permission API, and the view runs no guest code' },
+    },
+    secureContext: {
+        channel: "Whether the host page is a secure context: a document is one when its top-level page's URL is potentially trustworthy (`https:`, or a loopback host), and a worker when its owner is, so `isSecureContext`, and every interface the platform offers only in a secure context, tell a realm of the sandbox which kind of URL the host page was served from",
+        inheritedBy: "every frame and worker; strict, sealed and worker mode's `blob:` worker on Firefox and WebKit (Chromium counts that worker as not secure on every page)",
+        how: "Documented: one bit, whether the page's top-level URL is potentially trustworthy, which every visitor of the page sees in the address bar. A guest reads it from `isSecureContext` and from which secure-context interfaces it has (SEALED_REACH, the `secureContext` column, sealed-reach.ts); the e2e suite compares a sealed worker of a host page served from a name that is not trustworthy with one served from a loopback host, on every engine, and fails on a name that differs and is not listed there",
+        by: ['documented'],
+        engines: ['firefox', 'webkit'],
+        tests: ['test/e2e/sealed-reach.spec.ts', 'test/unit/sealed-reach.test.ts'],
+        sealed: { standing: 'remains', note: 'one bit, on Firefox and WebKit' },
+        residuals: {
+            secureBit: {
+                what: "on Firefox and WebKit a sealed guest learns whether the host page's top-level URL is potentially trustworthy (`https:` or a loopback host), from `isSecureContext` and from the presence of the secure-context interfaces (SubtleCrypto, Web Locks, Firefox's WebCodecs coders and image decoder, server timing); nothing else of the URL. Chromium's worker reads as not secure on every page",
+                tests: ['test/e2e/sealed-reach.spec.ts'],
+            },
+        },
     },
     uiSurfaces: {
         channel: "The browser's shared UI surfaces: focus, the clipboard, history, top-level navigation, the host window as a `postMessage` target",
@@ -259,6 +308,12 @@ export const INHERITED_CONTEXT = {
         engines: ALL,
         tests: ['test/e2e/view-bound.spec.ts', 'test/unit/view-bound.test.ts', 'test/e2e/view-budget.spec.ts'],
         sealed: { standing: 'remains', note: "the view shares the host page's thread as strict mode's does" },
+        residuals: {
+            viewRendering: {
+                what: "what the guest renders and sets is applied in the view, on the host page's thread on Firefox, WebKit, Android WebView and Chromium's headless shell: an availability cost, bounded by the view's budgets and the repeated-overrun rule (docs/API.md, the view's cost to the host page)",
+                tests: ['test/e2e/view-bound.spec.ts', 'test/unit/view-bound.test.ts', 'test/e2e/view-budget.spec.ts'],
+            },
+        },
     },
 } as const satisfies Record<string, InheritedContextRow>;
 

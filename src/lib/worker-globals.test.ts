@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keepOnlyWorkerGlobals, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS, WORKER_STATE_READS } from './worker-globals';
+import { keepOnlyWorkerGlobals, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
 
 /**
  * The worker globals allowlist (VR:V1), on a stand-in global shaped like a worker's
@@ -63,64 +63,5 @@ describe('V1: the worker keeps only the allowlisted globals', () => {
         new Function(`return (${keepOnlyWorkerGlobals.toString()})`)()(g, STRICT_WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS);
         expect(Object.getOwnPropertyNames(scope).sort()).toEqual(['constructor', 'fetch', 'navigator', 'setTimeout']);
         expect('importScripts' in g).toBe(false);
-    });
-});
-
-// BD5:ISO-1, BD5:ISO-2 (class A, the host page's context; the allowlist is the chokepoint): a kept name that reads browser
-// state keyed to an origin or to the profile can be answered from the host page's own record (WebKit's permissions were).
-// Every such name is classified with what it reads (WORKER_STATE_READS); every other name of the allowlists was reviewed
-// as reading none, and is listed below. A name added to the allowlists fails here until it is put in one of the two.
-const REVIEWED_NO_STATE = `
-    globalThis Infinity NaN undefined eval isFinite isNaN parseFloat parseInt decodeURI decodeURIComponent encodeURI encodeURIComponent
-    escape unescape Object Function Array Number Boolean String Symbol BigInt RegExp Promise Proxy Reflect JSON Math Atomics Iterator
-    Error AggregateError EvalError RangeError ReferenceError SyntaxError TypeError URIError SuppressedError InternalError
-    ArrayBuffer SharedArrayBuffer DataView Int8Array Uint8Array Uint8ClampedArray Int16Array Uint16Array Int32Array Uint32Array Float16Array
-    Float32Array Float64Array BigInt64Array BigUint64Array Map Set WeakMap WeakSet WeakRef FinalizationRegistry DisposableStack
-    AsyncDisposableStack WebAssembly
-    self navigator name close onerror onrejectionhandled onunhandledrejection onlanguagechange onoffline ononline setTimeout clearTimeout
-    setInterval clearInterval queueMicrotask requestAnimationFrame cancelAnimationFrame structuredClone reportError atob btoa console crypto
-    createImageBitmap scheduler DedicatedWorkerGlobalScope WorkerGlobalScope WorkerLocation WorkerNavigator
-    fetch XMLHttpRequest XMLHttpRequestEventTarget XMLHttpRequestUpload WebSocket importScripts
-    Request Response Headers FormData AbortController AbortSignal Event EventTarget CustomEvent ErrorEvent MessageEvent ProgressEvent
-    PromiseRejectionEvent CloseEvent SecurityPolicyViolationEvent DOMException QuotaExceededError DOMStringList MessageChannel MessagePort
-    Blob File FileList FileReader FileReaderSync URL URLSearchParams URLPattern TextDecoder TextEncoder TextDecoderStream TextEncoderStream
-    CompressionStream DecompressionStream ReadableStream ReadableStreamDefaultReader ReadableStreamBYOBReader ReadableStreamBYOBRequest
-    ReadableStreamDefaultController ReadableByteStreamController WritableStream WritableStreamDefaultWriter WritableStreamDefaultController
-    TransformStream TransformStreamDefaultController ByteLengthQueuingStrategy CountQueuingStrategy Crypto CryptoKey SubtleCrypto
-    IDBCursor IDBCursorWithValue IDBDatabase IDBIndex IDBKeyRange IDBObjectStore IDBOpenDBRequest IDBRecord IDBRequest IDBTransaction
-    IDBVersionChangeEvent Scheduler TaskController TaskSignal TaskPriorityChangeEvent
-    Performance PerformanceEntry PerformanceMark PerformanceMeasure PerformanceObserver PerformanceObserverEntryList PerformanceResourceTiming
-    PerformanceServerTiming
-    DOMMatrix DOMMatrixReadOnly DOMPoint DOMPointReadOnly DOMQuad DOMRect DOMRectReadOnly ImageData ImageBitmap ImageBitmapRenderingContext
-    OffscreenCanvas OffscreenCanvasRenderingContext2D CanvasGradient CanvasPattern Path2D TextMetrics
-    WebGLRenderingContext WebGL2RenderingContext WebGLActiveInfo WebGLBuffer WebGLContextEvent WebGLFramebuffer WebGLObject WebGLProgram
-    WebGLQuery WebGLRenderbuffer WebGLSampler WebGLShader WebGLShaderPrecisionFormat WebGLSync WebGLTexture WebGLTransformFeedback
-    WebGLUniformLocation WebGLVertexArrayObject
-    AudioData AudioDecoder AudioEncoder EncodedAudioChunk EncodedVideoChunk VideoColorSpace VideoDecoder VideoEncoder VideoFrame
-    ImageDecoder ImageTrack ImageTrackList
-`.trim().split(/\s+/);
-
-describe('the allowlists read no state of the host page: every name that reads origin- or profile-keyed state is classified (BD5:ISO-1)', () => {
-    const listed = [...WORKER_GLOBALS, ...WORKER_NAVIGATOR_MEMBERS.map(name => `navigator.${name}`)];
-    const classified = Object.keys(WORKER_STATE_READS);
-
-    it('every name of the allowlists is either a classified state read or reviewed as reading none, never both', () => {
-        const unreviewed = listed.filter(name => !classified.includes(name) && !REVIEWED_NO_STATE.includes(name));
-        expect(unreviewed, 'classify each new name: in WORKER_STATE_READS with what it reads and its measured answer, or in this list if it reads no state').toEqual([]);
-        expect(classified.filter(name => REVIEWED_NO_STATE.includes(name))).toEqual([]);
-        expect(new Set(REVIEWED_NO_STATE).size).toBe(REVIEWED_NO_STATE.length);
-    });
-
-    it('every classified name and every reviewed one is on the allowlists (no stale entry), and each classification says why', () => {
-        for (const name of [...classified, ...REVIEWED_NO_STATE]) expect(listed, name).toContain(name);
-        for (const [name, why] of Object.entries(WORKER_STATE_READS)) expect(why.length, name).toBeGreaterThan(20);
-    });
-
-    it('every navigator member is classified: the navigator is where an engine answers from its per-origin or profile records', () => {
-        for (const member of WORKER_NAVIGATOR_MEMBERS) expect(classified, member).toContain(`navigator.${member}`);
-    });
-
-    it("the permission API and the storage manager are not offered (WebKit answered permissions from the host origin's grants; Firefox's estimate() ended the task)", () => {
-        for (const name of ['Permissions', 'PermissionStatus', 'StorageManager', 'navigator.permissions', 'navigator.storage']) expect(listed, name).not.toContain(name);
     });
 });

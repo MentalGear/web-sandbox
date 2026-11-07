@@ -104,6 +104,22 @@ export const ENGINE_DIFFERENCES = {
         why: "Which APIs an engine ships (and, for secure-context-only ones, whether it counts a `blob:` worker of an opaque origin as secure). The library only deletes names off the allowlist, so an absent name is absent and none is added; no name that can make a request or open a channel differs (the four request makers are present on every engine, `importScripts` in worker mode)",
         tests: [`${E2E}worker-globals-and-termination.spec.ts`],
     },
+    'worker-secure-context': {
+        what: "Whether the guest's `blob:` worker of an opaque origin is a secure context, and so which secure-context interfaces it has (INHERITED_CONTEXT.secureContext)",
+        chromium: "Never, on any page: `isSecureContext` reads false, and no secure-context interface is there",
+        firefox: "When the host page's top-level URL is potentially trustworthy: `isSecureContext`, SubtleCrypto, Web Locks, the WebCodecs coders, the image decoder and server timing follow the host page",
+        webkit: "When the host page's top-level URL is potentially trustworthy: `isSecureContext`, SubtleCrypto and Web Locks follow the host page",
+        why: "How an engine reads the secure context of an opaque origin's worker: from its owner's top-level URL, or never. One bit of the host page, documented (the `secureContext` row); SEALED_REACH lists every name that differs, and the spec fails on one it does not list",
+        tests: [`${E2E}sealed-reach.spec.ts`],
+    },
+    'view-inline-style-check': {
+        what: "What the view's checks of the host page's `style-src` and `img-src` do with the guest's inline styles and a registered file, on a page whose policy refuses them (`cspStyle` and `cspReporting` residuals)",
+        chromium: "Refuses the style attribute, the style element and the file, and reports each to the page's endpoint",
+        firefox: "Refuses the style attribute, the style element and the file, and reports each to the page's endpoint",
+        webkit: "Applies the style attribute (it checks no attribute the renderer sets), refuses the style element and the file, and sends the page's endpoint nothing from the view",
+        why: "How an engine applies an inherited `style-src` to an attribute set through the DOM, and whether it delivers a report from an opaque frame. Documented residuals: every report names only `inline` or `blob` as blocked, and the guest hears none",
+        tests: [`${E2E}sealed-reach.spec.ts`],
+    },
     'worker-eventsource-fontface': {
         what: "A worker the guest makes in cooperative mode: its `EventSource` and `FontFace` against the policy",
         chromium: "Refused by the policy",
