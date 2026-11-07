@@ -1712,6 +1712,10 @@ export class WebSandbox extends ElementBase {
             step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true });
             return;
         }
+        if (data?.type === 'VIEW_INITIAL') {
+            this._warnAboutStrictHtml(data.dropped); // what the initial view dropped: its scripts and handlers, once per element
+            return;
+        }
         if (data?.type === 'TRUSTED_TYPES_REFUSED') {
             // The view could not create its Trusted Types policy (R2:C-6): the host page's trusted-types
             // directive does not name it, though the host page itself never needed it (its own default policy took the
@@ -2409,7 +2413,6 @@ export class WebSandbox extends ElementBase {
         }
 
         const html = this._config.html || '<div id="root"></div>';
-        this._warnAboutStrictHtml(mode, html);
         const sandboxFlags = this._getSandboxFlags();
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
         // never a type that opens as a document (BR:ST1); stylesheets without a network URL (S74, files.ts viewStylesheets)
@@ -2504,11 +2507,14 @@ export class WebSandbox extends ElementBase {
 
     // Sealed mode is the default and its view is strict mode's, so markup written for cooperative mode reaches that view
     // unchanged: its scripts and handlers never run (the renderer drops them, and the view's policy admits only the
-    // bootstrap). Said once per element and mode, in the mode's words, read with an inert parser (markup-scripts.ts); not
-    // again once said, so a big view is parsed only until then.
-    private _warnAboutStrictHtml(mode: 'strict' | 'sealed', html: string) {
-        const warning = mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING;
-        if (this._warnedStrict.has(warning) || !scriptInMarkup(html)) return;
+    // bootstrap). Said once per element and mode, in the mode's words, from what the view's renderer noted it dropped of
+    // the initial view (VIEW_INITIAL). The element reads no markup of a strict or sealed build itself: a parser of the host
+    // page's realm would check the guest's markup against the host page's policy, and report it (BD7:LIM-1; HOST_PASSES,
+    // host-passes.ts).
+    private _warnAboutStrictHtml(dropped: unknown) {
+        if (!hasStrictView(this._config.mode)) return;
+        const warning = this._config.mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING;
+        if (this._warnedStrict.has(warning) || !dropsScript(dropped)) return;
         this._warnedStrict.add(warning);
         console.warn(warning);
     }
@@ -2766,6 +2772,15 @@ function refuseGuestWrite(): Promise<never> {
 // in its own document. The one predicate every build asks (R2:L-1: _buildContext).
 function buildsHere(element: WebSandbox): boolean {
     return element.isConnected && element.ownerDocument === document;
+}
+
+// Whether the view's notes of what it dropped (VIEW_INITIAL: at most three constants) name a script or a handler.
+function dropsScript(dropped: unknown): boolean {
+    if (!Array.isArray(dropped)) return false;
+    for (let i = 0; i < dropped.length && i < 3; i++) {
+        if (dropped[i] === 'script' || dropped[i] === 'handler') return true;
+    }
+    return false;
 }
 
 // Insertion: the reducer's `connect` builds, or, where the element may not build, stops and warns once (`initialize`,

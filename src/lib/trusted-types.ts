@@ -4,7 +4,7 @@ import { BRIDGE_PREFIX, WRAPPER_PREFIX } from './frame-documents';
  * The element's HTML sinks on a host page that enforces Trusted Types. Under the host page's
  * `require-trusted-types-for 'script'`, Chromium and WebKit throw a TypeError when a string reaches an HTML sink
  * (measured; R1:R3-1), and the element has three: the wrapper's `srcdoc`, the fetch bridge's frame's `srcdoc`, and the inert parse of guest markup it reads before a
- * build (DOMParser: strict mode's script warning, cooperative mode's file references). Without a policy the build fails with "could not
+ * build of cooperative mode (DOMParser: its script warning and its file references; a strict or sealed build reads no markup, BD7:LIM-1). Without a policy the build fails with "could not
  * be built (TypeError)". Host-side only.
  *
  * A page cannot be asked whether it enforces Trusted Types, and a string that an enforcing page refuses is reported to

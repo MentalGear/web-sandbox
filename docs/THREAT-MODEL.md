@@ -60,7 +60,7 @@ cooperative mode's are ([S74](BACKLOG.md#s74)). `scriptUnsafe` is for testing an
 
 ## Trust boundaries
 
-<!-- describes: realms, channels sig:c25c9d12 -->
+<!-- describes: realms, channels sig:c25c3794 -->
 
 The realms and the channels between them are generated from the code in [ARCHITECTURE.md](../ARCHITECTURE.md#modes-and-realms)
 (which realm runs guest code, which library functions are stringified into it) and
@@ -306,7 +306,7 @@ bridge's requests are `fetch` events
 
 ### Channel integrity
 
-<!-- describes: frames sig:cc18 -->
+<!-- describes: frames sig:8eea -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |

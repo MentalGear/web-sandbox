@@ -510,11 +510,21 @@ describe("the warning about scripts in `html` names sealed mode in sealed mode",
     it('sealed says sealed mode (the default), once per element; strict says strict mode', async () => {
         const warn = vi.mocked(console.warn);
         const el = await mount();
+        // what the view noted it dropped of the initial view (VIEW_INITIAL), which the element warns from (BD7:LIM-1)
+        const viewDropped = (dropped: string[]) => {
+            const { port1 } = new MessageChannel();
+            el._viewPort = port1;
+            el._onViewMessage(port1, { type: 'VIEW_INITIAL', dropped });
+            port1.close();
+        };
         el.setConfig({ mode: 'sealed', html: '<script>x()</script>' });
+        viewDropped(['script']);
         el.setConfig({ mode: 'sealed', html: '<p onclick="y()">y</p>' });
+        viewDropped(['handler']);
         const said = () => warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('runs no script in `html`'));
         expect(said()).toEqual(["[Sandbox] sealed mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`."]);
         el.setConfig({ mode: 'strict', html: '<script>x()</script>' });
+        viewDropped(['script']);
         expect(said()[1]).toBe("[Sandbox] strict mode runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.");
     });
 

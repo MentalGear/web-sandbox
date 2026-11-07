@@ -173,6 +173,8 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIEW_READY', 'width', 'g.innerWidth'],
     ['VIEW_READY', 'height', 'g.innerHeight'],
     ['VIEW_READY', 'stillStyleRefused', 'true'],
+    ['VIEW_INITIAL', 'type', "'VIEW_INITIAL'"],
+    ['VIEW_INITIAL', 'dropped', 'renderDropped'],
     ['GUEST_TEXT_DROPPED', 'type', "'GUEST_TEXT_DROPPED'"],
     ['(type)', 'type', 'type'],
     ['(type)', 'message', 'cutText(text, options.guestText.maxLength)'],
