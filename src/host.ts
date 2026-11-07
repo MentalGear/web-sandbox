@@ -1920,19 +1920,19 @@ export class WebSandbox extends ElementBase {
     }
 
     // One fetch bridge per environment (BL:B5), built with the environment and aborted by _teardown. The reserved
-    // method is registered again with it, closed over THIS build's bridge (or null when off), as sandbox:write is
+    // method is registered again by every build (_attachBuild, from this function's answer: a sealed build, which has no
+    // network, gives null), closed over THIS build's bridge (or null when off), as sandbox:write is
     // over its overlay: the broker looks a method up when a request arrives and runs it a microtask later, and a
     // request must be served by the bridge of the environment it arrived in. Reading this._fetchBridge when the method
     // runs would let a request that arrived just before a rebuild be served by the next environment's bridge (FR:H).
     // Closed over its own bridge, it reaches the one teardown closed, and is refused there.
     // Its requests are made by its own frame (bridge-frame.ts; BD1:ISO-1, class E-net), prepared by the build and put in
     // the shadow root after the wrapper: the bridge's only transport. The host page's fetch makes none of them.
-    private _startFetchBridge(network: PreparedNetwork) {
+    private _startFetchBridge(network: PreparedNetwork): FetchBridge | null {
         const { bridgeFrame: prepared, fetchPolicy: policy } = network;
         if (!policy || !prepared) {
             this._fetchBridge = null;
-            this._exposeFetch(null);
-            return;
+            return null;
         }
         const frame = createBridgeFrame({
             iframe: prepared,
@@ -1948,7 +1948,7 @@ export class WebSandbox extends ElementBase {
             onRecord: (record) => this._dispatchFetch(record),
             transport: frame.transport,
         });
-        this._exposeFetch(this._fetchBridge);
+        return this._fetchBridge;
     }
 
     // The bridge fails closed when its frame never started (every request refused, with the reason in its record);
@@ -2415,9 +2415,10 @@ export class WebSandbox extends ElementBase {
         this.shadowRoot!.appendChild(iframe);
         // The bridge's frame after the wrapper, which stays the shadow root's first. A sealed build has no network: no
         // bridge, and the reserved method refuses, as before the first build (its guest's sandboxFetch() never calls it; a guest's
-        // own bridge.call('sandbox:fetch') does, and is refused here, test/e2e/sealed.spec.ts).
-        if (prepared.network) this._startFetchBridge(prepared.network);
-        else this._exposeFetch(null);
+        // own bridge.call('sandbox:fetch') does, and is refused here, test/e2e/sealed.spec.ts). The method is registered here
+        // for every build, with this build's bridge or none: no branch leaves the previous build's handler in place (BD6:TST-1).
+        const bridge = prepared.network ? this._startFetchBridge(prepared.network) : null;
+        this._exposeFetch(bridge);
     }
 
     // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
