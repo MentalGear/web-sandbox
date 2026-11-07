@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { vi } from 'vitest';
 import { runBootstrap } from './sandbox-environment';
 import { dropNetworkCss } from '@src/lib/css-references';
+import { declared, parseAsView } from './view-parse';
 
 /**
  * The strict view's findings of R5 (unit): the library's own logic where no browser decides. The engines' side is in test/e2e/strict-view-budget.spec.ts.
@@ -339,12 +340,12 @@ describe("S72 (class P): the repeated-overrun rule, the owner's decision on VIEW
 describe('L-2 and N-7 (docs and class P): with allowAnimations false, what happens to a style attribute depends on its text alone', () => {
     // The renderer with `allowAnimations: false`; the attribute each <p> ends with, and how many CSSOM reads it took.
     const still = (styles: string[]) => {
-        const template = document.createElement('template');
-        template.innerHTML = styles.map(style => `<p style="${style.replace(/"/g, '&quot;')}"></p>`).join('');
+        const { template, markup } = parseAsView(styles.map(style => `<p style="${style.replace(/"/g, '&quot;')}"></p>`).join(''));
         const read = vi.spyOn(CSSStyleDeclaration.prototype, 'getPropertyValue');
         try {
-            sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, { animations: false, autoplay: true, stylesheets: true });
-            return { styles: [...template.content.querySelectorAll('p')].map(p => p.getAttribute('style')), reads: read.mock.calls.length };
+            sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, { animations: false, autoplay: true, stylesheets: true }, undefined, { target: 'body', animating: RENDER_RULES.still.known, origins: {}, refused: [], urls: 0, loads: [], markup });
+            // the renderer's reads: of the animation and transition properties only (the engine's own parse of a text can read others)
+            return { styles: [...template.content.querySelectorAll('p')].map(p => p.getAttribute('style')), reads: read.mock.calls.filter(([name]) => /animation|transition/.test(String(name))).length };
         } finally {
             read.mockRestore();
         }
@@ -353,7 +354,7 @@ describe('L-2 and N-7 (docs and class P): with allowAnimations false, what happe
     it('a text without "animation", "transition" or a backslash is never read, "transform" and "transparent" included (N-7: they were)', () => {
         const written = ['transform: rotate(1deg); color: transparent', 'text-transform: uppercase', 'background: transparent; animatable: x'];
         const { styles, reads } = still(written);
-        expect(styles).toEqual(written);
+        expect(styles).toEqual(written.map(declared)); // each applied as written
         expect(reads).toBe(0);
     });
 
@@ -384,7 +385,7 @@ describe('L-2 and N-7 (docs and class P): with allowAnimations false, what happe
 
     it('the docs say so', () => {
         const api = readFileSync(join(__dirname, '../../docs/API.md'), 'utf8').replace(/\s+/g, ' ');
-        expect(api).toContain('whose text contains neither `animation` nor `transition` (in any case) nor a backslash is left exactly as written');
+        expect(api).toContain('whose text contains neither `animation` nor `transition` (in any case) nor a backslash is applied exactly as written');
         expect(api).not.toContain('declares more properties than it has characters');
     });
 });

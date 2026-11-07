@@ -443,7 +443,7 @@ every element and, once the guest's CSS names it (or uses an escape or `@import`
 supports that an animation applies to (not `::first-letter`, `::first-line`, the highlight pseudo-elements or scrollbar
 parts, on which no animation runs), and the renderer removes every animation and transition declaration that holds
 anything but a CSS-wide keyword from `style` attributes (an inline `!important` would beat any layer). A `style`
-attribute whose text contains neither `animation` nor `transition` (in any case) nor a backslash is left exactly as
+attribute whose text contains neither `animation` nor `transition` (in any case) nor a backslash is applied exactly as
 written. One that does, and also has a backslash or declares `all` (outside comments and strings), is removed whole;
 any other loses only its animation and transition declarations. Nothing the guest declares overrides it: its own
 `!important`, its own layers, `@starting-style`, `@property`, scroll-driven animations, registered stylesheets and
@@ -1380,6 +1380,18 @@ one a `style` attribute or a `<style>` names (`url()`, `@import`, `image-set()`,
 reported the same way, and a `<style>` keeps its text only. SVG `fill`, `stroke`, `clip-path` and `mask`
 reference only `url(#id)`. Link clicks and form submissions navigate nowhere.
 
+<a id="guest-styles"></a>The view applies the guest's styles through the CSSOM, never as an inline style, so your page's
+`style-src` never checks them and your report endpoint hears nothing of them ([Host page policy](#your-report-endpoint)):
+a `style` attribute's text becomes the element's own declaration (the element then carries the engine's serialization of
+it as its `style` attribute), and a `<style>`, HTML or SVG, becomes a constructed stylesheet that the view adopts. The
+`<style>` itself stays in the view as an inert `noframes` element that holds its text (`text()` and a render into it by
+its id change the stylesheet's rules, and a render that replaces or removes it removes them). What follows from a
+constructed stylesheet: the `<style>`s cascade among themselves in the order of the markup, all after every stylesheet
+`<link>` (a document's own stylesheets come before the ones it adopts); a `media` applies as it would; an SVG `<style>`
+whose `type` is not CSS applies nothing; an `@import` in a `<style>` loads nothing (link a registered stylesheet with
+`<link rel="stylesheet">`, whose `@import`s load); a `title` makes no alternative style sheet; and a selector that names
+`style` matches none of them.
+
 Not available in strict mode: `use`, markers, SVG filters, SVG `image`, `foreignObject` and animation; `canvas`,
 `slot`, `selectedcontent` (customizable `select`); popovers (`popover`, `popovertarget`) and invoker commands
 (`commandfor`, `command`); `autofocus`, `contenteditable`; form `action`, `formaction`, `method` and `target`;
@@ -2197,7 +2209,7 @@ policy must allow:
 | :--- | :--- | :--- | :--- |
 | `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; strict mode: `'unsafe-eval'` for `execute()` (sealed mode runs no string as code) | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
 | `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
-| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; while `allowAnimations` is `false` (the default), also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
+| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; while `allowAnimations` is `false` (the default), also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`. Nothing for the guest's own styles: the view applies its `style` attributes, `<style>` elements and `set({ css })` through the CSSOM, which no `style-src` checks ([below](#your-report-endpoint)); `blob:` where the guest links a registered stylesheet | `'unsafe-inline'`, or the wrapper style's hash (no animation stylesheet); `'unsafe-inline'` for the guest's own inline styles, which its document holds as written | `'unsafe-inline'`, or the wrapper style's hash (no animation stylesheet) |
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind (sealed mode needs none in `connect-src`, which is `'none'` there); strict mode: every origin in `origins` (in `connect-src`, named by scheme and host, not `'self'`: [below](#your-connect-src)); sealed mode: no origin, it has none | `blob:` for registered files of that kind; every origin in `origins` | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | `base-uri` | `about:` (for example `base-uri 'self' about:`), or omit the directive: the wrapper sets `<base href="about:blank">` so the guest never sees your page's URL, and a policy that refuses it (`'self'`, `'none'`) ends the build, because every bootstrap first checks its document's base URL | the same | the same |
@@ -2223,7 +2235,7 @@ policy must allow:
   `'unsafe-inline'` allows inline script everywhere on it, and so gives up its defence against an injected `<script>`.
   Prefer strict mode, whose hash sits beside your own hashes and nonces; using `'unsafe-inline'` there instead of the hash
   costs the same.
-- **Your report endpoint (`report-uri`, `report-to`) and your policy's text.** The sandbox's documents and its worker
+- <a id="your-report-endpoint"></a>**Your report endpoint (`report-uri`, `report-to`) and your policy's text.** The sandbox's documents and its worker
   inherit your page's policy list as it is, its text and its endpoints with it, and the browser reports every refusal
   of it twice: to the realm that tried (a `securitypolicyviolation` event that carries your policy's text, its nonces,
   its endpoint with any key in its URL) and to your endpoint (a POST with the refused URL, path and query included, and a
@@ -2232,11 +2244,14 @@ policy must allow:
   constructors, a timer given a string: the library's `EvalError`), the build refuses an entry that calls `import()`, and
   every request is refused by the library before the browser sees it; whatever still raises a violation in the worker
   is stopped before guest code hears it. So the guest reads nothing of your policy, and your endpoint receives nothing
-  it caused from the worker. The view runs no guest code, but what it shows is checked against your policy: a registered
-  file's `blob:` load under an `img-src`, `media-src`, `font-src` or `style-src` without `blob:`, and the guest's inline
-  styles under a `style-src` without `'unsafe-inline'`, are refused and reported to your endpoint, each naming `blob` or
-  `inline` as blocked, with the style's first characters where your `style-src` has `'report-sample'`; how many there
-  are, and when, is the guest's choice. Admit them as the table above says, or treat those reports as the guest's data.
+  it caused from the worker. The view runs no guest code, and applies the guest's styles through the CSSOM, never as an
+  inline style: a `style` attribute becomes the element's own declaration, a `<style>` (HTML or SVG) a constructed
+  stylesheet of the view's, and `set({ css })` sets the declaration's properties. No `style-src` checks any of them, so a
+  `style-src` of hashes alone, `'report-sample'` and all, refuses and reports none of the guest's styles (all three
+  engines; [research 25](research/25_cssom_styles/README.md)). What the view still has checked against your policy is
+  its loads of registered files: a `blob:` load under an `img-src`, `media-src`, `font-src` or `style-src` without
+  `blob:` is refused and reported to your endpoint, naming `blob` as blocked and nothing of the file; how many there are,
+  and when, is the guest's choice. Admit `blob:` as the table above says, or treat those reports as the guest's data.
   Strict mode with `scriptUnsafe`, cooperative mode and worker mode run guest strings and scripts that your policy checks:
   your endpoint then receives reports whose URLs and samples the guest chose, as many as the engine sends (it throttles
   bursts, not a steady rate). Treat every field of them as untrusted guest data, or serve the embedding page without

@@ -98,7 +98,8 @@ test.describe('the renderer is an allowlist', () => {
             frm: ['id=frm', 'name=f'],
             inp: ['id=inp', 'name=i', 'type=image'],
             // crossorigin is the renderer's own, the guest's use-credentials replaced (RENDER_CROSSORIGIN_ELEMENTS, S74)
-            img: ['alt=a', 'class=c', 'crossorigin=anonymous', 'id=img', 'referrerpolicy=no-referrer', 'src=https://x.example/i.png', 'style=color:red', 'width=1'],
+            // the style attribute is the engine's serialization of the declaration the view gave it (sanitizeRender: no inline style)
+            img: ['alt=a', 'class=c', 'crossorigin=anonymous', 'id=img', 'referrerpolicy=no-referrer', 'src=https://x.example/i.png', 'style=color: red;', 'width=1'],
             dataimg: ['alt=d', 'crossorigin=anonymous', 'id=dataimg', 'referrerpolicy=no-referrer'],
             srcsetimg: ['alt=s', 'crossorigin=anonymous', 'id=srcsetimg', 'referrerpolicy=no-referrer'],
             jsimg: ['alt=j', 'crossorigin=anonymous', 'id=jsimg', 'referrerpolicy=no-referrer'],
@@ -135,7 +136,8 @@ test.describe('the renderer is an allowlist', () => {
             })()`);
             expect(read.names).toEqual(['header', 'h1', 'nav', 'ul', 'li', 'a', 'main', 'form', 'fieldset', 'legend', 'label', 'input', 'select', 'optgroup', 'option', 'textarea', 'input', 'button', 'output',
                 'table', 'caption', 'thead', 'tr', 'th', 'tbody', 'tr', 'td', 'td', 'details', 'summary', 'p', 'dialog', 'progress', 'meter', 'figure', 'picture', 'img', 'figcaption', 'video',
-                'svg', 'defs', 'linearGradient', 'stop', 'g', 'path', 'circle', 'text', 'math', 'mfrac', 'mi', 'mn', 'my-card', 'style', 'p']);
+                // a <style> is a noframes in the view, holding its text, which the view applies as a constructed stylesheet
+                'svg', 'defs', 'linearGradient', 'stop', 'g', 'path', 'circle', 'text', 'math', 'mfrac', 'mi', 'mn', 'my-card', 'noframes', 'p']);
             expect(read).toMatchObject({
                 n: 'id maxlength name placeholder required type', s: 'id name', c: 'checked id name type', b: 'id name type value', f: 'autocomplete id name',
                 d: 'id open', dl: 'id open', pr: 'id max value', card: 'class data-id id', v: 'controls crossorigin id muted width', icon: 'aria-label height id role viewBox width',

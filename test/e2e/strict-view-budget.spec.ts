@@ -3,6 +3,7 @@ import { inView, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { cssLoadBound, RENDER_RULES, sanitizeRender, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 import { cssReferences, withoutNetworkReferences } from '@src/lib/css-references';
+import { styleMarkup } from '@src/lib/style-markup';
 import { VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
 import { busyOf, busyShare, describeShare, idleBaseline, lag, loadedShare, operationCost, startLag, viewBound } from './host-share';
 import { VIEW_MODES } from './view-modes';
@@ -161,9 +162,9 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         test.setTimeout(60000);
         await mountEntry(sandbox, `sandboxView.render('<div id="a"></div>');`);
         await waitInView(page, browserName, `!!document.getElementById('a')`);
-        // In the view's own document: the parse the view does for every render (template.innerHTML), and the parse and
-        // the renderer's cleaning (sanitizeRender, with animations allowed, so that every style attribute is kept and
-        // counted), against what the count adds (what cssLoadsOf does: read every style attribute and every <style>'s
+        // In the view's own document: the parse the view does for every render (template.innerHTML, of the markup as the
+        // view encodes it: styleMarkup), and the parse and the renderer's cleaning (sanitizeRender, with animations allowed,
+        // so that every style attribute is kept, applied and counted), against what the count adds (what cssLoadsOf does: read every style attribute and every <style>'s
         // text, and count them joined, through cssLoadBound). Half of the render is style attributes, half one
         // stylesheet, every rule naming two URLs: without escapes, with one escape per rule, and with every code point of
         // every name escaped, the most escapes such CSS holds (with animations not allowed, the default, the renderer
@@ -176,6 +177,7 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
             const scanCss = (${cssReferences.toString()});
             const dropCss = (${withoutNetworkReferences.toString()});
             const dropNetworkCss = (css, dropped) => dropCss(css, scanCss, dropped);
+            const encoding = (${styleMarkup.toString()})('wmeasure0001');
             const rules = ${JSON.stringify(RENDER_RULES)};
             const half = ${VIEW_RENDER_MAX_LENGTH / 2};
             const escape = (name) => name.split('').map(c => '\\\\' + c.charCodeAt(0).toString(16) + ' ').join('');
@@ -201,22 +203,22 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
             const measure = (html) => {
                 const parsed = () => {
                     const template = document.createElement('template');
-                    template.innerHTML = html;
+                    template.innerHTML = encoding.encode(html);
                     return template.content;
                 };
                 // the renderer, with animations allowed, as the view runs it: it collects the style attributes it keeps
                 const switches = { animations: true, autoplay: false, stylesheets: true };
                 const cleaned = () => {
                     const content = parsed();
-                    const context = { target: 'div', animating: [], origins: { images: ['https://a.example'] }, refused: [], urls: 0, loads: [], css: [] };
+                    const context = { target: 'div', animating: [], origins: { images: ['https://a.example'] }, refused: [], urls: 0, loads: [], css: [], sheets: [], markup: encoding };
                     sanitize(content, () => null, () => false, dropNetworkCss, rules, switches, { elements: 50000, depth: 256, urls: 1000 }, context);
                     return { content, context };
                 };
-                // what cssLoadsOf does with them: the <style> texts and the stylesheet links read, and all counted joined
+                // what cssLoadsOf does with them: the <style> texts (RenderContext.sheets) and the stylesheet links read, and
+                // all counted joined
                 const texts = ({ content, context }) => {
                     const out = context.css.slice();
-                    const styles = content.querySelectorAll('style');
-                    for (let i = 0; i < styles.length; i++) out.push(String(styles[i].textContent));
+                    for (let i = 0; i < context.sheets.length; i++) out.push(String(context.sheets[i].textContent));
                     content.querySelectorAll('link');
                     return out;
                 };
@@ -334,11 +336,12 @@ test.describe("M-1 (class P, the library's own mitigation): the still stylesheet
         await waitInView(page, browserName, `!!document.getElementById('p')`);
         expect((await rulesInView(page, browserName)).selectors).toEqual(['*']);
         await sandbox.run(`css('.a:before { color: red } li::marker { color: blue } input::file-selector-button { color: green }')`);
-        await waitInView(page, browserName, `document.querySelectorAll('style').length === 2`);
+        // the guest's <style> is a noframes in the view, whose text the view applies as a constructed stylesheet
+        await waitInView(page, browserName, `document.querySelectorAll('noframes').length === 1`);
         const named = await rulesInView(page, browserName);
         expect(named.selectors).toEqual(['*', ...['before', 'marker', 'file-selector-button'].filter(name => named.supported.includes(name)).map(name => `::${name}`)]);
         await sandbox.run(`css('.a::bef\\\\6fre { color: red }')`);
-        await waitInView(page, browserName, `document.querySelector('#p style') && document.querySelector('#p style').textContent.includes('6fre')`);
+        await waitInView(page, browserName, `document.querySelector('#p noframes') && document.querySelector('#p noframes').textContent.includes('6fre')`);
         const all = await rulesInView(page, browserName);
         console.log(`MEASURED ${browserName} M-1: ${all.selectors.length - 1} rules for pseudo-elements once every name was named, of ${VIEW_STILL_PSEUDO_ELEMENTS.length} listed`);
         // one rule per supported name (an engine writes an alias under its standard name: -moz-list-bullet as ::marker)

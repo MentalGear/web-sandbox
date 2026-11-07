@@ -132,6 +132,10 @@ test.describe('L-1: ready is never dispatched from inside the embedder\'s own ap
 });
 
 
+/** The `style` attribute the view's engine writes for each text given to an element's declaration: what "as written" leaves. */
+const declaredInView = async (page: Page, browserName: string, texts: string[]) =>
+    await inView<(string | null)[]>(page, browserName, `${JSON.stringify(texts)}.map((text) => { const p = document.createElement('p'); p.style.cssText = text; return p.getAttribute('style'); })`) as (string | null)[];
+
 test.describe("C-2: with allowAnimations false the renderer's style rewrite multiplies no work", () => {
     // The cost is read as the longest stall of the host page's thread while one render is applied (in Firefox and WebKit
     // the view runs on it; in Chromium it may not, and the numbers are the view's own then). The still stylesheet itself
@@ -156,8 +160,8 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
                     gaps[key] = Math.min(gaps[key] ?? Infinity, (await ticks(page, 4000, { execute: 'go()' })).longest);
                     const held = await waitInView<number>(page, browserName, `document.querySelectorAll('#a > i').length`, 30000);
                     expect(held, key).toBe(count);
-                    // left as written: nothing of it was read or rewritten (the case of 'all: unset;' with false)
-                    if (name === 'all:unset') expect(await inView<string>(page, browserName, `document.querySelector('#a > i').getAttribute('style')`)).toBe('all:unset');
+                    // applied as written: nothing of it was read or rewritten (the case of 'all: unset;' with false)
+                    if (name === 'all:unset') expect(await inView<string>(page, browserName, `document.querySelector('#a > i').getAttribute('style')`)).toEqual((await declaredInView(page, browserName, ['all:unset']))[0]);
                 }
             }
         }
@@ -171,12 +175,14 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
             await mountEntry(sandbox, `sandboxView.render('<p id="a" style="all:unset">a</p><p id="b" style="COLOR:red;margin:0">b</p><p id="c" style="color: red; transition: color 1s; animation: spin 1s">c</p><p id="d" style="all:unset;animation:spin 1s">d</p><p id="e" style="transform: rotate(1deg); color: transparent">e</p>');`, { ...{ allowAnimations: false }, mode });
             await waitInView(page, browserName, `!!document.getElementById('e')`);
             const styles = await inView<(string | null)[]>(page, browserName, `['a', 'b', 'c', 'd', 'e'].map(id => document.getElementById(id).getAttribute('style'))`);
-            expect(styles.slice(0, 3)).toEqual(['all:unset', 'COLOR:red;margin:0', 'color: red;']);
+            // as written: the engine's own serialization of the text (the view applies it through the element's declaration)
+            const [allUnset, colorMargin, transform] = await declaredInView(page, browserName, ['all:unset', 'COLOR:red;margin:0', 'transform: rotate(1deg); color: transparent']);
+            expect(styles.slice(0, 3)).toEqual([allUnset, colorMargin, 'color: red;']);
             // `all` beside an animation: gone whole, on every engine (R5:L-2: Chromium kept `all: unset;`, as it
             // stores `all` as one property)
             expect(styles[3]).toBeNull();
             // no "animation" or "transition" in it: as written (R5:N-7: "trans" in transform and transparent)
-            expect(styles[4]).toBe('transform: rotate(1deg); color: transparent');
+            expect(styles[4]).toBe(transform);
         });
 
         test("the engine's animation and transition longhands are all among the ones the view reads", async ({ sandbox, page, browserName }) => {
