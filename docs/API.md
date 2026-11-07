@@ -1407,7 +1407,12 @@ whose `type` is not CSS applies nothing; an `@import` in a `<style>` loads nothi
 `<link rel="stylesheet">`, whose `@import`s load); a `title` makes no alternative style sheet; and a selector that names
 `style` matches none of them. A `style` attribute that declares `all` (outside its comments and strings, however its
 name is escaped) is removed whole: through an element's declaration `all` is hundreds of properties set and serialized
-per element in Firefox and WebKit, where a stylesheet's `all` is not; write it in a `<style>`.
+per element in Firefox and WebKit, where a stylesheet's `all` is not; write it in a `<style>`. Applying the styles this
+way is the operation's own time, inside [the view's budget](#a-the-long-run-bound), and costs about what inline styles
+did. Measured (examples, 2026-11-07, Chromium 145, Firefox 146, WebKit 26, headless on a shared 4-core VM;
+[research 25](research/25_cssom_styles/README.md#the-cost)): a render of 1 500 elements with a `style` attribute
+(100 000 characters) took 24, 39–41 and 37 ms, against 24–25, 29 and 32–35 ms as inline styles; one of 500 `<style>`s,
+26, 20–25 and 27–40 ms, against 22–31, 17–18 and 24–27 ms.
 
 Not available in strict mode: `use`, markers, SVG filters, SVG `image`, `foreignObject` and animation; `canvas`,
 `slot`, `selectedcontent` (customizable `select`); popovers (`popover`, `popovertarget`) and invoker commands

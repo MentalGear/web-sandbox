@@ -66,4 +66,42 @@ engine.
 
 What the suite holds of it: `test/e2e/sealed-host-policy.spec.ts` renders every way the guest styles the view
 (`STYLE_MAKERS`, `test/e2e/sealed-makers.ts`) on the realistic host with a `style-src` of the documented hashes,
-`'report-sample'` and a keyed `report-uri`: no report, no violation, every style applies, on all three engines.
+`'report-sample'` and a keyed `report-uri`: no report, no violation, every style applies, on all three engines. Against
+the inline renderer it replaced, it fails on all three: Chromium and Firefox apply none of the guest's styles, and WebKit
+applies its `style` attributes (parsed into the template, unchecked) and none of its `<style>`s.
+
+## The cost
+
+`measure.spec.ts` times a render in the real view of a sealed sandbox at its default configuration, from the template the
+view makes to the end of the style and layout work after the insertion (forced in a microtask after the flush, so the
+sheets the view adopts are in it), 9 renders a markup, the median in ms. The inline renderer is `src/lib/in-sandbox-view.ts`
+as it was before this research (in git, at the parent of the commit that added `src/lib/style-markup.ts`), measured by
+the same file with that one file swapped in:
+
+```bash
+WEB_SANDBOX_MEASURE=1 bunx playwright test docs/research/25_cssom_styles/measure.spec.ts --project=chromium --workers=1
+git show "$(git log --diff-filter=A --format=%h -- src/lib/style-markup.ts)~1:src/lib/in-sandbox-view.ts" > src/lib/in-sandbox-view.ts
+WEB_SANDBOX_MEASURE=1 bunx playwright test docs/research/25_cssom_styles/measure.spec.ts --project=chromium --workers=1
+git checkout -- src/lib/in-sandbox-view.ts
+```
+
+Chromium 145, Firefox 146, WebKit 26 (Playwright 1.58, headless), a shared 4-core VM, 2026-11-07; each figure the
+medians of two runs (three for the CSSOM path on Firefox), inline → CSSOM:
+
+| Markup (characters) | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| 1 500 `<p style="…">`, three declarations each (99 840) | 24.4–24.7 → 24.1–24.5 | 29 → 39–41 | 32–35 → 37 |
+| 500 `<style>`s of two rules, each before a `<p>` (49 450) | 22.4–30.6 → 26.0–26.2 | 17–18 → 20–25 | 24–27 → 27–40 |
+| 2 500 `<p class>` and no style (57 500) | 20.3–21.5 → 20.7–20.8 | 21 → 22–31 | 30–31 → 32–33 |
+| the word `style` 4 500 times, in text and a `title` (60 000) | 13.0–13.4 → 16.5–17.0 | 16 → 19–22 | 20–21 → 24–27 |
+
+So the CSSOM path costs about what the inline one did: the same on Chromium; on Firefox about 7 µs more a `style`
+attribute (its `cssText` setter against its attribute parser) and about 10 µs more a `<style>`; on WebKit a few ms a
+render. A run of `style` that is not markup but could be read as an attribute name (in text, in a value) gets a marker
+and is read back without it, a few ms per 100 000 characters on every engine. All of it is the operation's own time,
+charged to the view's budget like the rest of its flush ([API.md](../../API.md#a-the-long-run-bound)); none of it is
+outside that statement.
+
+An inline `all` is the exception, and is why the renderer removes it whole: through an element's declaration it is
+every longhand set and serialized per element on Firefox and WebKit (R4:C-2's flood of `all: unset` elements took WebKit
+past its bound), where a stylesheet's `all` is one declaration.
