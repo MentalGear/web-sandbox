@@ -73,7 +73,8 @@ ${runs.join('\n')}
     const fields = {};
     for (const k of accessors) fields[k] = own[k];
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    console.log(${JSON.stringify(name)} + JSON.stringify({ results, messages, heard, accessors, fields, location: String(self.location.href) }));
+    // how many it heard, and the first three whole (a line is cut at LOG_MAX_STRING: every event the guest hears carries a policy)
+    console.log(${JSON.stringify(name)} + JSON.stringify({ results, messages, heardCount: heard.length, heard: heard.slice(0, 3), accessors, fields, location: String(self.location.href) }));
   } catch (e) {
     console.log(${JSON.stringify(name)} + JSON.stringify({ guestThrew: String(e && e.name) + ": " + String(e && e.message) }));
   }
@@ -89,7 +90,7 @@ async function runSealedGuest(host: RealisticHost) {
     expect(events.at(-1), 'the default sealed build is ready').toEqual({ type: 'ready', reason: null });
     const line = await host.sandbox.waitForLog(name, 60000);
     return JSON.parse(line.slice(line.indexOf(name) + name.length)) as {
-        results: Record<string, string>; messages: Record<string, string>; heard: Record<string, string>[];
+        results: Record<string, string>; messages: Record<string, string>; heardCount: number; heard: Record<string, string>[];
         accessors: string[]; fields: Record<string, unknown>; location: string;
     };
 }
@@ -120,7 +121,7 @@ test.describe('sealed mode: the host page\'s policy can never be checked by the 
 
         // the guest received no trusted violation, and nothing it holds names the policy's secrets
         expect((seen as { guestThrew?: string }).guestThrew, 'the guest ran to its end').toBeUndefined();
-        expect(seen.heard, covering('cspPolicyText', 'the guest hears no violation')).toEqual([]);
+        expect(seen.heardCount, covering('cspPolicyText', 'the guest hears no violation')).toBe(0);
         const reachable = JSON.stringify(seen);
         expect(reachable.includes(secrets.nonce), covering('cspPolicyText', 'no string the guest holds has the nonce')).toBe(false);
         expect(reachable.includes(secrets.key), covering('cspPolicyText', 'no string the guest holds has the report key')).toBe(false);
@@ -174,7 +175,7 @@ test.describe('sealed mode: the host page\'s policy can never be checked by the 
         await host.open(options);
         await host.hits(true);
         const seen = await runSealedGuest(host);
-        expect(seen.heard).toEqual([]);
+        expect(seen.heardCount).toBe(0);
         // the control, after the guest: the endpoint receives the host page's own report, and nothing else
         await hostOwnViolation(host);
         await expect.poll(async () => (await host.hits()).reports.flat().length, { message: "the host page's own violation is reported (control)", timeout: 60000 }).toBeGreaterThan(0);
