@@ -1230,12 +1230,18 @@ entry runs, `eval`, `Function`, the constructor of every function kind (async, g
 `setTimeout` and `setInterval` given a handler that is not a function throw an `EvalError` of the library's
 (`[Sandbox] a string does not run as code in the sandbox …`) and never hand the string to the browser, so your page's
 policy, which the worker inherits, is never asked and reports nothing. A timer given a function works as always. An
-entry that calls `import()` is refused when the sandbox builds. In every worker, a `securitypolicyviolation` the browser
+entry that holds an import expression (`import()`, or a phase of one: `import.source()`, `import.defer()`) is refused
+when the sandbox builds. In every worker, a `securitypolicyviolation` the browser
 still raises is relayed to the element's `violation` event and stopped there: no listener of the guest's receives it, and
 the fields of `SecurityPolicyViolationEvent` read empty to guest code. Measured figures (examples, 2026-11-07, Playwright
 1.58.1's engines on a shared 4-core VM under load): the refusal adds 0.2 ms to the worker's start on Chromium and under
-1 ms on Firefox and WebKit (their worker clock counts whole milliseconds); the build's scan of the entry for `import()`
-takes 1–2 ms per MiB of entry on the host page's thread, 7–18 ms for an entry of the whole 8 MiB file quota.
+1 ms on Firefox and WebKit (their worker clock counts whole milliseconds). The build's scan of the entry for an import
+expression runs on the host page's thread and is linear in the entry, whatever its text: a search for the word, and,
+once the text holds an `import` that is not part of a longer name, one pass of it from the end that reads every
+character a fixed number of times (`test/unit/host-passes-scaling.test.ts` times its worst shapes). Measured (example,
+2026-11-07, Node 22's V8 on the same VM): under 1 ms for an entry of the whole 8 MiB file quota without the word,
+86 ms with it in a comment, and 141–235 ms for 8 MiB of the worst shapes (a run of `import//`, an unclosed
+`import/*`, lines of `//import`).
 
 **The worker's globals are an allowlist** (worker, strict and sealed mode): before anything else runs in it, the worker keeps
 only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WORKER_NAVIGATOR_MEMBERS` for
@@ -2317,7 +2323,13 @@ policy must allow:
   constructors, a timer given a string: the library's `EvalError`), the build refuses an entry that calls `import()`, and
   every request is refused by the library before the browser sees it; whatever still raises a violation in the worker
   is stopped before guest code hears it. So the guest reads nothing of your policy, and your endpoint receives nothing
-  it caused from the worker. The view runs no guest code, and applies the guest's styles through the CSSOM, never as an
+  it caused from the worker. Nor from the element: a strict or sealed build hands nothing of the guest's to a parser, a
+  loader or a markup sink of your page's realm, where the browser would check it against your policy (Chromium checks
+  each `style` attribute, `<style>` and `<base>` it parses, and reports them): the `html` goes to the view as data,
+  and the element warns about its scripts from what the view's renderer noted it dropped. Every function of the element
+  that receives guest content is a row of `HOST_PASSES` (`src/lib/host-passes.ts`), held to that by a scan of the code.
+  Cooperative mode reads its guest document with an inert parser in your page's realm, which Chromium checks as its
+  frame then does. The view runs no guest code, and applies the guest's styles through the CSSOM, never as an
   inline style: a `style` attribute becomes the element's own declaration, a `<style>` (HTML or SVG) a constructed
   stylesheet of the view's, and `set({ css })` sets the declaration's properties. No `style-src` checks any of them, so a
   `style-src` of hashes alone, `'report-sample'` and all, refuses and reports none of the guest's styles (all three
