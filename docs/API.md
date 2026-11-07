@@ -2236,11 +2236,18 @@ policy must allow:
   file's `blob:` load under an `img-src`, `media-src`, `font-src` or `style-src` without `blob:`, and the guest's inline
   styles under a `style-src` without `'unsafe-inline'`, are refused and reported to your endpoint, each naming `blob` or
   `inline` as blocked, with the style's first characters where your `style-src` has `'report-sample'`; how many there
-  are, and when, is the guest's choice. Admit them as the table above says, or treat those reports as the guest's data.
+  are, and when, is the guest's choice (Chromium and Firefox; WebKit applies a guest's `style` attribute, refuses the rest,
+  and sends no report from the view). Admit them as the table above says, or treat those reports as the guest's data.
   Strict mode with `scriptUnsafe`, cooperative mode and worker mode run guest strings and scripts that your policy checks:
   your endpoint then receives reports whose URLs and samples the guest chose, as many as the engine sends (it throttles
   bursts, not a steady rate). Treat every field of them as untrusted guest data, or serve the embedding page without
   reporting.
+- **Your page's URL scheme.** A frame is a secure context when its top-level page's URL is potentially trustworthy
+  (`https:`, or a loopback host), and on Firefox and WebKit the guest's worker follows it: a sealed guest can tell from
+  `isSecureContext`, and from which secure-context interfaces it has (SubtleCrypto, Web Locks; on Firefox the WebCodecs
+  coders), whether your page was served from such a URL. That one bit is all it learns of the URL; Chromium's worker reads
+  as not secure on every page, so a guest that needs those interfaces on every engine cannot have them
+  ([the host page's context](THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)).
 - **Your `img-src`, `media-src`, `font-src` and the other fetch directives narrow `origins` silently**, in the engines
   that apply the inherited list: an origin listed in `origins` that your page's policy does not allow is refused in the
   sandbox too. The refusal happens in the sandbox's documents, so it arrives as the element's `violation` event (where the

@@ -89,7 +89,10 @@ test that enumerates the domain:
 - captured intrinsics with their source scan;
 - the snapshot measure and the frame builders.
 - class A, the host page's context a sandbox document inherits (`INHERITED_CONTEXT`, `src/lib/inherited-context.ts`): a finding that
-  the sandbox inherits something of the host page's adds a row, with how it is neutralised and the test that covers it.
+  the sandbox inherits something of the host page's adds a row, with how it is neutralised and the test that covers it,
+  and the row's column in `SEALED_REACH` (`src/lib/sealed-reach.ts`), which classifies every name a sealed guest can
+  reach (the worker's allowlist and the renderer's) against every row; a name added to either allowlist gets its surface
+  there, and what a sealed guest still reaches of a row is one of the row's residuals, with its test.
 
 A new mitigation (a stylesheet, a rewrite, a listener) is a new cost: measure it on every engine, as the code it guards
 is measured.

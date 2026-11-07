@@ -90,9 +90,11 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
 
 - **What leaves the default's path**: the host-site and host-policy decisions, the cookie and connect fact tables,
   `origins` parsing, the fetch bridge and its frame, the request gate's allow path, network URLs in the renderer
-  (research 24, §1). Of the 21 rows of the host page's inherited context, 5 do not apply in sealed mode, 2 are reduced and
-  14 remain, each failing closed with a reason, closed by construction, or costing availability only
-  ([THREAT-MODEL](THREAT-MODEL.md#the-host-pages-context)).
+  (research 24, §1). Of the 22 rows of the host page's inherited context, 5 do not apply in sealed mode, 2 are reduced and
+  15 remain, each failing closed with a reason, closed by construction, or costing availability only, except one bit on
+  Firefox and WebKit, whether the page's URL is potentially trustworthy (`secureContext`, documented)
+  ([THREAT-MODEL](THREAT-MODEL.md#the-host-pages-context)). Every name a sealed guest can reach is classified against
+  every row ([`SEALED_REACH`](THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)).
 - **What an embedder sees**: an embed with no `mode` and no network option builds sealed mode, the same view, worker and
   API, and a script in its `html` still never runs. One with `origins` or `fetchBridge` and no `mode` is refused with
   the reason above, and a type error in TypeScript; the fix is `mode: 'strict'`

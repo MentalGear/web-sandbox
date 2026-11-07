@@ -128,6 +128,20 @@ worker has no `permissions` or `storage`, every generated source is strict-mode 
 configured value (#87); and in the docs where only the embedder can (the pass-5 docs and test batch): links by key,
 state per app, one element per app, no URL from the app's bytes, and why the app's WebAssembly never runs in the page.
 
+**Pass 6: the drift check, and class A closed by enumeration.** Pass 6's two highs (BD6:ISO-1, BD6:ISO-2: the host page's
+policy text and report endpoints, reached from the sealed worker through `eval`, `import()` and the violation event) are
+class A again, after BD5:ISO-1 (permission state) in pass 5 and the host-adaptation findings of pass 4: each time through a
+channel the `INHERITED_CONTEXT` list did not have yet, and each fix added a row. That is the drift the project's rule names
+(the same class of problem coming back after each fix), so the response did not stop at the rows: the inherited context is
+a list of bad cases, and the classes that closed were closed by a list of allowed ones with a test that enumerates the
+domain ([research 18](../18_finding_classes/README.md#class-a-closed-by-enumeration)). In sealed mode the domain is
+finite: the worker's allowlist and the renderer's. `SEALED_REACH` classifies every name of both against every row, the
+unit test keeps a new name or a new row from shipping unclassified, and the e2e sweep calls every member of every kept
+global on the realistic host on three engines. The enumeration found two things no pass had: a row the list lacked (the
+host page's secure context, one bit on Firefox and WebKit, documented, its construction the owner's decision) and a name
+it called neutralised that was not (a refused `XMLHttpRequest` that a throwing `open()` left sendable, which Chromium
+reported to the page's endpoint; closed by construction in the request gate).
+
 ## What capability it has cost
 
 49 capabilities were removed or restricted because of a finding ([the table](clipped-capabilities.md)). What a UI author
@@ -164,4 +178,5 @@ patching it.
 | :--- | ---: | :--- | :--- |
 | BD3 (2026-10-24) | 4 (up from 3) | both: the count rose a second time, and all three highs sit in code BD2's fixes added | Delete the two predictors (#71); cookies on view loads by `crossorigin="anonymous"`; pass 4 reviews the result. If pass 4 still finds host-adaptation data findings, take up the served-document mode. |
 | BD4 (2026-10-24) | 5 (up from 4) | both again: the count rose a third time, and the three highs (BD4:ISO-1, BD4:ISO-3, BD4:CHL-2) sit in #71's code (`host-site.ts`, `host-csp.ts`); BD4:DOC-2 and BD4:DOC-3 sit in the exception of #73 | Owner, 2026-10-24: sealed mode becomes the default and the board's scope, and strict's network findings no longer block a clean pass (D5). The predictors are deleted: the cookie carriers (#75), the policy read (#76) and the same-site rule's guesses (#78). Pass 5 reviews sealed mode at its default. |
+| BD6, class A (2026-11-07) | both highs (BD6:ISO-1, BD6:ISO-2) reach sealed mode and are class A | the first form for class A: its data findings did not fall across passes 4, 5 and 6, each through a new channel; the drift check named it | Class A is closed by enumeration instead of by rows (above, and [research 18](../18_finding_classes/README.md#class-a-closed-by-enumeration)): every name a sealed guest can reach is classified against every inherited row (`SEALED_REACH`), with a unit test that fails on an unclassified name or row and an e2e sweep of every member on three engines. It found the `secureContext` row (documented; refusing a host page that is not a secure context is the owner's decision) and a request-gate state that let a refused `XMLHttpRequest` reach the platform (fixed by construction). Pass 7 reviews sealed mode with the table in place. |
 | BD5 (2026-10-25) | 10 reach sealed, the new scope (8 verified); not comparable with the strict series | the second form: most findings (NEW-1, DOC-3 with CHL-1, CHL-2, DOC-5, DOC-6, DOC-7) sit in the recipe and example that #84 added to the previous round; the count did not fall | Sealed mode's isolation held: no network on any engine under mutation testing and 172 extra constructs, no forged frame, and one host-state read (BD5:ISO-1, WebKit permissions). The class moved from "the library predicts host-page state" to "the host to app API hands over more than intended". By construction where the library can (#86: a view crosses with its own bytes, only the embedder's words from a failed host method, `unexpose()`; #87: no `permissions` or `storage` in the worker, strict-mode generated sources, no echo in reasons), and in the docs where only the embedder can (the pass-5 docs and test batch). Pass 6 reviews sealed mode again. |
