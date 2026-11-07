@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { runInNewContext } from 'node:vm';
 import { defineWebSandbox } from '@src/host';
-import { createBroker, RPC_ERROR_CODES, RPC_LIBRARY_CODES, type RpcFrame, type RpcSend } from '@src/lib/rpc';
+import { createBroker, RPC_ERROR_CODES, RPC_LIBRARY_CODES, type HostBrokerOptions, type RpcFrame, type RpcSend } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { FILE_ERROR_CODES, fileError } from '@src/lib/files';
 import { FETCH_ERROR_CODES, fetchRefusal } from '@src/lib/fetch-bridge';
@@ -371,13 +371,14 @@ describe('a library error crosses as its code and a fixed text, never its messag
         expect(crossingText(await guest.broker.call(42 as any).catch(error => error))).toBeNull();
     });
 
-    it('a host group without the factory or its table fails closed: a plain Error is named, never forwarded', async () => {
+    it('no host broker is made with the factory and not its table, or the reverse: the group is one type (checked by bun run typecheck)', () => {
         const reportWithheld = HOST.host.reportWithheld;
-        for (const host of [{ crossingText, reportWithheld }, { mint: mintError, reportWithheld }]) {
-            const reply = await answer(() => { throw new Error(MARKER); }, [], { transferResults: true, host });
-            expect(reply.frame.error).toBe('the method failed (Error)');
-        }
-        expect((await answer(() => { throw 'a string'; }, [], { transferResults: true, host: { reportWithheld } })).frame.error).toBe('a string');
+        // @ts-expect-error a host group without the table, which tells the library's errors from the embedder's plain ones
+        const withoutTable: HostBrokerOptions = { mint: mintError, reportWithheld };
+        // @ts-expect-error a host group without the factory
+        const withoutFactory: HostBrokerOptions = { crossingText, reportWithheld };
+        const whole: HostBrokerOptions = { mint: mintError, crossingText, reportWithheld };
+        expect([withoutTable, withoutFactory, whole]).toHaveLength(3);
     });
 });
 

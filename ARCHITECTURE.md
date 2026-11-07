@@ -14,7 +14,7 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 
 ## Modes and realms
 
-<!-- describes: realms sig:c25c -->
+<!-- describes: realms sig:ec39 -->
 
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
@@ -48,7 +48,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `wrapper` | The sandbox frame's document (frame-documents.ts): it holds the guest frame or the strict view, and runs no script. | no | — | — |
 | `cooperative` | Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `inSandboxImportMap`, `inSandboxMarkup`, `checkSandboxEnvironment` | `announcement`, `logic-port` |
 | `worker-frame` | Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup. | no | `workerBootstrap`, `checkSandboxEnvironment` | `announcement`, `worker` |
-| `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeWebAssembly` | `logic-port`, `worker` |
+| `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals` | `logic-port`, `worker` |
 | `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `cssReferences`, `withoutNetworkReferences`, `styleMarkup`, `viewInputOutbox`, `isStyleProperty`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
 | `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap, the prelude and the code-from-string refusal, then the guest's entry. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeSecureContextOnly`, `assertEntryScoped`, `inStrictWorker`, `refuseCodeFromStrings`, `isStyleProperty` | `logic-port`, `render-port`, `worker` |
 | `bridge-frame` | The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it. | no | `checkSandboxEnvironment`, `inBridgeFrame` | `announcement`, `bridge-init`, `bridge-port` |
@@ -65,7 +65,6 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `inSandboxMarkup` | `src/lib/in-sandbox-files.ts` | `cooperative` |
 | `keepOnlyWorkerGlobals` | `src/lib/worker-globals.ts` | `worker`, `strict-worker` |
 | `removeSecureContextOnly` | `src/lib/worker-globals.ts` | `strict-worker` |
-| `removeWebAssembly` | `src/host.ts` | `worker` |
 | `workerBootstrap` | `src/lib/worker-bootstrap.ts` | `worker-frame` |
 | `assertEntryScoped` | `src/lib/in-sandbox-view.ts` | `strict-worker` |
 | `inStrictWorker` | `src/lib/in-sandbox-view.ts` | `strict-worker` |
@@ -85,7 +84,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:c25cb45f42cb49d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:ec39b45f42cb49d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist

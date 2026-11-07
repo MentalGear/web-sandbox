@@ -107,8 +107,8 @@ creates the render port, spawns the worker from a `blob:` URL (`worker-src blob:
   (below), so it has no `Worker` or `SharedWorker` (a nested blob worker would be admitted by `worker-src blob:`, P3), no
   `postMessage`, `onmessage` or `onmessageerror` of its own (what it posted reached the view's `Worker` object, on the host
   page's thread wherever the view shares it, outside every budget; the library's ports are its only way out), and never
-  `RTCPeerConnection` or a document; the prelude deletes `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without
-  `'unsafe-eval'`, P3) and `URL.createObjectURL` (A8). Its location is its own `blob:null/…` URL.
+  `RTCPeerConnection` or a document, nor `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without `'unsafe-eval'`,
+  P3); the prelude deletes `URL.createObjectURL` (A8). Its location is its own `blob:null/…` URL.
 - **G3 — the host can always stop the guest.** The watchdog (`watchdogTimeout`) and `workerExecutionTimeout` watch the
   worker, which never shares the host's thread: the S6 bound holds on every engine
   ([ADR-003](ADR-003-lifecycle-and-liveness.md#strict-mode-bounds-execution-on-every-engine)).
@@ -490,7 +490,7 @@ labelled A1–A9 where the code and its tests cite them:
 | P7: one 1 MiB apply blocks WebKit's host thread for 1.2–1.6 s; an unacknowledged burst holds Firefox's worker round trip near 1 s | **A4**: one render in flight with acks, a cap on one render, render port closed over |
 | P4: Chromium's error page ends view and worker silently | **A5**: link/submit cancellation for every link form, plus a host-side view liveness check |
 | P1, P3: created frames report nothing to the view; worker reports go to the worker (Chromium), partly to the view (Firefox, `importScripts`), nowhere (WebKit) | **A6**: G6 scoped to the view; `source: 'logic'` best effort |
-| P3: nested blob workers are admitted; WebKit compiles WebAssembly without `'unsafe-eval'` | **A7**: delete `Worker`, `SharedWorker`, `WebAssembly` before guest code (the worker's allowlist omits the first two) |
+| P3: nested blob workers are admitted; WebKit compiles WebAssembly without `'unsafe-eval'` | **A7**: delete `Worker`, `SharedWorker`, `WebAssembly` before guest code (the worker's allowlist omits them, `WebAssembly` unless `scriptUnsafe`) |
 | P5: a worker-minted `blob:` URL loads in the view; CSP cannot tell whose it is | **A8**: keep only view-minted `blob:` URLs |
 | P8: WebKit sends the full host URL to same-site targets when asked | **A9**: S18 filed for cooperative mode; closed here by A1 |
 
