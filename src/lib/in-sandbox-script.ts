@@ -491,19 +491,47 @@ export function inSandboxScript(
         violationsSent++;
         send({ type: 'VIOLATION', directive: 'connect-src', blockedURI: cutAt(reportedUrl(href), VIOLATION_MAX_STRING), sourceFile: GATE_SOURCE });
     };
-    // A URL XMLHttpRequest or WebSocket was given, resolved against the base they use; throws a SyntaxError for one that
-    // does not parse.
-    const resolved = (value: unknown): URL => {
+    // The text of a URL XMLHttpRequest or WebSocket was given; read once.
+    const urlText = (value: unknown): string => {
         if (typeof value === 'symbol') throw construct(TypeErrorConstructor, ['a URL cannot be a Symbol']);
-        const text = StringConstructor(value);
-        const base = baseUriOf && doc ? apply(baseUriOf, doc, []) : locationHrefOf && locationFound ? apply(locationHrefOf, locationFound, []) : undefined;
+        return StringConstructor(value);
+    };
+    const baseOfRealm = (): unknown => baseUriOf && doc ? apply(baseUriOf, doc, []) : locationHrefOf && locationFound ? apply(locationHrefOf, locationFound, []) : undefined;
+    // A URL text resolved against the base they use; throws a SyntaxError for one that does not parse.
+    const resolveText = (text: string): URL => {
         try {
-            return parseUrl(text, base);
+            return parseUrl(text, baseOfRealm());
         } catch {
             throw construct(DOMExceptionConstructor!, ['the URL does not parse', 'SyntaxError']);
         }
     };
-    const refusal = 'refused by the sandbox: the origin is not in its origins.connect';
+    // A URL text resolved against the base they use, or null for a relative one that no base here can resolve (a blob
+    // worker's location, `blob:null/…`, has no path to resolve against). Such a text names no address the gate could
+    // admit, so XMLHttpRequest and WebSocket refuse it in the gate's words, not by a parse error of the platform's
+    // (BD6:NEW-2). A text that is not a URL at all still throws the SyntaxError.
+    const resolvedOrRelative = (text: string): URL | null => {
+        try {
+            return resolveText(text);
+        } catch (error) {
+            try {
+                parseUrl(text, 'https://base.invalid/');
+            } catch {
+                throw error; // not a relative reference either: the platform's SyntaxError
+            }
+            return null;
+        }
+    };
+    // The address XMLHttpRequest.open() checks: the resolved URL, or the text as written for a relative one no base resolves.
+    const addressOf = (text: string): string => {
+        const target = resolvedOrRelative(text);
+        return target ? (apply(urlHref!, target, []) as string) : text;
+    };
+    // The refusal's words per mode (BD6:NEW-1): sealed mode has no origins option to point at (it refuses one); it has no
+    // network, and what the app can do is call a method the host page exposes.
+    const sealedMode = features?.sealed === true; // read once: sandboxFetch() below refuses on it too
+    const refusal = sealedMode
+        ? 'refused by the sandbox: sealed mode has no network; call a method the host page exposes instead'
+        : 'refused by the sandbox: the origin is not in its origins.connect';
     // Every copy of `name` on the global object and its prototype chain removed, then `value` put on the global object
     // (nothing for undefined). Throws where a copy that holds `original` stays: the bootstrap ends before any guest code.
     // The global object's own copy is replaced in place where it cannot be deleted (a writable one, which the gate itself
@@ -594,7 +622,7 @@ export function inSandboxScript(
                 apply(clearTimer, g, [earlier[3]]);
                 apply(weakDelete, refusedRequests, [this]);
             }
-            const href = count >= 2 ? (apply(urlHref!, resolved(url), []) as string) : '';
+            const href = count >= 2 ? addressOf(urlText(url)) : '';
             const refused = count >= 2 && !admits(href);
             const args: unknown[] = list();
             append(args, method);
@@ -676,7 +704,6 @@ export function inSandboxScript(
     // whatever its list says, and never calls the platform's constructor. The refusal names the guest's mode: sealed mode
     // (strict mode's worker with `sealed`) has no network at all (BD5:NEW-4).
     const socketsRefused = mode === 'strict';
-    const sealedMode = features?.sealed === true; // read once: sandboxFetch() below refuses on it too
     const socketRefusal = sealedMode
         ? 'refused by the sandbox: sealed mode opens no WebSocket (it has no network)'
         : 'refused by the sandbox: strict mode opens no WebSocket';
@@ -686,7 +713,12 @@ export function inSandboxScript(
             const count = arguments.length;
             if (count === 0 && socketsRefused) throw construct(TypeErrorConstructor, ["Failed to construct 'WebSocket': 1 argument required"]);
             if (count === 0) return construct(NativeWebSocket, [], new.target);
-            const target = resolved(url);
+            const text = urlText(url);
+            const target = resolvedOrRelative(text);
+            if (!target) {
+                refuse(text);
+                throw construct(DOMExceptionConstructor!, ['WebSocket ' + (socketsRefused ? socketRefusal : refusal), 'SecurityError']);
+            }
             const protocol = apply(protocolOf!, target, []);
             if (protocol === 'https:') apply(protocolTo!, target, ['wss:']);
             else if (protocol === 'http:') apply(protocolTo!, target, ['ws:']);

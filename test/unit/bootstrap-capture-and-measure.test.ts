@@ -456,8 +456,39 @@ describe('C-9: coalescing a render keeps the order of the operations that remain
         const renderPort = new Port();
         listeners.get(w)!['message']!(new MsgEv({ data: { type: 'INIT_WORKER' }, ports: [new Port(), renderPort] }));
         const ack = () => listeners.get(renderPort)!['message']!(new MsgEv({ data: { type: 'VIEW_ACK' } }));
-        return { view: w.sandboxView, renderPort, ack };
+        const deliver = (data: unknown) => listeners.get(renderPort)!['message']!(new MsgEv({ data }));
+        return { view: w.sandboxView, renderPort, ack, deliver };
     }
+
+    // BD6:CHL-2 (class G): a field a frame from the view lacks is not read through the worker's Object.prototype, where
+    // guest code can put a getter: the prelude reads a received frame's fields through its own-property reader only.
+    const FRAME_FIELDS = ['type', 'refused', 'dropped', 'details', 'ids', 'rects'];
+
+    it('a frame that lacks a field runs no getter the guest put on Object.prototype for it', () => {
+        const { view, deliver } = startPrelude();
+        const reached: string[] = [];
+        const handled: unknown[] = [];
+        view.on('click', null, (detail: unknown) => handled.push(detail));
+        for (const field of FRAME_FIELDS) Object.defineProperty(Object.prototype, field, { get() { reached.push(field); return undefined; }, configurable: true });
+        try {
+            deliver({ type: 'VIEW_ACK' });
+            deliver({ type: 'VIEW_EVENT', details: [{ type: 'click' }] });
+            deliver({ type: 'VIEW_EVENT' });
+            deliver({});
+        } finally {
+            for (const field of FRAME_FIELDS) delete (Object.prototype as any)[field];
+        }
+        expect(reached).toEqual([]);
+        expect(handled).toHaveLength(1);
+    });
+
+    it('the prelude reads no field of a received frame except through fieldOf', () => {
+        const tokens = tokenize(inStrictWorker.toString());
+        const received = new Set(['data', 'detail']);
+        const reads = tokens.flatMap((token, i) => (received.has(token.text) && tokens[i + 1]?.kind === SyntaxKind.DotToken && tokens[i - 1]?.kind !== SyntaxKind.DotToken ? [`${token.text}.${tokens[i + 2]?.text}`] : []));
+        expect(reads).toEqual([]);
+        expect(tokens.filter(token => token.text === 'fieldOf').length).toBeGreaterThan(8);
+    });
 
     it('[render A into x, set y, render B into x] is applied as [set y, render B]: the set is never moved after B', () => {
         const { view, renderPort, ack } = startPrelude();

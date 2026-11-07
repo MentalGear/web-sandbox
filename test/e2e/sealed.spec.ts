@@ -86,6 +86,21 @@ test.describe('sealed mode', () => {
         expect(await hostFetches()).toBe(2); // without fetchBridge the host refuses it (a new environment: its count goes on from the raw call)
     });
 
+    // BD6:TST-1: the reserved method is registered by every build. A sealed build that follows a strict one with a fetch bridge
+    // answers `FETCH_NOT_ALLOWED` ("the fetch bridge is off"); the previous build's handler, closed over its aborted bridge,
+    // would answer FETCH_FAILED, and that bridge would be what a sealed guest's raw call reaches.
+    test("a sealed build after a strict one with a fetch bridge refuses the guest's raw call of sandbox:fetch as off, and the listener sees nothing", async ({ sandbox }) => {
+        const raw = `return await bridge.call('sandbox:fetch', { url: '${recorder.allowed}/after-bridge', method: 'POST', body: 'x' }).then(() => 'sent', (e) => e.code + ': ' + e.message);`;
+        expect(await sandbox.mount({ mode: 'strict', fetchBridge: { allow: [recorder.allowed] }, hostContentSecurityPolicy: false })).toBe('ready');
+        expect(await sandbox.inGuest(raw)).toBe('sent'); // the bridge is on in the strict build (positive control)
+        await recorder.waitFor('allowed', '/after-bridge');
+        recorder.clear();
+        expect(await sandbox.mount({ mode: 'sealed' })).toBe('ready');
+        expect(await sandbox.inGuest(raw)).toMatch(/^FETCH_NOT_ALLOWED: .*the fetch bridge is off/);
+        await sandbox.page.waitForTimeout(500);
+        expect(recorder.paths('allowed')).toEqual([]);
+    });
+
     test('a sealed config that names origins is refused: terminated with the reason, and a sealed config without it builds again', async ({ sandbox, page }) => {
         void sandbox;
         expect(await apply(page, { mode: 'sealed', origins: { images: [recorder.allowed] } } as unknown as SandboxConfig)).toBe('terminated');

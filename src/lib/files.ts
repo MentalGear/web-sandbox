@@ -8,6 +8,7 @@
  */
 
 import { moduleSpecifierEdits, VIRTUAL_ROOT } from './module-specifiers';
+import { markMinted } from './minted-errors';
 import type { Complete, Holds } from './utils';
 import { cssReferences, cssUrlReferences } from './css-references';
 import { virtualPathOf } from './markup-references';
@@ -134,7 +135,7 @@ export interface FileError extends Error {
 export function fileError(code: FileErrorCode, message: string): FileError {
     const error = new Error(`[Sandbox] ${message}`) as FileError;
     error.code = code;
-    return error;
+    return markMinted(error);
 }
 
 // One segment: the RFC 3986 unreserved and sub-delims characters, plus '@'. Nothing that a URL
