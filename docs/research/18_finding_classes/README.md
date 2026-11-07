@@ -674,10 +674,11 @@ classified for one effect only (`WORKER_STATE_READS`: does it read per-origin st
 **The list of allowed cases.** `SEALED_REACH` (`src/lib/sealed-reach.ts`) classifies every name against every row:
 `none`, with why; `neutralised`, naming the library's chokepoint, which the code must have; or `remains`, naming one of
 the row's residuals, each stated with the test that pins it. Each name has one surface (what it can do) and each row a
-column (what each surface is to it); `WORKER_STATE_READS` became the `permissionState` column. On 2026-11-07: 725 names ×
-22 rows, 15,950 cells: 15,113 `none`, 326 `neutralised`, 511 `remains`. Of the 511, 465 are the view's rendering on the
-host page's thread (availability) and 46 the view's checks of the page's `style-src` and fetch directives against the
-guest's inline styles and registered files; none is of the host page's own state. THREAT-MODEL renders the table
+column (what each surface is to it); `WORKER_STATE_READS` became the `permissionState` column. On 2026-11-07, after board
+pass 7: 722 names × 22 rows, 15,884 cells: 15,049 `none`, 333 `neutralised`, 502 `remains`. Of the 502, 462 are the
+view's rendering on the host page's thread (availability) and 40 the view's loads of registered files (`blob:`) under
+the page's fetch directives; none is of the host page's own state. The `permissionsPolicy` column also classifies every
+feature the view's document is allowed by default (`VIEW_FEATURES`). THREAT-MODEL renders the table
 ([What a sealed guest can reach](../../THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)).
 
 **The structural tests.**
@@ -711,8 +712,26 @@ guest's inline styles and registered files; none is of the host page's own state
   request gate hands the platform's `send()` an admitted request only, which makes the state unreachable; the sweep and a
   unit test fail on the code before.
 
+**The URL rule is one allowlist (board pass 7).** The enumeration classified each name and attribute, but what a
+name's value may hold was still decided by two rules: the renderer's URL attributes kept a list of allowed URLs, while
+guest CSS dropped a list of bad schemes (the server schemes), so every other scheme stayed in the CSSOM, the page's
+inherited fetch directives refused it, and Chromium and Firefox reported each refusal to the page's endpoint with the
+scheme whole (BD7:ISO-1, a channel the guest wrote into, through eight
+carriers). Deconstructed, it is this class's root once more: a list of bad cases. The construction is one rule for every
+position the view loads from, markup, CSS and a registered stylesheet alike (`keepsUrl`, `src/lib/css-references.ts`): a
+URL is kept only when it is a URL the view minted, the empty URL, a fragment-only URL in a property whose `url()` names an
+element of the document (measured: a fragment anywhere else resolves against `about:blank` and is loaded and reported),
+or a string CSS reads as text that names no URL at all. Everything else goes, whatever its scheme. The tests enumerate
+the domain, positions × kinds of URL: `test/unit/url-keep-rule.test.ts`, which also scans `src/` for a scheme test that is
+not classified, and `test/e2e/view-urls.spec.ts` on the realistic host with the documented fetch directives, every
+carrier × every kind of URL, on three engines. The same pass found the permissions-policy features a frame is allowed by
+default (BD7:ISO-3: picture-in-picture, which a user could start on a guest's video): the renderer turns it off on every
+video, and every feature an engine lists is a classified row (`VIEW_FEATURES`, `test/e2e/view-permissions.spec.ts`).
+
 **What keeps it closed.** A new allowlisted name, element, attribute or load kind fails the unit test until it has a
 surface; a new row fails until it has a column; a member an engine adds to a kept global is called by the sweep on every
-engine, so one that requests, raises a violation or reports fails it. The sweep does not reach members of interfaces it
+engine, so one that requests, raises a violation or reports fails it; a new position that loads a URL is held to the one
+rule, and a scheme test outside it fails the scan; a feature an engine allows by default fails until it is classified.
+The sweep does not reach members of interfaces it
 cannot construct from a URL, a string or nothing (a WebGL context, an IndexedDB object behind a refused `open()`): they
 are classified with their global.

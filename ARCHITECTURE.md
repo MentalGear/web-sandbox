@@ -100,7 +100,7 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Sealed mode: strict mode with no network
 
-<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e2daf0da8eee4 -->
+<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e2daf0da87e47 -->
 
 Sealed mode, the default (no `mode`, or `mode: 'sealed'`), is strict mode's view and worker with no network
 ([research 24](docs/research/24_sealed_mode/README.md), [ADR-008](docs/ADR-008-sealed-mode.md)). It is not strict mode
@@ -329,7 +329,7 @@ stateDiagram-v2
 
 ## Budgets
 
-<!-- describes: budgets:channels sig:eee4 -->
+<!-- describes: budgets:channels sig:7e47 -->
 
 Everything the guest can make the host page, the view or the network do goes through a **channel**, and every channel has
 a bound in count, bytes and time. The surfaces a guest can reach are listed once (the egress table), each with how it is

@@ -222,12 +222,12 @@ sandbox.setConfig({ mode: 'strict', origins: { connect: ['https://api.example.co
   cannot tell which) is reported as a [`violation`](#violation--sandboxviolation) with the directive of its kind
   (`img-src`, `media-src`) and its URL, within the view's cap. The loads no attribute reaches are dropped before
   insertion: a `poster` with an `https:` or `http:` URL (one engine fetches a poster without CORS, whatever the video says;
-  a registered file stays), and every `https:` or `http:` URL in CSS (`url()`, `@import`, `image-set()`, `@font-face`
-  `src`, any string that holds one), in a `style` attribute, a `<style>` or text set into one, each reported as a
-  `violation` of its directive (`img-src`, `style-src`, `font-src`). A registered stylesheet reaches the view without its
-  network URLs as well, with one warning per file (its references to registered files stay; one that is not UTF-8, or
-  whose `@charset` names another encoding, gets no URL in the view). So nothing loads from `styles` or `fonts` in strict
-  mode: register the stylesheets and fonts the guest needs. The rule has no exception, per origin or otherwise: an
+  a registered file stays), and every URL in CSS but a registered file's ([the URL rule](#the-url-rule): `url()`,
+  `@import`, `image-set()`, `@font-face` `src`, any string that reads as one), in a `style` attribute, a `<style>`, text
+  set into one or `set({ css })`, each reported as a `violation` of its directive (`img-src`, `style-src`, `font-src`). A
+  registered stylesheet reaches the view with only its references to registered files as well, with one warning per file
+  (one that is not UTF-8, or whose `@charset` names another encoding, gets no URL in the view). So nothing loads from
+  `styles` or `fonts` in strict mode: register the stylesheets and fonts the guest needs. The rule has no exception, per origin or otherwise: an
   asset whose server does not answer with CORS is either made to answer it (`Access-Control-Allow-Origin: *`), or
   fetched by your page and [registered as a file](#registerfilesfiles), which the view shows from a `blob:` URL.
   Cooperative mode is unchanged: the guest's document makes its own loads, with the cookies the engine attaches.
@@ -1381,18 +1381,25 @@ goes with its content.
 **Attributes**: `id`, `class`, `style`, `title`, `lang`, `dir`, `hidden`, `tabindex`, `role`, `translate`, `inert`,
 `spellcheck`, `inputmode`, `enterkeyhint`, `autocapitalize`, `data-*` and `aria-*` everywhere, and per element the
 ones it needs (form controls, tables, lists, media, links; SVG geometry and presentation; MathML presentation).
-Never an event handler. `src` and `srcset` keep a registered file's path, a relative URL (which loads nothing), or an
-`https:` or `http:` URL of an origin [`origins`](#origins) lists for that load (`images` for `img` and `srcset`, `media`
-for `audio`, `video`, their `source` and `track`), never `data:` or `javascript:`; `poster` keeps a registered file's
-path or a relative URL only. A URL the view's policy might refuse is dropped before insertion, so the browser never
-loads or refuses it: an `https:` or `http:` URL is kept only when its scheme, host and port are exactly those of a listed
-origin (an `http:` URL of a listed `https:` origin is refused by every engine, so it is dropped). So write URLs in the
-form you list them. Every `img`, `video`, `audio` and `link` gets `crossorigin="anonymous"`, the guest's own value
-replaced, so its loads carry no credentials ([The view's loads](#the-views-loads)). A dropped `https:` or `http:` URL is
-reported as a `violation` with the directive and the URL (without credentials or fragment), within the same cap; a URL
-of any other scheme is dropped without a report (no engine would request it). CSS keeps no `https:` or `http:` URL: each
-one a `style` attribute or a `<style>` names (`url()`, `@import`, `image-set()`, `@font-face`, a string) becomes `""`,
-reported the same way, and a `<style>` keeps its text only. SVG `fill`, `stroke`, `clip-path` and `mask`
+Never an event handler. <a id="the-url-rule"></a>Every URL the guest writes where the view would load it is kept by
+one rule, an allowlist: a registered file's URL the view minted, and nothing else, whatever its scheme or spelling.
+`src` and `srcset` keep a registered file's path (which becomes that URL) or, in strict mode, an `https:` or `http:` URL
+of an origin [`origins`](#origins) lists for that load (`images` for `img` and `srcset`, `media` for `audio`, `video`,
+their `source` and `track`); `poster` keeps a registered file's path only. Never a relative URL that names no registered
+file, a fragment, `data:`, `javascript:` or any other scheme. A URL the view's policy might refuse is dropped before
+insertion, so the browser never loads or refuses it: an `https:` or `http:` URL is kept only when its scheme, host and
+port are exactly those of a listed origin (an `http:` URL of a listed `https:` origin is refused by every engine, so it is
+dropped). So write URLs in the form you list them. Every `img`, `video`, `audio` and `link` gets
+`crossorigin="anonymous"`, the guest's own value replaced, so its loads carry no credentials
+([The view's loads](#the-views-loads)), and every `video` gets `disablepictureinpicture` and every `video` and `audio`
+`disableremoteplayback`, so the guest's media stays in its box. A dropped URL is reported as a `violation` with the
+directive of its load and the URL (without credentials or fragment), within the same cap. CSS keeps no URL but a
+registered file's the view minted (in a registered stylesheet, a reference to a registered file), and a fragment in an
+SVG reference (`fill`, `stroke`, `clip-path`, `mask`, `mask-image`, `filter`, `marker`: `url(#id)`): every other one a
+`style` attribute, a `<style>`, a registered stylesheet, `text()` or `set({ css })` names (`url()`, `@import`,
+`image-set()`, `@font-face`, `src()`) becomes `""`, reported the same way. A string CSS reads as text (`content`, a font
+family, an area of a grid template, a custom property) stays unless it reads as a URL (`"Note: x"`, `"#"` go), since
+`var()` can carry it into `image-set()`. A `<style>` keeps its text only. SVG `fill`, `stroke`, `clip-path` and `mask`
 reference only `url(#id)`. Link clicks and form submissions navigate nowhere.
 
 <a id="guest-styles"></a>The view applies the guest's styles through the CSSOM, never as an inline style, so your page's
@@ -2067,7 +2074,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Answers to the host's calls (`bridge.expose`) | one a call the host made: the host's pending calls | `RPC_MAX_BYTES` (34603008) an answer, measured by both ends; an error text cut at `MAX_TEXT_LENGTH` (65536) characters by both ends | the host's call timeout (`callWithTimeout`; by default `DEFAULT_TIMEOUT_MS` (30000) ms) | none beyond the host's pending calls and the bytes | none | test/unit/rpc-bounds-and-call-limits.test.ts (C-1); test/unit/structural.test.ts |
 | Guest writes (`sandboxFiles.write`, `remove`) | `GUEST_WRITES_PER_SECOND` (100) requests in any second, and each as a call; what is kept, at most `MAX_FILES` (1000) files with the registered ones | `GUEST_WRITE_BYTES_PER_SECOND` (8388608) in any second; what is kept, at most `MAX_TOTAL_BYTES` (8388608) with the registered files | none of its own: the count and the bytes | none beyond the count and the bytes | none: the host keeps them | test/unit/guest-writes.test.ts; test/e2e/guest-writes.spec.ts |
 | `sandboxFetch()`: a request the host decides and the bridge's frame makes, on the guest's behalf | `fetchBridge.maxConcurrent` at once, at most `MAX_MAX_CONCURRENT` (16); and each as a call | `fetchBridge.maxBytes` a response, at most `MAX_MAX_BYTES` (33554432); its status text and headers at most `MAX_RESPONSE_HEAD` (262144) characters together | `fetchBridge.timeoutMs` a request, at most `MAX_TIMEOUT_MS` (120000) ms | none beyond the count, the bytes and the time: each request is one fetch of the bridge's frame (an opaque origin: no Service Worker, no wrapper of the host page's), its body crossing to the host page one chunk at a time, as the host reads it | none: `sandboxFetch()` rejects in the guest with `FETCH_NOT_ALLOWED` and sends nothing; no bridge frame is built | src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts; test/e2e/fetch-bridge-isolation.spec.ts; test/unit/sealed-build.test.ts; test/e2e/sealed-no-network.spec.ts |
-| CSP violation reports, to `violation` | `VIOLATION_EVENT_LIMIT` (100) events an environment (strict mode: per source, and per directive for the view) | each string cut at `VIOLATION_MAX_STRING` (2048) characters before it is posted, by the bootstrap and by the view, and again by the host on receipt | none of its own: the count | none beyond the count | none from the worker: every request the guest tries is refused by the library and reported here, the request gate's refusals included, and no string runs as code and no entry calls `import()`, so the host page's own policy, which the worker inherits, is never asked and its report endpoint receives nothing the worker caused (INHERITED_CONTEXT.cspReporting). The view runs no guest code: a load of a registered file or a guest's inline style the host page's policy refuses is reported to its endpoint as well, naming `blob` or `inline` | src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts; test/e2e/sealed-no-network.spec.ts |
+| CSP violation reports, to `violation` | `VIOLATION_EVENT_LIMIT` (100) events an environment (strict mode: per source, and per directive for the view) | each string cut at `VIOLATION_MAX_STRING` (2048) characters before it is posted, by the bootstrap and by the view, and again by the host on receipt | none of its own: the count | none beyond the count | none from the worker: every request the guest tries is refused by the library and reported here, the request gate's refusals included, and no string runs as code and no entry calls `import()`, so the host page's own policy, which the worker inherits, is never asked and its report endpoint receives nothing the worker caused (INHERITED_CONTEXT.cspReporting). The view runs no guest code, and keeps no URL of the guest's but a registered file's it minted (keepsUrl, BD7:ISO-1: in markup, in CSS, in a registered stylesheet), and applies the guest's styles through the CSSOM, which no `style-src` checks: what the host page's policy can still refuse there, and report to its endpoint, is a load of a registered file, naming `blob`; the view reports what it dropped here, to the element | src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts; test/e2e/sealed-no-network.spec.ts |
 | Content heights (`autoResize`), to the frame's height | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) a second, and one a frame | a number, at most `AUTO_RESIZE_MAX_HEIGHT` (100000) px | none of its own: one relayout of the host page's frame a change | a cap: `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) relayouts of the host page's frame a second | none | src/lib/auto-resize.test.ts; test/e2e/auto-resize.spec.ts |
 | Liveness answers (PONG, VIEW_PONG), to the host's probes | one a probe of the host's | a number | `VIEW_LIVENESS_TIMEOUT_MS` (5000) ms for the view to answer; `EXECUTION_TIMEOUT_GRACE_MS` (1000) ms past a deadline for the worker (`workerExecutionTimeout`) | none: the library's own | none | src/lib/watchdog.test.ts; test/e2e/watchdog.spec.ts |
 | Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log` | `LOG_EVENTS_PER_SECOND` (1000) a second, counted in the view | each cut at `VIEW_OPTIONS.guestText.maxLength` (2048) characters in the view, before it is posted; each uncaught one counted whole against `UNCAUGHT_CHARACTERS_PER_SECOND` (1048576) characters in any second, as the worker counts the ones it sees (WebKit mutes those of a revoked script there); past it the sandbox ends | none of its own: one line each | none beyond the count and the bytes | none | test/unit/rpc-bounds-and-call-limits.test.ts (C-4); test/e2e/worker-port-and-view-cost.spec.ts (M-5) |
@@ -2082,7 +2089,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 counts and bytes above bound); and where the view shares the host page's thread it cannot run during a stall of the view
 ([(b)](#b-the-single-operation-bound)).
 
-<!-- describes: budgets sig:e5d2 -->
+<!-- describes: budgets sig:843a -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;
@@ -2316,10 +2323,16 @@ policy must allow:
   inline style: a `style` attribute becomes the element's own declaration, a `<style>` (HTML or SVG) a constructed
   stylesheet of the view's, and `set({ css })` sets the declaration's properties. No `style-src` checks any of them, so a
   `style-src` of hashes alone, `'report-sample'` and all, refuses and reports none of the guest's styles (all three
-  engines; [research 25](research/25_cssom_styles/README.md)). What the view still has checked against your policy is
-  its loads of registered files: a `blob:` load under an `img-src`, `media-src`, `font-src` or `style-src` without
+  engines; [research 25](research/25_cssom_styles/README.md)). No other URL the guest writes reaches your policy either:
+  the view keeps one, in markup, in CSS and in a registered stylesheet, only when it is a registered file's URL it
+  minted ([the URL rule](#the-url-rule)), whatever its scheme, and reports each one it drops to the element as a
+  `violation`, never to your endpoint. A URL of a scheme your fetch directives do not name (`data:`, `about:`, an
+  extension's, one the guest made up) would otherwise be refused and reported to your endpoint with its scheme whole, and
+  no policy of yours can refuse such a scheme without the report. What the view still has checked against your policy
+  is its loads of registered files: a `blob:` load under an `img-src`, `media-src`, `font-src` or `style-src` without
   `blob:` is refused and reported to your endpoint, naming `blob` as blocked and nothing of the file (Chromium and
-  Firefox; WebKit sends no report from the view); how many there are, and when, is the guest's choice. Admit `blob:` as the table above says, or treat those reports as the guest's data.
+  Firefox; WebKit sends no report from the view); how many there are, and when, is the guest's choice. Admit `blob:` as
+  the table above says, or treat those reports as the guest's data.
   Strict mode with `scriptUnsafe`, cooperative mode and worker mode run guest strings and scripts that your policy checks:
   your endpoint then receives reports whose URLs and samples the guest chose, as many as the engine sends (it throttles
   bursts, not a steady rate). Treat every field of them as untrusted guest data, or serve the embedding page without

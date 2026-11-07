@@ -559,8 +559,9 @@ The strict view runs no guest script and its worker is a classic script admitted
   (`markup-references.ts`, the table itself, minus `<script src>`: `link[href]`, `img`, `source`, `video`, `audio`,
   `track` `src`, `video[poster]`) against `https://vfs.invalid/index.html`, by the same rules, and writes the view's URL in.
   A `<link>` survives only as a stylesheet or icon naming such a URL.
-- **Only the view's own `blob:` URLs are kept** (A8). The renderer removes every attribute that holds any other `blob:`
-  URL, however it is spelled (after removing the tabs and newlines the URL parser ignores). The worker cannot mint new
+- **Only the view's own `blob:` URLs are kept** (A8). Every position the view loads from (a URL attribute, CSS, a
+  registered stylesheet) keeps a URL only when it is exactly one the view minted, by the one rule for a URL in the view
+  (`keepsUrl`, `src/lib/css-references.ts`; BD7:ISO-1), so any other `blob:` URL goes, however it is spelled. The worker cannot mint new
   ones: its prelude removes `URL.createObjectURL` after the file URLs exist, and the worker's own source URL is revoked
   once its script ran (ADR-005), so the only `blob:` URLs in the origin are the library's, for registered files — which
   also bounds what CSS could name.
