@@ -482,8 +482,9 @@ findings that the board's rule would backlog, and are fixed with the host-realm 
 how each finding was resolved are kept in [BOARD-PASS-7-2026-11-07.md](archive/reviews/BOARD-PASS-7-2026-11-07.md); each
 item cites its findings by ID (`BD7:`). The coordinator's evaluation is in
 [research 22](research/22_review_trajectory/README.md#evaluations): the architecture has held since sealed mode while
-`src/` grew by 38%, and an open question for the owner (keep D6, the served-document mode, shelved with a trigger, or
-switch now) is pending the owner's answer.
+`src/` grew by 38%. The owner's answers (2026-11-07, [research 24](research/24_sealed_mode/README.md) D8 and D9): sealed
+mode switches to served documents now; cooperative mode, worker mode and strict mode's network options stay, behind a
+build flag that is off by default. Neither is built yet.
 
 **Pass 8 reviews sealed mode again** (same scope), after the four fixes of pass 7 and a subtraction pass (the coordinator's
 plan: remove what the fixes made redundant before the board looks again): the two consecutive clean passes that clear the
