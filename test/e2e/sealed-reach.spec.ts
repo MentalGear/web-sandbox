@@ -6,8 +6,8 @@ import { RealisticHost, covering, withPolicySecrets, type PolicySecrets } from '
 import { E2E_PORT } from './server';
 import { inView } from './strict-view';
 import { ENTRY_DONE_PREFIX } from '@src/lib/in-sandbox-view';
-import { LIBRARY_GUEST_GLOBALS, reachCell, surfaceOf } from '@src/lib/sealed-reach';
-import { STRICT_WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { LIBRARY_GUEST_GLOBALS, surfaceOf } from '@src/lib/sealed-reach';
+import { STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 
 /**
  * Class A, closed by enumeration (S74; SEALED_REACH, src/lib/sealed-reach.ts): everything a sealed guest can reach is
@@ -57,7 +57,7 @@ test.describe('sealed mode: what the guest can reach, against every inherited ro
         expect(names.filter(name => !STRICT_WORKER_GLOBALS.includes(name) && !library.includes(name)), "a global of the sealed worker that is neither the allowlist's nor the library's").toEqual([]);
         for (const name of library) expect(names, name).toContain(name);
         expect(names.filter(name => !surfaceOf(name)), 'a global of the sealed worker with no surface in SEALED_REACH').toEqual([]);
-        expect((seen.navigatorMembers as string[]).filter(name => !WORKER_NAVIGATOR_MEMBERS.includes(name))).toEqual([]);
+        expect((seen.navigatorMembers as string[]).filter(name => !STRICT_WORKER_NAVIGATOR_MEMBERS.includes(name))).toEqual([]);
         // the cells of the worker's own scope (probe)
         expect(seen.ancestorOrigins, covering('ancestorOrigins', "the worker's location has no ancestorOrigins")).toBe(false);
         expect(seen.location, covering('documentOrigin', "the worker's URL is its own blob: URL")).toMatch(/^blob:null\/[0-9a-f-]{36}$/);
@@ -185,9 +185,20 @@ async function startPlainProxy() {
     };
 }
 
-/** Every global of the sealed worker and every own member of each, and of its prototype, as paths (`Name`, `Name.member`, `Name.prototype.member`). */
+/**
+ * Every global of the sealed worker and every member it leads to, as paths: `Name`; each own member of the value and of
+ * every object of its prototype chain (`Name.member`, `Name^1.member` one level up, …); for an interface, the same of its
+ * prototype (`Name.prototype.member`, …); and for every member of a namespace object whose value is an object (a getter's
+ * included: `crypto.subtle`, `navigator.mediaCapabilities`), the same of that object. Symbol-keyed members too.
+ */
 const PATHS = `
     const paths = [];
+    const keysOf = (o) => [...Object.getOwnPropertyNames(o), ...Object.getOwnPropertySymbols(o).map(String)];
+    const chain = (prefix, o) => {
+        for (let p = o, depth = 0; p && p !== Object.prototype && p !== Function.prototype; p = Object.getPrototypeOf(p), depth++) {
+            for (const k of keysOf(p)) paths.push(prefix + (depth ? '^' + depth : '') + '.' + k);
+        }
+    };
     const names = new Set();
     for (let o = self; o && o !== Object.prototype; o = Object.getPrototypeOf(o)) for (const n of Object.getOwnPropertyNames(o)) names.add(n);
     for (const n of names) {
@@ -196,22 +207,22 @@ const PATHS = `
         if (n === 'self' || n === 'globalThis') continue;
         let v; try { v = self[n]; } catch (e) { continue; }
         if (!v || (typeof v !== 'object' && typeof v !== 'function')) continue;
-        for (const m of Object.getOwnPropertyNames(v)) paths.push(n + '.' + m);
-        if (typeof v === 'object') { const p = Object.getPrototypeOf(v); if (p && p !== Object.prototype) for (const m of Object.getOwnPropertyNames(p)) paths.push(n + '.' + m); }
-        if (typeof v === 'function' && v.prototype) for (const m of Object.getOwnPropertyNames(v.prototype)) paths.push(n + '.prototype.' + m);
+        chain(n, v);
+        if (typeof v === 'function' && v.prototype && typeof v.prototype === 'object') chain(n + '.prototype', v.prototype);
+        if (typeof v !== 'object') continue;
+        for (let p = v; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+            for (const k of Object.getOwnPropertyNames(p)) {
+                let member; try { member = v[k]; } catch (e) { continue; }
+                if (member && typeof member === 'object') chain(n + '.' + k, member);
+            }
+        }
     }
     const all = [...new Set(paths)].sort();
     bridge.expose('paths', () => all);
     return { isSecureContext: self.isSecureContext, count: all.length };
 `;
 
-/** The table's name for a path: a member listed on its own (an instance's member read as its global's), else its global. */
-function tableName(path: string): string {
-    const member = path.replace(/^Crypto\.prototype\./, 'crypto.').replace(/^WorkerNavigator\.prototype\./, 'navigator.');
-    return surfaceOf(member) ? member : path.split('.')[0]!;
-}
-
-test.describe("the secureContext row: one bit, whether the host page's URL is potentially trustworthy", () => {
+test.describe("the secureContext row: the sealed worker is the same whatever the host page's URL", () => {
     test.describe.configure({ timeout: 120000 });
     test.use({
         proxy: async ({}, use) => {
@@ -221,7 +232,7 @@ test.describe("the secureContext row: one bit, whether the host page's URL is po
         },
     });
 
-    test('every name whose presence or answer differs between the two kinds of host page is a remains cell of the row', async ({ sandbox, browserName }) => {
+    test('a host page on a URL that is not potentially trustworthy and one on a loopback host: no name of the sealed worker differs, and isSecureContext reads false on both', async ({ sandbox }) => {
         const read = async (origin?: string) => {
             const host = await RealisticHost.open(sandbox, { mode: 'sealed', serviceWorker: false, cookies: false, ...(origin ? { origin } : {}) });
             const page = await host.page.evaluate(() => self.isSecureContext);
@@ -232,20 +243,13 @@ test.describe("the secureContext row: one bit, whether the host page's URL is po
         const insecure = await read(`http://app.insecure.test:${E2E_PORT}`);
         const loopback = await read();
         expect([insecure.page, loopback.page], 'the control: the host page itself is not secure on the name, and is on the loopback host').toEqual([false, true]);
+        expect(loopback.paths.length, 'the paths reach the members of every kept global (positive evidence)').toBeGreaterThan(3000);
 
         const before = new Set(insecure.paths);
         const after = new Set(loopback.paths);
-        const differing = [...new Set([...insecure.paths.filter(path => !after.has(path)), ...loopback.paths.filter(path => !before.has(path))])];
-        const unlisted = differing.filter(path => reachCell(tableName(path), 'secureContext')?.relation !== 'remains');
-        expect(unlisted, covering('secureContext', 'every name the secure context decides is a remains cell of the row')).toEqual([]);
-        // ledger: worker-secure-context
-        if (browserName === 'chromium') {
-            // Chromium counts the opaque origin's blob: worker as not secure on every page: nothing differs
-            expect([insecure.worker, loopback.worker, differing], covering('secureContext', 'Chromium: constant')).toEqual([false, false, []]);
-        } else {
-            expect([insecure.worker, loopback.worker], covering('secureContext', "the worker answers the host page's secure context")).toEqual([false, true]);
-            expect(differing.length, 'the secure-context interfaces differ').toBeGreaterThan(0);
-        }
+        const differing = [...new Set([...insecure.paths.filter(path => !after.has(path)), ...loopback.paths.filter(path => !before.has(path))])].sort();
+        expect(differing, covering('secureContext', 'no name or member of the sealed worker depends on the host page being a secure context')).toEqual([]);
+        expect([insecure.worker, loopback.worker], covering('secureContext', 'isSecureContext reads false on both, as on every engine')).toEqual([false, false]);
     });
 });
 

@@ -1,6 +1,6 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { useRecorder, wss } from './recorder';
-import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { LIBRARY_GUEST_GLOBALS } from '@src/lib/sealed-reach';
 import { isViewMode, VIEW_MODES } from './view-modes';
 
@@ -94,7 +94,8 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
     // The allowlist is a ceiling, not a promise: a name an engine does not have is simply not there. Which allowlisted names
     // (and navigator members) each engine lacks is measured here, exactly, in both modes (the engine versions of the suite).
     // SharedArrayBuffer is absent on all three (the page is not cross-origin isolated, which the library requires), and
-    // importScripts is absent in strict mode on all three by design: neither is an engine difference.
+    // importScripts is absent in strict mode on all three by design: neither is an engine difference; nor are the
+    // secure-context-only names in strict mode, which keeps none of them on any engine (SECURE_CONTEXT_ONLY).
     // Chromium's secure-context-only names are absent because its opaque-origin (blob:null) worker is not a secure context.
     const ABSENT_GLOBALS: Record<string, string[]> = {
         // ledger: worker-global-set
@@ -117,10 +118,17 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
                 return { names: [...names], navigatorMembers: Object.getOwnPropertyNames(Object.getPrototypeOf(navigator)) };
             `);
             const have = new Set<string>(seen.names);
+            // the mode's own lists: strict mode keeps neither importScripts nor a secure-context-only name, on any engine
+            const globals = isViewMode(mode) ? STRICT_WORKER_GLOBALS : WORKER_GLOBALS;
+            const navigatorMembers = isViewMode(mode) ? STRICT_WORKER_NAVIGATOR_MEMBERS : WORKER_NAVIGATOR_MEMBERS;
             // ledger: worker-global-set
-            const expectedAbsentGlobals = [...ABSENT_GLOBALS[browserName]!, 'SharedArrayBuffer', ...(isViewMode(mode) ? ['importScripts'] : [])].sort();
-            expect(WORKER_GLOBALS.filter(name => !have.has(name)).sort()).toEqual(expectedAbsentGlobals);
-            expect(WORKER_NAVIGATOR_MEMBERS.filter(name => !seen.navigatorMembers.includes(name)).sort()).toEqual([...ABSENT_NAVIGATOR_MEMBERS[browserName]!].sort());
+            const expectedAbsentGlobals = [...ABSENT_GLOBALS[browserName]!, 'SharedArrayBuffer'].filter(name => globals.includes(name)).sort();
+            expect(globals.filter(name => !have.has(name)).sort()).toEqual(expectedAbsentGlobals);
+            expect(WORKER_GLOBALS.filter(name => !globals.includes(name) && have.has(name)), 'nothing off the mode\'s list is present').toEqual([]);
+            // ledger: worker-global-set
+            const expectedAbsentMembers = ABSENT_NAVIGATOR_MEMBERS[browserName]!.filter(name => navigatorMembers.includes(name)).sort();
+            expect(navigatorMembers.filter(name => !seen.navigatorMembers.includes(name)).sort()).toEqual(expectedAbsentMembers);
+            expect(WORKER_NAVIGATOR_MEMBERS.filter(name => !navigatorMembers.includes(name) && seen.navigatorMembers.includes(name))).toEqual([]);
         });
     }
 

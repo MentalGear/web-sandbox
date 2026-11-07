@@ -30,7 +30,7 @@
 import { CODE_FROM_STRING_SINKS } from './code-from-strings';
 import { RENDER_ATTRIBUTES, RENDER_ELEMENTS, VIEW_LOAD_KINDS } from './in-sandbox-view';
 import type { InheritedContextId } from './inherited-context';
-import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
+import { SECURE_CONTEXT_ONLY, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
 
 /** The relations of a name to a row. */
 export const REACH_RELATIONS = ['none', 'neutralised', 'remains'] as const;
@@ -195,6 +195,11 @@ export const CHOKEPOINTS = {
         file: 'src/lib/environment.ts',
         token: 'export function detachEnvironment(',
     },
+    secureContextRemoval: {
+        what: "strict and sealed mode's worker has nothing only a secure context has, and reads `isSecureContext` as false, on every engine and page (SECURE_CONTEXT_ONLY): its globals and navigator members are off the strict allowlists, and the prelude deletes its members and pins `isSecureContext`; the surface Chromium's worker has on every page",
+        file: 'src/lib/worker-globals.ts',
+        token: 'export function removeSecureContextOnly(',
+    },
 } as const satisfies Record<string, Chokepoint>;
 export type ChokepointId = keyof typeof CHOKEPOINTS;
 
@@ -206,11 +211,22 @@ export type ChokepointId = keyof typeof CHOKEPOINTS;
  */
 export const LIBRARY_GUEST_GLOBALS = ['bridge', 'sandboxFiles', 'sandboxView', 'sandboxFetch'] as const;
 
+/** A member of an interface's prototype, as the table names it. */
+const prototypeMember = ([owner, member]: readonly [string, string]) => `${owner}.prototype.${member}`;
+
 /**
- * The members of a kept global that are classified on their own, because they differ from their global's surface. Every
- * other member is its global's.
+ * The members of a kept global that are classified on their own, because they differ from their global's surface: the
+ * static the prelude removes, and the secure-context-only members (SECURE_CONTEXT_ONLY). Every other member is its
+ * global's.
  */
-export const REACH_MEMBERS = ['URL.createObjectURL', 'crypto.subtle', 'crypto.randomUUID', 'PerformanceResourceTiming.prototype.serverTiming'] as const;
+export const REACH_MEMBERS: readonly string[] = ['URL.createObjectURL', ...SECURE_CONTEXT_ONLY.members.map(prototypeMember)];
+
+/** Every name of the table that only a secure context has: its globals, navigator members and members (SECURE_CONTEXT_ONLY). */
+export const secureContextOnlyNames = (): string[] => [
+    ...SECURE_CONTEXT_ONLY.globals,
+    ...SECURE_CONTEXT_ONLY.navigator.map(member => `navigator.${member}`),
+    ...SECURE_CONTEXT_ONLY.members.map(prototypeMember),
+];
 
 /** `import()`: syntax, which nothing at run time can take from the language. */
 export const DYNAMIC_IMPORT = 'import()';
@@ -355,7 +371,7 @@ export const SURFACES = {
             WritableStream WritableStreamDefaultWriter WritableStreamDefaultController TransformStream
             TransformStreamDefaultController ByteLengthQueuingStrategy CountQueuingStrategy`),
     },
-    crypto: { side: 'worker', what: 'random values, hashes, keys and ciphers', names: words('Crypto CryptoKey SubtleCrypto crypto crypto.subtle crypto.randomUUID') },
+    crypto: { side: 'worker', what: 'random values, hashes, keys and ciphers', names: words('Crypto CryptoKey SubtleCrypto crypto Crypto.prototype.subtle Crypto.prototype.randomUUID') },
     performance: {
         side: 'worker',
         what: "the worker's own timeline and clock",
@@ -524,6 +540,7 @@ const NO_WEBASSEMBLY = neutralised(['webAssemblyRemoval'], "the sealed worker do
 const REQUESTS_GATED = neutralised(['requestGate'], 'every request is refused before the platform: none is made');
 const NO_FETCH_BRIDGE = neutralised(['sealedFetchRefusal'], 'refused in the guest; nothing reaches the host');
 const NO_GUEST_URL = neutralised(['createObjectUrlRemoval'], 'the sealed worker does not have it');
+const SECURE_CONTEXT_REMOVED = neutralised(['secureContextRemoval'], 'only a secure context has it: the sealed worker does not, on any engine and whatever the host page');
 const VIEW_RUNS_NO_GUEST_CODE = neutralised(['viewPolicy', 'viewViolationRelay'], "the view's checks of the host page's policy raise violations in the view, which runs no guest code and relays no policy text");
 const NO_NETWORK_RENDERED = neutralised(['rendererUrlDrop', 'cssUrlDrop', 'inertHref'], 'what it renders keeps no network URL, in markup or CSS, and no link navigates');
 const VIEW_FOCUS_ON_TEARDOWN = neutralised(['teardownDetach'], 'a focused element of the view makes the browser dispatch focus and blur into the host page when the frame goes');
@@ -703,9 +720,9 @@ export const SEALED_REACH = {
             // them: each answer below was the same both ways (BD5:ISO-1). Every navigator member has its own cell here.
             'indexedDB': neutralised(['originCheck'], "the origin's databases: `open()`, `databases()` and `deleteDatabase()` give a SecurityError in the opaque origin on every engine; the host page's database is not visible"),
             'IDBFactory': neutralised(['originCheck'], "indexedDB's interface: as indexedDB"),
-            'navigator.locks': neutralised(['originCheck'], "the origin's Web Locks: `query()` and `request()` give a SecurityError (Firefox, WebKit); absent on Chromium; a lock the host page holds is not visible"),
-            'Lock': neutralised(['originCheck'], "navigator.locks's interface: as navigator.locks"),
-            'LockManager': neutralised(['originCheck'], "navigator.locks's interface: as navigator.locks"),
+            'navigator.locks': neutralised(['secureContextRemoval', 'originCheck'], "the origin's Web Locks: secure-context only, so not in the sealed worker on any engine; in worker mode's, `query()` and `request()` give a SecurityError (Firefox, WebKit), and a lock the host page holds is not visible"),
+            'Lock': neutralised(['secureContextRemoval', 'originCheck'], "navigator.locks's interface: as navigator.locks"),
+            'LockManager': neutralised(['secureContextRemoval', 'originCheck'], "navigator.locks's interface: as navigator.locks"),
             'BroadcastChannel': neutralised(['originCheck'], "the origin's channels: the guest's opaque origin is its own, and a channel of the host page's (or of a plain sandboxed frame's) of the same name never receives or delivers its messages"),
             'navigator.mediaCapabilities': none('what the engine and the device decode: the same answer for any page'),
             'MediaCapabilities': none("navigator.mediaCapabilities's interface: as navigator.mediaCapabilities"),
@@ -727,35 +744,20 @@ export const SEALED_REACH = {
             'navigator.product': none('a constant of the platform'),
             'origin': none("the worker's own origin: `'null'`"),
             'location': none("the worker's own URL: `blob:null/<uuid>`"),
-            'isSecureContext': none("the worker's own context; what it says of the host page is the `secureContext` row's"),
+            'isSecureContext': none("the worker's own context: false on every engine and page (the `secureContext` row)"),
             'crossOriginIsolated': none("the worker's own context: false (the element refuses an isolated host page)"),
             'performance': none("the worker's own timeline: its own entries only"),
         },
     },
     secureContext: {
         rest: 'reads nothing that depends on whether the document is a secure context',
+        // Every name whose presence or answer the secure context decides on an engine of the suite (SECURE_CONTEXT_ONLY): the
+        // sealed worker has none of them and reads `isSecureContext` as false, so a host page on a URL that is not
+        // potentially trustworthy and one on a loopback host give it the same names on every engine
+        // (test/e2e/sealed-reach.spec.ts, which fails on any name that differs).
         cells: {
-            // every name whose presence or answer the secure context decides on an engine of the suite, as measured: the sealed
-            // worker of a host page on a URL that is not potentially trustworthy against one on a loopback host
-            // (test/e2e/sealed-reach.spec.ts, which fails on a name that differs and is not here). Chromium counts the
-            // worker as not secure on every page, so none differs there.
-            'isSecureContext': remains(['secureBit'], "Firefox and WebKit: the host page's answer"),
-            'crypto.subtle': remains(['secureBit'], 'Firefox and WebKit: present only in a secure context'),
-            'crypto.randomUUID': remains(['secureBit'], 'Firefox and WebKit: present only in a secure context'),
-            'CryptoKey': remains(['secureBit'], 'Firefox and WebKit: present only in a secure context'),
-            'SubtleCrypto': remains(['secureBit'], 'Firefox and WebKit: present only in a secure context'),
-            'Lock': remains(['secureBit'], 'Firefox and WebKit: present only in a secure context'),
-            'LockManager': remains(['secureBit'], 'Firefox and WebKit: present only in a secure context'),
-            'navigator.locks': remains(['secureBit'], 'Firefox and WebKit: present only in a secure context'),
-            'AudioDecoder': remains(['secureBit'], 'Firefox: present only in a secure context'),
-            'AudioEncoder': remains(['secureBit'], 'Firefox: present only in a secure context'),
-            'VideoDecoder': remains(['secureBit'], 'Firefox: present only in a secure context'),
-            'VideoEncoder': remains(['secureBit'], 'Firefox: present only in a secure context'),
-            'ImageDecoder': remains(['secureBit'], 'Firefox: present only in a secure context'),
-            'ImageTrack': remains(['secureBit'], 'Firefox: present only in a secure context'),
-            'ImageTrackList': remains(['secureBit'], 'Firefox: present only in a secure context'),
-            'PerformanceServerTiming': remains(['secureBit'], 'Firefox: present only in a secure context'),
-            'PerformanceResourceTiming.prototype.serverTiming': remains(['secureBit'], 'Firefox: present only in a secure context'),
+            ...Object.fromEntries(secureContextOnlyNames().map(name => [name, SECURE_CONTEXT_REMOVED])),
+            'isSecureContext': neutralised(['secureContextRemoval'], 'reads false on every engine and page: the answer Chromium gives on every page'),
         },
     },
     uiSurfaces: {

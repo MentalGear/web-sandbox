@@ -1187,7 +1187,7 @@ In the guest, the codes other than `NOT_FOUND` come from the element through the
 
 ## Guest globals
 
-<!-- describes: worker-globals sig:9705 -->
+<!-- describes: worker-globals sig:59bf -->
 What guest code can use, by mode. Everything here is installed by the library's bootstrap before any guest code
 runs; in cooperative mode that needs `allow-scripts` (the policy always admits it).
 
@@ -1208,6 +1208,18 @@ nothing runs there either; deleting it keeps WebKit's compiler away from guest b
 cooperative mode keeps it, a frozen limit), and in strict and sealed mode `URL.createObjectURL`. In strict and sealed mode the view document
 runs no guest code at all, and acts only on trusted events: a synthetic event is never forwarded to `sandboxView.on`.
 
+**The same on every engine, whatever your page's URL** (strict and sealed mode's worker): a worker is a secure context
+when its page's top-level URL is `https:` or a loopback host, and on Firefox and WebKit the guest's worker follows your
+page, which would tell the guest which kind of URL your page has and give it a different API on each engine. So it keeps
+nothing only a secure context has (`SECURE_CONTEXT_ONLY`): no `SubtleCrypto` and `CryptoKey` (no `crypto.subtle`), no
+`crypto.randomUUID()`, no Web Locks (`navigator.locks`, `LockManager`, `Lock`), no WebCodecs coders (`AudioDecoder`,
+`AudioEncoder`, `VideoDecoder`, `VideoEncoder`) or image decoder (`ImageDecoder`, `ImageTrack`, `ImageTrackList`), no
+server timing (`PerformanceServerTiming`, `serverTiming`), no `navigator.deviceMemory` or `navigator.gpu`; and
+`isSecureContext` reads `false`. That is what Chromium's sealed worker has on every page, so no app could count on any of
+them. `crypto.getRandomValues()`, `AudioData`, `VideoFrame` and the encoded chunks stay. An app that needs a hash, a key
+or a codec calls a method your page exposes (`expose()`), which runs with your page's own APIs. Worker mode keeps them where
+the engine offers them.
+
 **No string runs as code** in strict and sealed mode's worker (unless `scriptUnsafe`, which sealed mode refuses): before the
 entry runs, `eval`, `Function`, the constructor of every function kind (async, generator, async generator) and
 `setTimeout` and `setInterval` given a handler that is not a function throw an `EvalError` of the library's
@@ -1226,8 +1238,9 @@ only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WOR
 make a request are `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`), which are the library's
 [request gate](#the-request-gate) in every mode (in strict and sealed mode `WebSocket` is kept as a name but refuses every
 socket: [no `WebSocket`](#strict-no-websocket)), and in worker mode `importScripts` (`script-src`). Strict mode's worker
-has no `importScripts`: its policy's `script-src` is the view's hash, so it could never load anything. Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
-encoding, streams, `crypto`, `Blob`, `File`, `URL`, `OffscreenCanvas` with 2D and WebGL, WebCodecs,
+has no `importScripts`: its policy's `script-src` is the view's hash, so it could never load anything, and nothing only a
+secure context has ([Guest globals](#guest-globals): no `crypto.subtle`, Web Locks or WebCodecs coders, in any engine). Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
+encoding, streams, `crypto` (`getRandomValues()`), `Blob`, `File`, `URL`, `OffscreenCanvas` with 2D and WebGL, WebCodecs' frames and chunks (worker mode: its coders, where the engine offers them),
 `performance`, `scheduler`, `BroadcastChannel`, and `indexedDB`, which is present but stores nothing: in the sandbox's opaque
 origin `indexedDB.open()` rejects with a `SecurityError` on all three engines (measured on Chromium 145, Firefox 146 and
 WebKit 26). Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace`
@@ -2291,11 +2304,10 @@ policy must allow:
   bursts, not a steady rate). Treat every field of them as untrusted guest data, or serve the embedding page without
   reporting.
 - **Your page's URL scheme.** A frame is a secure context when its top-level page's URL is potentially trustworthy
-  (`https:`, or a loopback host), and on Firefox and WebKit the guest's worker follows it: a sealed guest can tell from
-  `isSecureContext`, and from which secure-context interfaces it has (SubtleCrypto, Web Locks; on Firefox the WebCodecs
-  coders), whether your page was served from such a URL. That one bit is all it learns of the URL; Chromium's worker reads
-  as not secure on every page, so a guest that needs those interfaces on every engine cannot have them
-  ([the host page's context](THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)).
+  (`https:`, or a loopback host), and on Firefox and WebKit a worker follows it. Strict and sealed mode's worker keeps
+  nothing that depends on it and reads `isSecureContext` as `false` ([Guest globals](#guest-globals)), so a guest cannot
+  tell which kind of URL your page has; worker mode's worker and cooperative mode's guest document can, on Firefox and
+  WebKit ([the host page's context](THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)).
 - **Your `img-src`, `media-src`, `font-src` and the other fetch directives narrow `origins` silently**, in the engines
   that apply the inherited list: an origin listed in `origins` that your page's policy does not allow is refused in the
   sandbox too. The refusal happens in the sandbox's documents, so it arrives as the element's `violation` event (where the

@@ -96,12 +96,40 @@ export const WORKER_GLOBALS: readonly string[] = [
 ];
 
 /**
- * Strict mode's worker: {@link WORKER_GLOBALS} without `importScripts`. The strict policy's script-src is the view
+ * What the worker has only when it is a secure context (S74, class A: INHERITED_CONTEXT.secureContext). A worker is one
+ * when its owner is, and a document when its top-level page's URL is potentially trustworthy, so on Firefox and WebKit
+ * the guest's `blob:` worker has these, and `isSecureContext` reads true, exactly when the host page's URL is `https:` or
+ * a loopback host; Chromium counts that worker as not secure on every page. Strict and sealed mode's worker has none of
+ * them on any engine, and reads `isSecureContext` as false: the globals and navigator members are off its allowlists
+ * (STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS), and {@link removeSecureContextOnly} deletes the members of
+ * kept interfaces and pins `isSecureContext`. That is the surface Chromium's worker has on every page, so the guest's API
+ * is the same whatever the host page and the engine, and nothing of the host page's URL reaches the guest through it.
+ *
+ * The list is what differs on Chromium, Firefox and WebKit between the sealed worker of a host page served from a URL that
+ * is not potentially trustworthy and one on a loopback host, every global and every member it leads to compared
+ * (test/e2e/sealed-reach.spec.ts, which fails on any name that differs). `navigator.deviceMemory` and `navigator.gpu` are
+ * secure-context only too, and absent from the worker on every engine of the suite.
+ */
+export const SECURE_CONTEXT_ONLY = {
+    globals: [
+        'SubtleCrypto', 'CryptoKey', 'Lock', 'LockManager', 'AudioDecoder', 'AudioEncoder', 'VideoDecoder', 'VideoEncoder',
+        'ImageDecoder', 'ImageTrack', 'ImageTrackList', 'PerformanceServerTiming',
+    ],
+    navigator: ['locks', 'deviceMemory', 'gpu'],
+    /** [interface, member]: a member of the interface's prototype. */
+    members: [['Crypto', 'subtle'], ['Crypto', 'randomUUID'], ['PerformanceResourceTiming', 'serverTiming']],
+} as const satisfies { globals: readonly string[]; navigator: readonly string[]; members: readonly (readonly [string, string])[] };
+
+const secureContextOnly = (list: readonly string[]) => (name: string) => list.includes(name);
+
+/**
+ * Strict mode's worker: {@link WORKER_GLOBALS} without `importScripts`, and without the names only a secure context has
+ * ({@link SECURE_CONTEXT_ONLY}). The strict policy's script-src is the view
  * bootstrap's hash (ADR-005), so `importScripts()` can never load anything there; it is not offered at all, and with it
  * goes the one request API whose refusals an engine reported elsewhere (Firefox raises them in the view). The strict
  * worker requests only through fetch, XMLHttpRequest and WebSocket, which the request gate governs (in-sandbox-script.ts).
  */
-export const STRICT_WORKER_GLOBALS: readonly string[] = WORKER_GLOBALS.filter(name => name !== 'importScripts');
+export const STRICT_WORKER_GLOBALS: readonly string[] = WORKER_GLOBALS.filter(name => name !== 'importScripts' && !secureContextOnly(SECURE_CONTEXT_ONLY.globals)(name));
 
 /**
  * What guest code may find on the worker's navigator (its prototype's members): no `serviceWorker`, no `connection`, no
@@ -111,6 +139,9 @@ export const WORKER_NAVIGATOR_MEMBERS: readonly string[] = [
     'appCodeName', 'appName', 'appVersion', 'platform', 'product', 'userAgent', 'language', 'languages',
     'onLine', 'hardwareConcurrency', 'deviceMemory', 'globalPrivacyControl', 'locks', 'mediaCapabilities', 'gpu',
 ];
+
+/** Strict mode's worker's navigator: {@link WORKER_NAVIGATOR_MEMBERS} without the ones only a secure context has. */
+export const STRICT_WORKER_NAVIGATOR_MEMBERS: readonly string[] = WORKER_NAVIGATOR_MEMBERS.filter(name => !secureContextOnly(SECURE_CONTEXT_ONLY.navigator)(name));
 
 /**
  * Deletes every global of the worker that is not in `allowed`, and every member of its navigator's prototype that is
@@ -157,4 +188,33 @@ export function keepOnlyWorkerGlobals(g: object, allowed: readonly string[], nav
     const navigator = (g as { navigator?: object }).navigator;
     if (navigator) prune(O.getPrototypeOf(navigator), navigatorMembers, 'navigator.');
     return postToParent;
+}
+
+/**
+ * Strict and sealed mode's worker, right after keepOnlyWorkerGlobals (which took the secure-context-only globals and
+ * navigator members off: STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS): deletes each member of `members`
+ * (SECURE_CONTEXT_ONLY.members, [interface, member] of the interface's prototype), and puts `isSecureContext` on the
+ * global object as `false`, every copy on its prototype chain removed. Stringified into the worker's source (host.ts);
+ * self-contained, and it reaches nothing but `g`, the object literals' own Object and the arguments.
+ *
+ * Fails closed, as keepOnlyWorkerGlobals does: a member that is still there after its deletion, or an `isSecureContext`
+ * that cannot be put in place, throws, and the worker script ends there, before the library's channel or any guest code
+ * exists (strict mode's entry never starts).
+ */
+export function removeSecureContextOnly(g: object, members: readonly (readonly [string, string])[]) {
+    const O = ({}).constructor as ObjectConstructor;
+    const remove = (owner: object, name: string, where: string) => {
+        Reflect.deleteProperty(owner, name);
+        if (O.getOwnPropertyDescriptor(owner, name)) throw new Error('[Sandbox] the worker could not remove ' + where + name + '; it did not start');
+    };
+    for (let i = 0; i < members.length; i++) {
+        const member = members[i]!;
+        const found = (g as Record<string, unknown>)[member[0]];
+        const prototype = typeof found === 'function' ? (found as { prototype?: unknown }).prototype : undefined;
+        if (prototype !== null && typeof prototype === 'object') remove(prototype, member[1], member[0] + '.prototype.');
+    }
+    for (let owner: object | null = g; owner && owner !== O.prototype; owner = O.getPrototypeOf(owner)) remove(owner, 'isSecureContext', '');
+    if (!Reflect.defineProperty(g, 'isSecureContext', { value: false, writable: false, enumerable: true, configurable: false })) {
+        throw new Error('[Sandbox] the worker could not put isSecureContext in place; it did not start');
+    }
 }

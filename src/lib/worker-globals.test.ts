@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keepOnlyWorkerGlobals, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
+import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
 
 /**
  * The worker globals allowlist (VR:V1), on a stand-in global shaped like a worker's
@@ -57,11 +57,69 @@ describe('V1: the worker keeps only the allowlisted globals', () => {
         expect(new Set(WORKER_GLOBALS).size).toBe(WORKER_GLOBALS.length);
     });
 
-    it("strict mode's list is the same without importScripts (its script-src is the view's hash, so importScripts() could load nothing), and the worker then has none", () => {
-        expect(STRICT_WORKER_GLOBALS).toEqual(WORKER_GLOBALS.filter(name => name !== 'importScripts'));
+    it("strict mode's list is the same without importScripts (its script-src is the view's hash, so importScripts() could load nothing) and without the secure-context-only names, and the worker then has none", () => {
+        const secureOnly = (list: readonly string[], name: string) => list.includes(name);
+        expect(STRICT_WORKER_GLOBALS).toEqual(WORKER_GLOBALS.filter(name => name !== 'importScripts' && !secureOnly(SECURE_CONTEXT_ONLY.globals, name)));
+        expect(STRICT_WORKER_NAVIGATOR_MEMBERS).toEqual(WORKER_NAVIGATOR_MEMBERS.filter(name => !secureOnly(SECURE_CONTEXT_ONLY.navigator, name)));
         const { g, scope } = standInWorker();
         new Function(`return (${keepOnlyWorkerGlobals.toString()})`)()(g, STRICT_WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS);
         expect(Object.getOwnPropertyNames(scope).sort()).toEqual(['constructor', 'fetch', 'navigator', 'setTimeout']);
         expect('importScripts' in g).toBe(false);
+    });
+});
+
+// Class A (INHERITED_CONTEXT.secureContext): on Firefox and WebKit the worker's secure context follows the host page's URL,
+// so strict and sealed mode's worker has none of what only a secure context has, and reads isSecureContext as false.
+describe('the strict worker is the same whatever the host page is: no secure-context-only name, and isSecureContext false', () => {
+    const run = (g: object) => new Function(`return (${removeSecureContextOnly.toString()})`)()(g, SECURE_CONTEXT_ONLY.members);
+
+    function secureStandIn() {
+        class WorkerGlobalScope extends EventTarget {}
+        Object.defineProperty(WorkerGlobalScope.prototype, 'isSecureContext', { get: () => true, configurable: true });
+        class Crypto {}
+        Object.defineProperty(Crypto.prototype, 'subtle', { get: () => ({}), configurable: true });
+        Object.defineProperty(Crypto.prototype, 'randomUUID', { value: () => 'uuid', writable: true, configurable: true });
+        Object.defineProperty(Crypto.prototype, 'getRandomValues', { value: (array: unknown) => array, writable: true, configurable: true });
+        class PerformanceResourceTiming {}
+        Object.defineProperty(PerformanceResourceTiming.prototype, 'serverTiming', { get: () => [], configurable: true });
+        Object.defineProperty(PerformanceResourceTiming.prototype, 'duration', { get: () => 0, configurable: true });
+        const g = new WorkerGlobalScope() as any;
+        for (const [name, value] of [['Crypto', Crypto], ['PerformanceResourceTiming', PerformanceResourceTiming], ['crypto', new Crypto()]] as const) {
+            Object.defineProperty(g, name, { value, writable: true, configurable: true });
+        }
+        return { g, scope: WorkerGlobalScope.prototype, Crypto, PerformanceResourceTiming };
+    }
+
+    it('deletes each member SECURE_CONTEXT_ONLY lists and keeps the others; isSecureContext reads false, on the global object only', () => {
+        const { g, scope, Crypto, PerformanceResourceTiming } = secureStandIn();
+        run(g);
+        expect(Object.getOwnPropertyNames(Crypto.prototype).sort()).toEqual(['constructor', 'getRandomValues']);
+        expect(Object.getOwnPropertyNames(PerformanceResourceTiming.prototype).sort()).toEqual(['constructor', 'duration']);
+        expect('subtle' in g.crypto).toBe(false);
+        expect(g.isSecureContext).toBe(false);
+        expect(Object.getOwnPropertyNames(scope)).not.toContain('isSecureContext');
+        expect(Reflect.defineProperty(g, 'isSecureContext', { value: true })).toBe(false); // guest code cannot set it back
+    });
+
+    it('an interface the engine does not have is skipped; a member that cannot be deleted throws, so nothing after it in the worker runs', () => {
+        const absent = secureStandIn();
+        delete absent.g.PerformanceResourceTiming;
+        run(absent.g);
+        expect(absent.g.isSecureContext).toBe(false);
+        const stuck = secureStandIn();
+        Object.defineProperty(stuck.Crypto.prototype, 'subtle', { get: () => ({}), configurable: false });
+        expect(() => run(stuck.g)).toThrowError(/could not remove Crypto\.prototype\.subtle/);
+    });
+
+    it('the lists are disjoint from what the strict worker keeps, and each name is one the allowlists list', () => {
+        for (const name of SECURE_CONTEXT_ONLY.globals) {
+            expect(WORKER_GLOBALS, name).toContain(name);
+            expect(STRICT_WORKER_GLOBALS, name).not.toContain(name);
+        }
+        for (const name of SECURE_CONTEXT_ONLY.navigator) {
+            expect(WORKER_NAVIGATOR_MEMBERS, name).toContain(name);
+            expect(STRICT_WORKER_NAVIGATOR_MEMBERS, name).not.toContain(name);
+        }
+        for (const [owner] of SECURE_CONTEXT_ONLY.members) expect(STRICT_WORKER_GLOBALS, owner).toContain(owner);
     });
 });

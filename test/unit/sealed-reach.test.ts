@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { ABSENT_COMPILERS, CODE_FROM_STRING_SINKS } from '@src/lib/code-from-strings';
 import { INHERITED_CONTEXT, type InheritedContextId, type InheritedContextRow } from '@src/lib/inherited-context';
 import {
-    CHOKEPOINTS, REACH_RELATIONS, REACH_SIDES, SEALED_REACH, SURFACES, reachCell, sealedReachNames, sideOf, surfaceOf,
+    CHOKEPOINTS, REACH_RELATIONS, REACH_SIDES, SEALED_REACH, SURFACES, reachCell, sealedReachNames, secureContextOnlyNames, sideOf, surfaceOf,
     type Cell, type ChokepointId, type Column, type SurfaceId,
 } from '@src/lib/sealed-reach';
 import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
@@ -146,6 +146,14 @@ describe('the classification agrees with the chokepoints the code keeps', () => 
         for (const name of ['fetch', 'XMLHttpRequest', 'WebSocket']) {
             for (const rowId of ['cspFetch', 'cspPolicyText', 'cspReporting', 'referrer', 'cookies', 'serviceWorker'] as const) neutralisedBy(name, rowId, 'requestGate');
         }
+    });
+
+    it("every name only a secure context has, and isSecureContext, is neutralised by the strict worker's removal; nothing of the row remains", () => {
+        for (const name of [...secureContextOnlyNames(), 'isSecureContext']) {
+            expect(nameList, name).toContain(name);
+            neutralisedBy(name, 'secureContext', 'secureContextRemoval');
+        }
+        expect(cellsOf('secureContext').filter(([, found]) => found.relation === 'remains')).toEqual([]);
     });
 
     it('every URL attribute of the renderer keeps no network URL, and what it loads is a residual of the fetch rows', () => {

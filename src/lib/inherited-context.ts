@@ -269,18 +269,12 @@ export const INHERITED_CONTEXT = {
     },
     secureContext: {
         channel: "Whether the host page is a secure context: a document is one when its top-level page's URL is potentially trustworthy (`https:`, or a loopback host), and a worker when its owner is, so `isSecureContext`, and every interface the platform offers only in a secure context, tell a realm of the sandbox which kind of URL the host page was served from",
-        inheritedBy: "every frame and worker; strict, sealed and worker mode's `blob:` worker on Firefox and WebKit (Chromium counts that worker as not secure on every page)",
-        how: "Documented: one bit, whether the page's top-level URL is potentially trustworthy, which every visitor of the page sees in the address bar. A guest reads it from `isSecureContext` and from which secure-context interfaces it has (SEALED_REACH, the `secureContext` column, sealed-reach.ts); the e2e suite compares a sealed worker of a host page served from a name that is not trustworthy with one served from a loopback host, on every engine, and fails on a name that differs and is not listed there",
-        by: ['documented'],
+        inheritedBy: "every frame and worker; worker mode's `blob:` worker and cooperative mode's guest document on Firefox and WebKit (Chromium counts the worker as not secure on every page); strict and sealed mode's worker has nothing that depends on it",
+        how: "Strict and sealed mode's worker has nothing only a secure context has, and reads `isSecureContext` as false, on every engine and whatever the host page: the secure-context-only globals and navigator members are off its allowlists, and the prelude deletes the members of kept interfaces and pins `isSecureContext` (SECURE_CONTEXT_ONLY, removeSecureContextOnly, worker-globals.ts). That is the surface Chromium's worker has on every page, so the guest's API is the same on every engine and no host page changes it. The e2e suite compares the sealed worker of a host page served from a name that is not potentially trustworthy with one on a loopback host, every global and every member it leads to, on every engine, and fails on any difference. Worker mode's worker and cooperative mode's guest document follow the page's URL on Firefox and WebKit: one bit, which every visitor of the page sees in the address bar (documented)",
+        by: ['construct', 'documented'],
         engines: ['firefox', 'webkit'],
-        tests: ['test/e2e/sealed-reach.spec.ts', 'test/unit/sealed-reach.test.ts'],
-        sealed: { standing: 'remains', note: 'one bit, on Firefox and WebKit' },
-        residuals: {
-            secureBit: {
-                what: "on Firefox and WebKit a sealed guest learns whether the host page's top-level URL is potentially trustworthy (`https:` or a loopback host), from `isSecureContext` and from the presence of the secure-context interfaces (SubtleCrypto, Web Locks, Firefox's WebCodecs coders and image decoder, server timing); nothing else of the URL. Chromium's worker reads as not secure on every page",
-                tests: ['test/e2e/sealed-reach.spec.ts'],
-            },
-        },
+        tests: ['test/e2e/sealed-reach.spec.ts', 'test/unit/sealed-reach.test.ts', 'src/lib/worker-globals.test.ts'],
+        sealed: { standing: 'remains', note: 'closed by construction: the worker has nothing only a secure context has, and reads `isSecureContext` as false, on every engine' },
     },
     uiSurfaces: {
         channel: "The browser's shared UI surfaces: focus, the clipboard, history, top-level navigation, the host window as a `postMessage` target",
