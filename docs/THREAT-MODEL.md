@@ -229,7 +229,7 @@ forge or suppress them, and they differ per engine. Treat them as claims.
 
 ### Resource limits
 
-<!-- describes: budgets:channels sig:cccc -->
+<!-- describes: budgets:channels sig:eee4 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
@@ -330,6 +330,9 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
   message of a call rejected by a guest handler. The library
   validates and clamps its size and shape, not its content. Show it with `textContent`; never pass it to an HTML, URL (a
   link `href`), `eval`, template or `console` format-string sink, or the guest's text runs with the host page's authority.
+  Do not forward it to a network sink, an error reporter or analytics (`fetch`, `navigator.sendBeacon`) as if it were the
+  page's own event: whoever wrote the app reads that sink. The exposed methods are not the app's only way to the host
+  page: its log lines, violation details, guest writes and auto-resize height arrive there too, and are the app's data.
 - **Exposed methods are the attack surface** the embedder adds: validate every argument, copy objects with spread, never
   `Object.assign` or `for…in` ([S25](BACKLOG.md#s25)), and throw only errors whose message the guest may see.
 - **Opt-ins widen the model**, each with a warning: `scriptUnsafe` (`execute()` and `eval` in the guest's realm;

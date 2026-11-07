@@ -385,6 +385,7 @@ BD5 (D5). Highs are as the verifiers confirmed them. There were no criticals.
 | BD3 | 2026-10-23 | 5 | 4 | 4 |
 | BD4 | 2026-10-24 | 5 | 5 | 3 |
 | BD5 | 2026-10-25 | 10 | 10 (sealed) | 1 |
+| BD6 | 2026-11-07 | 5 | 5 (sealed) | 2 |
 
 The full counts per round, the analysis and the coordinator's evaluation after each pass are in
 [research 22](research/22_review_trajectory/README.md).
@@ -439,8 +440,25 @@ test batch that archives the pass). The availability finding BD5:LIM-3 is [S87](
 each finding was resolved are kept in [BOARD-PASS-5-2026-10-25.md](archive/reviews/BOARD-PASS-5-2026-10-25.md); each item
 cites its findings by ID (`BD5:`).
 
-**Pass 6 reviews sealed mode again** (same scope), on `main` after #86, #87 and the batch: the two consecutive clean passes
-that clear the board start there.
+**Pass 6 (2026-11-07, `c404689`)** reviewed sealed mode again, with the same scope, after #86, #87 and the pass-5 batch.
+**It was not clean** (0 of 2): 5 data findings reach sealed mode, all verified. Two are high and are the library's own
+isolation (BD6:ISO-1: a sealed guest read the host page's Content-Security-Policy text, nonce and report key included;
+BD6:ISO-2: the guest made the browser POST CSP reports with URLs and text it chose to the host's `report-uri`; both on
+Chromium and Firefox, one missing `INHERITED_CONTEXT` channel: the inherited policy's text and reporting endpoints), and
+three are low (BD6:LIM-1 with BD6:CHL-1: the library's own refusal carried the engine's text; BD6:LIM-2 and BD6:CHL-3: the
+recipe's `stop()` did not cut the first app off from the next one on an element, and a failed load left the app running).
+The count fell from 10 to 5 on the same basis; the evaluation rule triggered in its second form for the three lows. No owner
+decision was needed: each finding was solved by construction. Fixed: the worker never reaches a refusing check of the host
+page's policy (no string run as code, so sealed mode refuses `scriptUnsafe` and has no `execute()`; an entry cannot spell
+`import(`; violation events stopped and blank; the view runs no guest code; `cspPolicyText` and `cspReporting` rows) (#90);
+the view's guest styles go through the CSSOM (the CSSOM fix); the library's own refusals carry fixed texts, and the lows
+BD6:CHL-2, BD6:NEW-1, BD6:NEW-2 and BD6:TST-1 (#89); the recipe gives each app its own element, and the docs, the
+attacker-text sink sentence and the archive (this pull request). No availability finding is new. The reports, the verdicts
+and how each finding was resolved are kept in [BOARD-PASS-6-2026-11-07.md](archive/reviews/BOARD-PASS-6-2026-11-07.md);
+each item cites its findings by ID (`BD6:`).
+
+**Pass 7 reviews sealed mode again** (same scope), on the branch after these fixes: the two consecutive clean passes that
+clear the board start there.
 
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 

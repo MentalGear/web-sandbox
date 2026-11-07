@@ -28,6 +28,7 @@ export const PREFIXED_SOURCES = [
     { prefix: 'BD3', file: 'docs/archive/reviews/BOARD-PASS-3-2026-10-23.md', title: 'The S74 review board, pass 3', example: 'BD3:ISO-2' },
     { prefix: 'BD4', file: 'docs/archive/reviews/BOARD-PASS-4-2026-10-24.md', title: 'The S74 review board, pass 4', example: 'BD4:ISO-2' },
     { prefix: 'BD5', file: 'docs/archive/reviews/BOARD-PASS-5-2026-10-25.md', title: 'The S74 review board, pass 5', example: 'BD5:ISO-1' },
+    { prefix: 'BD6', file: 'docs/archive/reviews/BOARD-PASS-6-2026-11-07.md', title: 'The S74 review board, pass 6', example: 'BD6:ISO-1' },
     { prefix: 'AR', file: 'docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md', title: 'The adversarial review', example: 'AR:B1' },
     { prefix: 'BR', file: 'docs/archive/reviews/BROAD-REVIEW-2026-10-14.md', title: 'The broad review', example: 'BR:CB1' },
     { prefix: 'FR', file: 'docs/archive/reviews/FOCUSED-REVIEW-2026-10-14.md', title: 'The focused review', example: 'FR:W1' },
