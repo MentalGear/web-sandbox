@@ -441,7 +441,7 @@ test.describe('the view and the overlay', () => {
                 svg: document.getElementById('s').getAttribute('src') + ' ' + document.getElementById('s').naturalWidth,
                 registered: document.getElementById('r').getAttribute('src').slice(0, 5),
             })`);
-            expect(view).toEqual({ written: 'blob: 3', svg: 'written.svg 0', registered: 'blob:' });
+            expect(view).toEqual({ written: 'blob: 3', svg: 'null 0', registered: 'blob:' }); // the SVG write gets no URL: the URL rule drops its path
         });
 
         test('5b. a committed image is a registered file at the next build: the view renders it from its own URL', async ({ sandbox, page, browserName }) => {

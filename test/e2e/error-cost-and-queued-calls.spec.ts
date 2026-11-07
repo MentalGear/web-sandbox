@@ -189,7 +189,7 @@ test.describe('N-4 (D): the view shows what the guest sees', () => {
             expect(removed).toEqual(['kept.png']);
             await waitInView(page, browserName, `!!document.getElementById('done')`, 8000);
             expect((await waitInView<{ size: string }>(page, browserName, image('kept'), 8000)).size).toBe('7x4');
-            expect(await waitInView(page, browserName, image('pic'), 8000)).toEqual({ size: '0x0', src: 'pic.png' });
+            expect(await waitInView(page, browserName, image('pic'), 8000)).toEqual({ size: '0x0', src: null }); // a path that names nothing is dropped (the URL rule)
             expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).listGuestWrites())).toEqual([]);
         });
     });
