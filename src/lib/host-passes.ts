@@ -117,7 +117,7 @@ export const HOST_PASSES = {
         does: "the config schema reads each option by its own rule: `html`'s reads its type and, in strict and sealed mode, its length, and refuses one longer than VIEW_RENDER_MAX_LENGTH before it is stored (htmlRefusal: setConfig() and load() alike)",
         takes: ['html'], modes: ALL, rule: 'pure',
         units: [
-            'src/host.ts#this._configure', 'src/host.ts#this._applyConfig', 'src/host.ts#this._warnConfig', 'src/host.ts#this.load', 'src/host.ts#this._buildContext',
+            'src/host.ts#this._configure', 'src/host.ts#this._applyConfig', 'src/host.ts#this.load', 'src/host.ts#this._buildContext',
             'src/lib/config-schema.ts#normaliseConfig', 'src/lib/config-schema.ts#htmlRefusal', 'src/lib/config-schema.ts#hasStrictView', 'src/lib/config-schema.ts#ignoredIn',
             'src/lib/config-schema.ts#readIn', 'src/lib/config-schema.ts#sealedNetworkRefusal', 'src/lib/config-schema.ts#sealedScriptUnsafeRefusal',
             'src/lib/utils.ts#defineData', 'src/lib/utils.ts#hasOwnField', 'src/lib/utils.ts#ownField',

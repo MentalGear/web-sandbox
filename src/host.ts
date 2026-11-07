@@ -741,7 +741,6 @@ export class WebSandbox extends ElementBase {
     private _autoHeight: string | null = null;   // the inline height auto-sizing last wrote on the element
     private _fetchPolicy: FetchPolicy | null = null; // the validated fetchBridge config, or null when off (BL:B5)
     private _origins: OriginPolicy = NO_ORIGINS; // the parsed `origins` (ADR-007), what the guest policy admits
-    private _warnedConfig = new Set<string>();   // the config schema's warnings (normaliseConfig), once each per instance
     private _fetchBridge: EnvironmentFields['_fetchBridge'] = null; // this environment's bridge: its requests end with it
     private _bridgeFrame: EnvironmentFields['_bridgeFrame'] = null; // the frame that makes this environment's bridge requests (BD1:ISO-1)
     private _warnedBridgeFrame = false;      // the bridge's frame did not start, said once per instance
@@ -785,8 +784,7 @@ export class WebSandbox extends ElementBase {
     // What waits for the port while loading, in the order it was issued (R2:L-3): execute() code and the host's own RPC
     // requests (cloned at call time), in one queue, so a call made before an execute() is sent before it.
     private _queue: ({ code: string } | { frame: unknown })[] = [];
-    private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
-    private _warnedStrict = new Set<string>(); // strict-mode warnings of a build (the view's stylesheet, html's scripts), once each per instance
+    private _warned = new Set<string>(); // the warnings said, each once per element and text (_warnOnce)
     private _warnedForeignDocument = false; // inserted into a document of another realm (BR:CB7), once per instance
     private _warnedWrapperStyle = false;    // the host page's style-src refused the wrapper's style (R1:R3-1), once per instance
     // The copy of the last usable setConfig() argument (R1:R3-7), compared as data with the next one; whether nothing else a
@@ -995,19 +993,12 @@ export class WebSandbox extends ElementBase {
     // a refused config too, up to what refused it; only a config that passed every check is stored, last (FR:F6).
     private _applyConfig(copy: unknown) {
         const { value, warnings, refusal } = normaliseConfig(copy, readHostPage);
-        for (const message of warnings) this._warnConfig(message);
+        for (const message of warnings) this._warnOnce(message);
         if (value === null) throw refusal;
         this._config = value.config;
         this._fetchPolicy = value.fetchPolicy;
         this._origins = value.origins;
         this._callBudget = value.callBudget;
-    }
-
-    // A warning of the config schema: once per element and message.
-    private _warnConfig(message: string) {
-        if (this._warnedConfig.has(message)) return;
-        this._warnedConfig.add(message);
-        console.warn(message);
     }
 
     /**
@@ -1824,7 +1815,7 @@ export class WebSandbox extends ElementBase {
     // VIEW_STILL_STYLE), which a srcdoc document inherits: the view checked, and drops the guest's stylesheets instead, so
     // no guest animation runs either way. Said once per element, with the hash to allow.
     private _warnStillStyleRefused() {
-        this._warnStrictOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or ${scriptHashSource(VIEW_STILL_STYLE)} in style-src (see docs/API.md#host-page-policy).`);
+        this._warnOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or ${scriptHashSource(VIEW_STILL_STYLE)} in style-src (see docs/API.md#host-page-policy).`);
     }
 
     // Flushes what was queued before the build was ready onto its port, in the order it was issued (R2:L-3): execute() code
@@ -2251,7 +2242,7 @@ export class WebSandbox extends ElementBase {
     // embedder did not give it (hostReach, the one decision; BD4:CHL-1, BD4:CHL-2). The page itself is never asked.
     // Pure of the element's fields: a nested or stale build narrows its own (LM-2).
     private _reach(): NarrowedReach {
-        return hostReach(this._origins, this._fetchPolicy, this._config.hostContentSecurityPolicy, message => this._warnConfig(message));
+        return hostReach(this._origins, this._fetchPolicy, this._config.hostContentSecurityPolicy, message => this._warnOnce(message));
     }
 
     // The host page's Trusted Types directives, where the browser has no Trusted Types to apply them (a browser that has them
@@ -2301,10 +2292,11 @@ export class WebSandbox extends ElementBase {
         this._warnOnce(`[Sandbox] cooperative mode without "allow-scripts" runs no script, the library's own included: ${unused.join(', ')} ${unused.length === 1 ? 'has' : 'have'} no effect. Add "allow-scripts" to capabilities.`);
     }
 
-    // Warnings about the guest's markup come back with every build of the same markup: one each per element.
+    // Every warning a config or a build brings back (the config schema's, the build's about the guest's markup and files,
+    // the view's notes) is said here, each text once per element.
     private _warnOnce(message: string) {
-        if (this._warnedGuestMarkup.has(message)) return;
-        this._warnedGuestMarkup.add(message);
+        if (this._warned.has(message)) return;
+        this._warned.add(message);
         console.warn(message);
     }
 
@@ -2520,12 +2512,6 @@ export class WebSandbox extends ElementBase {
         return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${marker}();\n`;
     }
 
-    private _warnStrictOnce(message: string) {
-        if (this._warnedStrict.has(message)) return;
-        this._warnedStrict.add(message);
-        console.warn(message);
-    }
-
     // Sealed mode is the default and its view is strict mode's, so markup written for cooperative mode reaches that view
     // unchanged: its scripts and handlers never run (the renderer drops them, and the view's policy admits only the
     // bootstrap). Said once per element and mode, in the mode's words, from what the view's renderer noted it dropped of
@@ -2533,11 +2519,8 @@ export class WebSandbox extends ElementBase {
     // page's realm would check the guest's markup against the host page's policy, and report it (BD7:LIM-1; HOST_PASSES,
     // host-passes.ts).
     private _warnAboutStrictHtml(dropped: unknown) {
-        if (!hasStrictView(this._config.mode)) return;
-        const warning = this._config.mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING;
-        if (this._warnedStrict.has(warning) || !dropsScript(dropped)) return;
-        this._warnedStrict.add(warning);
-        console.warn(warning);
+        if (!hasStrictView(this._config.mode) || !dropsScript(dropped)) return;
+        this._warnOnce(this._config.mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING);
     }
 
     // The view liveness check (ADR-005): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.
