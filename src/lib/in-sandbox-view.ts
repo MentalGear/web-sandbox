@@ -3242,7 +3242,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * EventSource; nothing else that requests): no WebAssembly unless scriptUnsafe (WebKit compiles it without
  * 'unsafe-eval', P3), and no URL.createObjectURL — the files' URLs are minted before this runs, and a URL
  * guest code minted could otherwise name unregistered media to the view through CSS (A8). RTCPeerConnection
- * is never there in a worker, and the comms script deletes it anyway.
+ * is never there in a worker, and the comms script deletes it anyway. After this prelude, unless scriptUnsafe, the
+ * worker's source runs the code-from-string refusal (code-from-strings.ts), its last statement before the entry.
  *
  * The render port (A4): taken from the one trusted INIT_WORKER message by a capture listener registered
  * before guest code, which stops every trusted message on the global (there is no other: only the view
