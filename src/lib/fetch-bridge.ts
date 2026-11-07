@@ -39,7 +39,7 @@
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
 import type { RpcLibraryCode } from './rpc';
-import { markMinted } from './minted-errors';
+import { mintError } from './minted-errors';
 import { ownField, type Complete, type Holds } from './utils';
 import { parseOrigin, type Origin, type OriginRules } from './origin';
 import { shown } from './csp/origins';
@@ -235,11 +235,12 @@ export const MAX_HEADER_VALUE = 8192;
 export const MAX_URL = 8192;
 const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
 
-/** An Error with a library code, the only kind of refusal this module produces. */
+/**
+ * An Error with a library code, the only kind of refusal this module produces, made by the library's factory: the guest
+ * receives its code and a fixed text, never `message` (BD7:CHL-2); the record's `reason` and the host's console have it.
+ */
 export function fetchRefusal(code: FetchErrorCode, message: string): FetchRefusal {
-    const error = new Error(`[sandboxFetch] ${code}: ${message}`) as FetchRefusal;
-    error.code = code;
-    return markMinted(error);
+    return mintError(code, `[sandboxFetch] ${code}: ${message}`);
 }
 
 const boundedInteger = (value: unknown, fallback: number, max: number): number => {

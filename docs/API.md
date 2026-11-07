@@ -584,13 +584,17 @@ value (awaited if it is a promise), copied: a typed array or `DataView` that cov
 with a buffer that holds exactly its bytes.
 
 What a failure tells the guest: a throw or rejection reaches it as `HANDLER_ERROR`, and its text is
-your own words only. The guest receives the message of a plain `Error` (`throw new Error(text)`, whose prototype is
-this window's `Error.prototype`) or a thrown string, verbatim up to 65536 characters (a longer one is cut, and ends
-`[… cut at 65536 characters]`): put nothing in it you would not show the guest. Any other throw (an engine's
-`TypeError` or `SyntaxError` from `JSON.parse`, a `DOMException`, a subclass of `Error`, an error from another
-window, an object) arrives as `the method failed (<name>)` with its name only, because an engine's message quotes
-the data it was handling. A result that cannot be copied is refused `RESULT_NOT_TRANSFERABLE` with the library's
-own text. Each text the guest does not receive is written to this page's console with
+your own words only. The guest receives the message of a plain `Error` your code made (`throw new Error(text)`,
+whose prototype is this window's `Error.prototype`) or a thrown string, verbatim up to 65536 characters (a longer
+one is cut, and ends `[… cut at 65536 characters]`): put nothing in it you would not show the guest. An error of the
+library's that the handler lets through (a refusal of `registerFiles()`, `unregisterFiles()` or
+`commitGuestWrites()`, of its own `call()` to this guest or another element's, a `TypeError` of `expose()`) arrives
+as its code and the library's fixed text for that code (`INVALID_PATH: …`; `the method failed (TypeError)` for one
+without a code), never its message, which quotes what you gave the library or what another app answered. Any other
+throw (an engine's `TypeError` or `SyntaxError` from `JSON.parse`, a `DOMException`, a subclass of `Error`, an error
+from another window, an object) arrives as `the method failed (<name>)` with its name only, because an engine's
+message quotes the data it was handling. A result that cannot be copied is refused `RESULT_NOT_TRANSFERABLE` with
+the library's own text. Each text the guest does not receive is written to this page's console with
 `console.warn`, once per call.
 
 Methods belong to the element: they survive `reset()`, `load()`,
@@ -679,7 +683,8 @@ Calls a method the guest exposed with `bridge.expose()` and resolves with its re
 
 **Throws:** Never synchronously: the promise rejects with an `RpcError`, an `Error` whose `code` is an
 `RpcErrorCode`. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and
-their message is the guest's text.
+their message is the guest's text. A host method that lets the rejection propagate hands its own caller the code
+and the library's fixed text for it, never this message (see `expose()`).
 
 ### `callWithTimeout(timeoutMs, method, ...args)`
 
@@ -1139,7 +1144,7 @@ From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.
 | `SEND_FAILED` | local | The transport threw while sending. | no |
 | `INVALID_CALL` | local | The method name is not a string, or is longer than 256 characters. | no |
 | `UNKNOWN_METHOD` | reported | No method of that name is exposed on the other side. | no |
-| `HANDLER_ERROR` | reported | The handler threw or rejected; the message is its text, at most 65536 characters. A host method's text is the message of a plain `Error` or a thrown string; any other throw is `the method failed (<name>)` (see [`expose()`](#exposename-fn)). | depends on the handler |
+| `HANDLER_ERROR` | reported | The handler threw or rejected; the message is its text, at most 65536 characters. A host method's text is the message of a plain `Error` or a thrown string; an error of the library's that it let through is its code and the library's fixed text for that code; any other throw is `the method failed (<name>)` (see [`expose()`](#exposename-fn)). | depends on the handler |
 | `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned (the library's text, never the clone's error), measures more than `RPC_MAX_BYTES`, or holds a value the measure does not know (as above). | no |
 | `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls, or 64 MiB of their arguments; the method did not run. Guest calls only: the guest made more calls in the last second than [`callLimits`](#calllimits) allows (by default 1000 calls, or 64 MiB of calls); the guest's `bridge` refuses such a call before sending it, and the element answers one that arrives anyway. | yes |
 
@@ -1166,7 +1171,9 @@ Set only by the host (`FETCH_ERROR_CODES`):
 | `FETCH_FAILED` | Network error, CORS (the target sees `Origin: null`), the bridge's frame could not start, or the environment was torn down. | yes |
 
 HTTP error statuses resolve, as with `fetch`. `sandboxFetch()` can also reject with a call code (for example
-`TIMEOUT`, as a backstop 5 s after `timeoutMs`), and with a `TypeError` for a body it cannot send.
+`TIMEOUT`, as a backstop 5 s after `timeoutMs`), and with a `TypeError` for a body it cannot send. A refusal's message is
+its code and the library's fixed text for it (`FETCH_NOT_ALLOWED: …`), the same for every request refused with that code:
+why this one was refused is the `fetch` record's `reason`, and the host page's console.
 
 ### Files: `FileErrorCode` and `NOT_FOUND`
 
@@ -1181,7 +1188,9 @@ HTTP error statuses resolve, as with `fetch`. `sandboxFetch()` can also reject w
 | `NOT_FOUND` | guest `sandboxFiles` | Any lookup of a path that is not there, exactly as written (message `no such file`); a `remove()` of a path that is in neither the files nor the guest's writes. Also `url()` of a file that is there and has no URL, with a message of its own (`this file has no URL (read() and text() work)`): a path the guest wrote, and in strict mode's worker a type the view does not show. |
 
 In the guest, the codes other than `NOT_FOUND` come from the element through the broker, so `write()` and
-`remove()` can also reject with a [call code](#calls-rpcerrorcode) such as `BUSY` or `TERMINATED`.
+`remove()` can also reject with a [call code](#calls-rpcerrorcode) such as `BUSY` or `TERMINATED`. Their message is the
+code and the library's fixed text for it (`INVALID_PATH: …`); the element's own message, which names the path, goes to the
+host page's console.
 
 ---
 
@@ -1849,12 +1858,20 @@ The host publishes methods with `sandbox.expose()` and the app calls them with `
   from `call()`) becomes a document of your origin when its object URL is opened. Show images in the sandbox view, or in
   an `<img>` from a `Blob` you typed `image/png` after checking its signature; offer anything else as a download of an
   `application/octet-stream` blob ([Guest writes](#guest-writes)).
-- **What a failure tells the app.** A throw or rejection reaches it as `HANDLER_ERROR`. The message of a plain `Error`
-  (`throw new Error(text)`) or a thrown string reaches it as you wrote it: put nothing in it you would not tell the app.
-  Any other throw, such as the `SyntaxError` of a `JSON.parse` of your data, a `TypeError`, a `DOMException` or a
-  subclass of `Error`, reaches it as `the method failed (<name>)`, with no text of its own, because an engine's message
-  quotes the data it was handling. A result that cannot be copied reaches it as `RESULT_NOT_TRANSFERABLE` with the
-  library's text. Each text the app does not receive is written to your page's console (`console.warn`, once per call).
+- **What a failure tells the app.** A throw or rejection reaches it as `HANDLER_ERROR`, with one of three texts:
+  - your own words, as you wrote them: a thrown string, or the message of a plain `Error` your code made
+    (`throw new Error(text)`). Put nothing in it you would not tell the app;
+  - for an error of the library's that your method lets through (a refusal of `registerFiles()`, `unregisterFiles()` or
+    `commitGuestWrites()`, of your own `call()` to this app or to another element's, an `expose()` of a bad name), its
+    code and a fixed text the library has for that code (`INVALID_PATH: …`, `TIMEOUT: …`), never its message: that
+    message is for you, and quotes what you gave the library (your paths, your method names) or what another app
+    answered your call;
+  - for any other throw, such as the `SyntaxError` of a `JSON.parse` of your data, a `TypeError`, a `DOMException` or a
+    subclass of `Error`, `the method failed (<name>)`, with no text of its own, because an engine's message quotes the
+    data it was handling.
+
+  A result that cannot be copied reaches it as `RESULT_NOT_TRANSFERABLE` with the library's text. Each text the app
+  does not receive is written to your page's console (`console.warn`, once per call).
 - **An element is one app's for its life; to run another app, use a new element.** The element is the unit of isolation:
   its files, its exposed methods, its pending guest writes and every handle a host method holds (`sandbox.call`) belong to
   the element, not to the app. They survive `reset()`, `load()`, `setConfig()` and `terminate()`, so an app you load next

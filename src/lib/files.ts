@@ -8,7 +8,7 @@
  */
 
 import { moduleSpecifierEdits, VIRTUAL_ROOT } from './module-specifiers';
-import { markMinted } from './minted-errors';
+import { mintError } from './minted-errors';
 import type { Complete, Holds } from './utils';
 import { cssReferences, cssUrlReferences } from './css-references';
 import { virtualPathOf } from './markup-references';
@@ -132,10 +132,9 @@ export interface FileError extends Error {
     code: FileErrorCode;
 }
 
+/** A refusal of the files, made by the library's factory: a guest receives its code and a fixed text, never `message`. */
 export function fileError(code: FileErrorCode, message: string): FileError {
-    const error = new Error(`[Sandbox] ${message}`) as FileError;
-    error.code = code;
-    return markMinted(error);
+    return mintError(code, `[Sandbox] ${message}`);
 }
 
 // One segment: the RFC 3986 unreserved and sub-delims characters, plus '@'. Nothing that a URL
