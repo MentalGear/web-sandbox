@@ -1986,26 +1986,24 @@ group of its own; `setConfig()` detaches and recreates the sandbox's frames at o
 for a new frame can arrive in that order. `realistic-host.ts` already leaves the harness page for `about:blank` before a
 COOP page for the same class of driver error at navigation; this one is later, at a frame's creation.
 
-**Fixed** by the repo's one patch of its test tooling, `patches/playwright-core@1.58.1.patch` (`patchedDependencies` in
-package.json, applied by `bun install`). The first version (2026-10-25, #85) only made `frameCommittedNewDocumentNavigation`
-return early for an unknown frame: the crash went, but the same case then failed on Firefox in CI (2026-11-06, #87's first
-run) with the view never reachable, because `FFPage` also drops a frame's execution contexts, load and navigation events
-that come before its attach, so the frame had no context a spec could evaluate in. The root cause is the order of the
-driver's events for a new frame, so the patch now holds every frame-keyed event of `FFPage` (navigation started,
-committed, aborted, same-document, load and DOMContentLoaded, execution context created) for a frame not yet attached, at
-most 64 a frame, replays them in order at its attach, and drops them at its detach; `FrameManager`'s early return stays
-as a second line. A frame's attach that comes before its parent's would take the main frame's place in
-`FrameManager.frameAttached`, so the patch holds that attach under the parent's id too, and replays it once the parent
-attaches, with what the frame held. The case still failed in CI with the view absent from the driver's frame tree while
-the sandbox was ready (2026-11-07, #88): the loss is not in the order the Node side handles. `waitInView`
-(test/e2e/strict-view.ts) now lists the page's frames when it fails, and the directive matrix records the driver's frame
-events and the browser's warnings on Firefox (`recordFrameEvents`), so the next failure names the event that lost it. The newest release, 1.64.1, still has the unguarded lookup and the dropping, so an upgrade does not
-remove it ([S88](../../BACKLOG.md#s88) redoes the patch for the version it moves to). `test/unit/playwright-patch.test.ts`
-pins it: events before an attach are held and replayed in order, an attach before its parent's is held and replayed
-with them, a context before an attach is held and not dropped, a known frame's events go through at once and a detach
-drops what was held (all four fail without the holding), an
-unknown frame's commit does not throw, and the patch names the installed version. The case was neither retried nor
-skipped.
+**Root cause, and the fix.** The driver's Node side never received the frame's attach: Juggler, its browser side, lost
+it. Juggler's content process talks to the parent process over a `SimpleChannel` named `process-<pid>`
+(`chrome/juggler/content/content/main.js` in the browser's omni.ja), and a COOP navigation makes a new top-level browsing
+context, so a new channel, in the same content process: the same name, request ids from 1 again. The parent end keeps
+the responses the old channel never acknowledged and, seeing the same name, does not clear them, so each new request
+whose id matches one is answered from that cache and never delivered. In #88's CI runs (2026-11-07) the recorded frame
+events showed exactly that: the view's `Page.frameAttached` and its first execution context were missing, two
+consecutive messages, while every later event of the frame arrived. Playwright 1.64.0 names each channel uniquely
+(`'process-' + pid + '-' + helper.generateId()`); 1.58.1 to 1.63 do not. The e2e runs' global setup,
+`test/e2e/firefox-juggler.ts` (both Playwright configs), applies that line to the installed Firefox's omni.ja before any
+run and re-reads it, and throws on a Juggler that has neither form; `test/unit/firefox-juggler.test.ts` pins the
+rewrite. With the messages delivered, the driver patch that compensated on the Node side (#85 and its two follow-ups:
+an early return in `frameCommittedNewDocumentNavigation`, then `FFPage` holding a frame's events, then its attach, until
+the frame or its parent attached) had nothing left to do and was removed, with `patchedDependencies`; so was
+`realistic-host.ts`'s detour through `about:blank` before a COOP page, which had lowered the odds of the same loss.
+On Firefox the directive matrix records the driver's frame events (`recordFrameEvents`), and `waitInView` lists the
+page's frames and those events when it fails (test/e2e/strict-view.ts). [S88](../../BACKLOG.md#s88)'s upgrade brings the
+fix from upstream and removes the setup. The case was neither retried nor skipped.
 
 ### <a id="t6"></a>T6 · Two CPU-heavy unit tests failed once on a loaded machine — ✅ **done**
 

@@ -181,9 +181,6 @@ export class RealisticHost {
         if (options.cookies === false) query.set('cookies', '0');
         if (options.serviceWorker === false) query.set('sw', '0');
         if (options.guestCode !== 'execute' && options.ttDefault !== false) query.set('tt-default', '1');
-        // (a page with a Cross-Origin-Opener-Policy is a new browsing context group; going there straight from the harness page
-        // makes Playwright's Firefox throw on a frame it lost, so the old page is left first)
-        await page.goto('about:blank');
         await page.goto(`${HOST_BASE}/page?${query}`);
         await page.waitForFunction(() => (window as any).harnessReady === true);
         // the element's first build (no script to run) has finished: its 'ready' is not a later build's (a host policy can end it

@@ -29,7 +29,7 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S84](#s84) | ⏳ open (P2 · S) · medium | The strict view's `VIEW_LISTEN` has no flow control: an `on()`/`off()` loop is uncounted (S74 board BD4:LIM-3; availability only) |
 | [S85](#s85) | ⏳ open (P3 · S) · low | The strict view's input outbox scans every slot on each event (S74 board BD4:LIM-5; availability only) |
 | [S87](#s87) | ⏳ open (P3 · S) · low | A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time (S74 board BD5:LIM-3; availability only) |
-| [S88](#s88) | ⏳ open (P2 · S) · low (test tooling) | Upgrade Playwright for Ubuntu 26.04 runners, redo the S86 driver patch, then unpin CI from `ubuntu-24.04` |
+| [S88](#s88) | ⏳ open (P2 · S) · low (test tooling) | Upgrade Playwright (1.64.0 or later) for Ubuntu 26.04 runners, drop the S86 Juggler setup, then unpin CI from `ubuntu-24.04` |
 | [D1](#bl-d1) | 🟡 ready except the licence | An installable package; waits for H5's `LICENSE` |
 | [H5](#bl-h5) | 🟡 partly done | Missing repo basics: the `LICENSE` is the owner's choice |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
@@ -722,12 +722,10 @@ with the write rate; state the cost in the docs of `fileswritten`. Unit test: wi
 ran. A fixed image is what every green run used; the move to a newer one is a step of its own, with the Playwright upgrade it
 needs.
 
-**Do.** Upgrade `@playwright/test` and `playwright` to a release that installs on Ubuntu 26.04. Redo the S86 driver patch
-for the new version: `patches/playwright-core@1.58.1.patch` names the version it patches, and `test/unit/playwright-patch.test.ts`
-fails when an upgrade drops it. Playwright 1.64.1 still has the unguarded lookup in
-`FrameManager.frameCommittedNewDocumentNavigation` and in `FrameManager.frameAttached` (an unknown parent makes the main
-frame), and `FFPage` still drops a frame's events that come before its attach, so every part of the patch is needed again (rename it, rebase its hunks, update the `patchedDependencies` entry in
-`package.json`). Then run the three engines in full, and unpin the workflows from
+**Do.** Upgrade `@playwright/test` and `playwright` to a release that installs on Ubuntu 26.04, 1.64.0 or later: from
+1.64.0 Firefox's Juggler names each content channel uniquely ([S86](archive/backlog/BACKLOG-done.md#s86)), so the e2e
+global setup `test/e2e/firefox-juggler.ts` finds the fixed line and does nothing; remove it, its unit test and the
+`globalSetup` entries of both Playwright configs. Then run the three engines in full, and unpin the workflows from
 `ubuntu-24.04`. Check that the e2e suite's engine-specific expectations (the ledger rows measured on Chromium 145, Firefox
 146 and WebKit 26) still hold on the new browsers, and re-measure the ones that do not.
 

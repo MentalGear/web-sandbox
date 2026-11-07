@@ -18,6 +18,8 @@ export default defineConfig({
     testDir: ".",
     testMatch: ["test/e2e/**/*.spec.ts", "docs/research/**/*.spec.ts"],
     testIgnore: ["**/node_modules/**", NESTED],
+    // the installed Firefox's Juggler gets a channel name per channel before any run (S86)
+    globalSetup: "./test/e2e/firefox-juggler.ts",
     timeout: 30000,
     // in CI a suite that has not finished in 40 minutes stops and names the tests still running (a whole run takes ~25)
     globalTimeout: process.env.CI ? 40 * 60_000 : 0,
