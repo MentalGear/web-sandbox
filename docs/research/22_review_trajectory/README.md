@@ -16,7 +16,7 @@ board's rule and its passes are backlog [S74](../../BACKLOG.md#s74); the reports
   [research 24](../24_sealed_mode/README.md)): the BD5 value counts the data findings that reach sealed mode, with its own
   opt-ins, and a finding that reaches only strict's network opt-ins is not counted. The two populations are not the same
   (sealed has no network and a recipe of its own), so the BD5 value does not continue the strict series.
-- The board passes (BD1 to BD6) had verifiers and added a docs reviewer, a test reviewer and a newcomer, so their low
+- The board passes (BD1 to BD7) had verifiers and added a docs reviewer, a test reviewer and a newcomer, so their low
   counts are higher and not comparable with R1 to R5. AR and BR used split ratings; the first-listed half is counted.
 
 ## The rounds
@@ -38,6 +38,7 @@ board's rule and its passes are backlog [S74](../../BACKLOG.md#s74); the reports
 | BD4, board pass 4 | 2026-10-24 | `46eb358` | 6 + 5 verifiers | 3 | 7 | 14 | 5 | 3 | 16 | 5 (strict) |
 | BD5, board pass 5 | 2026-10-25 | `7f227db` | 6 + 3 verifiers | 1 | 7 | 16 | 10 | 1 | 13 | 10 (sealed) |
 | BD6, board pass 6 | 2026-11-07 | `c404689` | 6 + 3 verifiers | 2 | 0 | 11 | 5 | 0 | 8 | 5 (sealed) |
+| BD7, board pass 7 | 2026-11-07 | `fbc2587` | 6 + 2 verifiers | 3 | 2 | 11 | 3 | 2 | 11 | 3 (sealed) |
 
 There was no critical finding in any round.
 
@@ -61,12 +62,19 @@ CHL-4, DOC-3, DOC-4, TST-1, NEW-1, NEW-2) have no data effect. The BD6 row has i
 DOC-2) taken out: 15 findings as filed, 13 after the verdicts. BD6 is on the same sealed basis as BD5, so the two bars
 compare.
 
+*Reaching the scope* for BD7 counts the three confirmed data findings that reach sealed mode, all verified: LIM-1, ISO-1
+and CHL-2. None needs `origins` or `fetchBridge`. The two availability findings (LIM-2, LIM-3) and the eleven findings
+with no data effect (ISO-2 with CHL-1, ISO-3, LIM-4, LIM-5, DOC-1 to DOC-3, TST-1, TST-2, NEW-1, NEW-2) are not counted.
+The BD7 row has its merge (CHL-1 into ISO-2) taken out: 17 findings as filed, 16 after the verdicts, with the verdicts'
+ratings (ISO-1 raised from medium to high, CHL-2 from low to medium). BD7 is on the same sealed basis as BD5 and BD6, so
+the three bars compare.
+
 ```mermaid
 xychart-beta
     title "Data findings reaching the board's scope, per round (strict up to BD4, sealed from BD5)"
-    x-axis [R1, R2, R3, R4, R5, BD1, BD2, BD3, BD4, BD5, BD6]
+    x-axis [R1, R2, R3, R4, R5, BD1, BD2, BD3, BD4, BD5, BD6, BD7]
     y-axis "findings" 0 --> 11
-    bar [0, 0, 0, 0, 0, 2, 3, 4, 5, 10, 5]
+    bar [0, 0, 0, 0, 0, 2, 3, 4, 5, 10, 5, 3]
 ```
 
 ## What the curve says
@@ -172,6 +180,52 @@ that was not (a refused `XMLHttpRequest` that a throwing `open()` left sendable,
 endpoint; closed in the request gate). Deconstructed to the root, neither needed the owner: the first is one surface for
 every engine and host page, the second a state the gate cannot reach.
 
+**Pass 7: the count fell again, and the findings sit at the edges of the enumeration.** On the same sealed basis the count
+went from 5 to 3. The enumeration of pass 6 did what it was built for: the ISO reviewer's re-read of the worker's allowlist,
+the code-from-string refusal and the request gate found nothing, and no reviewer forged a frame or reached the network from
+a newcomer's app. The three data findings are where the enumeration's domain ended:
+
+| Finding | Code | Added | What that code did |
+| :--- | :--- | :--- | :--- |
+| BD7:LIM-1 | `src/host.ts`, `_warnAboutStrictHtml` and `parseInert` | the strict-mode warning | Parsed the app's config `html` with the host realm's `DOMParser`, so the browser checked the guest's styles and `<base>` against the host page's own policy and reported them. The enumeration listed what a guest can reach in its own realms (the worker, the view), and the host realm, where the library handles guest content, was not a reach path. |
+| BD7:ISO-1 | `src/lib/css-references.ts`, `isNetwork` | the CSS scanner; its claim made false by #93 | Kept every URL in guest CSS that was not a server URL: a list of bad schemes next to markup's list of allowed URLs. The browser checks every URL it loads, so a `data:`, custom or unminted `blob:` URL was reported to the host's endpoint, with a scheme the guest chose. #93 changed the `cspReporting` cells for styles from `remains` to `neutralised`, which this finding falsifies. |
+| BD7:CHL-2 | `src/lib/rpc.ts`, `handlerErrorText`, and the library's errors | #89 | The fixed-text rule of BD6:LIM-1 held for the refusals it listed; the library's other errors were plain `Error`s whose messages interpolate the caller's path, a method name or another app's text, and `handlerErrorText` forwarded them. |
+
+LIM-2 (the entry scan is quadratic), LIM-4 and LIM-5 sit in code that the pass-6 fixes added or changed (#90 and #93).
+So the evaluation rule triggered in its second form for CHL-2 and for those three, and not in its first: the count fell for
+the second time in a row (10, 5, 3).
+
+**The drift check, after pass 7.** The signs the project's rule names are a fix that moves a symptom, a follow-up to a
+follow-up, and the same class coming back. Read against the record:
+- **The architecture has held since sealed mode.** No fix has been reverted; the channel layer held three passes in a row
+  (BD5 to BD7), the worker's surface held, and the pass-7 findings are in the host realm, the view's URL rule and the
+  library's own error texts, not in the sealed construction (a worker and an inert view with no network).
+- **The code grew.** `src/` went from 16.7k lines at pass 1 to 23.0k at pass 7 (+38%), and the largest growth is in fix
+  pull requests: #92 added 893 lines, #90 384 and #93 311. Each fix by construction adds the construction (a table, a
+  scan, a registry) and its tests, and a pass then finds the next edge of the construction.
+- **Class A came back a fifth pass** (passes 3 to 7), at a new boundary each time: the host page's site and policy (passes 3
+  and 4), permission state (pass 5), the policy text and reporting endpoints reached from the worker (pass 6), and in pass 7
+  the host realm's own handling of guest content and a deny-list of schemes in CSS. Each time the fix closed the channel
+  and the next pass found a neighbour. That is the pattern the rule names, and the response to it is the one of pass 6: a
+  list of allowed cases and a test that enumerates the domain. Pass 7 shows that the domain was drawn too narrowly (two
+  realms, and not the third; one URL rule in markup, and not in CSS), and the fixes redraw it: a registry of the host's passes
+  over guest content, and one keep-predicate for every URL.
+
+**The plan before pass 8: a subtraction pass.** The coordinator's plan is to remove before the board looks again: delete
+what the pass-6 and pass-7 fixes made redundant (a scan or a rule that a construction now covers), and set each remaining
+list of bad cases against the allowed-list construction that replaced it, so that the code the fixes grew by 38% is
+smaller where it can be. Pass 8 then reviews sealed mode again on the result.
+
+**The open question for the owner (D6).**
+<!-- owner-question:begin -->
+The question pending the owner's answer: keep D6 (the served-document mode of [research 20](../20_served_document_mode/README.md)
+shelved, [research 24](../24_sealed_mode/README.md)) with a trigger, so that if pass 8 finds another class-A data finding
+through the inherited policy, sealed mode switches to served documents, or switch now. The served-document mode removes the
+inherited policy by construction (its documents are served by the embedder with their own headers and start a policy container of
+their own, and the guests' `srcdoc` frames inherit that one), at the cost the research measures: the embedder serves one
+static file. Pending the owner's answer: no decision has been taken, and pass 8 reviews sealed mode as it is.
+<!-- owner-question:end -->
+
 ## What capability it has cost
 
 52 capabilities were removed or restricted because of a finding ([the table](clipped-capabilities.md)). What a UI author
@@ -212,3 +266,4 @@ patching it.
 | BD6, class A (2026-11-07) | both highs (BD6:ISO-1, BD6:ISO-2) reach sealed mode and are class A | the first form for class A: its data findings did not fall across passes 4, 5 and 6, each through a new channel; the drift check named it | Class A is closed by enumeration instead of by rows (above, and [research 18](../18_finding_classes/README.md#class-a-closed-by-enumeration)): every name a sealed guest can reach is classified against every inherited row (`SEALED_REACH`), with a unit test that fails on an unclassified name or row and an e2e sweep of every member on three engines. It found the `secureContext` row (closed by construction: the strict and sealed worker keeps nothing only a secure context has and reads `isSecureContext` as false, the same surface on every engine and host page) and a request-gate state that let a refused `XMLHttpRequest` reach the platform (fixed by construction). Pass 7 reviews sealed mode with the table in place. |
 | BD5 (2026-10-25) | 10 reach sealed, the new scope (8 verified); not comparable with the strict series | the second form: most findings (NEW-1, DOC-3 with CHL-1, CHL-2, DOC-5, DOC-6, DOC-7) sit in the recipe and example that #84 added to the previous round; the count did not fall | Sealed mode's isolation held: no network on any engine under mutation testing and 172 extra constructs, no forged frame, and one host-state read (BD5:ISO-1, WebKit permissions). The class moved from "the library predicts host-page state" to "the host to app API hands over more than intended". By construction where the library can (#86: a view crosses with its own bytes, only the embedder's words from a failed host method, `unexpose()`; #87: no `permissions` or `storage` in the worker, strict-mode generated sources, no echo in reasons), and in the docs where only the embedder can (the pass-5 docs and test batch). Pass 6 reviews sealed mode again. |
 | BD6 (2026-11-07) | 5 reach sealed (down from 10 on the same basis: it fell); all 5 verified | the second form, for 3 of the 5: LIM-2 and CHL-3 sit in the recipe that #88 rewrote, and LIM-1 in an incomplete part of #86's error-text rule. The count fell, so the first condition does not hold. ISO-1 and ISO-2 are a new channel and not fix-induced | No owner decision. By construction: the worker never reaches a refusing check of the host page's policy and the view's guest styles go through the CSSOM (class A: `cspPolicyText`, `cspReporting`; #90 and the CSSOM fix); the library's own refusals carry fixed texts (#89); an element is one app's for its life, and the recipe makes one for each mount (this pull request). The served-document mode is not taken up: it was the ISO reviewer's only full construction for ISO-2, and the worker's removal of every refusing check reaches the same result without it. Pass 7 reviews sealed mode again. |
+| BD7 (2026-11-07) | 3 reach sealed (down from 5 on the same basis: it fell, a second time); all 3 verified | the second form, for CHL-2 (the fix of #89 left the library's other errors forwarding their messages) and for LIM-2, LIM-4 and LIM-5 (the code of #90 and #93). The count fell, so the first condition does not hold | No owner decision for the findings. By construction: no HTML parser in the host realm on a strict or sealed build, one registry of the host's passes over guest content (each pure and linear, with a scaling test), every standalone `import` token refused and `html` capped (the host-realm passes fix); a library error crosses as its code's fixed text from one table, made by one factory (the crossing-texts fix); one keep-predicate for URLs in markup and CSS, minted URLs and fragments only, with `disablepictureinpicture` and `disableremoteplayback` forced (the URL-rule fix); and the docs fix. A subtraction pass comes before pass 8, which reviews sealed mode again. **Open: whether to keep D6 (the served-document mode shelved) with a trigger or switch now, pending the owner's answer (above).** |
