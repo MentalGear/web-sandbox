@@ -1,0 +1,155 @@
+{
+  "steps": {
+    "attr-parse": {
+      "applied": null,
+      "heard": []
+    },
+    "attr-insert": {
+      "applied": false,
+      "heard": [
+        "style-src-attr inline --k:attr-parse;color:rgb(1, 2, 3)"
+      ]
+    },
+    "attr-set": {
+      "applied": false,
+      "heard": [
+        "style-src-attr inline --k:attr-set;color:rgb(1, 2, 3)"
+      ]
+    },
+    "elem-parse": {
+      "applied": null,
+      "heard": []
+    },
+    "elem-insert": {
+      "applied": false,
+      "heard": [
+        "style-src-elem inline /*elem-parse*/.elem-parse{color:rgb(1, 2…"
+      ]
+    },
+    "elem-text": {
+      "applied": false,
+      "heard": [
+        "style-src-elem inline /*elem-text*/.elem-text{color:rgb(1, 2, …"
+      ]
+    },
+    "svg-insert": {
+      "applied": false,
+      "heard": [
+        "style-src-elem inline /*svg-insert*/.svg-insert{color:rgb(1, 2…"
+      ]
+    },
+    "empty-style": {
+      "applied": null,
+      "heard": [
+        "style-src-elem inline "
+      ]
+    },
+    "csstext": {
+      "applied": true,
+      "heard": []
+    },
+    "csstext-restore": {
+      "applied": true,
+      "heard": []
+    },
+    "setproperty": {
+      "applied": true,
+      "heard": []
+    },
+    "csstext-svg": {
+      "applied": true,
+      "heard": []
+    },
+    "csstext-in-template": {
+      "applied": true,
+      "heard": []
+    },
+    "data-attr-parse-insert": {
+      "applied": true,
+      "heard": []
+    },
+    "sheet": {
+      "applied": true,
+      "heard": []
+    },
+    "sheet-media": {
+      "applied": true,
+      "heard": []
+    },
+    "sheet-replace": {
+      "applied": true,
+      "heard": []
+    },
+    "sheet-insert-rule": {
+      "applied": true,
+      "heard": []
+    },
+    "sheet-media-text": {
+      "applied": true,
+      "heard": []
+    },
+    "renamed": {
+      "applied": false,
+      "heard": []
+    },
+    "noframes-text": {
+      "applied": null,
+      "heard": []
+    },
+    "parse-domparser": {
+      "applied": null,
+      "heard": []
+    },
+    "parse-implementation": {
+      "applied": null,
+      "heard": []
+    },
+    "parse-unsafe": {
+      "applied": null,
+      "heard": []
+    },
+    "parse-renamed": {
+      "applied": false,
+      "heard": []
+    },
+    "style-type": {
+      "applied": false,
+      "heard": []
+    },
+    "style-type-parsed": {
+      "applied": null,
+      "heard": []
+    },
+    "style-type-svg": {
+      "applied": null,
+      "heard": []
+    }
+  },
+  "reports": [
+    {
+      "step": "attr-parse",
+      "directive": "style-src-attr"
+    },
+    {
+      "step": "attr-set",
+      "directive": "style-src-attr"
+    },
+    {
+      "step": "elem-parse",
+      "directive": "style-src-elem"
+    },
+    {
+      "step": "elem-text",
+      "directive": "style-src-elem"
+    },
+    {
+      "step": "svg-insert",
+      "directive": "style-src-elem"
+    },
+    {
+      "step": "(no sample; style-src-elem)",
+      "directive": "style-src-elem"
+    }
+  ],
+  "hostViolations": []
+}
