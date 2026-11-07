@@ -566,8 +566,8 @@ export const RENDER_ATTRIBUTES = {
         area: ['href', 'rel', 'referrerpolicy', 'alt', 'shape', 'coords'],
         img: ['src', 'srcset', 'sizes', 'alt', 'width', 'height', 'loading', 'decoding', 'fetchpriority', 'usemap', 'ismap', 'referrerpolicy'],
         source: ['src', 'srcset', 'sizes', 'media', 'type', 'width', 'height'],
-        video: ['src', 'poster', 'controls', 'autoplay', 'loop', 'muted', 'playsinline', 'preload', 'width', 'height', 'controlslist', 'disablepictureinpicture', 'disableremoteplayback'],
-        audio: ['src', 'controls', 'autoplay', 'loop', 'muted', 'preload', 'controlslist', 'disableremoteplayback'],
+        video: ['src', 'poster', 'controls', 'autoplay', 'loop', 'muted', 'playsinline', 'preload', 'width', 'height', 'controlslist'],
+        audio: ['src', 'controls', 'autoplay', 'loop', 'muted', 'preload', 'controlslist'],
         track: ['src', 'kind', 'srclang', 'label', 'default'],
         map: ['name'],
         link: ['rel', 'href', 'type', 'media', 'sizes', 'referrerpolicy'],
@@ -630,8 +630,12 @@ export const RENDER_URL_ATTRIBUTES = [
 ] as const;
 
 /**
- * The elements the renderer gives `crossorigin="anonymous"`, every one it keeps, whatever the guest wrote there (S74,
- * BD2:ISO-2, docs/research/21_crossorigin_loads/README.md; class A, a browser choice taken by construction): the engine attaches no cookie of any SameSite kind,
+ * The attributes the renderer sets on every kept HTML element of a name, whatever the guest wrote there (the guest's own
+ * are on no allowlist), in the inert template before the element is first connected (class A, a browser choice taken by
+ * construction): [element, attribute, value], one table that one statement applies (sanitizeRender).
+ *
+ * `crossorigin="anonymous"` on every `img`, `video`, `audio` and `link` (S74, BD2:ISO-2,
+ * docs/research/21_crossorigin_loads/README.md; RENDER_CROSSORIGIN_ELEMENTS): the engine attaches no cookie of any SameSite kind,
  * no HTTP authentication and no client certificate to a load in CORS `anonymous` mode, on every engine and to every
  * target, where a `no-cors` load would carry the listed origin's own cookies (Firefox, WebKit) and the host site's
  * (WebKit). Each is the element whose own attribute governs what loads for it: an `<img>` its `src`, its `srcset` and
@@ -641,8 +645,25 @@ export const RENDER_URL_ATTRIBUTES = [
  * connected: set on an element in the document after its URL, the engine would already have started a `no-cors` load.
  * A load from a listed origin is a CORS request, so the origin must answer with `Access-Control-Allow-Origin` (`*`,
  * or `null`: the view's origin is opaque); without it the load fails, and the view reports it (inSandboxView).
+ *
+ * `disablepictureinpicture` on every `video`, and `disableremoteplayback` on every `video` and `audio` (BD7:ISO-3): the
+ * user agent offers neither picture-in-picture nor remote playback (casting) for the guest's media, from its controls or
+ * its context menu. The frames delegate no feature (no `allow` attribute), but picture-in-picture's default allowlist is
+ * `*`, so Chromium allows it in the view unless the host page's own Permissions-Policy forbids it: a user could open a
+ * guest's `<video controls>` in an always-on-top window outside the element's box. The guest's media stays in its box.
  */
-export const RENDER_CROSSORIGIN_ELEMENTS = ['img', 'video', 'audio', 'link'] as const;
+export const RENDER_FORCED_ATTRIBUTES = [
+    ['img', 'crossorigin', 'anonymous'],
+    ['video', 'crossorigin', 'anonymous'],
+    ['audio', 'crossorigin', 'anonymous'],
+    ['link', 'crossorigin', 'anonymous'],
+    ['video', 'disablepictureinpicture', ''],
+    ['video', 'disableremoteplayback', ''],
+    ['audio', 'disableremoteplayback', ''],
+] as const;
+
+/** The elements the renderer always gives `crossorigin="anonymous"`: the crossorigin rows of RENDER_FORCED_ATTRIBUTES. */
+export const RENDER_CROSSORIGIN_ELEMENTS: readonly string[] = RENDER_FORCED_ATTRIBUTES.filter(([, attribute]) => attribute === 'crossorigin').map(([element]) => element);
 
 /**
  * The [element, attribute] pairs of RENDER_URL_ATTRIBUTES whose http(s) URL the renderer drops, reported like a URL the
@@ -684,8 +705,8 @@ export interface RenderRules {
     attributes: typeof RENDER_ATTRIBUTES;
     /** [element, attribute] pairs that hold a URL the view loads (RENDER_URL_ATTRIBUTES). */
     urls: readonly (readonly [string, string])[];
-    /** The HTML elements that always get crossorigin="anonymous" (RENDER_CROSSORIGIN_ELEMENTS). */
-    crossOrigin: readonly string[];
+    /** [element, attribute, value]: what every kept HTML element of that name always gets (RENDER_FORCED_ATTRIBUTES). */
+    forced: readonly (readonly [element: string, attribute: string, value: string])[];
     /** The pairs of `urls` that keep no http(s) URL (RENDER_NETWORK_DROPPED). */
     networkDropped: readonly (readonly [string, string])[];
     /** [element, attribute, kind] triples that may name a registered file (markup-references.ts, minus <script src>). */
@@ -790,7 +811,7 @@ export const RENDER_RULES: RenderRules = {
     removed: RENDER_REMOVED_ELEMENTS,
     attributes: RENDER_ATTRIBUTES,
     urls: RENDER_URL_ATTRIBUTES,
-    crossOrigin: RENDER_CROSSORIGIN_ELEMENTS,
+    forced: RENDER_FORCED_ATTRIBUTES,
     networkDropped: RENDER_NETWORK_DROPPED,
     // derived, not copied: the table markup-references.ts resolves in cooperative mode. Scripts never survive
     // the renderer, so <script src> names nothing here.
@@ -844,8 +865,9 @@ export const RENDER_RULES: RenderRules = {
  *      which no style-src governs;
  *      referrerpolicy becomes no-referrer, and is set on rules.referrerElements; rel on <a>/<area> keeps only
  *      rules.anchorRelations (A1);
- *   8. every kept element of rules.crossOrigin gets crossorigin="anonymous", the guest's own value replaced (S74), so
- *      that it is never connected without it: none of its loads carries credentials (RENDER_CROSSORIGIN_ELEMENTS);
+ *   8. every kept HTML element gets the attributes rules.forced names for it, the guest's own value replaced, so that
+ *      it is never connected without them: crossorigin="anonymous" (S74: none of its loads carries credentials), and on
+ *      media no picture-in-picture or remote playback (BD7:ISO-3) (RENDER_FORCED_ATTRIBUTES);
  *   9. per `switches` (RenderSwitches): autoplay goes; a style attribute's declaration loses its animations and
  *      transitions; <style> and stylesheet links go.
  * The insertions the encoding made (context.markup) are taken out of every text and attribute value before anything
@@ -1300,9 +1322,10 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             if (context.urls > urlRoom) throw new RangeError('VIEW_MAX_URLS');
         }
         if (rules.referrerElements.indexOf(name) >= 0) set(element, 'referrerpolicy', 'no-referrer');
-        // whatever the guest wrote (its own crossorigin is on no allowlist and went above), before the element is connected,
-        // on every kept element of rules.crossOrigin, with no exception: no load of the view carries a credential
-        if (html && rules.crossOrigin.indexOf(name) >= 0) set(element, 'crossorigin', 'anonymous');
+        // whatever the guest wrote (its own are on no allowlist and went above), before the element is connected, on every
+        // kept element the table names, with no exception: no load of the view carries a credential, and the guest's media
+        // stays in its box (no picture-in-picture, no remote playback)
+        for (let f = 0; html && f < rules.forced.length; f++) if (rules.forced[f]![0] === name) set(element, rules.forced[f]![1], rules.forced[f]![2]);
         if ((name === 'a' || name === 'area') && has(element, 'rel')) {
             set(element, 'rel', tokens(get(element, 'rel')).filter((token) => rules.anchorRelations.indexOf(token) >= 0).join(' '));
         }

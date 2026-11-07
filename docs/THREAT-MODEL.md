@@ -178,7 +178,7 @@ so nothing of it depends on the page's URL).
 
 ### What a sealed guest can reach, row by row
 
-<!-- describes: sealed-reach sig:b637 -->
+<!-- describes: sealed-reach sig:bd02 -->
 The table above lists the channels found so far; this one closes the class by enumeration
 ([research 18](research/18_finding_classes/README.md#class-a-closed-by-enumeration)). In sealed mode guest code reaches the
 browser through two allowlists only: the worker's globals (`WORKER_GLOBALS`, with the library's own names `bridge`,
@@ -188,7 +188,10 @@ Every name of those lists is classified against every row above (`SEALED_REACH`,
 cannot make the browser consult the row's inherited state, nor read it, and the cell says why), `neutralised` (a chokepoint
 of the library stands in front of it, named in the cell) or `remains` (one of the row's residuals). Each name has one
 surface, what it can do, and a row's column says what each surface is to it; a prototype member is classified with its
-global, except the members listed on their own (`REACH_MEMBERS`).
+global, except the members listed on their own (`REACH_MEMBERS`). The `permissionsPolicy` column also classifies every
+feature the view's document is allowed (`VIEW_FEATURES`: the features whose default allowlist is `*`, since the frames
+delegate none); only picture-in-picture is reachable from markup, by the user through a video's controls, and the renderer
+gives every video `disablepictureinpicture` and every video and audio `disableremoteplayback` (`RENDER_FORCED_ATTRIBUTES`).
 
 What keeps it closed: `test/unit/sealed-reach.test.ts` fails on a name of either allowlist that has no surface, on a row
 that has no column, on a chokepoint whose declaration or statement the code no longer has, and on a `remains` cell that
@@ -199,35 +202,38 @@ called with a URL, with a string of code and with nothing, on a host page whose 
 a key in its report endpoint's URL, makes no request, raises no violation, sends no report and puts no secret of the policy
 in an error's text; a host page served from a URL that is not potentially trustworthy and one on a loopback host give the
 sealed worker the same globals and members, every member they lead to compared, and an `isSecureContext` that reads
-false on both (`secureContext`); and the view's residuals are what the table says.
+false on both (`secureContext`); and the view's residuals are what the table says. `test/e2e/view-permissions.spec.ts`
+holds the features to Chromium, the one engine that lists them: a feature it allows that the column does not name fails,
+and a guest's `<video controls>` does not enter picture-in-picture with a user's gesture (and does, as the control, once the
+attribute is taken away).
 
 <!-- generated:begin sealed-reach -->
-725 names × 22 rows = 15950 cells.
+722 names × 22 rows = 15884 cells.
 
 | Row | None | Neutralised (by) | Remains (the residual, the surfaces that reach it) |
 | :--- | :--- | :--- | :--- |
-| `cspScript` | 714 | 11: `codeFromStringRefusal`, `entryImportRefusal`, `strictWorkerAllowlist`, `webAssemblyRemoval` | 0 |
-| `cspWorker` | 725 | 0 | 0 |
-| `cspStyle` | 719 | 6: `adoptedSheets`, `cssomDeclaration`, `styleEncoding` | 0 |
-| `cspBaseUri` | 702 | 23: `baseCheck`, `entryImportRefusal`, `inertHref`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
-| `cspFetch` | 686 | 19: `createObjectUrlRemoval`, `entryImportRefusal`, `inertHref`, `linkRelations`, `navigationCancel`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `svgLocalReferences`, `urlKeepRule` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): a registered file's load in the view (a `blob:` URL the view minted) is checked against the page's `img-src`, `font-src`, `media-src` or `style-src`: one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show |
-| `cspPolicyText` | 685 | 40: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssUrlDrop`, `cssomDeclaration`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `styleEncoding`, `urlKeepRule`, `viewPolicy`, `viewViolationRelay`, `violationFieldBlanking`, `violationStop`, `webAssemblyRemoval` | 0 |
-| `cspReporting` | 683 | 22: `codeFromStringRefusal`, `createObjectUrlRemoval`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `svgLocalReferences`, `urlKeepRule`, `webAssemblyRemoval` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice |
-| `trustedTypesRequirement` | 715 | 10: `codeFromStringRefusal`, `strictWorkerAllowlist`, `trustedTypesPolicy` | 0 |
-| `trustedTypesDefault` | 725 | 0 | 0 |
-| `coep` | 712 | 13: `isolationRefusal` | 0 |
-| `referrer` | 692 | 33: `cssUrlDrop`, `entryImportRefusal`, `forcedNoReferrer`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
-| `ancestorOrigins` | 725 | 0 | 0 |
-| `documentOrigin` | 697 | 28: `originCheck` | 0 |
-| `cookies` | 697 | 28: `cssUrlDrop`, `entryImportRefusal`, `forcedCrossorigin`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
-| `serviceWorker` | 707 | 18: `cssUrlDrop`, `entryImportRefusal`, `inertHref`, `originCheck`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
-| `hostRealmGlobals` | 707 | 18: `brokerCapture`, `logRelay` | 0 |
-| `permissionsPolicy` | 712 | 13: `autoplaySwitch`, `isolationRefusal`, `noDelegation`, `viewEventList` | 0 |
-| `permissionState` | 719 | 6: `originCheck`, `secureContextRemoval` | 0 |
-| `secureContext` | 706 | 19: `secureContextRemoval` | 0 |
-| `uiSurfaces` | 711 | 14: `inertHref`, `navigationCancel`, `viewFocusRule` | 0 |
-| `eventDispatch` | 710 | 15: `teardownDetach` | 0 |
-| `thread` | 260 | 0 | 465: `viewRendering` (from `autoplay`, `disclosure`, `focusAttribute`, `form`, `hyperlink`, `linkHref`, `linkRelation`, `loadKind`, `loader`, `markup`, `mediaControls`, `presentation`, `referrerPolicyAttribute`, `styleAttribute`, `styleElement`, `svgReference`, `urlAttribute`, `viewApi`): what the guest renders and sets is applied in the view, on the host page's thread on Firefox, WebKit, Android WebView and Chromium's headless shell: an availability cost, bounded by the view's budgets and the repeated-overrun rule (docs/API.md, the view's cost to the host page) |
+| `cspScript` | 711 | 11: `codeFromStringRefusal`, `entryImportRefusal`, `strictWorkerAllowlist`, `webAssemblyRemoval` | 0 |
+| `cspWorker` | 722 | 0 | 0 |
+| `cspStyle` | 716 | 6: `adoptedSheets`, `cssomDeclaration`, `styleEncoding` | 0 |
+| `cspBaseUri` | 699 | 23: `baseCheck`, `entryImportRefusal`, `inertHref`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
+| `cspFetch` | 683 | 19: `createObjectUrlRemoval`, `entryImportRefusal`, `inertHref`, `linkRelations`, `navigationCancel`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `svgLocalReferences`, `urlKeepRule` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): a registered file's load in the view (a `blob:` URL the view minted) is checked against the page's `img-src`, `font-src`, `media-src` or `style-src`: one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show |
+| `cspPolicyText` | 682 | 40: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssUrlDrop`, `cssomDeclaration`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `styleEncoding`, `urlKeepRule`, `viewPolicy`, `viewViolationRelay`, `violationFieldBlanking`, `violationStop`, `webAssemblyRemoval` | 0 |
+| `cspReporting` | 680 | 22: `codeFromStringRefusal`, `createObjectUrlRemoval`, `entryImportRefusal`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `svgLocalReferences`, `urlKeepRule`, `webAssemblyRemoval` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice |
+| `trustedTypesRequirement` | 712 | 10: `codeFromStringRefusal`, `strictWorkerAllowlist`, `trustedTypesPolicy` | 0 |
+| `trustedTypesDefault` | 722 | 0 | 0 |
+| `coep` | 709 | 13: `isolationRefusal` | 0 |
+| `referrer` | 689 | 33: `cssUrlDrop`, `entryImportRefusal`, `forcedNoReferrer`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
+| `ancestorOrigins` | 722 | 0 | 0 |
+| `documentOrigin` | 694 | 28: `originCheck` | 0 |
+| `cookies` | 694 | 28: `cssUrlDrop`, `entryImportRefusal`, `forcedCrossorigin`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
+| `serviceWorker` | 704 | 18: `cssUrlDrop`, `entryImportRefusal`, `inertHref`, `originCheck`, `rendererUrlDrop`, `requestGate`, `sealedFetchRefusal`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
+| `hostRealmGlobals` | 704 | 18: `brokerCapture`, `logRelay` | 0 |
+| `permissionsPolicy` | 712 | 10: `autoplaySwitch`, `forcedMediaControls`, `isolationRefusal`, `noDelegation`, `viewEventList` | 0 |
+| `permissionState` | 716 | 6: `originCheck`, `secureContextRemoval` | 0 |
+| `secureContext` | 703 | 19: `secureContextRemoval` | 0 |
+| `uiSurfaces` | 708 | 14: `inertHref`, `navigationCancel`, `viewFocusRule` | 0 |
+| `eventDispatch` | 707 | 15: `teardownDetach` | 0 |
+| `thread` | 260 | 0 | 462: `viewRendering` (from `autoplay`, `disclosure`, `focusAttribute`, `form`, `hyperlink`, `linkHref`, `linkRelation`, `loadKind`, `loader`, `markup`, `mediaControls`, `presentation`, `referrerPolicyAttribute`, `styleAttribute`, `styleElement`, `svgReference`, `urlAttribute`, `viewApi`): what the guest renders and sets is applied in the view, on the host page's thread on Firefox, WebKit, Android WebView and Chromium's headless shell: an availability cost, bounded by the view's budgets and the repeated-overrun rule (docs/API.md, the view's cost to the host page) |
 <!-- generated:end -->
 
 The chokepoints the cells name, each a declaration or a statement of the code:
@@ -261,6 +267,7 @@ The chokepoints the cells name, each a declaration or a statement of the code:
 | `navigationCancel` | the view cancels every click and auxclick on a link and every submit: no navigation from rendered markup | `src/lib/in-sandbox-view.ts` |
 | `forcedNoReferrer` | the renderer gives every `a`, `area`, `img` and `link` `referrerpolicy="no-referrer"`, whatever the guest wrote | `src/lib/in-sandbox-view.ts` |
 | `forcedCrossorigin` | the renderer gives every `img`, `video`, `audio` and `link` `crossorigin="anonymous"` before it is connected: no load carries credentials | `src/lib/in-sandbox-view.ts` |
+| `forcedMediaControls` | the renderer gives every `video` `disablepictureinpicture` and every `video` and `audio` `disableremoteplayback`, whatever the guest wrote, before it is connected: the user agent offers no picture-in-picture and no remote playback for the guest's media (BD7:ISO-3) | `src/lib/in-sandbox-view.ts` |
 | `autoplaySwitch` | the `autoplay` attribute goes unless `allowAutoplay` | `src/lib/in-sandbox-view.ts` |
 | `noDelegation` | strict and sealed mode's frames carry no `allow` attribute: no feature is delegated, so a host Permissions-Policy only narrows what no frame has | `src/host.ts` |
 | `viewEventList` | the view forwards only the event types of VIEW_EVENT_TYPES, none of them a media event | `src/lib/in-sandbox-view.ts` |
@@ -529,6 +536,7 @@ the test tooling. Each branch of a spec on the engine cites its row (`// ledger:
 | <a id="engine-focus-during-removal"></a>`focus-during-removal` | The host window's `focus` event while a frame is being removed | Not fired inside the removal | Fired inside the removal: the teardown is re-entered | Not fired inside the removal | Event timing of the engine. Teardown is re-entrancy-safe either way (the spec asserts the nested build stood) | [teardown-reentry.spec.ts](../test/e2e/teardown-reentry.spec.ts) |
 | <a id="engine-structured-stack-traces"></a>`structured-stack-traces` | Whether the engine consults `Error.prepareStackTrace`, a global guest code sets, and hands it `CallSite`s whose `getFunction()` is a function on the stack | Consults it (V8): a `CallSite` gives every sloppy-mode function on the stack, and none of a strict-mode frame or below it | Does not consult it: `new Error().stack` stays a string | Does not consult it: `new Error().stack` stays a string | The engine's API. Every source the library generates for a sandbox realm is strict-mode code (`STRICT_DIRECTIVE`, BD5:CHL-3), so on V8 too guest code finds only its own functions there | [strict.spec.ts](../test/e2e/strict.spec.ts) |
 | <a id="engine-view-frame-access"></a>`view-frame-access` | How the suite reads the strict view's frames (the suite, not the library) | Through the DevTools protocol: the view may be out of process, which Playwright links unreliably; the accessibility role is checked from HTML-AAM facts | Playwright's frame API and `getByRole` | Playwright's frame API and `getByRole` | A tooling limit. The observable behaviour asserted is the same on all three | [strict-view.ts](../test/e2e/strict-view.ts), [inert-files-and-smil.spec.ts](../test/e2e/inert-files-and-smil.spec.ts), [strict-entry-scope-and-links.spec.ts](../test/e2e/strict-entry-scope-and-links.spec.ts), [worker-port-and-view-cost.spec.ts](../test/e2e/worker-port-and-view-cost.spec.ts) |
+| <a id="engine-view-allowed-features"></a>`view-allowed-features` | Which permissions-policy features the strict view's document allows, as a list a test can read, and a user's gesture for picture-in-picture | Lists them (`document.featurePolicy.allowedFeatures()`): the features whose default allowlist is `*`, picture-in-picture among them; the DevTools protocol gives an evaluation a user's gesture | Exposes no list (`document.featurePolicy` is absent) | Exposes no list (`document.featurePolicy` is absent) | The platform's. The one feature a sealed guest's markup reaches, picture-in-picture, is taken away on every engine by construction (RENDER_FORCED_ATTRIBUTES), which the spec checks on all three; the list is classified where an engine exposes it (SEALED_REACH, VIEW_FEATURES) | [view-permissions.spec.ts](../test/e2e/view-permissions.spec.ts) |
 | <a id="engine-service-worker-control"></a>`service-worker-control` | Whether the suite's Service Worker controls the harness page (the suite, not the library) | Controls it | Playwright's Firefox: it never controls the harness, so the positive control shows nothing | Controls it | A tooling limit; the spec records it as an annotation where it applies | [fetch-bridge-isolation.spec.ts](../test/e2e/fetch-bridge-isolation.spec.ts) |
 <!-- generated:end -->
 

@@ -220,7 +220,7 @@ describe('no exception to the forced crossorigin: whatever the view is given as 
     });
 
     it('positive control: the same check finds the exceptions a renderer without the rule would leave', () => {
-        const { fragment } = renderWith({ ...RENDER_RULES, crossOrigin: [], networkDropped: [] });
+        const { fragment } = renderWith({ ...RENDER_RULES, forced: [], networkDropped: [] });
         expect(exceptions(fragment)).toEqual([
             'img without the attribute', 'img without the attribute', 'img without the attribute', 'img without the attribute',
             'audio without the attribute', 'video without the attribute', 'poster https://other.example/p.png',

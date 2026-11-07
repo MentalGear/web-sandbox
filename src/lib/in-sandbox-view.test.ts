@@ -446,8 +446,8 @@ describe('broad review 2026-10-14: the renderer is an allowlist', () => {
         for (const element of Array.from(fragment.querySelectorAll('*'))) {
             if (!allowedElement(element)) found.push(`seed ${seed}: <${element.localName}> in ${element.namespaceURI}`);
             for (const name of element.getAttributeNames()) {
-                // crossorigin is the renderer's own, on the elements it gives it to (RENDER_CROSSORIGIN_ELEMENTS), with its one value
-                const own = name === 'crossorigin' && (RENDER_RULES.crossOrigin as readonly string[]).includes(element.localName) && element.getAttribute(name) === 'anonymous';
+                // the renderer's own, on the elements it gives them to (RENDER_FORCED_ATTRIBUTES), each with its one value
+                const own = RENDER_RULES.forced.some(([forced, attribute, value]) => forced === element.localName && attribute === name && element.getAttribute(name) === value);
                 if ((!own && !allowedAttribute(element, name)) || name.toLowerCase().startsWith('on')) found.push(`seed ${seed}: ${element.localName}[${name}]`);
                 const value = element.getAttribute(name)!.replace(/[\t\n\r]/g, '').trim().toLowerCase();
                 if (['src', 'srcset', 'href', 'xlink:href', 'poster'].includes(name) && /^(javascript|data|vbscript):/.test(value)) found.push(`seed ${seed}: ${element.localName}[${name}]=${value}`);

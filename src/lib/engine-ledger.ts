@@ -400,6 +400,14 @@ export const ENGINE_DIFFERENCES = {
         why: "A tooling limit. The observable behaviour asserted is the same on all three",
         tests: [`${E2E}strict-view.ts`, `${E2E}inert-files-and-smil.spec.ts`, `${E2E}strict-entry-scope-and-links.spec.ts`, `${E2E}worker-port-and-view-cost.spec.ts`],
     },
+    'view-allowed-features': {
+        what: "Which permissions-policy features the strict view's document allows, as a list a test can read, and a user's gesture for picture-in-picture",
+        chromium: "Lists them (`document.featurePolicy.allowedFeatures()`): the features whose default allowlist is `*`, picture-in-picture among them; the DevTools protocol gives an evaluation a user's gesture",
+        firefox: "Exposes no list (`document.featurePolicy` is absent)",
+        webkit: "Exposes no list (`document.featurePolicy` is absent)",
+        why: "The platform's. The one feature a sealed guest's markup reaches, picture-in-picture, is taken away on every engine by construction (RENDER_FORCED_ATTRIBUTES), which the spec checks on all three; the list is classified where an engine exposes it (SEALED_REACH, VIEW_FEATURES)",
+        tests: [`${E2E}view-permissions.spec.ts`],
+    },
     'service-worker-control': {
         what: "Whether the suite's Service Worker controls the harness page (the suite, not the library)",
         chromium: "Controls it",

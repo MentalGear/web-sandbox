@@ -173,7 +173,12 @@ export const CHOKEPOINTS = {
     forcedCrossorigin: {
         what: 'the renderer gives every `img`, `video`, `audio` and `link` `crossorigin="anonymous"` before it is connected: no load carries credentials',
         file: 'src/lib/in-sandbox-view.ts',
-        token: 'export const RENDER_CROSSORIGIN_ELEMENTS',
+        token: "['img', 'crossorigin', 'anonymous'],",
+    },
+    forcedMediaControls: {
+        what: 'the renderer gives every `video` `disablepictureinpicture` and every `video` and `audio` `disableremoteplayback`, whatever the guest wrote, before it is connected: the user agent offers no picture-in-picture and no remote playback for the guest\'s media (BD7:ISO-3)',
+        file: 'src/lib/in-sandbox-view.ts',
+        token: "['video', 'disablepictureinpicture', ''],",
     },
     autoplaySwitch: {
         what: 'the `autoplay` attribute goes unless `allowAutoplay`',
@@ -475,7 +480,7 @@ export const SURFACES = {
     mediaControls: {
         side: 'view',
         what: "the browser's own media controls (fullscreen, picture-in-picture, remote playback), which the user drives",
-        names: words('html:video@controls html:audio@controls html:video@controlslist html:audio@controlslist html:video@disablepictureinpicture html:video@disableremoteplayback html:audio@disableremoteplayback'),
+        names: words('html:video@controls html:audio@controls html:video@controlslist html:audio@controlslist'),
     },
     svgReference: { side: 'view', what: 'a reference from an SVG shape to a paint server, clip path or mask', names: words('svg:*@fill svg:*@stroke svg:*@clip-path svg:*@mask') },
     focusAttribute: { side: 'view', what: 'make an element focusable', names: words('html:*@tabindex svg:*@tabindex mathml:*@tabindex') },
@@ -550,6 +555,8 @@ const remains = (residuals: readonly string[], why: string): Cell => ({ relation
 export interface Column {
     readonly rest: string;
     readonly cells: Readonly<Record<string, Cell>>;
+    /** `permissionsPolicy` only: every feature the view's document allows, and what it is to a sealed guest (VIEW_FEATURES). */
+    readonly features?: Readonly<Record<string, Cell>>;
 }
 
 // Cells several columns share.
@@ -574,6 +581,43 @@ const STYLE_VIOLATIONS = neutralised(['styleEncoding', 'cssomDeclaration', 'adop
 const NO_NETWORK_IN_CSS = neutralised(['urlKeepRule', 'cssUrlDrop'], "CSS keeps no URL but a registered file's `blob:` URL: no network URL");
 // Every name that would make a request or load by URL, if the library let it: the rows a request reaches share these.
 const REQUEST_MAKERS = { requests: REQUESTS_GATED, fetchBridge: NO_FETCH_BRIDGE, importScripts: NO_IMPORT_SCRIPTS, dynamicImport: IMPORT_REFUSED } as const;
+
+// A feature the view allows that only script of the view's document reaches (an API of `document`, `navigator` or `window`,
+// a fetch() option): the view runs no guest code, and the worker's allowlist has none of it.
+const SCRIPT_ONLY = (what: string) => none(`${what}: only script of the view's document reaches it, and the view runs no guest code (the worker has no such name)`);
+const NO_REQUEST = (what: string) => neutralised(['urlKeepRule', 'requestGate'], `${what}: rides on a network request, which the view never makes (it loads only the \`blob:\` URLs it minted) and the worker's request gate refuses`);
+
+/**
+ * Every feature the view's document allows (Chromium's `document.featurePolicy.allowedFeatures()`: the features whose
+ * default allowlist is `*`, since the frames delegate none; Firefox and WebKit expose no such list), and what each is to a
+ * sealed guest (BD7:ISO-3). test/e2e/view-permissions.spec.ts fails on a feature the engine allows that this does not name,
+ * so a feature an engine adds is classified before it ships. Only picture-in-picture is reachable from markup, by the user
+ * through a video's controls; the renderer turns it off on every video.
+ */
+export const VIEW_FEATURES: Readonly<Record<string, Cell>> = {
+    'picture-in-picture': neutralised(['forcedMediaControls'], "every `<video>` the renderer keeps has `disablepictureinpicture`: its controls and context menu offer no picture-in-picture, and `requestPictureInPicture()` refuses; the host page's own policy decides nothing for it"),
+    'attribution-reporting': SCRIPT_ONLY("the Attribution Reporting API (and the `attributionsrc` attribute, which no allowlist of the renderer has)"),
+    'browsing-topics': SCRIPT_ONLY('the Topics API (`document.browsingTopics()`, and a fetch option)'),
+    'interest-cohort': SCRIPT_ONLY('FLoC (`document.interestCohort()`)'),
+    'join-ad-interest-group': SCRIPT_ONLY('`navigator.joinAdInterestGroup()`'),
+    'run-ad-auction': SCRIPT_ONLY('`navigator.runAdAuction()`'),
+    'private-aggregation': SCRIPT_ONLY('the Private Aggregation API, from shared-storage and auction worklets'),
+    'shared-storage': SCRIPT_ONLY('`window.sharedStorage` and its worklets'),
+    'shared-storage-select-url': SCRIPT_ONLY('`sharedStorage.selectURL()`'),
+    'private-state-token-issuance': SCRIPT_ONLY('a fetch() option of the Private State Token API'),
+    'private-state-token-redemption': SCRIPT_ONLY('a fetch() option of the Private State Token API'),
+    'storage-access': SCRIPT_ONLY('`document.requestStorageAccess()`'),
+    'deferred-fetch-minimal': SCRIPT_ONLY('`fetchLater()`'),
+    'sync-xhr': SCRIPT_ONLY("a document's synchronous `XMLHttpRequest`"),
+    'gamepad': SCRIPT_ONLY('`navigator.getGamepads()` and the gamepad events'),
+    'aria-notify': SCRIPT_ONLY('`ariaNotify()`'),
+    'unload': none("an `unload` handler: the renderer keeps no event handler attribute, and the view runs no guest code"),
+    'ch-ua': NO_REQUEST('a client hint'),
+    'ch-ua-mobile': NO_REQUEST('a client hint'),
+    'ch-ua-platform': NO_REQUEST('a client hint'),
+    'ch-ua-high-entropy-values': NO_REQUEST('a client hint, which also reaches script through `navigator.userAgentData`, which the view runs none of'),
+    'ch-save-data': NO_REQUEST('a client hint'),
+};
 
 /** Every row of INHERITED_CONTEXT, and what each surface of the sealed guest is to it. */
 export const SEALED_REACH = {
@@ -725,10 +769,11 @@ export const SEALED_REACH = {
         rest: 'uses no feature a permissions policy gates',
         cells: {
             autoplay: neutralised(['autoplaySwitch', 'noDelegation', 'viewEventList'], 'dropped by default; with `allowAutoplay` the frame has no `autoplay` delegated, and the guest hears no media event'),
-            mediaControls: neutralised(['noDelegation'], 'fullscreen, picture-in-picture and remote playback are delegated to no frame, so the host page\'s policy decides nothing for them'),
+            mediaControls: neutralised(['forcedMediaControls', 'noDelegation'], "picture-in-picture and remote playback are off on every video and audio the renderer keeps, whatever the host page's policy (picture-in-picture is allowed in every frame by default, so delegating nothing does not turn it off); fullscreen is delegated to no frame"),
             isolation: neutralised(['isolationRefusal'], "`cross-origin-isolated` is the feature behind `crossOriginIsolated`, which no sandbox runs with"),
-            viewApi: neutralised(['autoplaySwitch', 'noDelegation', 'viewEventList'], 'what it renders: its media elements and their controls'),
+            viewApi: neutralised(['autoplaySwitch', 'forcedMediaControls', 'noDelegation', 'viewEventList'], 'what it renders: its media elements and their controls'),
         },
+        features: VIEW_FEATURES,
     },
     permissionState: {
         rest: "reads no browser state keyed to an origin or to the user's profile",

@@ -88,6 +88,17 @@ describe('every row has a column, and every cell is well formed', () => {
         }
     });
 
+    it("the view's features (permissionsPolicy): each says why, and a neutralised one names chokepoints the code has (BD7:ISO-3)", () => {
+        const features = Object.entries(column('permissionsPolicy').features ?? {});
+        expect(features.map(([feature]) => feature)).toContain('picture-in-picture');
+        for (const [feature, cell] of features) {
+            expect(cell.relation, feature).not.toBe('remains');
+            expect(cell.why.length, feature).toBeGreaterThan(20);
+            if (cell.relation === 'neutralised') for (const chokepoint of cell.by) expect(Object.keys(CHOKEPOINTS), feature).toContain(chokepoint);
+        }
+        for (const id of rowIds) if (id !== 'permissionsPolicy') expect(column(id).features, id).toBeUndefined();
+    });
+
     it("a remains cell names residuals of its own row, and every residual is named by a cell and pinned by a test that exists", () => {
         for (const id of rowIds) {
             const residuals = Object.keys(row(id).residuals ?? {});

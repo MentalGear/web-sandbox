@@ -60,8 +60,9 @@ describe('the renderer', () => {
     it('autoplay off: video and audio lose autoplay and keep the rest; on: they keep it', () => {
         const markup = '<video id="v" autoplay muted loop controls></video><audio id="a" autoplay loop></audio>';
         const off = render(markup, { autoplay: false });
-        expect(off.getElementById('v')!.getAttributeNames().sort()).toEqual(['controls', 'crossorigin', 'id', 'loop', 'muted']);
-        expect(off.getElementById('a')!.getAttributeNames().sort()).toEqual(['crossorigin', 'id', 'loop']);
+        // (crossorigin, disablepictureinpicture and disableremoteplayback are the renderer's own: RENDER_FORCED_ATTRIBUTES)
+        expect(off.getElementById('v')!.getAttributeNames().sort()).toEqual(['controls', 'crossorigin', 'disablepictureinpicture', 'disableremoteplayback', 'id', 'loop', 'muted']);
+        expect(off.getElementById('a')!.getAttributeNames().sort()).toEqual(['crossorigin', 'disableremoteplayback', 'id', 'loop']);
         const on = render(markup, { autoplay: true });
         expect(on.getElementById('v')!.hasAttribute('autoplay')).toBe(true);
         expect(on.getElementById('a')!.hasAttribute('autoplay')).toBe(true);
