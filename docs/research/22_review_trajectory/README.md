@@ -202,7 +202,11 @@ follow-up, and the same class coming back. Read against the record:
   library's own error texts, not in the sealed construction (a worker and an inert view with no network).
 - **The code grew.** `src/` went from 16.7k lines at pass 1 to 23.0k at pass 7 (+38%), and the largest growth is in fix
   pull requests: #92 added 893 lines, #90 384 and #93 311. Each fix by construction adds the construction (a table, a
-  scan, a registry) and its tests, and a pass then finds the next edge of the construction.
+  scan, a registry) and its tests, and a pass then finds the next edge of the construction. Of the 23.7k lines at the
+  head of pass 7's fixes, about 2.7k are data registries that only the tests and the docs read (`SEALED_REACH`,
+  `INHERITED_CONTEXT`, `HOST_PASSES`, the engine ledger, the presets, the lifecycle transitions): no module the library
+  runs imports them. They are the enumerated domains the board's rule asks for; the code the library runs is about 21.0k
+  lines.
 - **Class A came back a fifth pass** (passes 3 to 7), at a new boundary each time: the host page's site and policy (passes 3
   and 4), permission state (pass 5), the policy text and reporting endpoints reached from the worker (pass 6), and in pass 7
   the host realm's own handling of guest content and a deny-list of schemes in CSS. Each time the fix closed the channel
@@ -211,10 +215,16 @@ follow-up, and the same class coming back. Read against the record:
   realms, and not the third; one URL rule in markup, and not in CSS), and the fixes redraw it: a registry of the host's passes
   over guest content, and one keep-predicate for every URL.
 
-**The plan before pass 8: a subtraction pass.** The coordinator's plan is to remove before the board looks again: delete
-what the pass-6 and pass-7 fixes made redundant (a scan or a rule that a construction now covers), and set each remaining
-list of bad cases against the allowed-list construction that replaced it, so that the code the fixes grew by 38% is
-smaller where it can be. Pass 8 then reviews sealed mode again on the result.
+**The subtraction pass before pass 8.** The plan was to remove what the pass-6 and pass-7 fixes made redundant before the
+board looks again. The inventory (at the head of pass 7's fixes, the URL-rule fix included) found little to remove. Every
+layer beside a chokepoint is either an independent mechanism kept on purpose (the browser's CSP under the request gate and
+the URL keep-predicate; the view's load budget, which research 18's rule B5 keeps independent of the renderer's model) or a
+small duplicate. The internal removals come to about 190 lines, 58 of them in `src/` (a WebAssembly removal step that the
+worker allowlist already covers, two once-per-element warning sets, a guard the broker's types rule out, an alias of the
+forced-attribute table); the rest are unit tests that are special cases of the URL keep-rule's enumeration. So the growth
+is the constructions and their registries, not layers left behind. The large removals would be public features outside
+the board's scope, cooperative and worker modes (roughly 2k lines, not traced) and strict mode's network options (about
+1.9k), which is a decision for the owner. Pass 8 reviews sealed mode again after the internal removals.
 
 **The open question for the owner (D6).**
 <!-- owner-question:begin -->
