@@ -212,6 +212,7 @@ let frameEvents: string[] | null = null;
  * lists them, so a view missing from the driver's frame tree says which event lost it (S86). Other engines: nothing.
  */
 export function recordFrameEvents(browserName: string): () => void {
+    // ledger: view-frame-access
     if (browserName !== 'firefox') return () => {};
     const previous = debug.disable();
     const previousLog = debug.log;
