@@ -16,7 +16,7 @@ import { clickInSandbox, inView, waitInView } from './strict-view';
  *   3. user -> app -> host: typing and Enter, and a checkbox, reach the host's `save` as validated data, and the app's
  *      image follows its state (a new write the host can list);
  *   4. the stored state loads into the next mount (the host is the app's only storage);
- *   5. another app on the same element (which the recipe no longer does), after `unexpose()` and `unregisterFiles()`, reaches none of the first app's methods
+ *   5. another app on the same element (the library supports it; the recipe does not), after `unexpose()` and `unregisterFiles()`, reaches none of the first app's methods
  *      and files, and cannot tell a removed method from one that never existed;
  *   6. a second, hostile bundle mounted through the same host.js after stop() is handed none of the first app's state or
  *      files, and its save leaves the first app's key alone (the state is keyed by the embedder's app id);
