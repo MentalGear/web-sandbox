@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { cssLoadBound, inSandboxView, isStyleProperty, sanitizeRender, VIEW_OPTIONS, VIEW_URLS_PER_SECOND, viewBudget, viewInputOutbox, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
+import { styleMarkup } from '@src/lib/style-markup';
 import { VIOLATION_DIRECTIVES, violationBucket } from '@src/lib/violation';
 import { scalingRatio, type ScalingSize } from './scaling';
 import { cssReferences, withoutNetworkReferences } from '@src/lib/css-references';
@@ -415,7 +416,7 @@ describe('S73: the view prepays the CSS each operation applies, and a reported l
             return add.call(this, type, listener, options);
         } as typeof window.addEventListener;
         try {
-            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${spy}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()});`)();
+            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${spy}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
         } finally {
             window.addEventListener = add;
         }

@@ -1,8 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { cssLoadBound, inSandboxView, INERT_HREF, isStyleProperty, RENDER_ATTRIBUTES, RENDER_CROSSORIGIN_ELEMENTS, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_OPTIONS, viewBudget, viewInputOutbox, type RenderContext, type RenderSwitches, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
+import { styleMarkup } from '@src/lib/style-markup';
 import { cssReferences, dropNetworkCss, withoutNetworkReferences } from '@src/lib/css-references';
 import { FileStore, viewStylesheets, type FileSnapshotEntry } from '@src/lib/files';
+import { declared, parseAsView } from './view-parse';
 
 /**
  * Strict mode's view makes no load with credentials (S74, BD2:ISO-2, docs/research/21_crossorigin_loads/README.md; class A, a browser choice taken by construction).
@@ -17,12 +19,11 @@ const LISTED = 'https://cdn.example';
 const ORIGINS = { images: [LISTED], media: [LISTED], styles: [LISTED], fonts: [LISTED] };
 
 function render(html: string, target = 'body', files: Record<string, { url: string; type: string }> = {}, origins: Record<string, readonly string[]> = ORIGINS) {
-    const template = document.createElement('template');
-    template.innerHTML = html;
+    const { template, markup } = parseAsView(html);
     const minted = new Set(Object.values(files).map(file => file.url));
-    const context: RenderContext = { target, animating: [], origins, refused: [], urls: 0, loads: [], css: [] };
+    const context: RenderContext = { target, animating: [], origins, refused: [], urls: 0, loads: [], css: [], markup };
     sanitizeRender(template.content, path => files[path] ?? null, url => minted.has(url), dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
-    return { fragment: template.content, refused: context.refused };
+    return { fragment: template.content, refused: context.refused, css: context.css! };
 }
 
 // ---- The enumeration: what loads, by the HTML Standard, and how each load is made without credentials ----------------
@@ -145,9 +146,11 @@ describe('the renderer makes every load it lets through without credentials, by 
 describe('CSS keeps no network URL in the view: style attributes, <style> (HTML and SVG), text() and renders into a style (S74)', () => {
     it('a style attribute: each network url() and image-set() string becomes "", reported with its directive; the rest stays', () => {
         const style = `color: red; background: url(${LISTED}/a.png), image-set("${LISTED}/b.png" 1x, 'r.png' 2x); --u: "${LISTED}/c.png"; list-style: url( HTTPS://x.example/d.png )`;
-        const { fragment, refused } = render(`<p id="p" style="${style.replace(/"/g, '&quot;')}">x</p><p id="q" style="color: blue; background: url(r.png)">y</p>`);
-        expect(fragment.getElementById('p')!.getAttribute('style')).toBe(`color: red; background: url(""), image-set("" 1x, 'r.png' 2x); --u: ""; list-style: url("")`);
-        expect(fragment.getElementById('q')!.getAttribute('style')).toBe('color: blue; background: url(r.png)'); // no network URL: as written
+        const { fragment, refused, css } = render(`<p id="p" style="${style.replace(/"/g, '&quot;')}">x</p><p id="q" style="color: blue; background: url(r.png)">y</p>`);
+        // what each element's declaration is given (RenderContext.css), and what it holds of it
+        expect(css).toEqual([`color: red; background: url(""), image-set("" 1x, 'r.png' 2x); --u: ""; list-style: url("")`, 'color: blue; background: url(r.png)']); // no network URL: as written
+        expect(fragment.getElementById('p')!.getAttribute('style')).toBe(declared(css[0]!));
+        expect(fragment.getElementById('q')!.getAttribute('style')).toBe(declared(css[1]!));
         expect(refused).toEqual([['img-src', `${LISTED}/a.png`], ['img-src', `${LISTED}/b.png`], ['img-src', `${LISTED}/c.png`], ['img-src', 'https://x.example/d.png']]);
     });
 
@@ -188,16 +191,20 @@ describe('no exception to the forced crossorigin: whatever the view is given as 
         + `<picture><source srcset="${OTHER}/p.png"><img src="${OTHER}/d.png"></picture><audio src="${OTHER}/e.mp3" crossorigin></audio>`
         + `<video src="${OTHER}/f.mp4" poster="${OTHER}/p.png"><source src="${OTHER}/s.mp4"><track src="${OTHER}/t.vtt"></video>`
         + `<p style="background: url(${OTHER}/a.png)">x</p><style>@import "${OTHER}/i.css"; @font-face { src: url(${OTHER}/f.woff2) }</style>`;
-    /** The elements of RENDER_CROSSORIGIN_ELEMENTS the fragment holds without crossorigin="anonymous", and any network URL left in CSS or a poster. */
-    const exceptions = (fragment: DocumentFragment) => [
+    /**
+     * The elements of RENDER_CROSSORIGIN_ELEMENTS the fragment holds without crossorigin="anonymous", and any network URL left
+     * in CSS (a style attribute, the text a <style> keeps, a `noframes` in the view: sanitizeRender, or a declaration it was
+     * given, `declarations`) or a poster.
+     */
+    const exceptions = (fragment: DocumentFragment, declarations: readonly string[] = []) => [
         ...[...fragment.querySelectorAll(RENDER_CROSSORIGIN_ELEMENTS.join(','))].filter(element => element.getAttribute('crossorigin') !== 'anonymous').map(element => `${element.localName} without the attribute`),
         ...[...fragment.querySelectorAll('[poster]')].map(element => `poster ${element.getAttribute('poster')}`),
-        ...[...fragment.querySelectorAll('[style], style')].filter(element => /https?:/.test(element.getAttribute('style') ?? element.textContent ?? '')).map(element => `${element.localName} keeps a network URL`),
+        ...[...fragment.querySelectorAll('[style], style, noframes')].filter(element => /https?:/.test(element.getAttribute('style') ?? element.textContent ?? '')).map(element => `${element.localName} keeps a network URL`),
+        ...declarations.filter(text => /https?:/.test(text)).map(() => 'a declaration keeps a network URL'),
     ];
     const renderWith = (rules: typeof RENDER_RULES, target = 'body') => {
-        const template = document.createElement('template');
-        template.innerHTML = MARKUP;
-        const context: RenderContext = { target, animating: [], origins: EVERYTHING, refused: [], urls: 0, loads: [], css: [] };
+        const { template, markup } = parseAsView(MARKUP);
+        const context: RenderContext = { target, animating: [], origins: EVERYTHING, refused: [], urls: 0, loads: [], css: [], markup };
         sanitizeRender(template.content, () => null, () => false, dropNetworkCss, rules, KEEP_ALL, undefined, context);
         return { fragment: template.content, context };
     };
@@ -206,7 +213,8 @@ describe('no exception to the forced crossorigin: whatever the view is given as 
         for (const target of ['body', 'div', 'video', 'picture']) {
             const { fragment, context } = renderWith(RENDER_RULES, target);
             expect(fragment.querySelectorAll(RENDER_CROSSORIGIN_ELEMENTS.join(',')).length, target).toBe(6);
-            expect(exceptions(fragment), target).toEqual([]);
+            expect(fragment.querySelectorAll('noframes').length, target).toBe(1); // the <style>, which the view applies
+            expect(exceptions(fragment, context.css), target).toEqual([]);
             expect(context.loads, target).toContain(`${OTHER}/a.png`);
         }
     });
@@ -226,9 +234,8 @@ describe('no exception to the forced crossorigin: whatever the view is given as 
         const source = sanitizeRender.toString();
         expect(source).not.toMatch(/withoutCors|corsFree/);
         const without = renderWith(RENDER_RULES);
-        const template = document.createElement('template');
-        template.innerHTML = MARKUP;
-        const context: RenderContext = { target: 'body', animating: [], origins: { images: EVERYTHING.images, media: EVERYTHING.media, styles: EVERYTHING.styles, fonts: EVERYTHING.fonts }, refused: [], urls: 0, loads: [], css: [] };
+        const { template, markup } = parseAsView(MARKUP);
+        const context: RenderContext = { target: 'body', animating: [], origins: { images: EVERYTHING.images, media: EVERYTHING.media, styles: EVERYTHING.styles, fonts: EVERYTHING.fonts }, refused: [], urls: 0, loads: [], css: [], markup };
         sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
         const serialise = (fragment: DocumentFragment) => [...fragment.childNodes].map(node => (node as Element).outerHTML ?? node.textContent).join('');
         expect(serialise(without.fragment)).toBe(serialise(template.content));
@@ -424,7 +431,7 @@ describe('the view: what an operation puts into a <style>, and a load that fails
             return add.call(this, type, listener, options);
         } as typeof window.addEventListener;
         try {
-            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()});`)();
+            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
         } finally {
             window.addEventListener = add;
         }

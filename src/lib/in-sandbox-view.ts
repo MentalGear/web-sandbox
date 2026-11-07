@@ -11,6 +11,7 @@ import { UNCAUGHT_CHARACTERS_PER_SECOND } from './egress';
 import { KIND_DIRECTIVES } from './csp/csp-generator';
 import { VIOLATION_DIRECTIVES } from './violation';
 import { cssReferences, withoutNetworkReferences } from './css-references';
+import { styleMarkup, type StyleMarkup } from './style-markup';
 
 /**
  * Strict mode's view and worker prelude (ADR-005).
@@ -746,6 +747,18 @@ export interface RenderContext {
      */
     css?: string[];
     /**
+     * The encoding the view parsed the markup with (styleMarkup, style-markup.ts): the names the parse gave the guest's
+     * `style` attributes and `<style>` elements, and the insertions to take out of its texts and values. Absent where the
+     * markup was parsed as it is.
+     */
+    markup?: StyleMarkup;
+    /**
+     * Filled by the renderer when given: every `<style>` it kept (HTML or SVG), in document order. Each is a `noframes`
+     * element holding the style's text and its `media`, which the view applies as a constructed stylesheet
+     * (inSandboxView, `sheets`); no `<style>` element is ever kept.
+     */
+    sheets?: Element[];
+    /**
      * Filled by the renderer when given, each at most once (BD5:NEW-3): what it dropped or left inert that the author may
      * not expect, for the one notice a render gets (the view's acknowledgement carries them, and the worker's prelude
      * logs one line: inStrictWorker): `script`, a `<script>` (HTML or SVG) removed;
@@ -815,7 +828,11 @@ export const RENDER_RULES: RenderRules = {
  *      would against rules.documentUrl, becomes the view's own blob: URL for it (`fileOf`), but only when the file's
  *      type is admitted for the kind of load the element makes (rules.kinds; a <link> by its rel tokens);
  *   4. a <link> stays only if its href is a URL the view minted;
- *   5. a <style> (HTML or SVG) keeps its child text only, without its network URLs (`dropNetworkCss`, below);
+ *   5. a <style> (HTML or SVG), which the view's encoding parsed as a `noframes` element with its marker
+ *      (context.markup, style-markup.ts), keeps its child text only, without its network URLs (`dropNetworkCss`, below),
+ *      and stays that `noframes` element, listed in context.sheets: the view applies its text as a constructed
+ *      stylesheet. An element named style, which the encoded markup never holds, goes with its content: no <style>
+ *      element is ever kept;
  *   6. every href that makes a hyperlink becomes rules.inertHref (S24): HTML <a> and <area>, SVG <a> (href and
  *      xlink:href) and any MathML element;
  *   7. every attribute outside rules.attributes goes; so does any attribute whose value contains "blob:" (after
@@ -823,12 +840,16 @@ export const RENDER_RULES: RenderRules = {
  *      a URL the view minted (A8), a URL attribute (rules.urls) whose URL is not http(s), minted or relative, or is an
  *      http(s) URL the view's policy refuses for the load the element makes (context.origins; R4:M-2), or is any
  *      http(s) URL where rules.networkDropped says so (a poster), and an SVG paint or clip reference that is not a
- *      fragment; a style attribute loses its network URLs (`dropNetworkCss`); referrerpolicy becomes no-referrer, and
- *      is set on rules.referrerElements; rel on <a>/<area> keeps only rules.anchorRelations (A1);
+ *      fragment; a style attribute (under the encoding's name for it) never stays an attribute: its text, without its
+ *      network URLs (`dropNetworkCss`), becomes the element's CSSOM declaration (`cssText`), which no style-src governs;
+ *      referrerpolicy becomes no-referrer, and is set on rules.referrerElements; rel on <a>/<area> keeps only
+ *      rules.anchorRelations (A1);
  *   8. every kept element of rules.crossOrigin gets crossorigin="anonymous", the guest's own value replaced (S74), so
  *      that it is never connected without it: none of its loads carries credentials (RENDER_CROSSORIGIN_ELEMENTS);
- *   9. per `switches` (RenderSwitches): autoplay goes; a style attribute loses its animations and transitions; <style>
- *      and stylesheet links go.
+ *   9. per `switches` (RenderSwitches): autoplay goes; a style attribute's declaration loses its animations and
+ *      transitions; <style> and stylesheet links go.
+ * The insertions the encoding made (context.markup) are taken out of every text and attribute value before anything
+ * reads it, so every rule above sees what the guest wrote.
  * `dropNetworkCss` is withoutNetworkReferences (css-references.ts) over cssReferences: the CSS without a network URL,
  * each one it dropped added to the list it is given, with its kind of load.
  * The URL attributes it keeps are counted (context.urls) against `room.urls`, what is left of VIEW_MAX_URLS: past it it
@@ -858,16 +879,25 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     const localNameOf = getter(E, 'localName');
     const namespaceOf = getter(E, 'namespaceURI');
     const firstChildOf = getter(N, 'firstChild');
+    // Without a context (a caller that only cleans markup), the strictest one: no origin is admitted, and the
+    // still properties are the known ones.
+    const context: RenderContext = given || { target: 'body', animating: rules.still.known, origins: {}, refused: [], urls: 0, loads: [] };
+    // The encoding the markup was parsed with (style-markup.ts), or null where it was parsed as it is: every text and
+    // attribute value is read without its insertions, so the rules below see what the guest wrote.
+    const markup = context.markup || null;
+    const decoded = (text: string) => (markup ? markup.decode(text) : text);
     const has = (element: Element, name: string): boolean => call(E.hasAttribute, element, [name]);
-    const get = (element: Element, name: string): string | null => call(E.getAttribute, element, [name]);
+    const written = (element: Element, name: string): string | null => call(E.getAttribute, element, [name]);
+    const get = (element: Element, name: string): string | null => {
+        const value = written(element, name);
+        return value === null ? null : decoded(value);
+    };
+    // Never given the name `style` (the source scan, test/unit/inline-styles.test.ts): a style attribute is a declaration.
     const set = (element: Element, name: string, value: string) => call(E.setAttribute, element, [name, value]);
     const drop = (element: Element, name: string) => call(E.removeAttribute, element, [name]);
     const own = Object.prototype.hasOwnProperty;
     const limit = room || { elements: rules.maxElements, depth: rules.maxDepth };
     const urlRoom = limit.urls === undefined ? rules.maxUrls : limit.urls;
-    // Without a context (a caller that only cleans markup), the strictest one: no origin is admitted, and the
-    // still properties are the known ones.
-    const context: RenderContext = given || { target: 'body', animating: rules.still.known, origins: {}, refused: [], urls: 0, loads: [] };
     // lookups without a prototype: an element or attribute name is never an inherited key
     const setOf = (names: readonly string[]) => {
         const out: Record<string, true> = Object.create(null);
@@ -1052,23 +1082,33 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         if (namespace === SVG) return svgAttributes[attribute] === true || (element === 'a' && svgLinkAttributes[attribute] === true);
         return namespace === MATHML && mathAttributes[attribute] === true;
     };
-    // A kept style attribute without animations and transitions (switches.animations false; R4:C-2, R5:L-2, R5:N-7).
-    // What happens to an attribute depends on its text alone, never on how an engine stores it:
+    // A kept style attribute (S74, class A: INHERITED_CONTEXT.cspReporting; style-markup.ts): its text, without its network
+    // URLs, becomes the element's own CSSOM declaration (the `cssText` setter), never an attribute written from guest text.
+    // A style attribute is an inline style that the host page's style-src checks (and Chromium checks it as it parses
+    // it, in the template too); a declaration set through the CSSOM is none, on any engine (docs/research/25_cssom_styles).
+    // The element carries the declaration's serialization as its `style` attribute from then on (the engine writes it), and
+    // the attribute goes when the declaration is empty.
+    //
+    // A text that declares `all` goes whole, whatever the switches (R4:C-2): `all` expands into hundreds of longhands in
+    // Firefox and WebKit (one in Chromium), and an element's declaration sets and serializes each of them, per element:
+    // 10 000 elements of `all:unset` took WebKit 0.7 s to set and 0.7 s more to serialize, Firefox 0.1 s and 0.05 s, where
+    // the same attributes parsed by the engine itself took a fifth of it (research 25). Whether it does is read from the text
+    // as the CSS tokenizer reads names (`declaredNames`: comments, strings and escapes), and errs only toward removing.
+    //
+    // Without animations and transitions (switches.animations false; R4:C-2, R5:L-2, R5:N-7), what happens to the text
+    // depends on the text alone, never on how an engine stores it:
     //   1. The text decides whether there is anything to read. A declaration names its property with an identifier,
     //      matched ASCII case-insensitively and spelled with literal letters or CSS escapes, and every property that sets
     //      an animation or transition longhand has "animation" or "transition" in its name (shorthands, aliases and
     //      prefixes alike: checked against each engine's whole property list in the R4:C-2 e2e test), but
     //      `all`, which takes nothing but a CSS-wide keyword (a var() in it resolves to one, or the declaration is
     //      invalid). So a text without "animation", "transition" (in any case) or a backslash declares no animation, and
-    //      stays as the guest wrote it: nothing is read, nothing is serialized. "transform", "transparent" or
+    //      is applied as the guest wrote it: nothing is read back. "transform", "transparent" or
     //      "text-transform" alone never take the slower path (a test for "anim" or "trans" would send them there).
-    //   2. A text that does, and has a backslash (an escape the engine's parser would read as any name), or declares
-    //      `all` (the word as a property name: after the start, a `;`, whitespace or a comment, before an optional
-    //      whitespace and a colon; comments are skipped), goes whole. `all` expands into hundreds of longhands in Firefox
-    //      and WebKit and into one in Chromium, so reading and rewriting it would be work out of proportion to what the
-    //      guest sent, and its result would differ per engine. Either errs only toward removing.
-    //   3. Otherwise the element's own CSSOM declaration is read, so the engine's parser decides what the attribute
-    //      declares (case, `!important`, var() in a shorthand: every engine stores longhands, under their own names).
+    //   2. A text that does, and has a backslash (an escape the engine's parser would read as any name), goes whole; one
+    //      that declares `all` has gone already (above). Either errs only toward removing.
+    //   3. Otherwise the text is applied and the element's own CSSOM declaration is read, so the engine's parser decides
+    //      what it declares (case, `!important`, var() in a shorthand: every engine stores longhands, under their own names).
     //      Without `all` a declaration holds at most a few longhands per character of its text (`font` the most), so
     //      the work is linear in what the guest sent. Only the engine's animation and transition properties are read
     //      (context.animating, found once per view), each with getPropertyValue, and each that holds anything but a
@@ -1076,51 +1116,65 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     //      takes it, and the declaration's length says so). A CSS-wide keyword (initial, inherit, unset, revert,
     //      revert-layer) never animates: it is the property's initial value, the parent's value (every parent was
     //      cleaned, or is stopped by the still stylesheet), or a rollback to sheets the still stylesheet stops.
-    //   4. When something was removed, the attribute becomes the declaration's serialization, so what the view applies
-    //      is exactly what was read here (the attribute goes when nothing is left); else it stays as written.
+    //   4. What the view applies is the declaration as read here, without what was removed (the attribute goes when
+    //      nothing is left).
     // The CSSOM is no CSP sink. Only the animation properties are read, because listing every property of every
-    // declaration and writing the attribute back from it would make `all:unset` cost hundreds of reads and a
-    // serialization of hundreds of properties per element (R4:C-2): one render of 262 000 characters of
-    // `<i style="all:unset"></i>` would stall WebKit 10.3 s and Firefox 2.7 s (0.35 s and 0.27 s with animations on), and
-    // then be refused for the characters its expansion takes.
-    // An element whose namespace has no `style` (jsdom's MathML, an engine without MathMLElement) loses an attribute it
-    // would have to read: fail closed.
+    // declaration and writing it back would make `all:unset` cost hundreds of reads and a serialization of hundreds of
+    // properties per element (R4:C-2): one render of 262 000 characters of `<i style="all:unset"></i>` would stall
+    // WebKit 10.3 s and Firefox 2.7 s (0.35 s and 0.27 s with animations on), and then be refused for the characters its
+    // expansion takes.
+    // An element whose namespace has no `style` (jsdom's MathML, an engine without MathMLElement) gets nothing of it: fail
+    // closed.
     const MAY_ANIMATE = /animation|transition|\\/i;
+    // `all` as a property name: after the start, a `;`, whitespace or a comment, before an optional whitespace and a colon
     const ALL_PROPERTY = /(^|[^a-z0-9_-])all[\t\n\f\r ]*:/i;
-    // The text without its comments and strings, each a space, in one pass: a comment runs to its "*/" or the end of
-    // the text, a string to its closing quote, a newline or the end (no escape is left to read: a text with a backslash
-    // goes before this). So neither a comment nor a quote can hide `all` from ALL_PROPERTY, nor show it one.
-    const outsideCommentsAndStrings = (text: string) => {
+    const NAME_CHARACTER = /^[a-z0-9_-]$/i;
+    const HEX_ESCAPE = /^([0-9a-f]{1,6})(\r\n|[\t\n\f\r ])?/i;
+    const NEWLINE = /^[\n\r\f]$/;
+    // The text as the tokenizer reads names in it, in one pass: each comment and each string a space (a comment runs to
+    // its "*/" or the end of the text, a string to its unescaped closing quote, a newline or the end), and each escape
+    // outside them the character it stands for where that is a letter, a digit, `-` or `_`, else `x` (an escape is always
+    // part of a name: never a comment, a string, a colon or a separator). So neither a comment, a quote nor an escape can
+    // hide `all` from ALL_PROPERTY, or show it one.
+    const slice = String.prototype.slice;
+    const declaredNames = (text: string) => {
         const parts = list<string>();
         let from = 0;
         let i = 0;
         while (i < text.length) {
             const c = text[i]!;
             let end = -1;
+            let read = ' ';
             if (c === '/' && text[i + 1] === '*') {
                 const close = text.indexOf('*/', i + 2);
                 end = close < 0 ? text.length : close + 2;
             } else if (c === '"' || c === "'") {
                 end = i + 1;
-                while (end < text.length && text[end] !== c && text[end] !== '\n' && text[end] !== '\r' && text[end] !== '\f') end++;
-                end = end < text.length ? end + 1 : end;
+                while (end < text.length && text[end] !== c && !NEWLINE.test(text[end]!)) end += text[end] === '\\' ? 2 : 1;
+                end = Math.min(end + 1, text.length);
+            } else if (c === '\\') {
+                const hex = HEX_ESCAPE.exec(call(slice, text, [i + 1, i + 9]) as string);
+                const code = hex ? parseInt(hex[1]!, 16) : -1;
+                const escaped = hex ? (code < 128 ? String.fromCharCode(code) : 'x') : text[i + 1];
+                end = hex ? i + 1 + hex[0].length : escaped === undefined || NEWLINE.test(escaped) ? i + 1 : i + 2;
+                read = escaped !== undefined && NAME_CHARACTER.test(escaped) ? escaped : end === i + 1 ? ' ' : 'x';
             }
             if (end < 0) {
                 i++;
                 continue;
             }
-            parts[parts.length] = call(String.prototype.slice, text, [from, i]) as string;
-            parts[parts.length] = ' ';
+            parts[parts.length] = call(slice, text, [from, i]) as string;
+            parts[parts.length] = read;
             from = end;
             i = end;
         }
-        parts[parts.length] = call(String.prototype.slice, text, [from]) as string;
+        parts[parts.length] = call(slice, text, [from]) as string;
         return call(joinList, parts, ['']) as string;
     };
     const CSS_WIDE_KEYWORDS = setOf(['initial', 'inherit', 'unset', 'revert', 'revert-layer']);
     const declaration = CSSStyleDeclaration.prototype;
     const declarationLength = getter(declaration, 'length');
-    const cssTextOf = getter(declaration, 'cssText');
+    const setCssText = Object.getOwnPropertyDescriptor(declaration, 'cssText')!.set!;
     const propertyValue = declaration.getPropertyValue;
     const removeProperty = declaration.removeProperty;
     const animating = context.animating;
@@ -1134,24 +1188,22 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     styleGetters[SVG] = styleGetter(SVGElement.prototype);
     const MathMLElementFound = g.MathMLElement;
     styleGetters[MATHML] = styleGetter(typeof MathMLElementFound === 'function' ? MathMLElementFound.prototype : null);
-    const stillStyle = (element: Element, namespace: unknown, written: string) => {
-        if (!MAY_ANIMATE.test(written)) return;
+    // Applies `text`, a kept style attribute's (as written, without the encoding's insertions), to `element`.
+    const declare = (element: Element, namespace: unknown, text: string) => {
+        const css = withoutNetwork(text);
+        if (context.css) context.css[context.css.length] = css; // before the still rules (cssLoadsOf)
         const styleOf = typeof namespace === 'string' ? styleGetters[namespace] : null;
-        if (!styleOf || written.indexOf('\\') >= 0 || ALL_PROPERTY.test(outsideCommentsAndStrings(written))) {
-            drop(element, 'style');
-            return;
-        }
+        if (!styleOf || ALL_PROPERTY.test(declaredNames(css))) return;
+        const still = !switches.animations && MAY_ANIMATE.test(css);
+        if (still && css.indexOf('\\') >= 0) return;
         const style = call(styleOf, element, []) as CSSStyleDeclaration;
-        const before = call(declarationLength, style, []) as number;
-        for (let i = 0; i < animating.length; i++) {
+        call(setCssText, style, [css]);
+        for (let i = 0; still && i < animating.length; i++) {
             const value = String(call(propertyValue, style, [animating[i]!]));
             if (value !== '' && CSS_WIDE_KEYWORDS[value.toLowerCase()]) continue;
             call(removeProperty, style, [animating[i]!]); // nothing, when it is not declared
         }
-        const after = call(declarationLength, style, []) as number;
-        if (after === before) return;
-        if (after === 0) drop(element, 'style');
-        else set(element, 'style', String(call(cssTextOf, style, [])));
+        if (call(declarationLength, style, []) === 0) drop(element, 'style');
     };
 
     // CSS without its network URLs (S74, BD2:ISO-2; docs/research/21_crossorigin_loads/README.md): no attribute reaches a load that CSS makes, so a kept style attribute
@@ -1164,9 +1216,9 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         for (let i = 0; i < dropped.length; i++) context.refused[context.refused.length] = [directiveOf(dropped[i]![0]), droppedUrl(dropped[i]![1])];
         return kept;
     };
-    // A kept <style> (HTML or SVG) holds one text only: its child text, which is what a sheet reads, without network URLs.
-    // Anything else in it goes (SVG parses elements into one), so no element is ever inside a style, and no later text()
-    // or set() can reach a sheet but through the view's own filter (inSandboxView, `cssInto`).
+    // A kept <style> (HTML or SVG) holds one text only: its child text, which is what a sheet reads, as the guest wrote it
+    // and without network URLs. Anything else in it goes (SVG parses elements into one), so no element is ever inside a
+    // style, and no later text() or set() can reach a sheet but through the view's own filter (inSandboxView, `cssInto`).
     const nextSiblingOf = getter(N, 'nextSibling');
     const setTextContent = Object.getOwnPropertyDescriptor(N, 'textContent')!.set!;
     const cleanSheet = (element: Element) => {
@@ -1175,7 +1227,16 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             const type = call(nodeTypeOf, child, []);
             if (type === 3 || type === 4) parts[parts.length] = call(dataOf, child, []);
         }
-        call(setTextContent, element, [withoutNetwork(call(joinList, parts, ['']) as string)]);
+        call(setTextContent, element, [withoutNetwork(decoded(call(joinList, parts, ['']) as string))]);
+    };
+    // The name an element is decided by (style-markup.ts): the guest's <style>, parsed as a `noframes` with the encoding's
+    // marker, is a style; the guest's own noframes, parsed under the encoding's name for it, is a noframes; and an element
+    // named style, which encoded markup never holds, goes as a noframes does, with its content.
+    const decidedName = (element: Element, local: string): string => {
+        if (local === 'style') return 'noframes';
+        if (!markup) return local;
+        if (local === 'noframes') return has(element, markup.sheet) ? 'style' : local;
+        return local === markup.noframes ? 'noframes' : local;
     };
 
     const KEEP = 0, REMOVE = 1, UNWRAP = 2;
@@ -1225,8 +1286,13 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         }
         const names: string[] = call(E.getAttributeNames, element, []);
         for (let a = 0; a < names.length; a++) {
-            const attribute = names[a]!;
-            const value = get(element, attribute) || '';
+            const parsed = names[a]!;
+            // the guest's style attribute, under the encoding's name for it (or its own, where nothing was encoded): never
+            // kept as an attribute (declare, above)
+            const isStyle = parsed === 'style' || (markup !== null && parsed === markup.attribute);
+            const attribute = isStyle ? 'style' : parsed;
+            const raw = written(element, parsed) || '';
+            const value = decoded(raw);
             const isUrl = html && isPair(rules.urls, name, attribute);
             const kind = isUrl ? urlKind(name, attribute, parent) : '';
             const refused = list<string>();
@@ -1238,17 +1304,14 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
                 && !(attribute === 'autoplay' && !switches.autoplay);
             // a URL the policy refuses: reported as the browser would have reported its load (a srcset's first one)
             if (refused.length > 0) context.refused[context.refused.length] = [directiveOf(kind), refused[0]!];
-            if (!keep) {
-                drop(element, attribute);
+            if (!keep || isStyle) drop(element, parsed);
+            if (!keep) continue;
+            if (isStyle) {
+                declare(element, namespace, value);
                 continue;
             }
+            if (value !== raw) set(element, parsed, value);
             if (attribute === 'referrerpolicy') set(element, attribute, 'no-referrer');
-            if (attribute === 'style') {
-                const css = withoutNetwork(value);
-                if (css !== value) set(element, 'style', css);
-                if (!switches.animations) stillStyle(element, namespace, css);
-                if (context.css) context.css[context.css.length] = css; // before the still rules (cssLoadsOf)
-            }
             if (!isUrl) continue;
             for (let l = 0; l < loads.length; l++) context.loads[context.loads.length] = loads[l]!;
             context.urls++;
@@ -1310,15 +1373,18 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         const node = run.input[run.index]!;
         run.index++;
         const type = call(nodeTypeOf, node, []);
-        if (type === 3 || type === 4) { // text, and CDATA in SVG or MathML: its text
+        if (type === 3 || type === 4) { // text, and CDATA in SVG or MathML: its text, as the guest wrote it
+            const data = call(dataOf, node, []) as string;
+            const text = decoded(data);
+            if (text !== data) call(setData, node, [text]);
             if (!run.text.first) run.text.first = node;
-            run.text.parts[run.text.parts.length] = call(dataOf, node, []);
+            run.text.parts[run.text.parts.length] = text;
             continue;
         }
         if (type !== 1) continue; // a comment or a processing instruction: dropped
         const element = node as Element;
         const namespace = call(namespaceOf, element, []);
-        const name = String(call(localNameOf, element, []));
+        const name = decidedName(element, String(call(localNameOf, element, [])));
         let decision = verdict(namespace, name);
         const parentName = run.parent === fragment ? context.target : String(call(localNameOf, run.parent as Element, []));
         if (decision === KEEP && !clean(element, namespace, name, parentName)) decision = REMOVE;
@@ -1335,6 +1401,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         if (run.depth > limit.depth) throw new RangeError('VIEW_MAX_DEPTH');
         flushText(run);
         call(N.appendChild, run.parent, [element]);
+        if (name === 'style' && context.sheets) context.sheets[context.sheets.length] = element; // the view applies its text
         runs[runs.length] = { parent: element, input: drain(element), index: 0, depth: run.depth + 1, text: { first: null, parts: list<string>() }, own: true };
     }
     return kept;
@@ -1555,7 +1622,7 @@ export interface ViewOptions {
  * message is ignored. A copy of this text that ever ran a second time in the same document would return
  * at once (the run counter), and a copy elsewhere would never receive INIT_VIEW (research 15, P1).
  */
-export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, scanCss: typeof cssReferences, dropCss: typeof withoutNetworkReferences, options: ViewOptions, makeOutbox: typeof viewInputOutbox, styleProperty: typeof isStyleProperty) {
+export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, scanCss: typeof cssReferences, dropCss: typeof withoutNetworkReferences, options: ViewOptions, makeOutbox: typeof viewInputOutbox, styleProperty: typeof isStyleProperty, encodeStyles: typeof styleMarkup) {
     const g = globalThis as any;
     const runs = (g.__sandboxViewRuns || 0) + 1;
     g.__sandboxViewRuns = runs;
@@ -2108,6 +2175,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         bodyCharacters = null;
         bodyElements = null;
         bodyUrls = null;
+        sheetsStale = true; // a change no operation made may have moved or removed a style (syncSheets)
     };
     const hasRecords = typeof MutationObserver === 'function' && typeof MutationRecord === 'function';
     const observer = hasRecords ? new MutationObserver(forget) : null;
@@ -2252,14 +2320,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         }
         stillPending = left;
     };
-    // Every kept <style> of a fragment about to be inserted (HTML and SVG alike).
-    const stylesOf = (fragment: DocumentFragment) => call(DocumentFragment.prototype.querySelectorAll, fragment, ['style']) as NodeListOf<Element>;
+    // Every kept <style> of a fragment about to be inserted (HTML and SVG alike: the renderer lists them, RenderContext.sheets).
     const textContentOf = getter(Node.prototype, 'textContent');
-    const stillNamedIn = (fragment: DocumentFragment) => {
+    const stillNamedIn = (sheets: readonly Element[]) => {
         if (!stillLayer || stillPending.length === 0) return;
-        const styles = stylesOf(fragment);
-        const length = call(getter(NodeList.prototype, 'length'), styles, []) as number;
-        for (let i = 0; i < length; i++) stillNamed(String(call(textContentOf, call(NodeList.prototype.item, styles, [i]), [])));
+        for (let i = 0; i < sheets.length; i++) stillNamed(String(call(textContentOf, sheets[i], [])));
     };
     const headOf = getter(Document.prototype, 'head');
     const firstChildOf = getter(Node.prototype, 'firstChild');
@@ -2302,17 +2367,19 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const renderedLoads = new Set<string>();
     const CSS_URL = /url\(|image-set\(|@import|\\/i;
     const styleAttributeOf = (element: Element) => call(E.getAttribute, element, ['style']) as string | null;
-    const cssMayLoad = (fragment: DocumentFragment) => {
-        const sheets = call(DocumentFragment.prototype.querySelectorAll, fragment, ['style, link']) as NodeListOf<Element>;
-        if (call(nodeListLength, sheets, []) as number > 0) return true;
-        const styled = call(DocumentFragment.prototype.querySelectorAll, fragment, ['[style]']) as NodeListOf<Element>;
-        const length = call(nodeListLength, styled, []) as number;
-        for (let i = 0; i < length; i++) if (CSS_URL.test(styleAttributeOf(call(NodeList.prototype.item, styled, [i]) as Element) || '')) return true;
+    // `sheets` and `styles`: the <style>s the renderer kept and the texts of the style attributes it applied, as written
+    // (RenderContext.sheets and css).
+    const cssMayLoad = (fragment: DocumentFragment, sheets: readonly Element[], styles: readonly string[]) => {
+        if (sheets.length > 0) return true;
+        const links = call(DocumentFragment.prototype.querySelectorAll, fragment, ['link']) as NodeListOf<Element>;
+        if (call(nodeListLength, links, []) as number > 0) return true;
+        for (let i = 0; i < styles.length; i++) if (CSS_URL.test(styles[i]!)) return true;
         return false;
     };
     // The URLs of `loads` this view has not loaded yet, once each; throws, before anything is inserted, when they would
-    // take the count past the limit, or when the count has reached it and `fragment` carries CSS that can load.
-    const newLoads = (loads: readonly string[], fragment: DocumentFragment): string[] => {
+    // take the count past the limit, or when the count has reached it and the render carries CSS that can load
+    // (cssMayLoad).
+    const newLoads = (loads: readonly string[], fragment: DocumentFragment, sheets: readonly Element[], styles: readonly string[]): string[] => {
         const fresh: string[] = [];
         const seen = new Set<string>();
         for (let i = 0; i < loads.length; i++) {
@@ -2321,7 +2388,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             fresh.push(loads[i]!);
         }
         if (distinctLoads.size + fresh.length > options.maxDistinctUrls) throw new RangeError('VIEW_MAX_DISTINCT_URLS');
-        if (distinctLoads.size >= options.maxDistinctUrls && cssMayLoad(fragment)) throw new RangeError('VIEW_MAX_DISTINCT_URLS');
+        if (distinctLoads.size >= options.maxDistinctUrls && cssMayLoad(fragment, sheets, styles)) throw new RangeError('VIEW_MAX_DISTINCT_URLS');
         return fresh;
     };
     // The loads the CSS an operation applies can make, at most (S73, R5:M-3; class E-net and P), prepaid to the load
@@ -2332,8 +2399,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // times the view's render rate, not by the budget.
     // What an operation can add CSS with, and so what is counted (cssLoadBound):
     //   - a render: every style attribute the renderer kept (HTML, SVG and MathML), as written, which it reads as it
-    //     walks them (RenderContext.css: no second walk of the fragment), the text of every <style> in the fragment
-    //     (HTML and SVG; an SVG one's whole text, its elements' included), every <link> with the stylesheet relation
+    //     walks them (RenderContext.css: no second walk of the fragment), the text of every <style> the renderer kept
+    //     (HTML and SVG, RenderContext.sheets: its text, which is all it holds), every <link> with the stylesheet relation
     //     (the renderer keeps only those that name a registered stylesheet, minted: `perSheet`, like an @import, for
     //     what the sheet and its imports name), and, when the target is a <style> or inside one, the fragment's whole
     //     text (a sheet reads its own text children; the rest only counts more);
@@ -2349,20 +2416,20 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // it is charged when it is reported, and is the one part of the bound its text alone bounds (VIEW_URLS_PER_SECOND).
     const STYLESHEET_LINK = /(^|[\t\n\f\r ])stylesheet($|[\t\n\f\r ])/i;
     const relOf = (element: Element) => call(E.getAttribute, element, ['rel']) as string | null;
+    // Whether `target` is a <style> the view shows, or inside one: a <style> is a `noframes` element in the view (the
+    // renderer keeps no other, and no <style> element: sanitizeRender), whose text is a stylesheet's (syncSheets).
     const inStyle = (target: Element) => {
         const body = call(bodyOf, document, []);
-        for (let n: Element | null = target; n && n !== body; n = call(parentOf, n, [])) if (call(localNameOf, n, []) === 'style') return true;
+        for (let n: Element | null = target; n && n !== body; n = call(parentOf, n, [])) if (call(localNameOf, n, []) === 'noframes') return true;
         return false;
     };
     // The texts are counted as one, joined by newlines, which counts at least what counting each would (a match holds
     // one `(`, at its end, so one that runs across a newline, an escape's whitespace, ends at the next text's first `(`,
     // in place of at most one match of that text), and one count of a long text costs far less than thousands of short.
-    const cssLoadsOf = (fragment: DocumentFragment, target: Element, styleAttributes: string[]) => {
+    const cssLoadsOf = (fragment: DocumentFragment, target: Element, styleAttributes: string[], sheets: readonly Element[]) => {
         const perSheet = options.rates.urls;
         const texts = styleAttributes; // every style attribute the renderer kept, as written (RenderContext.css)
-        const styles = stylesOf(fragment);
-        const stylesLength = call(nodeListLength, styles, []) as number;
-        for (let i = 0; i < stylesLength; i++) texts.push(String(call(textContentOf, call(NodeList.prototype.item, styles, [i]), [])));
+        for (let i = 0; i < sheets.length; i++) texts.push(String(call(textContentOf, sheets[i], [])));
         if (inStyle(target)) texts.push(String(call(textContentOf, fragment, [])));
         let bound = texts.length > 0 ? countLoads(texts.join('\n'), perSheet) : 0;
         const links = call(DocumentFragment.prototype.querySelectorAll, fragment, ['link']) as NodeListOf<Element>;
@@ -2424,6 +2491,120 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         for (let i = 0; i < refused.length; i++) reportViolation(refused[i]![0], refused[i]![1]);
     };
 
+    // The guest's markup as the parser gets it (S74, class A: INHERITED_CONTEXT.cspReporting; style-markup.ts): with no
+    // style attribute and no <style> element in it, so that the parse makes no inline style the host page's policy
+    // checks (Chromium checks a style attribute as it parses it, in the template too). The nonce is drawn per render, and
+    // drawn again in the unlikely case that the markup holds it; `markup` is null where nothing had to be renamed.
+    const randomSource = g.crypto;
+    const randomValues = randomSource.getRandomValues;
+    const nonceFor = (html: string): string => {
+        for (;;) {
+            const words = call(randomValues, randomSource, [new Uint32Array(3)]) as Uint32Array;
+            let nonce = 'w';
+            for (let i = 0; i < words.length; i++) nonce += words[i]!.toString(36);
+            if (!new RegExp(nonce, 'i').test(html)) return nonce;
+        }
+    };
+    const parserInput = (html: string): { text: string; markup: StyleMarkup | null } => {
+        const markup = encodeStyles(nonceFor(html));
+        const text = markup.encode(html);
+        return { text, markup: text === html ? null : markup };
+    };
+
+    // The guest's stylesheets (S74, class A: INHERITED_CONTEXT.cspReporting; docs/research/25_cssom_styles/README.md).
+    // A <style> element is an inline style that the host page's style-src checks and reports to its endpoint; a
+    // constructed stylesheet, adopted, is none, on every engine. So each <style> the view shows is a `noframes` element
+    // holding its text (sanitizeRender), and its rules are a constructed stylesheet of this document's. The document's
+    // adopted stylesheets are those sheets in the tree order of their elements (`sheetOrder`), so they cascade among
+    // themselves in the order of the markup, as <style> elements would, and all of them after the document's own
+    // stylesheets: the still stylesheet (VIEW_STILL_STYLE, which must stay the first layer) and every stylesheet <link>.
+    // A sheet has its element's `media`, and no rules where an SVG <style>'s `type` is not CSS, as an element's own sheet
+    // would; it has no `@import` (a constructed stylesheet has none), and no `title` makes it an alternative one.
+    // Each operation keeps them in step: a render removes the sheets of the <style>s inside its target and adds those of
+    // the ones it kept (RenderContext.sheets) in their place; a text() or a render into a <style> replaces its sheet's
+    // rules. A change no operation made (`forget`, the body's observer) has the next one read them from the body again.
+    // Without constructable stylesheets (none of the engines the library supports lacks them) no guest stylesheet applies.
+    const sheets = new Map<Element, CSSStyleSheet>();
+    let sheetOrder: Element[] = [];
+    let sheetsStale = false;
+    const SheetConstructor = g.CSSStyleSheet as typeof CSSStyleSheet | undefined;
+    const replaceSync = SheetConstructor && SheetConstructor.prototype.replaceSync;
+    const adoptedDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'adoptedStyleSheets');
+    const adoptSheets = adoptedDescriptor && adoptedDescriptor.set;
+    const comparePosition = Node.prototype.compareDocumentPosition;
+    const following = Node.DOCUMENT_POSITION_FOLLOWING;
+    const CSS_TYPE = /^(text\/css)?$/i;
+    const sheetText = (element: Element) => (CSS_TYPE.test(call(E.getAttribute, element, ['type']) || '') ? String(call(textContentOf, element, [])) : '');
+    const sheetOf = (element: Element): CSSStyleSheet | null => {
+        const known = sheets.get(element);
+        if (known || !SheetConstructor || !replaceSync) return known || null;
+        const sheet = new SheetConstructor({ media: call(E.getAttribute, element, ['media']) || '' });
+        call(replaceSync, sheet, [sheetText(element)]);
+        sheets.set(element, sheet);
+        return sheet;
+    };
+    const adopt = () => {
+        const list: CSSStyleSheet[] = [];
+        for (let i = 0; i < sheetOrder.length; i++) {
+            const sheet = sheetOf(sheetOrder[i]!);
+            if (sheet) list.push(sheet);
+        }
+        if (adoptSheets) call(adoptSheets, document, [list]);
+    };
+    // The <style>s the body holds, read from it: those the view made a sheet for, or is about to (`added`), in tree order.
+    const readSheets = (added: readonly Element[]) => {
+        const body = call(bodyOf, document, []);
+        const ours = new Set<Element>(added);
+        sheets.forEach((_sheet, element) => ours.add(element));
+        const found = body ? call(E.querySelectorAll, body, ['noframes']) as NodeListOf<Element> : null;
+        const length = found ? call(nodeListLength, found, []) as number : 0;
+        const order: Element[] = [];
+        for (let i = 0; i < length; i++) {
+            const element = call(NodeList.prototype.item, found, [i]) as Element;
+            if (ours.has(element)) order.push(element);
+        }
+        sheets.forEach((_sheet, element) => {
+            if (order.indexOf(element) < 0) sheets.delete(element);
+        });
+        sheetOrder = order;
+        sheetsStale = false;
+        adopt();
+    };
+    // After a render into `target` (not a <style>): the sheets of the <style>s it replaced (out of the body now) are
+    // dropped, and those of the ones it kept (`added`, in tree order) take their place, before the first <style> that
+    // follows the target.
+    const syncSheets = (target: Element, added: readonly Element[]) => {
+        if (sheetsStale) {
+            readSheets(added);
+            return;
+        }
+        const body = call(bodyOf, document, []);
+        const kept: Element[] = [];
+        let at = -1;
+        for (let i = 0; i < sheetOrder.length; i++) {
+            const element = sheetOrder[i]!;
+            if (!call(containsNode, body, [element])) {
+                sheets.delete(element);
+                continue;
+            }
+            if (at < 0 && ((call(comparePosition, target, [element]) as number) & following) !== 0) at = kept.length;
+            kept.push(element);
+        }
+        if (kept.length === sheetOrder.length && added.length === 0) return;
+        if (at < 0) at = kept.length;
+        sheetOrder = kept.slice(0, at).concat(added, kept.slice(at));
+        adopt();
+    };
+    // After `target`'s text changed, where it is a <style> or inside one: its sheet's rules are its new text.
+    const refreshSheet = (target: Element) => {
+        if (sheetsStale) readSheets([]);
+        const body = call(bodyOf, document, []);
+        for (let n: Element | null = target; n && n !== body; n = call(parentOf, n, [])) {
+            const sheet = sheets.get(n);
+            if (sheet && replaceSync) call(replaceSync, sheet, [sheetText(n)]);
+        }
+    };
+
     // template.innerHTML parses into an inert fragment (no script runs, nothing loads); the renderer cleans
     // it; replaceChildren MOVES its nodes into the document (A2) — never a clone or an import. The renderer gets the
     // room the view's budget leaves (BR:ST2): the body's elements outside the target stay, the target's own
@@ -2433,14 +2614,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const target = into === null ? body : call(D.getElementById, document, [into]);
         if (!target || !body || (target !== body && !call(containsNode, body, [target]))) return;
         const template = call(D.createElement, document, ['template']) as HTMLTemplateElement;
-        trusted((value) => { template.innerHTML = value as string; }, html, 'createHTML');
+        const input = parserInput(html);
+        trusted((value) => { template.innerHTML = value as string; }, input.text, 'createHTML');
         const before = counts(body);
         const ownElements = target === body ? before.elements : countOf(target);
         const ownCharacters = target === body ? before.characters : innerLength(target);
         const ownUrls = target === body ? before.urls : urlsOf(target);
         let depth = 0;
         for (let n = target; n !== body; n = call(parentOf, n, [])) depth++;
-        const context: RenderContext = { target: String(call(localNameOf, target, [])), animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0, loads: [], css: [], dropped: [] };
+        const context: RenderContext = { target: String(call(localNameOf, target, [])), animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0, loads: [], css: [], dropped: [], sheets: [] };
+        if (input.markup) context.markup = input.markup;
         const room = { elements: options.render.maxElements - (before.elements - ownElements), depth: options.render.maxDepth - depth, urls: options.render.maxUrls - (before.urls - ownUrls) };
         let kept = sanitize(template.content, fileOf, isMinted, dropNetworkCss, options.render, switches, room, context);
         if (inStyle(target)) {
@@ -2451,18 +2634,21 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             context.urls = 0;
             context.loads.length = 0;
             context.css!.length = 0;
+            context.sheets!.length = 0;
         }
-        const fresh = newLoads(context.loads, template.content);
+        const fresh = newLoads(context.loads, template.content, context.sheets!, context.css!);
         // The characters the body would hold (R1:R1-1): its serialization outside the target, plus the cleaned fragment's
         // (what the target's serialization becomes: the same nodes, moved; never more, and less only inside a raw-text
         // element, whose text is not escaped). Counted on the browser's own serializer, after the renderer, so
         // attributes it dropped and elements it unwrapped never count. Once inserted, the target is measured again, so
         // the count is what the body serializes to, exactly.
         if (before.characters - ownCharacters + innerLength(template) > options.render.maxCharacters) throw new RangeError('VIEW_MAX_CHARACTERS');
-        if (!switches.animations) stillNamedIn(template.content); // the still rules its stylesheets need, before they apply
-        const css = cssLoadsOf(template.content, target, context.css!); // before the move empties the fragment
+        if (!switches.animations) stillNamedIn(context.sheets!); // the still rules its stylesheets need, before they apply
+        const css = cssLoadsOf(template.content, target, context.css!, context.sheets!); // before the move empties the fragment
         call(E.replaceChildren, target, [template.content]);
         settle(target);
+        if (inStyle(target)) refreshSheet(target);
+        else syncSheets(target, context.sheets!);
         urlWork += context.urls;
         cssWork += css;
         for (let i = 0; i < context.loads.length; i++) renderedLoads.add(context.loads[i]!);
@@ -2508,6 +2694,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const styleGetters = [inlineStyle(HTMLElement.prototype), inlineStyle(g.SVGElement && g.SVGElement.prototype), inlineStyle(g.MathMLElement && g.MathMLElement.prototype)];
     const setProperty = CSSStyleDeclaration.prototype.setProperty;
     const removeProperty = CSSStyleDeclaration.prototype.removeProperty;
+    const setCssText = setter(CSSStyleDeclaration.prototype, 'cssText');
     const applyCss = (target: Element, given: Record<string, string | null>, refused: [directive: string, url: string][]) => {
         let style: CSSStyleDeclaration | null = null;
         for (let i = 0; !style && i < styleGetters.length; i++) {
@@ -2542,8 +2729,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         }
         const change = valueAttributeLength(styleAttributeOf(target), 'style') - valueAttributeLength(old, 'style');
         if (before.characters + change > options.render.maxCharacters) {
+            // the declaration as it was, set through the CSSOM like every guest style (never the attribute: sanitizeRender)
             if (old === null) call(E.removeAttribute, target, ['style']);
-            else call(E.setAttribute, target, ['style', old]);
+            else call(setCssText, style, [old]);
             settle(target, 'style');
             throw new RangeError('VIEW_MAX_CHARACTERS');
         }
@@ -2561,13 +2749,15 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         return innerLength(probe);
     };
     // How many characters an attribute `name="…"` (by default `value`) adds to its element's serialization; 0 for none.
+    // Counted on an attribute named `value`, whatever `name` is: a style attribute written from guest text is an inline
+    // style the host page's policy checks (sanitizeRender), and the escaped value is the same under any name.
     const valueAttributeLength = (value: string | null, name = 'value') => {
         if (value === null) return 0;
         const probe = call(D.createElement, document, ['span']);
-        call(E.setAttribute, probe, [name, value]);
+        call(E.setAttribute, probe, ['value', value]);
         const length = call(outerHTMLOf, probe, []).length as number;
         work += length;
-        return length - '<span></span>'.length;
+        return length - '<span></span>'.length - 'value'.length + name.length;
     };
     const assertCharacters = (total: number) => {
         if (total > options.render.maxCharacters) throw new RangeError('VIEW_MAX_CHARACTERS');
@@ -2590,10 +2780,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const target = elementInBody(into);
         if (!target) return;
         const refused: [string, string][] = [];
-        const text = inStyle(target) ? cssInto(given, refused) : given; // a stylesheet's new text, without network URLs (S74)
-        if (!switches.animations && call(localNameOf, target, []) === 'style') stillNamed(text); // a stylesheet's new text
-        const css = inStyle(target) ? countLoads(text, options.rates.urls) : 0; // a stylesheet's new text (S73)
+        const sheet = inStyle(target);
+        const text = sheet ? cssInto(given, refused) : given; // a stylesheet's new text, without network URLs (S74)
+        if (!switches.animations && sheet) stillNamed(text); // a stylesheet's new text
+        const css = sheet ? countLoads(text, options.rates.urls) : 0; // a stylesheet's new text (S73)
         replaceText(target, text);
+        if (sheet) refreshSheet(target);
         cssWork += css;
         reportAll(refused);
     };
@@ -3856,7 +4048,7 @@ export function environmentGate(host: string, stopParsing: boolean, body: string
 export function viewBootstrapSource(options: ViewOptions): string {
     const script = 'var s = document.currentScript;';
     const bridge = `(${inBridgeFrame.toString()})(${JSON.stringify(BRIDGE_FRAME_OPTIONS).replaceAll('<', '\\u003c')});`;
-    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()});`;
+    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`;
     // The gate first (environment-check.ts): a refusal goes to the host page's window, which is the bridge frame's parent and
     // the view's grandparent.
     const host = `(document.currentScript && document.currentScript.getAttribute('data-role') === '${BRIDGE_ROLE}' ? parent : parent.parent)`;

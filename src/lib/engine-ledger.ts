@@ -104,12 +104,12 @@ export const ENGINE_DIFFERENCES = {
         why: "Which APIs an engine ships (and, for secure-context-only ones, whether it counts a `blob:` worker of an opaque origin as secure). The library only deletes names off the allowlist, so an absent name is absent and none is added; no name that can make a request or open a channel differs (the four request makers are present on every engine, `importScripts` in worker mode)",
         tests: [`${E2E}worker-globals-and-termination.spec.ts`],
     },
-    'view-inline-style-check': {
-        what: "What the view's checks of the host page's `style-src` and `img-src` do with the guest's inline styles and a registered file, on a page whose policy refuses them (`cspStyle` and `cspReporting` residuals)",
-        chromium: "Refuses the style attribute, the style element and the file, and reports each to the page's endpoint",
-        firefox: "Refuses the style attribute, the style element and the file, and reports each to the page's endpoint",
-        webkit: "Applies the style attribute (it checks no attribute the renderer sets), refuses the style element and the file, and sends the page's endpoint nothing from the view",
-        why: "How an engine applies an inherited `style-src` to an attribute set through the DOM, and whether it delivers a report from an opaque frame. Documented residuals: every report names only `inline` or `blob` as blocked, and the guest hears none",
+    'view-report-delivery': {
+        what: "Whether a refusal of the view's (a registered file's `blob:` load, on a page whose policy refuses `blob:`: the `cspReporting` residual) reaches the page's report endpoint",
+        chromium: "Reports it to the page's endpoint, naming `blob`",
+        firefox: "Reports it to the page's endpoint, naming `blob`",
+        webkit: "Raises the violation in the view and sends the page's endpoint nothing from it (it reports the host page's own)",
+        why: "Whether an engine delivers a report from an opaque `srcdoc` frame. Documented residual: every report names only `blob` as blocked, and the guest hears none. The guest's styles are no part of it on any engine: the view applies them through the CSSOM, which no `style-src` checks (docs/research/25_cssom_styles)",
         tests: [`${E2E}sealed-reach.spec.ts`],
     },
     'worker-eventsource-fontface': {

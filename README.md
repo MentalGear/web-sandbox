@@ -108,7 +108,10 @@ the browser ([Host page policy](docs/API.md#host-page-policy)). `bun run dev` se
 **Your page's own policy applies inside the sandbox.** Its frames are `srcdoc` documents, which inherit the host
 page's Content-Security-Policy, Trusted Types and Cross-Origin-Embedder-Policy. A host policy that refuses what the
 sandbox needs ends the build with a reason that names it; what to allow, per mode, is in
-[API.md](docs/API.md#host-page-policy). Cooperative and worker mode need `'unsafe-inline'` in your `script-src`, which
+[API.md](docs/API.md#host-page-policy). Sealed and strict mode need the view bootstrap's hash in your `script-src`,
+`blob:` in your `worker-src`, and the hashes of the library's two styles (or `'unsafe-inline'`) in your `style-src`, and
+nothing for the guest's own styles: the view applies them through the CSSOM, which your `style-src` does not check, so
+your report endpoint hears nothing of them. Cooperative and worker mode need `'unsafe-inline'` in your `script-src`, which
 browsers ignore next to a hash or a nonce: they cost a page its own nonce- or hash-based script policy, so prefer sealed
 mode (the default) or strict mode.
 
@@ -128,8 +131,9 @@ nothing, and the `terminated` reason names `'cooperative'`.
 
 **The guest reaches nothing by default.** Sealed mode has no network at all: guest code makes no request, and makes
 the browser send none for it, not even a report to your page's Content-Security-Policy endpoint (it runs no string as
-code and calls no `import()`, so your page's policy, which the sandbox inherits, is never asked; what of the view your
-policy refuses is reported to it: [Host page policy](docs/API.md#host-page-policy)). In strict mode, list the exact origins it
+code and calls no `import()`, so your page's policy, which the sandbox inherits, is never asked, and the view applies the
+guest's styles through the CSSOM, which your policy does not check; what of the view your policy refuses, a registered
+file's `blob:` load, is reported to it: [Host page policy](docs/API.md#host-page-policy)). In strict mode, list the exact origins it
 may load each kind from in `origins` (`connect`, `images`, `styles`, `fonts`, `media`, `scripts`); everything else in
 its policy is fixed:
 

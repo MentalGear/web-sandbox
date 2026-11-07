@@ -100,18 +100,12 @@ export const INHERITED_CONTEXT = {
     },
     cspStyle: {
         channel: "The host page's CSP `style-src` (and its fallbacks)",
-        inheritedBy: "every mode: the wrapper's style and the strict view's animation stylesheet; the guest's inline styles in the view",
-        how: "The wrapper style and the animation stylesheet have documented hashes; a policy that refuses them leaves the frame 150 px high (or drops the guest stylesheets) and the element warns once, naming the hash. The guest's own `style` attributes and `<style>` elements are inline styles the policy checks: docs/API.md#host-page-policy says to admit `'unsafe-inline'` for them (documented)",
-        by: ['warn', 'documented'],
+        inheritedBy: "every mode: the wrapper's style and the strict view's animation stylesheet; cooperative mode's guest styles",
+        how: "The wrapper style and the animation stylesheet have documented hashes; a policy that refuses them leaves the frame 150 px high (or drops the guest stylesheets) and the element warns once, naming the hash. Strict and sealed mode's view applies the guest's styles through the CSSOM, which no `style-src` checks (the `cspReporting` row), so the page needs nothing in `style-src` for them; cooperative mode's guest document holds its styles as written, and the page's `style-src` checks them (documented)",
+        by: ['construct', 'warn', 'documented'],
         engines: ALL,
-        tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/e2e/directive-matrix.spec.ts', 'test/e2e/sealed-reach.spec.ts'],
+        tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/e2e/directive-matrix.spec.ts', 'test/e2e/sealed-host-policy.spec.ts', 'test/unit/inline-styles.test.ts', 'test/e2e/sealed-reach.spec.ts'],
         sealed: { standing: 'remains' },
-        residuals: {
-            guestStyles: {
-                what: "the guest's `style` attributes and `<style>` elements are checked against the page's `style-src`: one that does not admit `'unsafe-inline'` (or carries a hash or a nonce, beside which the browser ignores it) refuses them, and the guest's styling is lost",
-                tests: ['test/e2e/sealed-reach.spec.ts'],
-            },
-        },
     },
     cspBaseUri: {
         channel: "The host page's CSP `base-uri`, and with it the document's base URL (a refused `<base>` leaves the host page's URL)",
@@ -150,18 +144,14 @@ export const INHERITED_CONTEXT = {
     cspReporting: {
         channel: "The host page's CSP reporting endpoints (`report-uri`, `report-to`): every refusing check of the inherited list makes the browser POST a report to the page's endpoint, with fields of the refused action (the blocked URL with its path and query, a sample of a script or a style with `'report-sample'`, and Chromium's Trusted Types sample without it)",
         inheritedBy: "every mode: the view and the guest's worker; cooperative mode's guest document",
-        how: "The worker of strict and sealed mode reaches no refusing check (the `cspPolicyText` row), so it makes the browser send no report: no `import()` (the build refuses the entry), no string run as code, no request past the gate. The view runs no guest code, and the renderer drops every network URL before the browser sees it, so no report names one; what the view still has checked against the host page's policy is the library's own loads of registered files (`blob:`, under the page's `img-src`, `font-src`, `media-src` and `style-src`) and the guest's inline styles (under its `style-src`): a page whose policy refuses them gets a report for each refusal, which names `blob` or `inline` as blocked, and the first characters of the style where its `style-src` has `'report-sample'` (documented, with what the embedder does: admit `blob:` and `'unsafe-inline'` for styles, docs/API.md#host-page-policy, or serve the embedding page without reporting). Strict mode with `scriptUnsafe`, worker mode and cooperative mode report what their guest code makes the platform refuse (documented)",
+        how: "The worker of strict and sealed mode reaches no refusing check (the `cspPolicyText` row), so it makes the browser send no report: no `import()` (the build refuses the entry), no string run as code, no request past the gate. The view runs no guest code, and the renderer drops every network URL before the browser sees it, so no report names one. The view applies the guest's styles through the CSSOM, which no `style-src` checks on any engine: a style attribute as the element's declaration, a `<style>` as a constructed stylesheet it adopts, and its parser is given markup that holds neither, since Chromium checks a style attribute as it parses it (style-markup.ts, sanitizeRender; docs/research/25_cssom_styles). What the view still has checked against the host page's policy is the library's own loads of registered files (`blob:`, under the page's `img-src`, `font-src`, `media-src` and `style-src`): a page whose policy refuses them gets a report for each refusal, which names only `blob` as blocked (documented, with what the embedder does: admit `blob:`, docs/API.md#host-page-policy, or serve the embedding page without reporting). Strict mode with `scriptUnsafe`, worker mode and cooperative mode report what their guest code makes the platform refuse (documented)",
         by: ['construct', 'refuse', 'reason', 'documented'],
         engines: ['chromium', 'firefox'],
-        tests: ['test/e2e/sealed-host-policy.spec.ts', 'test/e2e/sealed-no-network.spec.ts', 'test/unit/entry-imports.test.ts', 'test/unit/code-from-strings.test.ts', 'test/e2e/sealed-reach.spec.ts'],
-        sealed: { standing: 'reduced', note: "no report from the worker; the view's checks of registered files and of the guest's inline styles remain, on a page whose policy refuses them" },
+        tests: ['test/e2e/sealed-host-policy.spec.ts', 'test/e2e/sealed-no-network.spec.ts', 'test/unit/entry-imports.test.ts', 'test/unit/code-from-strings.test.ts', 'test/unit/inline-styles.test.ts', 'test/e2e/sealed-reach.spec.ts'],
+        sealed: { standing: 'reduced', note: "no report from the worker, and none of a guest style; the view's `blob:` loads of registered files remain, on a page whose policy refuses `blob:`, each report naming only `blob`" },
         residuals: {
             blobLoads: {
                 what: "each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice",
-                tests: ['test/e2e/sealed-reach.spec.ts'],
-            },
-            inlineStyles: {
-                what: "each refusal of a guest's inline style is reported to the page's endpoint, naming `inline` as blocked, with the style's first characters where the page's `style-src` has `'report-sample'`; how many there are, and when, is the guest's choice",
                 tests: ['test/e2e/sealed-reach.spec.ts'],
             },
         },
