@@ -367,7 +367,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         bytes: '{RPC_MAX_BYTES} a call, its whole frame measured by both ends; `callLimits.maxBytesPerSecond` a second, by default {GUEST_CALL_BYTES_PER_SECOND}; {RPC_MAX_INBOUND_BYTES} of arguments running at once; a method name of at most {MAX_NAME_LENGTH} characters',
         time: "none of its own: the embedder's methods run as long as they take",
         cost: 'none beyond the count and the bytes',
-        sealed: "none of the library's: the embedder's methods are the guest's only way out, so they are all it can reach",
+        sealed: "none of the library's: the only code of the host page the guest can run is the embedder's methods, so they are all it can reach",
         test: 'test/unit/rpc-bounds-and-call-limits.test.ts (M-2, C-1); test/unit/config-schema.test.ts; test/unit/rate-limit.prop.test.ts' },
     { channel: "Answers to the host's calls (`bridge.expose`)",
         surfaces: [['port', 'message']],

@@ -186,7 +186,9 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions, NetworkSandbo
  * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
  * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
  * guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
- * URL (such as a link `href`), `eval`, template or `console` format-string sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
+ * URL (such as a link `href`), `eval`, template or `console` format-string sink, and do not forward it to a network sink,
+ * an error reporter or analytics (`fetch`, `navigator.sendBeacon`) as if it were your page's own event: whoever wrote
+ * the app reads that sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
  * `+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the
  * library's text, which never quotes a value of your configuration, or the text you passed to `terminate()`.
  */
