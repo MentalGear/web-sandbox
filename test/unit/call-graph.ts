@@ -51,6 +51,8 @@ export function graphOf(file: string): Graph {
     const starts: { name: string; at: number; close: RegExp }[] = [];
     for (const match of text.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm)) starts.push({ name: match[1]!, at: match.index!, close: /^\}$/m });
     for (const match of text.matchAll(/^(?:export\s+)?const\s+(\w+)/gm)) starts.push({ name: match[1]!, at: match.index!, close: /^(?=\S)/m });
+    // a class of a module (its methods are its text), but host.ts's element, whose members are units of their own
+    if (file !== 'src/host.ts') for (const match of text.matchAll(/^(?:export\s+)?class\s+(\w+)/gm)) starts.push({ name: match[1]!, at: match.index!, close: /^\}$/m });
     if (file === 'src/host.ts') {
         // the element class's members only (the interfaces below it name some of the same members)
         const from = text.indexOf('\nexport class WebSandbox ');

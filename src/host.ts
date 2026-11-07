@@ -2314,7 +2314,6 @@ export class WebSandbox extends ElementBase {
     // the element's until `attach`, and the reducer attaches only the build that is still the element's (`built{gen}`):
     // an outer build that a nested one replaced is dropped whole.
     private _prepareBuild(): PreparedBuild {
-        const isWorkerMode = this._config.mode === 'worker';
         // The embedder's own inline height, back as soon as a build without auto-sizing starts (R1:R3-8), whether or not it
         // then completes: the element's, not a resource of the build, and written without embedder code.
         if (!this._autoResizeEnabled()) this._releaseAutoHeight();
@@ -2332,7 +2331,17 @@ export class WebSandbox extends ElementBase {
         const reach = this._reach();
         this._refuseByTrustedTypes();
         if (this._config.mode === 'strict') return this._prepareStrictFrame(built, files, reach);
+        return this._prepareDocumentFrame(built, files, reach);
+    }
 
+    /**
+     * Cooperative and worker mode: the guest document (cooperative mode's is `html`, which runs as it is: that is the mode;
+     * worker mode's has no markup) under the guest policy, in the wrapper. Cooperative mode reads `html` with an inert
+     * parser here, for its warning and its file references (HOST_PASSES.cooperativeDocument); a strict or sealed build
+     * never reaches this (_prepareBuild returns before it).
+     */
+    private _prepareDocumentFrame(built: FileStore, files: FileSnapshotEntry[], reach: NarrowedReach): PreparedBuild {
+        const isWorkerMode = this._config.mode === 'worker';
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
         const policy = this._guestPolicy(files, reach.origins);

@@ -373,6 +373,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/frame-documents.ts` | Builds the documents the sandbox is made of |
 | `src/lib/frames.ts` | The frame table |
 | `src/lib/guest-writes.ts` | Guest writes, host side: the overlay of one environment |
+| `src/lib/host-passes.ts` | The host realm's passes over guest content, as data |
 | `src/lib/host-site.ts` | The host page's origin and its site for cookies |
 | `src/lib/import-map.ts` | The guest's own import maps |
 | `src/lib/in-bridge-frame.ts` | The fetch bridge's frame, frame side: the only code that performs a request of the bridge |

@@ -9,6 +9,7 @@ import {
     type Cell, type ChokepointId, type Column, type SurfaceId,
 } from '@src/lib/sealed-reach';
 import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { HOST_PASSES, type HostPassId } from '@src/lib/host-passes';
 
 /**
  * Class A is closed by enumeration (S74; docs/research/18_finding_classes): every name a sealed guest can reach (the worker's
@@ -182,6 +183,30 @@ describe('permissionState: every name that reads origin- or profile-keyed state 
 
     it("the permission API and the storage manager are not offered (WebKit answered permissions from the host origin's grants; Firefox's estimate() ended the task)", () => {
         for (const name of ['Permissions', 'PermissionStatus', 'StorageManager', 'navigator.permissions', 'navigator.storage']) expect(nameList, name).not.toContain(name);
+    });
+});
+
+// BD7:LIM-1 (class A): the domain left out the third realm that handles guest content, the host page's own, where the
+// element parses and loads nothing of the guest's by construction (HOST_PASSES): every pass a sealed build runs is a name.
+describe("the host realm, the table's third side: every pass of the host realm a sealed build runs (HOST_PASSES)", () => {
+    const sealedPasses = (Object.keys(HOST_PASSES) as HostPassId[]).filter(id => (HOST_PASSES[id].modes as readonly string[]).includes('sealed'));
+
+    it('every row of HOST_PASSES whose modes include sealed is a name of the host side, and no other is', () => {
+        expect(names.filter(entry => entry.domain === 'hostPass').map(entry => entry.name).sort()).toEqual(sealedPasses.map(id => `host:${id}`).sort());
+        expect(sealedPasses).toContain('entryScan');
+        expect(sealedPasses).not.toContain('cooperativeDocument');
+    });
+
+    it("every row a parse, a load or a sink of the host realm would have the browser consult is neutralised for every pass by the host pass rule; the cost on the thread is the row's residual", () => {
+        const consulted: InheritedContextId[] = ['cspScript', 'cspStyle', 'cspBaseUri', 'cspFetch', 'cspPolicyText', 'cspReporting', 'trustedTypesRequirement', 'trustedTypesDefault', 'referrer', 'cookies', 'serviceWorker'];
+        for (const id of sealedPasses) {
+            for (const rowId of consulted) {
+                const found = reachCell(`host:${id}`, rowId)!;
+                expect(found.relation, `${id} × ${rowId}`).toBe('neutralised');
+                expect((found as { by: readonly ChokepointId[] }).by, `${id} × ${rowId}`).toEqual(['hostPassRule']);
+            }
+            expect(reachCell(`host:${id}`, 'thread'), id).toMatchObject({ relation: 'remains', residuals: ['hostPasses'] });
+        }
     });
 });
 
