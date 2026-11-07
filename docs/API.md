@@ -773,7 +773,7 @@ listGuestWrites(): GuestWrite[]
 ```
 
 The guest's pending writes and removals (see `guestWrites` and [Guest writes](#guest-writes)), sorted by path. They belong
-to the current environment and survive its termination; the next build and the element's removal discard them.
+to the current environment; how long they live is stated once, at [Guest writes lifetime](#guest-writes-lifetime).
 
 **Returns:** One `GuestWrite` per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
 (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
@@ -1115,8 +1115,8 @@ cannot open the gate early.
 | :--- | :--- |
 | Host-exposed methods, registered files, the configuration, the `autoResize` height (until the new guest reports) | The guest's realm and exposed methods, pending calls, queued `execute()` code, in-flight requests, uncommitted guest writes |
 
-A termination keeps the guest's pending writes (listable and committable) until the next build; removing the
-element discards them.
+A termination keeps the guest's pending writes until the next build; removing the element discards them
+([how long pending writes live](#guest-writes-lifetime)).
 
 [ADR-003](ADR-003-lifecycle-and-liveness.md)
 
@@ -1297,6 +1297,11 @@ reject with `FILES_NOT_ALLOWED`, and so does the element for any request that re
 content as the guest's data, and so its path and type: show them with `textContent`, never in an HTML, URL, template or `console`
 format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,` and `@`, so one written into a
 single-quoted attribute can end it and add one). [ADR-004](ADR-004-files-as-blob-urls.md)
+
+<a id="guest-writes-lifetime"></a>**How long pending writes live.** Each build (`setConfig()`, `load()`, `reset()`, a
+rebuild) makes a new, empty overlay and discards the last one's pending writes. Only `terminate()` (and so a budget that
+ends the sandbox) keeps them: they stay listable and committable until the next build, and the element's removal
+discards them. This is the one statement of the rule; the other passages link here.
 
 **The bytes are the guest's too, and a URL made of them is a document of your origin.** Bytes the app wrote or returned
 (`GuestWrite.content`, a `Blob` or `File` a method returns to `call()`) become a page of **your** origin when you make an
@@ -1856,10 +1861,12 @@ The host publishes methods with `sandbox.expose()` and the app calls them with `
   quotes the data it was handling. A result that cannot be copied reaches it as `RESULT_NOT_TRANSFERABLE` with the
   library's text. Each text the app does not receive is written to your page's console (`console.warn`, once per call).
 - **An element is one app's for its life; to run another app, use a new element.** The element is the unit of isolation:
-  its files, its exposed methods, its pending guest writes and every handle a host method holds (`sandbox.call`) belong to
-  the element, not to the app. They survive `reset()`, `load()`, `setConfig()` and `terminate()`, so an app you load next
-  on the same element can call the methods you exposed for the last one and read its files, a `commitGuestWrites()` or a
-  late `call()` meant for the first app lands in the second, and two mounts that overlap (the first still waiting for your
+  its files, its exposed methods and every handle a host method holds (`sandbox.call`) belong to the element, not to the
+  app. They survive `reset()`, `load()`, `setConfig()` and `terminate()`, so an app you load next on the same element can
+  call the methods you exposed for the last one and read its files, and a late `call()` meant for the first app lands in
+  the second (its pending guest writes are the exception: only `terminate()` keeps them, [and only until the next
+  build](#guest-writes-lifetime), so a `commitGuestWrites()` meant for the first app can still commit what a terminated
+  first app left), and two mounts that overlap (the first still waiting for your
   store) meet. `mountTodoApp` therefore makes an element for each mount, and `stop()` terminates it and removes it.
   After `stop()`:
   - the app is ended and its element is out of the page: its pending guest writes are gone with it, and a `call()` that a

@@ -1069,7 +1069,7 @@ export class WebSandbox extends ElementBase {
 
     /**
      * The guest's pending writes and removals (see `guestWrites` and docs/API.md#guest-writes), sorted by path. They belong
-     * to the current environment and survive its termination; the next build and the element's removal discard them.
+     * to the current environment; how long they live is stated once, at docs/API.md#guest-writes-lifetime.
      *
      * @returns One {@link GuestWrite} per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
      * (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while

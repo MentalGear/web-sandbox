@@ -4260,7 +4260,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#listGuestWrites:member(1)",
-              "docComment": "/**\n * The guest's pending writes and removals (see `guestWrites` and docs/API.md#guest-writes), sorted by path. They belong\n * to the current environment and survive its termination; the next build and the element's removal discard them.\n *\n * @returns One {@link GuestWrite} per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`\n * (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while\n * `guestWrites` is off.\n */\n",
+              "docComment": "/**\n * The guest's pending writes and removals (see `guestWrites` and docs/API.md#guest-writes), sorted by path. They belong\n * to the current environment; how long they live is stated once, at docs/API.md#guest-writes-lifetime.\n *\n * @returns One {@link GuestWrite} per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`\n * (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while\n * `guestWrites` is off.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
