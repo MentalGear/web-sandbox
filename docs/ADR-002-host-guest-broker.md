@@ -63,9 +63,13 @@ about it.
 - **What a refusal's text carries is chosen, not inherited.** A refusal the broker makes has a fixed text of its own,
   never an engine's: a result that cannot be cloned is answered without the clone's error, which on Chromium quotes the
   function's source. The host's broker sends a handler's text by an allow-list: a thrown string, or the message of an
-  `Error` whose prototype is exactly the host realm's `Error.prototype`; any other throw arrives as
-  `the method failed (<name>)`, because an engine's message quotes the data the handler was handling, and its text goes
-  to the host's console. The guest's broker forwards its handlers' texts, which the host receives as the guest's data.
+  `Error` whose prototype is exactly the host realm's `Error.prototype` that the library did not make. An error the
+  library made (its own refusals, a refusal that carries another side's text, a file or fetch refusal) crosses as its
+  code and the one fixed text the library has for that code, chosen when the error was made and never read from its
+  message, which may quote the caller's data or another app's text (BD7:CHL-2; src/lib/minted-errors.ts). Any other throw
+  arrives as `the method failed (<name>)`, because an engine's message quotes the data the handler was handling. Each
+  text withheld goes to the host's console. The guest's broker forwards its handlers' texts, which the host receives as
+  the guest's data.
 - **One field with disjoint groups, not a category code plus a detail code.** The guarantee only needs the groups to
   be disjoint and the clamp to enforce that on receipt; a category on top adds a second field to branch on.
 - **No separate retry field.** Whether to retry follows from the code: only `TIMEOUT` and `BUSY` are worth

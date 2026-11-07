@@ -40,7 +40,7 @@
  *
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
-import { CheckedFile, describePath, fileError, isValidPath, MAX_TOTAL_BYTES, type FileStore } from './files';
+import { CheckedFile, checkPath, describePath, fileError, MAX_TOTAL_BYTES, type FileStore } from './files';
 import { createRateLimiter } from './rate-limit';
 
 /** The reserved broker method the guest's sandboxFiles.write() and remove() call (rpc.ts, reserved names). */
@@ -194,7 +194,7 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         const change = source.change;
 
         if (change === 'remove') {
-            if (!isValidPath(path)) throw fileError('INVALID_PATH', `${REMOVE_CALLER} refused the path ${describePath(path)}.`);
+            checkPath(path, REMOVE_CALLER);
             const written = overlay.get(path);
             const inBuild = built.has(path);
             // what the guest sees: what it wrote, else what the build delivered and it did not remove
@@ -323,7 +323,7 @@ export function createGuestWrites({ store, built = store, now = () => performanc
 export function parseCommitArguments(paths: unknown, options: unknown): { paths: string[]; code: boolean } {
     if (!Array.isArray(paths)) throw fileError('INVALID_PATH', `${COMMIT_CALLER} expects an array of paths.`);
     for (const path of paths) {
-        if (!isValidPath(path)) throw fileError('INVALID_PATH', `${COMMIT_CALLER} refused the path ${describePath(path)}.`);
+        checkPath(path, COMMIT_CALLER);
     }
     const code = options !== null && typeof options === 'object' && (options as { code?: unknown }).code === true;
     return { paths: [...paths], code };

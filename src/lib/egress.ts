@@ -21,6 +21,7 @@
  *
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
+import { mintUncodedError } from './minted-errors';
 
 /** Where the surface is. */
 export type EgressRealm =
@@ -473,7 +474,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
  */
 export function budgetsTable(values: Readonly<Record<string, number>>): string {
     const cell = (text: string) => text.replace(/\{([A-Za-z_.]+)\}/g, (_, name: string) => {
-        if (!(name in values)) throw new Error(`budgetsTable: no value for ${name}`);
+        if (!(name in values)) throw mintUncodedError(Error, `budgetsTable: no value for ${name}`);
         return `\`${name}\` (${values[name]})`;
     }).replace(/\|/g, '\\|');
     const lines = ['| Channel | Count | Bytes | Time | Bound on the cost to the host page | Network in sealed mode | Test |', '| :--- | :--- | :--- | :--- | :--- | :--- | :--- |'];

@@ -19,6 +19,7 @@
  *
  * Host-side only, never stringified into a guest, so it may use module scope freely.
  */
+import { mintUncodedError } from '../minted-errors';
 
 // The first 32 bits of the fractional parts of the cube roots of the first 64 primes (FIPS 180-4, 4.2.2).
 const K = new Uint32Array([
@@ -88,8 +89,8 @@ const toBase64 = (bytes: Uint8Array) => {
  * ("</script", "<!--", "<script"), so the parser's script text is exactly `text`.
  */
 export function assertHashableScript(text: string): void {
-    if (/[\r\u0000]/.test(text)) throw new Error('[Sandbox] a hashed script must not contain CR or NUL: the HTML parser changes them, so its hash would never match');
-    if (/<\/script|<!--|<script/i.test(text)) throw new Error('[Sandbox] a hashed script must not contain "</script", "<script" or "<!--": its parsed text would differ from its source');
+    if (/[\r\u0000]/.test(text)) throw mintUncodedError(Error, '[Sandbox] a hashed script must not contain CR or NUL: the HTML parser changes them, so its hash would never match');
+    if (/<\/script|<!--|<script/i.test(text)) throw mintUncodedError(Error, '[Sandbox] a hashed script must not contain "</script", "<script" or "<!--": its parsed text would differ from its source');
 }
 
 /**
@@ -100,8 +101,8 @@ export function assertHashableScript(text: string): void {
  * strict view's bootstrap is held to assertHashableScript, which refuses that too.
  */
 export function assertParserSafeScript(text: string): void {
-    if (/\u0000/.test(text)) throw new Error('[Sandbox] an inline script must not contain NUL: the HTML parser replaces it');
-    if (/<\/script|<!--|<script/i.test(text)) throw new Error('[Sandbox] an inline script must not contain "</script", "<script" or "<!--": the HTML parser would not read it back as one script');
+    if (/\u0000/.test(text)) throw mintUncodedError(Error, '[Sandbox] an inline script must not contain NUL: the HTML parser replaces it');
+    if (/<\/script|<!--|<script/i.test(text)) throw mintUncodedError(Error, '[Sandbox] an inline script must not contain "</script", "<script" or "<!--": the HTML parser would not read it back as one script');
 }
 
 /** The CSP hash-source for a script whose parsed text is `text`: `'sha256-<base64>'`. */

@@ -3,6 +3,7 @@ import { cssUrlReferences, replaceRanges } from "./css-references";
 import { srcsetCandidates } from "./srcset";
 import { admitsAll, linkKinds, type LoadKindName } from "./load-kinds";
 import { parseInert } from "./trusted-types";
+import { mintUncodedError } from "./minted-errors";
 
 /**
  * Markup references to registered files (ADR-004). Host-only: nothing here is stringified into
@@ -208,7 +209,7 @@ const scriptType = (script: Element) => (script.getAttribute('type') ?? '').repl
  * a build that only rewrote modules or took out a map returns a single part and draws no nonce.
  */
 export function rewriteGuestMarkup(markup: string, files: FileTypes, options: GuestMarkupOptions, givenNonce?: string): GuestMarkup {
-    if (givenNonce !== undefined && !/^[0-9a-f]{32}$/.test(givenNonce)) throw new Error('[Sandbox] the slot nonce must be 32 lowercase hex characters');
+    if (givenNonce !== undefined && !/^[0-9a-f]{32}$/.test(givenNonce)) throw mintUncodedError(Error, '[Sandbox] the slot nonce must be 32 lowercase hex characters');
     const unchanged: GuestMarkup = { parts: null, importMaps: [] };
     if (files.size === 0 || markup === '') return unchanged;
     const resolve = (value: string, kinds: readonly LoadKindName[]) => resolveReference(value, files, kinds, options.onKindMismatch);

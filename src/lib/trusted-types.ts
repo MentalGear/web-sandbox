@@ -1,4 +1,5 @@
 import { BRIDGE_PREFIX, WRAPPER_PREFIX } from './frame-documents';
+import { mintUncodedError } from './minted-errors';
 
 /**
  * The element's HTML sinks on a host page that enforces Trusted Types. Under the host page's
@@ -44,7 +45,7 @@ function htmlPolicy(): HtmlPolicy | null {
         policy = factory.createPolicy(TRUSTED_TYPES_POLICY, {
             createHTML: (input: string) => {
                 if (typeof input === 'string' && (parsing || input.startsWith(WRAPPER_PREFIX) || input.startsWith(BRIDGE_PREFIX))) return input;
-                throw new TypeError(`the ${TRUSTED_TYPES_POLICY} policy creates only the sandbox's own documents`);
+                throw mintUncodedError(TypeError, `the ${TRUSTED_TYPES_POLICY} policy creates only the sandbox's own documents`);
             },
         });
     } catch {
@@ -54,7 +55,7 @@ function htmlPolicy(): HtmlPolicy | null {
 }
 
 // A Trusted Types refusal of a string: a TypeError on a page that has Trusted Types, and the policy was refused too.
-const refusal = (error: unknown) => (error instanceof TypeError && 'trustedTypes' in globalThis ? new TrustedTypesRefusal(`createPolicy('${TRUSTED_TYPES_POLICY}') was refused`) : error);
+const refusal = (error: unknown) => (error instanceof TypeError && 'trustedTypes' in globalThis ? mintUncodedError(TrustedTypesRefusal, `createPolicy('${TRUSTED_TYPES_POLICY}') was refused`) : error);
 
 /** Sets `iframe.srcdoc` to a document of the library's (a wrapper, or the bridge's frame), through the library's policy where the browser has Trusted Types. */
 export function setLibrarySrcdoc(iframe: HTMLIFrameElement, wrapper: string): void {

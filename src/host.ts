@@ -17,7 +17,7 @@ import { scriptInMarkup } from "./lib/markup-scripts";
 import { LOAD_KINDS } from "./lib/load-kinds";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
-import { isMinted, markMinted } from "./lib/minted-errors";
+import { crossingText, mintError, mintUncodedError } from "./lib/minted-errors";
 import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
@@ -815,16 +815,19 @@ export class WebSandbox extends ElementBase {
     // flushes them. Answers to the guest never use it — they go back on the port the request arrived on.
     // Results go back with their snapshot's ArrayBuffers transferred (R2:C-3: rpc.ts, sendResult).
     // A guest's request past its environment's per-second budget is answered BUSY (R3:M-2: _admitGuestCall).
-    // A handler's error text reaches the guest only by the broker's allow-list; what it withholds is written to the
+    // A handler's error text reaches the guest only by the broker's rule: the embedder's own words, or for an error the
+    // library made the fixed text its factory chose (BD7:CHL-2: minted-errors.ts); what it withholds is written to the
     // console here, once per call (BD5:LIM-2, BD5:DOC-1: rpc.ts, reportWithheld).
     private _broker = createBroker((frame) => this._postRpc(frame), {
         sizeOf: createSizeOf(),
         transferResults: true,
         admitInbound: (bytes) => this._admitGuestCall(bytes),
-        markMinted,
-        isMinted,
-        reportWithheld: (method, refusal, text) => {
-            console.warn(`[Sandbox] "${method.slice(0, 64)}" failed, and the other side received "${refusal}" in place of its error, which was:`, text);
+        host: {
+            mint: mintError,
+            crossingText,
+            reportWithheld: (method, refusal, text) => {
+                console.warn(`[Sandbox] "${method.slice(0, 64)}" failed, and the other side received "${refusal}" in place of its error, which was:`, text);
+            },
         },
         takeUnexpose: (unexpose) => { this._unexposeMethod = unexpose; },
     });
@@ -1023,7 +1026,8 @@ export class WebSandbox extends ElementBase {
      * - The whole batch is validated first. It fires `fileschanged` when something changed; registering identical content
      *   again changes nothing.
      * - A path is relative (`src/main.js`): segments of letters, digits and the characters of `._~!$&'()*+,;=@-`,
-     *   separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised.
+     *   separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised;
+     *   a refusal's message names the rule the path breaks.
      * - A file's type comes from its extension (`.js` and `.mjs` `text/javascript`, `.css` `text/css`, `.json`
      *   `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4` and the like); an unknown extension is
      *   `application/octet-stream`.
@@ -1169,7 +1173,7 @@ export class WebSandbox extends ElementBase {
         if (!diff.listed) return new Promise((resolve, reject) => this._showInView(shown, () => resolve(answer), reject));
         return new Promise((resolve, reject) => {
             const acted = runNotices(lifecycleHost(this), [() => this._dispatchFilesWritten(answer.path)], () => this._showInView(shown, () => resolve(answer), reject));
-            if (!acted) reject(new Error('[Sandbox] the sandbox was reset or terminated while this write was announced.'));
+            if (!acted) reject(mintError('TERMINATED', '[Sandbox] the sandbox was reset or terminated while this write was announced.'));
         });
     }
 
@@ -1276,13 +1280,17 @@ export class WebSandbox extends ElementBase {
      *
      * @remarks
      * What a failure tells the guest: a throw or rejection reaches it as `HANDLER_ERROR`, and its text is
-     * your own words only. The guest receives the message of a plain `Error` (`throw new Error(text)`, whose prototype is
-     * this window's `Error.prototype`) or a thrown string, verbatim up to 65536 characters (a longer one is cut, and ends
-     * `[… cut at 65536 characters]`): put nothing in it you would not show the guest. Any other throw (an engine's
-     * `TypeError` or `SyntaxError` from `JSON.parse`, a `DOMException`, a subclass of `Error`, an error from another
-     * window, an object) arrives as `the method failed (<name>)` with its name only, because an engine's message quotes
-     * the data it was handling. A result that cannot be copied is refused `RESULT_NOT_TRANSFERABLE` with the library's
-     * own text. Each text the guest does not receive is written to this page's console with
+     * your own words only. The guest receives the message of a plain `Error` your code made (`throw new Error(text)`,
+     * whose prototype is this window's `Error.prototype`) or a thrown string, verbatim up to 65536 characters (a longer
+     * one is cut, and ends `[… cut at 65536 characters]`): put nothing in it you would not show the guest. An error of the
+     * library's that the handler lets through (a refusal of `registerFiles()`, `unregisterFiles()` or
+     * `commitGuestWrites()`, of its own `call()` to this guest or another element's, a `TypeError` of `expose()`) arrives
+     * as its code and the library's fixed text for that code (`INVALID_PATH: …`; `the method failed (TypeError)` for one
+     * without a code), never its message, which quotes what you gave the library or what another app answered. Any other
+     * throw (an engine's `TypeError` or `SyntaxError` from `JSON.parse`, a `DOMException`, a subclass of `Error`, an error
+     * from another window, an object) arrives as `the method failed (<name>)` with its name only, because an engine's
+     * message quotes the data it was handling. A result that cannot be copied is refused `RESULT_NOT_TRANSFERABLE` with
+     * the library's own text. Each text the guest does not receive is written to this page's console with
      * `console.warn`, once per call.
      *
      * Methods belong to the element: they survive `reset()`, `load()`,
@@ -1301,10 +1309,10 @@ export class WebSandbox extends ElementBase {
     expose(name: string, fn: (...args: any[]) => unknown): void {
         // A name that is not a string, or a handler that is not a function, is a mistake to say at once (R1:R3-9): ignored,
         // it would fail the guest's call with UNKNOWN_METHOD far from the cause.
-        if (typeof name !== 'string') throw new TypeError('[Sandbox] expose(): the name must be a string');
+        if (typeof name !== 'string') throw mintUncodedError(TypeError, '[Sandbox] expose(): the name must be a string');
         // the broker's longest method name (rpc.ts, R3:C-1): a longer one could never be called
-        if (name.length > 256) throw new TypeError(`[Sandbox] expose(): the name "${name.slice(0, 64)}…" is longer than 256 characters`);
-        if (typeof fn !== 'function') throw new TypeError(`[Sandbox] expose(): the handler for "${name.slice(0, 64)}" must be a function`);
+        if (name.length > 256) throw mintUncodedError(TypeError, `[Sandbox] expose(): the name "${name.slice(0, 64)}…" is longer than 256 characters`);
+        if (typeof fn !== 'function') throw mintUncodedError(TypeError, `[Sandbox] expose(): the handler for "${name.slice(0, 64)}" must be a function`);
         if (name.startsWith(RESERVED_METHOD_PREFIX)) {
             console.warn(`[Sandbox] expose(): names starting with "${RESERVED_METHOD_PREFIX}" are reserved for the library; "${name}" was not exposed.`);
             return;
@@ -1337,7 +1345,7 @@ export class WebSandbox extends ElementBase {
         }
         const list: unknown[] = typeof names === 'string' ? [names] : Array.isArray(names) ? [...names] : [names];
         for (const name of list) {
-            if (typeof name !== 'string') throw new TypeError('[Sandbox] unexpose(): names must be a string or an array of strings');
+            if (typeof name !== 'string') throw mintUncodedError(TypeError, '[Sandbox] unexpose(): names must be a string or an array of strings');
         }
         for (const name of list as string[]) {
             if (name.startsWith(RESERVED_METHOD_PREFIX)) {
@@ -1386,7 +1394,8 @@ export class WebSandbox extends ElementBase {
      * @returns The guest method's return value (awaited if it is a promise).
      * @throws Never synchronously: the promise rejects with an {@link RpcError}, an `Error` whose `code` is an
      * {@link RpcErrorCode}. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and
-     * their message is the guest's text.
+     * their message is the guest's text. A host method that lets the rejection propagate hands its own caller the code
+     * and the library's fixed text for it, never this message (see `expose()`).
      */
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
         const refusal = this._noEnvironmentError();
@@ -2364,7 +2373,7 @@ export class WebSandbox extends ElementBase {
     // it does where it has them.
     private _refuseByTrustedTypes() {
         const trustedTypes = this._trustedTypes();
-        if (trustedTypes && buildRefused(trustedTypes, this._config.mode as TrustedTypesMode)) throw new TrustedTypesRefusal("the host page's trusted-types directive does not name the policy");
+        if (trustedTypes && buildRefused(trustedTypes, this._config.mode as TrustedTypesMode)) throw mintUncodedError(TrustedTypesRefusal, "the host page's trusted-types directive does not name the policy");
     }
 
     /**
@@ -2405,7 +2414,7 @@ export class WebSandbox extends ElementBase {
         const entry = this._config.entry;
         if (typeof entry === 'string' && entry !== '') {
             const file = files.find(candidate => candidate[0] === entry);
-            if (!file || !isJavaScriptType(file[1])) throw new Error('the entry was not refused before the build'); // _buildRefusal decides
+            if (!file || !isJavaScriptType(file[1])) throw mintUncodedError(Error, 'the entry was not refused before the build'); // _buildRefusal decides
             entrySource = entryText(file[2]);
         }
 
@@ -2813,7 +2822,7 @@ function adopted(element: WebSandbox) {
  */
 export function defineWebSandbox(tagName = 'web-sandbox'): typeof WebSandbox {
     const existing = customElements.get(tagName);
-    if (existing && existing !== WebSandbox) throw new Error(`<${tagName}> is already defined by another element`);
+    if (existing && existing !== WebSandbox) throw mintUncodedError(Error, `<${tagName}> is already defined by another element`);
     if (!existing) customElements.define(tagName, WebSandbox);
     return WebSandbox;
 }

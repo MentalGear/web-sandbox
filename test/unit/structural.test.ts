@@ -33,6 +33,8 @@ import { BRIDGE_REQUEST_OPTIONS } from '@src/lib/in-bridge-frame';
  *     arbitrary values restricted to what clone accepts.
  *   - The console relay (in-sandbox-script.ts) against the measure and against the host's reading of a line
  *     (sandbox-log.ts, toLogDetail): a differential test of the two ends of one budget.
+ *   - Every error made in host-realm code is made by the one factory (class P; BD7:CHL-2, minted-errors.ts), which
+ *     chooses what a guest receives for it: a scan of src/ outside the functions stringified into a guest's realm.
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -984,47 +986,128 @@ describe('what the broker posts is what the value shows: every view in a posted 
         expect(read).toBeGreaterThan(2);
         expect(tokens.flatMap((_, i) => (isCall(i, 'handlerErrorText') ? [enclosing(i)] : []))).toEqual(['refusalFrame']);
     });
+});
 
-    // BD6:LIM-1, class P: an error the library makes in host code is made with a text of its own. A host method can let
-    // any such error propagate to the guest, so the message of one reads no other error: not a variable that holds one,
-    // not its `message`, not errorMessage(). The messages checked are those of the error classes and of the library's
-    // minting functions (the argument that is the message); a `cause` argument is the one place an error goes.
-    // in-sandbox-*.ts run in the guest's realms, where an error never reaches a host handler.
-    it("no error the library makes in host code is built from another error's text", () => {
-        const MESSAGE_ARGUMENT: Record<string, number> = { fileError: 1, fetchRefusal: 1, localRefusal: 1, codedError: 0 };
-        const OTHER_ERROR = new Set(['error', 'err', 'e', 'ex', 'exception', 'reason', 'cause', 'errorMessage']);
-        // Reads of an error that carry no engine text: the name of a browser error is one identifier of a closed set.
-        const ALLOWED = new Set(["src/lib/fetch-bridge.ts: `the browser refused the request (${ error instanceof Error ? error . name : 'error' })`"]);
-        const files = sourceFiles('src').filter(file => !path.basename(file).startsWith('in-sandbox-'));
-        const found: string[] = [];
-        let constructors = 0;
-        for (const file of files) {
-            const tokens = tokenize(read(file));
-            for (let i = 0; i < tokens.length; i++) {
-                const token = tokens[i]!;
-                const before = tokens[i - 1]?.kind;
-                const isClass = before === SyntaxKind.NewKeyword && /Error$|^DOMException$/.test(token.text);
-                const isMinting = Object.hasOwn(MESSAGE_ARGUMENT, token.text) && before !== SyntaxKind.FunctionKeyword && before !== SyntaxKind.DotToken;
-                if (!(isClass || isMinting) || tokens[i + 1]?.kind !== SyntaxKind.OpenParenToken) continue;
-                constructors++;
-                // the tokens of each argument, split at the commas of the call's own level
-                const args: Token[][] = [[]];
-                for (let end = i + 2, depth = 0; ; end++) {
-                    const part = tokens[end]!;
-                    if (part.kind === SyntaxKind.OpenParenToken || part.kind === SyntaxKind.OpenBracketToken || part.kind === SyntaxKind.OpenBraceToken) depth++;
-                    if (part.kind === SyntaxKind.CloseParenToken || part.kind === SyntaxKind.CloseBracketToken || part.kind === SyntaxKind.CloseBraceToken) depth--;
-                    if (depth < 0) break;
-                    if (depth === 0 && part.kind === SyntaxKind.CommaToken) args.push([]);
-                    else args.at(-1)!.push(part);
-                }
-                const message = args[MESSAGE_ARGUMENT[token.text] ?? 0] ?? [];
-                const reads = message.some((part, at) => OTHER_ERROR.has(part.text) || (part.text === 'message' && message[at - 1]?.kind === SyntaxKind.DotToken));
-                if (!reads) continue;
-                const shown = `${file}: ${message.map(part => part.text).join(' ')}`;
-                if (!ALLOWED.has(shown)) found.push(shown);
+// BD7:CHL-2, class P (what crosses is what the API shows): what a guest receives for an error the library made is chosen
+// from a fixed table by its code when the error is made (minted-errors.ts), never read from its message. That holds only
+// for the errors the factory made, so every error made in host-realm code is made there: anywhere else in src/, a
+// construction of an error class (a built-in one, or a class of src/ that extends one), by `new`, a call, Reflect's
+// `construct` or a value of the class taken to construct it elsewhere, is a finding. The functions the library
+// stringifies into a guest's realm (STRINGIFIED) keep their own rules: an error made there is the guest's; createBroker
+// is one, and on the host it makes its errors through its `host.mint` option, the factory (rpc-what-crosses.test.ts).
+describe('every error the library makes in host-realm code is made by the one factory (BD7:CHL-2, class P)', () => {
+    const FACTORY = 'src/lib/minted-errors.ts';
+    const FACTORY_CALLS = new Set(['mintUncodedError']);
+    const BUILT_IN = /^(?:Error|TypeError|RangeError|SyntaxError|ReferenceError|EvalError|URIError|AggregateError|DOMException)$/;
+    // An alias of a built-in error class, as the stringified code captures one (ErrorConstructor, TypeErrorConstructor).
+    const ALIAS = /^[A-Z][A-Za-z]*ErrorConstructor$/;
+    const unix = (file: string) => file.split(path.sep).join('/');
+
+    /** The error classes of `sources` that are not built in: every class that extends one, transitively. */
+    function errorClasses(sources: string[]): Set<string> {
+        const classes = new Set<string>();
+        const extending: [string, string][] = [];
+        for (const source of sources) {
+            const tokens = tokenize(source);
+            for (let i = 0; i + 3 < tokens.length; i++) {
+                if (tokens[i]!.kind === SyntaxKind.ClassKeyword && tokens[i + 2]!.kind === SyntaxKind.ExtendsKeyword) extending.push([tokens[i + 1]!.text, tokens[i + 3]!.text]);
             }
         }
+        const isError = (name: string) => BUILT_IN.test(name) || ALIAS.test(name) || classes.has(name);
+        for (let grew = true; grew;) {
+            grew = false;
+            for (const [name, base] of extending) {
+                if (classes.has(name) || !isError(base)) continue;
+                classes.add(name);
+                grew = true;
+            }
+        }
+        return classes;
+    }
+
+    /** The token ranges of the bodies of the functions `file` declares that the library stringifies into a guest realm. */
+    function stringifiedBodies(file: string, tokens: Token[]): [number, number][] {
+        const rows = Object.entries(STRINGIFIED).filter(([, row]) => row.module === unix(file));
+        const bodies: [number, number][] = [];
+        for (const [name] of rows) bodies.push(bodyOf(tokens, name));
+        return bodies;
+    }
+
+    /** The index of the bracket that encloses token `at` (a `(`, `[` or `{` left open before it), or -1. */
+    function enclosingOpen(tokens: Token[], at: number): number {
+        for (let i = at - 1, depth = 0; i >= 0; i--) {
+            const kind = tokens[i]!.kind;
+            if (kind === SyntaxKind.CloseParenToken || kind === SyntaxKind.CloseBracketToken || kind === SyntaxKind.CloseBraceToken) depth++;
+            else if ((kind === SyntaxKind.OpenParenToken || kind === SyntaxKind.OpenBracketToken || kind === SyntaxKind.OpenBraceToken) && depth-- === 0) return i;
+        }
+        return -1;
+    }
+
+    /** Each construction of an error class in `source` outside `exempt`, as `file:line: tokens`, and how many were exempt. */
+    function constructions(file: string, source: string, classes: Set<string>, exempt: [number, number][]): { found: string[]; exempted: number } {
+        const tokens = tokenize(source);
+        const isErrorClass = (token: Token | undefined) => token !== undefined && token.kind === SyntaxKind.Identifier && (BUILT_IN.test(token.text) || ALIAS.test(token.text) || classes.has(token.text));
+        const found: string[] = [];
+        let exempted = 0;
+        for (let i = 0; i < tokens.length; i++) {
+            if (!isErrorClass(tokens[i])) continue;
+            // the start of a member chain that ends in the class (`globalThis.Error`): the tokens around the whole of it
+            let first = i;
+            while (tokens[first - 1]?.kind === SyntaxKind.DotToken && tokens[first - 2]?.kind === SyntaxKind.Identifier) first -= 2;
+            const before = tokens[first - 1];
+            const after = tokens[i + 1];
+            const constructed = before?.kind === SyntaxKind.NewKeyword // new Error(…), new Error
+                || (after?.kind === SyntaxKind.OpenParenToken && before?.kind !== SyntaxKind.FunctionKeyword) // Error(…)
+                || (before?.kind === SyntaxKind.EqualsToken && (after?.kind === SyntaxKind.SemicolonToken || after?.kind === SyntaxKind.CommaToken)); // const E = Error;
+            // passed as an argument of a call (`construct(Error, …)`, `make(x, TypeError)`): only the factory may take one
+            const open = enclosingOpen(tokens, first);
+            const passed = (before?.kind === SyntaxKind.OpenParenToken || before?.kind === SyntaxKind.CommaToken)
+                && (after?.kind === SyntaxKind.CommaToken || after?.kind === SyntaxKind.CloseParenToken)
+                && open >= 0 && tokens[open]!.kind === SyntaxKind.OpenParenToken
+                && !(open === first - 1 && FACTORY_CALLS.has(tokens[open - 1]?.text ?? ''));
+            if (!constructed && !passed) continue;
+            if (exempt.some(([open, close]) => i > open && i < close)) {
+                exempted++;
+                continue;
+            }
+            const line = source.slice(0, tokens[i]!.start).split('\n').length;
+            found.push(`${unix(file)}:${line}: ${tokens.slice(Math.max(0, first - 1), i + 3).map(token => token.text).join(' ')}`);
+        }
+        return { found, exempted };
+    }
+
+    const classes = errorClasses(sourceFiles('src').map(read));
+
+    it('no code of src/ outside the factory and the stringified functions makes an error', () => {
+        const found: string[] = [];
+        let exempted = 0;
+        for (const file of sourceFiles('src')) {
+            if (unix(file) === FACTORY) continue;
+            const source = read(file);
+            const result = constructions(file, source, classes, stringifiedBodies(file, tokenize(source)));
+            found.push(...result.found);
+            exempted += result.exempted;
+        }
         expect(found).toEqual([]);
-        expect(constructors).toBeGreaterThan(40);
+        expect(exempted).toBeGreaterThan(20); // the guest realms' own errors: the scan sees constructions
+        expect([...classes].sort()).toEqual(['ConfigRefusal', 'OriginsTypeError', 'TrustedTypesRefusal']);
+    });
+
+    it('and the scan flags each way host code could make an error, and not a reference that makes none', () => {
+        const flagged = (line: string) => constructions('src/lib/x.ts', line, classes, []).found.length;
+        const MAKES = [
+            "throw new Error('x');", 'const e = new TypeError(`${path}`);', "reject(Error('x'));", 'const e = new globalThis.RangeError(1);',
+            "Reflect.construct(Error, ['x']);", "const E = Error; throw new E('x');", "throw new DOMException('x', 'NotFoundError');",
+            "throw new ConfigRefusal('x');", "throw new OriginsTypeError('origins');", 'const e = new AggregateError([], m);',
+            "make(TypeError, 'x');", 'const e = window.Error(m);',
+        ];
+        expect(MAKES.map(flagged)).toEqual(MAKES.map(() => 1));
+        const NONE = [
+            'if (error instanceof TypeError) return;', 'const e: Error = x;', 'function f<T extends Error>(e: T) {}',
+            "throw mintUncodedError(TypeError, 'x');", "throw mintError('INVALID_PATH', 'x');", 'class X extends Error {}',
+            "const name = error instanceof Error ? error.name : 'error';", 'interface RpcError extends Error { code: string }',
+            "import { ConfigRefusal, DEFAULT } from './x';",
+        ];
+        expect(NONE.map(flagged)).toEqual(NONE.map(() => 0));
     });
 });
