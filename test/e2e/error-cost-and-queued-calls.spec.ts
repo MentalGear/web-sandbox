@@ -112,7 +112,8 @@ test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the ho
 });
 
 test.describe('L-1 (L): queued calls are posted only when the build is ready', () => {
-    // The owner's repro: a call made at once after setConfig() with a large view. When its timeout falls between the
+    // The owner's repro: a call made at once after setConfig() with a large view (as costly as one render may be: about
+    // VIEW_RENDER_MAX_LENGTH characters of elements, the most `html` takes, BD7:LIM-3). When its timeout falls between the
     // wrapper's load and the view's check-in (the window the large view widens), the call times out and must not run:
     // the queue is flushed at `ready`, not at the load. The window's place differs per run and engine, so the call
     // is made with several timeouts, one build each, and every call that timed out before its build's `ready` is checked;
@@ -125,7 +126,7 @@ test.describe('L-1 (L): queued calls are posted only when the build is ready', (
             for (const timeout of [5, 20, 40, 60, 80, 100, 130, 160, 200, 300]) {
                 cases.push(await page.evaluate(async ({ timeout, mode }) => {
                     const el = document.querySelector('web-sandbox') as any;
-                    const html = '<p>' + 'x'.repeat(880000) + '</p><p>' + timeout + '</p>';
+                    const html = '<i></i>'.repeat(37440) + '<p>' + timeout + '</p>'; // 262 090 characters at most: within VIEW_RENDER_MAX_LENGTH
                     let readyAt = Infinity;
                     const ready = new Promise(resolve => el.addEventListener('ready', () => { readyAt = performance.now(); resolve(null); }, { once: true }));
                     el.setConfig({ mode, entry: 'main.js', html });

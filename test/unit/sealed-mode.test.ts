@@ -76,7 +76,13 @@ describe('T2: the schema: no network option reaches sealed mode', () => {
     it("origins and fetchBridge exclude 'sealed' from their modes; every other option of strict mode's view is sealed's too", () => {
         expect(SANDBOX_MODES).toContain('sealed');
         for (const name of NETWORK_OPTIONS) expect(rules[name]!.modes, name).not.toContain('sealed');
+        // the one option strict mode reads that sealed mode cannot use: its deadline is an execute() call's (BD7:DOC-3)
+        const INERT_IN_SEALED = ['workerExecutionTimeout'];
         for (const name of CONFIG_OPTIONS.filter(option => !(NETWORK_OPTIONS as readonly string[]).includes(option))) {
+            if (INERT_IN_SEALED.includes(name)) {
+                expect(rules[name]!.modes, name).not.toContain('sealed');
+                continue;
+            }
             expect(rules[name]!.modes!.includes('sealed'), name).toBe(rules[name]!.modes!.includes('strict'));
         }
     });

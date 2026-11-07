@@ -2,12 +2,15 @@ import { parseInert } from './trusted-types';
 
 /**
  * Finds whether guest markup asks to run script: a `script` element (any namespace) or an event handler attribute (`on…`,
- * any case, any namespace), anywhere, template contents included. Strict mode's view, which sealed mode, the default,
- * shares, runs none of it (the renderer drops both, ADR-005), so the element says so once (host.ts, _warnAboutStrictHtml).
+ * any case, any namespace), anywhere, template contents included. Cooperative mode without `allow-scripts` runs none of
+ * it, so the element says so once (host.ts, _warnAboutNoScripts). Strict and sealed mode never call it: their view's
+ * renderer notes what it drops (VIEW_INITIAL), and the element warns from that (HOST_PASSES, host-passes.ts; BD7:LIM-1).
  *
- * Read with the host's DOMParser (parseInert, trusted-types.ts): a parsed document has no browsing context, so nothing in it runs or loads. Only
- * elements and attribute names are read, so text, comments, raw-text content (`<textarea>`, `<style>`, `<title>`) and
- * attribute values never count, nor do `data-on…` names. Host-side only, never stringified into a guest.
+ * Read with the host's DOMParser (parseInert, trusted-types.ts): a parsed document has no browsing context, so nothing in
+ * it runs or loads; but Chromium checks the host page's policy as it parses (a style attribute, a `<style>`, a `<base>`),
+ * which is why only cooperative mode, whose guest document holds the same markup under the same policy, reads it here.
+ * Only elements and attribute names are read, so text, comments, raw-text content (`<textarea>`, `<style>`, `<title>`)
+ * and attribute values never count, nor do `data-on…` names. Host-side only, never stringified into a guest.
  */
 export function scriptInMarkup(html: string): boolean {
     const parsed = parseInert(html);

@@ -785,8 +785,10 @@ export interface RenderContext {
     /**
      * Filled by the renderer when given, each at most once (BD5:NEW-3): what it dropped or left inert that the author may
      * not expect, for the one notice a render gets (the view's acknowledgement carries them, and the worker's prelude
-     * logs one line: inStrictWorker): `script`, a `<script>` (HTML or SVG) removed;
-     * `reference`, a URL attribute that names a path of the sandbox's files and no file the view shows, dropped (keepsUrl).
+     * logs one line: inStrictWorker; the initial view's go to the element, VIEW_INITIAL, which warns once):
+     * `script`, a `<script>` (HTML or SVG) removed; `handler`, an event handler attribute (`on…`, any case, any
+     * namespace) removed; `reference`, a URL attribute that names a path of the sandbox's files and no file the view
+     * shows, dropped (keepsUrl).
      */
     dropped?: string[];
 }
@@ -921,6 +923,11 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     // Never given the name `style` (the source scan, test/unit/inline-styles.test.ts): a style attribute is a declaration.
     const set = (element: Element, name: string, value: string) => call(E.setAttribute, element, [name, value]);
     const drop = (element: Element, name: string) => call(E.removeAttribute, element, [name]);
+    // An event handler content attribute: `on` and a letter (onclick, ONLOAD, onToggle), in any namespace. No allowlist
+    // names one, so it never stays; it is noted (`handler`), as a <script> is, wherever the walk meets it: on a kept
+    // element as its attributes are cleaned, on a removed or unwrapped one before it goes. Any letter counts, so `one`
+    // does too: a false note costs one warning, a missed one a silent surprise.
+    const isHandler = (name: string) => /^on[a-z]/i.test(name);
     const own = Object.prototype.hasOwnProperty;
     const limit = room || { elements: rules.maxElements, depth: rules.maxDepth };
     const urlRoom = limit.urls === undefined ? rules.maxUrls : limit.urls;
@@ -982,6 +989,18 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         if (!notes) return;
         for (let i = 0; i < notes.length; i++) if (notes[i] === what) return;
         notes[notes.length] = what;
+    };
+    // The handlers of an element the walk removes or unwraps (isHandler), noted before it goes: once a render.
+    const noteHandlers = (element: Element) => {
+        const notes = context.dropped;
+        if (!notes) return;
+        for (let i = 0; i < notes.length; i++) if (notes[i] === 'handler') return;
+        const names: string[] = call(E.getAttributeNames, element, []);
+        for (let i = 0; i < names.length; i++) {
+            if (!isHandler(names[i]!)) continue;
+            note('handler');
+            return;
+        }
     };
     const isPair = (list: readonly (readonly string[])[], element: string, attribute: string) => {
         for (let i = 0; i < list.length; i++) {
@@ -1306,6 +1325,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             const kind = isUrl ? urlKind(name, attribute, parent) : '';
             const refused = list<string>();
             const loads = list<string>();
+            if (isHandler(attribute)) note('handler');
             const keep = allowed
                 && !(isUrl && !(attribute === 'srcset' ? srcsetAllowed(value, kind, refused, loads) : urlAllowed(value, kind, refused, loads, isPair(rules.networkDropped, name, attribute))))
                 && !(attribute === 'autoplay' && !switches.autoplay);
@@ -1395,6 +1415,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         const name = decidedName(element, String(call(localNameOf, element, [])));
         let decision = verdict(namespace, name);
         const parentName = run.parent === fragment ? context.target : String(call(localNameOf, run.parent as Element, []));
+        if (decision !== KEEP) noteHandlers(element);
         if (decision === KEEP && !clean(element, namespace, name, parentName)) decision = REMOVE;
         if (decision === REMOVE) {
             if (name === 'script') note('script');
@@ -3442,7 +3463,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 // past the budget, or anything else the renderer refused: the initial view stays empty
             }
             settleOperations(started, false);
-            renderDropped = []; // the initial view's are the element's to say (its html notice), not a render's
+            // The initial view's notes are the element's to say, not a render's: what it dropped of `html` that the author
+            // may not expect, its scripts and handlers among them (BD7:LIM-1). The element warns from these once; it reads
+            // no markup itself, so no parser of the host page's realm checks the guest's markup against the host page's
+            // policy (HOST_PASSES, host-passes.ts).
+            if (renderDropped.length > 0) viewPort.postMessage({ type: 'VIEW_INITIAL', dropped: renderDropped });
+            renderDropped = [];
         }
         if (data.autoResize === true) startAutoResize();
     }, true);
@@ -3850,15 +3876,18 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             // render at most, in the guest's own log and its budget
             const dropped = fieldOf(data, 'dropped');
             let script = false;
+            let handler = false;
             let reference = false;
-            for (let i = 0; dropped && i < dropped.length && i < 2; i++) {
+            for (let i = 0; dropped && i < dropped.length && i < 3; i++) {
                 if (dropped[i] === 'script') script = true;
+                else if (dropped[i] === 'handler') handler = true;
                 else if (dropped[i] === 'reference') reference = true;
             }
-            if (script || reference) {
+            const scripts = script && handler ? 'the <script> elements and on… handlers' : script ? 'the <script> elements' : 'the on… handlers';
+            if (script || handler || reference) {
                 log('warn', ['[Sandbox] sandboxView.render: '
-                    + (script ? 'the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker)' : '')
-                    + (script && reference ? '; and ' : '')
+                    + (script || handler ? 'the view runs no script, so ' + scripts + ' of this render were dropped (code runs in the entry, in the worker)' : '')
+                    + ((script || handler) && reference ? '; and ' : '')
                     + (reference ? 'a reference that names no file the view shows was dropped (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>)' : '')
                     + '.']);
             }

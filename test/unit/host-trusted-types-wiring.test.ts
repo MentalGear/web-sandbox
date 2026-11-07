@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe('a browser without Trusted Types, given the page\'s policy', () => {
-    it.each(['strict', 'cooperative', 'worker'] as const)('%s: a list that does not name the library\'s policy ends the build with the Trusted Types reason', async (mode) => {
+    it.each(['strict', 'sealed', 'cooperative', 'worker'] as const)('%s: a list that does not name the library\'s policy ends the build with the Trusted Types reason', async (mode) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         vi.spyOn(console, 'error').mockImplementation(() => {});
         const { el, reasons } = await mount({ mode, capabilities: mode === 'cooperative' ? ['allow-scripts'] : [], hostContentSecurityPolicy: REQUIRING_OTHER });

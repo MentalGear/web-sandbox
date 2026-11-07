@@ -51,19 +51,23 @@
  * reported codes the message stays the other side's text verbatim, up to MAX_TEXT_LENGTH characters — the code, not the
  * text, is the part a caller can branch on.
  *
- * What a refusal's text carries (BD5:LIM-2, BD5:DOC-1, BD6:LIM-1; class P, what crosses is what the API shows). An error
- * this function makes itself has a fixed text of its own, never an engine's: a result structured clone cannot carry is
- * answered "result is not transferable: …", and arguments it cannot carry are refused "RPC arguments are not
- * transferable: …", with no part of the clone's error, which on Chromium quotes the source of the function it could not
- * clone. The engine's error is the refusal's `cause` (host side only, never read for a frame) and its text goes to
- * `reportWithheld`. A handler's throw is reported with its text as is on the guest's broker (the guest's text, which the
- * host receives as the guest's data). On the host's broker (`reportWithheld`) the text crosses by an allow-list: a thrown
- * string, an error the library made (`isMinted`: the broker's own, a file or fetch refusal; its message is a fixed text),
- * or the message of an error whose prototype is exactly this realm's Error.prototype (a plain `new Error(text)`, the
- * embedder's own words). Any other throw, an engine's TypeError, SyntaxError or DOMException, a subclass, an error of
- * another realm, an object, is reported as `the method failed (<name>)`, its name checked as the element's errorName
- * checks one (FR:F3), because an engine's message quotes the data it was handling. The text withheld goes to
- * `reportWithheld`, the host's console.
+ * What a refusal's text carries (BD5:LIM-2, BD5:DOC-1, BD6:LIM-1, BD7:CHL-2; class P, what crosses is what the API
+ * shows). An error this function makes itself has a fixed text of its own, never an engine's: a result structured clone
+ * cannot carry is answered "result is not transferable: …", and arguments it cannot carry are refused "RPC arguments are
+ * not transferable: …", with no part of the clone's error, which on Chromium quotes the source of the function it could
+ * not clone. The engine's error is the refusal's `cause` (host side only, never read for a frame). A handler's throw is
+ * reported with its text as is on the guest's broker (the guest's text, which the host receives as the guest's data).
+ * On the host's broker (`host`) what crosses for a handler's throw is chosen, never composed:
+ *   - the embedder's own words as written: a thrown string, or the message of an error whose prototype is exactly this
+ *     realm's Error.prototype that the library did not make (a plain `new Error(text)`);
+ *   - an error the library made (minted-errors.ts: this broker's own refusals, a refusal that carries another side's text
+ *     included, a file or fetch refusal, a bad argument's TypeError) as the text its factory chose for it, from a fixed
+ *     table by its code (`<code>: <text>`; `the method failed (<name>)` for one without a code), never its message, which
+ *     can quote the caller's path, a method name or another app's text;
+ *   - any other throw, an engine's TypeError, SyntaxError or DOMException, a subclass, an error of another realm, an
+ *     object, as `the method failed (<name>)`, its name checked as the element's errorName checks one (FR:F3), because an
+ *     engine's message quotes the data it was handling.
+ * Every text withheld goes to `reportWithheld`, the host's console.
  * `code` is a plain own property rather than an Error subclass: a subclass would be a module-scope
  * class this function cannot close over (see above), and a property reads the same in every realm.
  *
@@ -131,7 +135,8 @@ export type RpcFrame = (
  * Reported by the other side (the message is its text; any other reported value reads as `HANDLER_ERROR`):
  * - `UNKNOWN_METHOD`: no method of that name is exposed there.
  * - `HANDLER_ERROR`: the handler threw or rejected. A guest handler's text arrives as it is. A host handler's text is
- *   the message of a plain `Error` or a thrown string; any other throw arrives as `the method failed (<name>)` (see
+ *   the message of a plain `Error` or a thrown string; an error of the library's that it let through arrives as its
+ *   code and the library's fixed text for that code; any other throw arrives as `the method failed (<name>)` (see
  *   `expose()`).
  * - `RESULT_NOT_TRANSFERABLE`: the handler's return value cannot be structured-cloned (a fixed text, never the clone's
  *   error), or an answer arrived past `RPC_MAX_BYTES`.
@@ -235,20 +240,25 @@ export interface BrokerOptions {
     // function that does so through this broker's builder, so no RPC frame is made anywhere else (R3:C-1); it is never part
     // of the returned object, so guest code never holds it.
     takeBusyRefusal?: (refuse: (request: unknown, reason: string) => void) => void;
-    // The host's broker only (BD5:LIM-2): a handler's error text crosses by the allow-list of the header, and every text the
-    // broker withholds (an engine's error from a handler, or from the clone or the post of a result) is handed here with
-    // the method's name and the refusal the other side received instead. The guest's broker forwards its handlers' texts.
-    reportWithheld?: (method: string, refusal: string, text: string) => void;
-    // The host's broker only (BD6:LIM-1): the registry of the errors the library makes. `markMinted` is called with each error
-    // this broker makes (codedError); `isMinted` answers for those and for the ones the host's other modules make (a file
-    // refusal, a fetch refusal, another element's broker). A minted error's message is a fixed library text, so it crosses
-    // as it is, whatever its prototype; its `cause` (an engine's error) never does.
-    markMinted?: (error: Error) => void;
-    isMinted?: (error: unknown) => boolean;
+    // The host's broker only (BD5:LIM-2, BD7:CHL-2): what makes it the host's, as one group, so that no broker of the host
+    // can be made with one part and not the others. A handler's error text crosses by the rule of the header.
+    host?: HostBrokerOptions;
     // The host's broker only (BD5:DOC-3): given, once, the function that removes one exposed method, or every one when
     // called with no name; reserved names are never removed. Like takeBusyRefusal it is never part of the returned object,
     // which the guest's bootstrap publishes as `bridge`.
     takeUnexpose?: (unexpose: (name?: string) => void) => void;
+}
+
+/** What makes a broker the host's (BrokerOptions.host): minted-errors.ts's factory and table, and the host's console. */
+export interface HostBrokerOptions {
+    // Makes every error this broker makes (codedError), a refusal that carries the other side's text included: the
+    // library's factory, which registers what a guest receives for it (minted-errors.ts, mintError).
+    mint: (code: RpcErrorCode | RpcLibraryCode, message: string, cause?: unknown) => Error;
+    // What a guest receives for an error the library made, or null for any other value (minted-errors.ts, crossingText).
+    crossingText: (error: unknown) => string | null;
+    // Every text the broker withholds (a library error's message, an engine's error from a handler, or from the clone or
+    // the post of a result) is handed here with the method's name and the refusal the other side received instead.
+    reportWithheld: (method: string, refusal: string, text: string) => void;
 }
 
 /** Why a call budget refuses a guest call: retryable (BUSY), or never carried (ARGS_NOT_TRANSFERABLE). */
@@ -364,18 +374,24 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const admitOutboundOption = options.admitOutbound;
     const admitInboundOption = options.admitInbound;
     const takeBusyRefusalOption = options.takeBusyRefusal;
-    const reportWithheldOption = options.reportWithheld;
     const takeUnexposeOption = options.takeUnexpose;
-    const markMintedOption = options.markMinted;
-    const isMintedOption = options.isMinted;
+    const hostOption = options.host;
     const sizeOf = typeof sizeOfOption === 'function' ? sizeOfOption : null;
     const admitOutbound = typeof admitOutboundOption === 'function' ? admitOutboundOption : null;
     const admitInbound = typeof admitInboundOption === 'function' ? admitInboundOption : null;
     const takeBusyRefusal = typeof takeBusyRefusalOption === 'function' ? takeBusyRefusalOption : null;
-    const reportWithheld = typeof reportWithheldOption === 'function' ? reportWithheldOption : null;
     const takeUnexpose = typeof takeUnexposeOption === 'function' ? takeUnexposeOption : null;
-    const markMinted = typeof markMintedOption === 'function' ? markMintedOption : null;
-    const isMinted = typeof isMintedOption === 'function' ? isMintedOption : null;
+    // The host's group (HostBrokerOptions), each member read once; `isHost` decides the handler texts, whatever a member is.
+    const isHost = hostOption !== null && typeof hostOption === 'object';
+    const mintOption = isHost ? hostOption.mint : undefined;
+    const crossingTextOption = isHost ? hostOption.crossingText : undefined;
+    const reportWithheldOption = isHost ? hostOption.reportWithheld : undefined;
+    const mint = typeof mintOption === 'function' ? mintOption : null;
+    const crossingText = typeof crossingTextOption === 'function' ? crossingTextOption : null;
+    const reportWithheld = typeof reportWithheldOption === 'function' ? reportWithheldOption : null;
+    // A plain Error is the embedder's own only where the library's errors can be told from it: both the factory and its
+    // table are given. A host group without either fails closed, every throw but a string named.
+    const knowsLibraryErrors = mint !== null && crossingText !== null;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     // Mirrors the exported RESERVED_METHOD_PREFIX: declared here to survive stringification, and typed by it, so the two
@@ -656,25 +672,32 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         return name;
     }
 
-    // The text of a handler's refusal (BD5:LIM-2; see the header). Without reportWithheld (the guest's broker), the
-    // handler's own text. With it (the host's), only what the embedder or the library wrote crosses: a thrown string, an
-    // error the library made (BD6:LIM-1, whose message is a fixed text), or the message of a plain Error of this realm; any
-    // other throw is named, and its text goes to reportWithheld.
+    // The text of a handler's refusal (BD5:LIM-2, BD7:CHL-2; see the header). On the guest's broker, the handler's own
+    // text. On the host's, only the embedder's own words cross as written (a thrown string, the message of a plain Error of
+    // this realm); an error the library made crosses as the fixed text its factory chose for it, never its message; any
+    // other throw is named. The text withheld goes to reportWithheld.
     function handlerErrorText(method: string, error: unknown): string {
-        if (!reportWithheld || typeof error === 'string') return errorMessage(error);
-        if (isMintedError(error) || hasPlainPrototype(error)) return errorMessage(error);
+        if (!isHost || typeof error === 'string') return errorMessage(error);
+        const fixed = libraryText(error);
+        if (fixed !== null) {
+            withhold(method, fixed, errorMessage(error));
+            return fixed;
+        }
+        if (knowsLibraryErrors && hasPlainPrototype(error)) return errorMessage(error);
         const name = errorName(error);
         const refusal = `the method failed (${name})`;
         withhold(method, refusal, `${name}: ${errorMessage(error)}`);
         return refusal;
     }
 
-    function isMintedError(error: unknown): boolean {
-        if (!isMinted) return false;
+    // What the host's crossingText answers for `error`: a string for an error the library made, else null.
+    function libraryText(error: unknown): string | null {
+        if (!crossingText) return null;
         try {
-            return isMinted(error) === true;
+            const text = crossingText(error);
+            return typeof text === 'string' ? cutText(text) : null;
         } catch {
-            return false;
+            return null;
         }
     }
 
@@ -700,21 +723,15 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // Error.prototype or Object.prototype. Its message is cut to MAX_TEXT_LENGTH (R3:C-1): every rejection this function
     // makes, a reported text received included, carries a bounded one. The message is a fixed text of the library's or the
     // other side's, never an engine's (BD6:LIM-1): an engine's error that caused the refusal is its `cause`, which stays with
-    // the caller of this side and is never read for a frame. The error is registered as the library's (markMinted).
-    function codedError(message: string, code: string, cause?: unknown): RpcError {
-        const error = new ErrorConstructor(cutText(message)) as RpcError;
+    // the caller of this side and is never read for a frame. On the host it is made by the library's factory (host.mint;
+    // BD7:CHL-2), so a host method that lets it propagate hands the guest its code and a fixed text, never this message.
+    function codedError(message: string, code: RpcErrorCode | RpcLibraryCode, cause?: unknown): RpcError {
+        const text = cutText(message);
+        if (mint) return mint(code, text, cause) as RpcError;
+        const error = new ErrorConstructor(text) as RpcError;
         defineOwn(error, 'code', { value: code, writable: true, enumerable: true, configurable: true });
         if (cause !== undefined) defineOwn(error, 'cause', { value: cause, writable: true, enumerable: false, configurable: true });
-        if (markMinted) markMintedError(error);
         return error;
-    }
-
-    function markMintedError(error: Error): void {
-        try {
-            markMinted!(error);
-        } catch {
-            // the registry threw: the error is then not recognised, and its message is judged as a plain Error's
-        }
     }
 
     // Mints a refusal with a LOCAL code. Called only from this side's own state (its timer, teardown,
@@ -728,7 +745,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // The guest's call refused by the per-second budget (R3:M-2), here, before it is sent, as the host would answer it:
     // BUSY, the other side's code, minted for the other side's budget; or ARGS_NOT_TRANSFERABLE for a call heavier than
     // the whole budget (R5:L-2), which the host would answer the same. Its text is the budget owner's. The refusal is read once.
-    function budgetCode(refusal: BudgetRefusal): string {
+    function budgetCode(refusal: BudgetRefusal): BudgetRefusal['code'] {
         return refusal.code === CODE.ARGS_NOT_TRANSFERABLE ? CODE.ARGS_NOT_TRANSFERABLE : CODE.BUSY;
     }
     function budgetRefusal(refusal: BudgetRefusal): RpcError {
@@ -742,7 +759,8 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // unknown string, a non-string, nothing) becomes HANDLER_ERROR. So a response can never yield TIMEOUT, TERMINATED,
     // SEND_FAILED or INVALID_CALL. The
     // message is the other side's text verbatim up to MAX_TEXT_LENGTH (codedError cuts it again, R3:C-1), or a fixed
-    // fallback when it sent none. Each field is
+    // fallback when it sent none: the caller's to read. On the host the error is the library's (codedError), so a host
+    // method that relays it hands its own guest the code's fixed text, never the other side's (BD7:CHL-2). Each field is
     // read once, and `code` is always one of our own constants rather than the inbound value.
     // A library code passes only for a call to a reserved name on a broker created with acceptLibraryCodes
     // (the guest's); it is then the matching string from our own LIBRARY_CODES, never the inbound value.

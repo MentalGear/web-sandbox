@@ -139,10 +139,35 @@ describe('styleMarkup: the parse of the encoded markup has no style attribute an
         }
     });
 
+    // Every member of every set the tokenizer's states read, in each context it ends or starts a name in, as a table: a
+    // character that dropped out of a set would leave a real style attribute or element for the view's parser (BD7:TST-1).
+    it('for every character of every tokenizer set, in the tag-name, attribute-name and end-tag contexts: no style attribute, no <style> element', () => {
+        const contexts = (ch: string) => [
+            `<p${ch}style="color:red">`, `<p a="b"${ch}style=x>`, `<p${ch}${ch}STYLE>`, `<p ${ch}style>`, `<p a=b${ch}style>`, `<p style${ch}x>`, `<p style${ch}=x>`,
+            `<style${ch}>a{}</style>`, `<style${ch}media=print>a{}</style>`, `<STYLE${ch}>a{}</STYLE>`, `<noframes${ch}>x</noframes>`,
+            `<svg><style${ch}>a{}</style></svg>`, `<p </style${ch}>`, `<p </style${ch}=x>`, `<p a</style${ch}>`, `</style${ch}><p style=x>`, `<p </noframes${ch}>`,
+        ];
+        // the HTML tokenizer's own sets (whatwg.org/multipage/parsing.html), written out here and not read from the code
+        const WHITE_SPACE = '\t\n\f\r ';
+        const spec = { WHITE_SPACE, TAG_NAME_END: WHITE_SPACE + '/>', ATTRIBUTE_NAME_END: WHITE_SPACE + '/>=', ATTRIBUTE_NAME_START: WHITE_SPACE + '/"\'' };
+        const sorted = (set: string) => [...set].sort().join('');
+        let cases = 0;
+        for (const [name, set] of Object.entries(spec)) {
+            expect(sorted(markupFor().sets[name as keyof typeof spec]), name).toBe(sorted(set));
+            for (const ch of set) {
+                for (const html of contexts(ch)) {
+                    cases++;
+                    expect(stylesIn(parse(markupFor().encode(html))), `${name} ${JSON.stringify(ch)}: ${JSON.stringify(html)}`).toEqual([]);
+                }
+            }
+        }
+        expect(cases).toBeGreaterThan(300);
+    });
+
     it('whatever the markup: a property over the pieces every context turns on (tables, noframes and stray bytes included)', () => {
         fc.assert(fc.property(markupOf([...PIECES, ...TABLES, ...NOFRAMES]), (html) => {
             expect(stylesIn(parse(markupFor().encode(html))), html).toEqual([]);
-        }), { numRuns: 3000 });
+        }), { numRuns: 3000, seed: 74074 });
     });
 
     it('and is the parse of the markup in every other respect, read back: names, values, texts and the tree (no table, no noframes)', () => {

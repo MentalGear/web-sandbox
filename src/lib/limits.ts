@@ -77,7 +77,7 @@ export const LIMITS = {
     VIOLATION_MAX_STRING: { value: VIOLATION_MAX_STRING, unit: 'characters', label: null, enforced: 'in-sandbox-script.ts and the view, before posting; violation.ts, toViolationDetail, again on receipt', exported: false },
     AUTO_RESIZE_MAX_HEIGHT: { value: AUTO_RESIZE_MAX_HEIGHT, unit: 'px', label: 'Auto-size: tallest height (px)', enforced: 'auto-resize.ts, the host', exported: true },
     AUTO_RESIZE_MAX_UPDATES_PER_SECOND: { value: AUTO_RESIZE_MAX_UPDATES_PER_SECOND, unit: 'count', label: 'Auto-size: height changes per second (and at most one per frame)', enforced: 'auto-resize.ts, the host', exported: true },
-    VIEW_RENDER_MAX_LENGTH: { value: VIEW_RENDER_MAX_LENGTH, unit: 'characters', label: 'Strict: characters per `sandboxView.render()`, `text()` or `set()` value', enforced: PRELUDE, exported: true },
+    VIEW_RENDER_MAX_LENGTH: { value: VIEW_RENDER_MAX_LENGTH, unit: 'characters', label: 'Strict: characters per `sandboxView.render()`, `text()` or `set()` value, and of `html` (the initial view)', enforced: `${PRELUDE}; config-schema.ts, htmlRefusal (html, at setConfig() and load())`, exported: true },
     VIEW_TARGET_MAX_LENGTH: { value: VIEW_TARGET_MAX_LENGTH, unit: 'characters', label: 'Strict: characters of a render or event target id', enforced: PRELUDE, exported: false },
     VIEW_MAX_ELEMENTS: { value: VIEW_MAX_ELEMENTS, unit: 'count', label: 'Strict: elements in the view', enforced: `${VIEW}, sanitizeRender`, exported: false },
     VIEW_MAX_CHARACTERS: { value: VIEW_MAX_CHARACTERS, unit: 'characters', label: 'Strict: characters in the view (its body\'s serialization)', enforced: VIEW, exported: false },

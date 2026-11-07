@@ -348,9 +348,12 @@ The host and the guest can call each other's functions and await the result. Eac
 functions with `expose(name, fn)` and calls the other side's with `call(method, ...args)`, which
 returns a promise for the handler's return value; if the handler throws, the promise rejects with
 `HANDLER_ERROR`. A guest handler's message crosses as written (it is attacker text). A host method's message crosses
-only when it is your own words: a thrown string or the message of a plain `Error`. Any other throw (the `SyntaxError` of
-a `JSON.parse` of your data, a `TypeError`, a subclass of `Error`) reaches the guest as `the method failed (<name>)`,
-because an engine's message quotes the data it was handling ([details](docs/API.md#app-to-host)). On the host these
+only when it is your own words: a thrown string or the message of a plain `Error` your code made. An error of the
+library's that your method lets through (a `registerFiles()` refusal, the refusal of your own `call()`) crosses as its
+code and a fixed text, never its message, which quotes your data or another app's answer. Any other throw (the
+`SyntaxError` of a `JSON.parse` of your data, a `TypeError`, a subclass of `Error`) reaches the guest as
+`the method failed (<name>)`, because an engine's message quotes the data it was handling
+([details](docs/API.md#app-to-host)). On the host these
 are methods of the element; in the guest they live on the global `bridge`.
 
 ```js
@@ -381,9 +384,10 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
 *   **Host methods belong to the element**, so they survive `reset()`, `load()` and `setConfig()`, until
     `unexpose()` removes them (before another app runs on the element). Guest
     methods belong to one frame: a new frame starts with none until its own code exposes them.
-*   **A host method's failure tells the guest only what you wrote.** The message of a plain `Error` or a thrown
-    string reaches the guest; any other throw (an engine's `TypeError`, a `JSON.parse` error) arrives as
-    `the method failed (<name>)`, and its text goes to your console.
+*   **A host method's failure tells the guest only what you wrote.** The message of a plain `Error` your code made or a
+    thrown string reaches the guest; an error of the library's that the method lets through arrives as its code and a
+    fixed text of the library's; any other throw (an engine's `TypeError`, a `JSON.parse` error) arrives as
+    `the method failed (<name>)`. Each text the guest does not receive goes to your console.
 *   **A reset settles every pending call.** When `reset()`, `load()` or `setConfig()` recreates the
     frame, the element is removed, or the sandbox is terminated, pending calls reject; calls made
     after termination reject at once.

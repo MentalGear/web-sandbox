@@ -81,10 +81,10 @@ describe('sealed mode\'s request makers: one enumeration, tied to the library\'s
         for (const { maker } of compilers) expect([maker.outcome, maker.sees], maker.id).toEqual(['absent', 'ReferenceError']);
     });
 
-    it('every import() is a maker the build refuses, and no other maker holds one, so the entry of the rest builds', () => {
+    it('every import expression (import() and its phases) is a maker the build refuses, and no other maker holds one, so the entry of the rest builds', () => {
         const origins = { https: 'https://l.test', http: 'http://l.test', wss: 'wss://l.test' };
         const unbuildable = SEALED_MAKERS.filter(maker => maker.outcome === 'unbuildable');
-        expect(unbuildable.map(maker => maker.id)).toEqual(['import', 'import-file', 'import-data']);
+        expect(unbuildable.map(maker => maker.id)).toEqual(['import', 'import-file', 'import-data', 'import-source', 'import-defer']);
         for (const maker of SEALED_MAKERS.filter(maker => maker.realm === 'worker')) {
             const found = dynamicImportAt(makerCode(maker, makerUrl(maker, origins))) >= 0;
             expect(found, maker.id).toBe(maker.outcome === 'unbuildable');

@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { viewBootstrapHash, viewBootstrapText } from '@src/lib/in-sandbox-view';
+import { VIEW_RENDER_MAX_LENGTH, viewBootstrapHash, viewBootstrapText } from '@src/lib/in-sandbox-view';
+import { ConfigRefusal, normaliseConfig } from '@src/lib/config-schema';
+import { reasonText, TERMINATION_REASONS } from '@src/lib/reasons';
 import { sealedViewPolicy, strictViewPolicy } from '@src/lib/csp/csp-generator';
 import { NO_ORIGINS, type SandboxOrigins } from '@src/lib/csp/origins';
 import { scriptInMarkup } from '@src/lib/markup-scripts';
+import { runBootstrap } from './sandbox-environment';
 import type { SandboxConfig } from '@src/host';
 
 /**
@@ -97,6 +100,58 @@ describe('T8: a config that names no mode is sealed', () => {
     });
 });
 
+// BD7:LIM-3 (class E-cpu): `html` had no size cap, and the view parses the whole of its initial markup before its renderer
+// can refuse any of it. Markup longer than one render (the initial view is one) is refused where it arrives.
+describe('html longer than one render is refused at configuration, by setConfig() and load() (BD7:LIM-3)', () => {
+    const LONG = `<p>${'x'.repeat(VIEW_RENDER_MAX_LENGTH)}</p>`;
+    const FITS = `<p>${'x'.repeat(VIEW_RENDER_MAX_LENGTH - 7)}</p>`;
+    const reasons = (el: any) => {
+        const seen: string[] = [];
+        el.addEventListener('terminated', (event: CustomEvent) => seen.push(event.detail.reason));
+        return seen;
+    };
+    const settled = () => new Promise(resolve => setTimeout(resolve, 0));
+
+    it('the schema refuses it in strict and sealed mode, named or the default, with its reason; one that fits, and cooperative and worker mode, are kept', () => {
+        const host = { hostOrigin: 'https://host.example', hostSites: ['https://host.example'] };
+        expect(FITS.length).toBe(VIEW_RENDER_MAX_LENGTH);
+        for (const config of [{ html: LONG }, { mode: 'sealed', html: LONG }, { mode: 'strict', html: LONG }]) {
+            const { value, refusal } = normaliseConfig(config, host);
+            expect(value, JSON.stringify(config.mode)).toBeNull();
+            expect((refusal as ConfigRefusal).reason).toBe(reasonText('htmlTooLong'));
+        }
+        for (const config of [{ html: FITS }, { mode: 'strict', html: FITS }, { mode: 'cooperative', html: LONG }, { mode: 'worker', html: LONG }]) {
+            expect(normaliseConfig(config, host).refusal, `${config.mode} ${config.html.length}`).toBeNull();
+        }
+        expect(TERMINATION_REASONS.htmlTooLong.decidedBy).toBe('config');
+    });
+
+    it('setConfig() keeps nothing of it; load() keeps the html it had; both end the build with the reason, and the view never gets it', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await element();
+        document.body.appendChild(el);
+        const seen = reasons(el);
+        el.setConfig({ html: '<p>kept</p>' });
+        el.setConfig({ html: LONG });
+        await settled();
+        expect(el.state).toBe('terminated');
+        expect(el._config.html).toBe('<p>kept</p>');
+        el.setConfig({ html: '<p>kept</p>' });
+        expect(el.state).toBe('loading');
+        el.load(LONG);
+        await settled();
+        expect(el.state).toBe('terminated');
+        expect(seen).toEqual([reasonText('htmlTooLong'), reasonText('htmlTooLong')]);
+        expect(el._config.html).toBe('<p>kept</p>');
+        expect(el._strictInit).toBeNull();
+        el.reset(); // the html it kept builds
+        expect(el.state).toBe('loading');
+        expect(el._strictInit.html).toBe('<p>kept</p>');
+        el.load(FITS);
+        expect(el._strictInit.html).toBe(FITS);
+    });
+});
+
 describe('scriptInMarkup: script elements and handler attributes, read with an inert parser', () => {
     it.each([
         ['an HTML script', '<script>1</script>'],
@@ -144,17 +199,32 @@ describe('scriptInMarkup: script elements and handler attributes, read with an i
     });
 });
 
-describe('html that holds script warns once per element, in the default mode and in strict mode', () => {
+// BD7:LIM-1 (class A, the host realm): the element read `html` with the host page's DOMParser to decide this warning, and
+// Chromium checks the host page's policy as it parses (a style attribute against style-src, with its sample reported; a
+// <base> against base-uri, with the guest's URL reported). The view's renderer notes what it drops of the initial view
+// (VIEW_INITIAL), and the element warns from that: a strict or sealed build reads no markup in the host page's realm.
+describe('html that holds script warns once per element, from what the view dropped of it (BD7:LIM-1)', () => {
+    // The view's notice of what it dropped of the initial view, on the element's current view port.
+    const viewDropped = (el: any, dropped: unknown) => {
+        const { port1 } = new MessageChannel();
+        el._viewPort = port1;
+        el._onViewMessage(port1, { type: 'VIEW_INITIAL', dropped });
+        port1.close();
+    };
+
     it('a script, then a handler, across setConfig(), reset() and load(): one warning', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await element();
         document.body.appendChild(el);
         el.setConfig({ html: '<p>clean</p>' });
+        viewDropped(el, ['reference']);
         expect(scriptWarnings(warn)).toEqual([]);
         el.setConfig({ html: '<script>console.log(1)</script>' });
+        viewDropped(el, ['script']);
         el.reset();
+        viewDropped(el, ['script']);
         el.load('<button onclick="go()">go</button>');
-        el.setConfig({ mode: 'sealed', html: '<svg onload="1"></svg>' });
+        viewDropped(el, ['handler']);
         expect(scriptWarnings(warn)).toEqual([SCRIPT_WARNING]);
     });
 
@@ -163,8 +233,9 @@ describe('html that holds script warns once per element, in the default mode and
         const el = await element();
         document.body.appendChild(el);
         el.setConfig({ mode: 'strict', html: '<script>console.log(1)</script>' });
-        el.reset();
+        viewDropped(el, ['script', 'handler', 'reference']);
         el.load('<button onclick="go()">go</button>');
+        viewDropped(el, ['handler']);
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('runs no script in `html`'))).toEqual([STRICT_SCRIPT_WARNING]);
     });
 
@@ -174,31 +245,75 @@ describe('html that holds script warns once per element, in the default mode and
             const el = await element();
             document.body.appendChild(el);
             el.setConfig({ html: '<script>1</script>' });
+            viewDropped(el, ['script']);
         }
         expect(scriptWarnings(warn)).toHaveLength(2);
     });
 
-    it('a handler alone warns', async () => {
+    it('no warning: notes that name neither (a reference, nothing, what is not a list), and a mode with no view', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await element();
         document.body.appendChild(el);
-        el.load('<img src="x" onerror="1">');
+        for (const dropped of [['reference'], [], 'script', null, { 0: 'script', length: 1 }, ['reference', 'x', 'y', 'script']]) viewDropped(el, dropped);
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], html: '<script>1</script>' });
+        viewDropped(el, ['script']);
+        expect(scriptWarnings(warn)).toEqual([]);
+        el.setConfig({ html: '<img src="x" onerror="1">' });
+        viewDropped(el, ['handler']); // positive control: a handler alone warns
         expect(scriptWarnings(warn)).toEqual([SCRIPT_WARNING]);
     });
 
-    it('no warning: cooperative and worker mode, markup without script, data-on* attributes, an element not in the document', async () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    it("a strict or sealed build parses no markup in the host page's realm: setConfig(), load(), reset() and insertion; cooperative mode's documented parse is seen (positive control)", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const parses = vi.spyOn(DOMParser.prototype, 'parseFromString');
+        const html = '<p style="color: red">a</p><style>p { color: blue }</style><svg><style>rect { fill: red }</style></svg><base href="https://x.example/?secret=1"><script>1</script><img src="x" onerror="1">';
         const el = await element();
-        el.setConfig({ html: '<script>1</script>' }); // detached: nothing is built, nothing is said yet
-        expect(scriptWarnings(warn)).toEqual([]);
-        document.body.appendChild(el);
-        expect(scriptWarnings(warn)).toEqual([SCRIPT_WARNING]); // built on insertion
+        el.setConfig({ html });
+        document.body.appendChild(el); // insertion builds
+        el.setConfig({ mode: 'strict', html });
+        el.reset();
+        el.load(html);
+        el.setConfig({ html: `${html}<i>sealed</i>` });
+        el.load(html);
+        expect(el.state).toBe('loading');
+        expect(parses.mock.calls.length, 'DOMParser calls of strict and sealed builds').toBe(0);
+        el.setConfig({ mode: 'cooperative', html }); // no allow-scripts: the element says what will not run, read with an inert parser
+        expect(parses.mock.calls.length, "cooperative mode's documented host-side parse").toBeGreaterThan(0);
+    });
+});
 
-        const other = await element();
-        document.body.appendChild(other);
-        other.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], html: '<script>1</script><p onclick="1">p</p>' });
-        other.setConfig({ mode: 'worker', html: '<script>1</script>' });
-        other.setConfig({ html: '<p data-onclick="x">text: &lt;script&gt; onclick=</p>' });
-        expect(scriptWarnings(warn)).toEqual([SCRIPT_WARNING]);
+describe('the view says what it dropped of the initial view, once a build (VIEW_INITIAL)', () => {
+    const originalWorker = (globalThis as any).Worker;
+    afterEach(() => {
+        (globalThis as any).Worker = originalWorker;
+        delete (globalThis as any).__sandboxViewRuns;
+    });
+
+    // The view's bootstrap in this document with a fake Worker, given `html` as its initial view: what it posts the host.
+    const initialView = (html: string) => {
+        vi.spyOn(URL, 'createObjectURL').mockImplementation((() => 'blob:view/1') as typeof URL.createObjectURL);
+        vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        (globalThis as any).Worker = class {
+            onerror: unknown = null;
+            postMessage() {}
+        };
+        runBootstrap(viewBootstrapText());
+        const logic = new MessageChannel(), view = new MessageChannel();
+        const fromView: any[] = [];
+        view.port2.onmessage = (event) => fromView.push(event.data);
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html }, source: window, ports: [logic.port1, view.port1] }));
+        return fromView;
+    };
+    const settled = () => new Promise(resolve => setTimeout(resolve, 20));
+
+    it('its scripts and handlers, once each, after the check-in; nothing when it dropped neither', async () => {
+        const dropping = initialView('<p onclick="a()">a</p><script>b()</script><svg onload="c()"><script>d()</script></svg><img src="missing.png">');
+        await settled();
+        expect(dropping.map(frame => frame.type).filter(type => type === 'VIEW_READY' || type === 'VIEW_INITIAL')).toEqual(['VIEW_READY', 'VIEW_INITIAL']);
+        expect(dropping.find(frame => frame.type === 'VIEW_INITIAL')).toEqual({ type: 'VIEW_INITIAL', dropped: ['handler', 'script', 'reference'] });
+        document.body.replaceChildren();
+        const clean = initialView('<p data-onclick="x">clean</p>');
+        await settled();
+        expect(clean.map(frame => frame.type)).not.toContain('VIEW_INITIAL');
     });
 });

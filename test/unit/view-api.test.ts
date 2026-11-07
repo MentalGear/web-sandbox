@@ -167,6 +167,20 @@ describe('R4-5: sandboxView.text() and sandboxView.set() in the worker', () => {
             '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was dropped (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
         ]);
     });
+
+    // BD7:LIM-1: the renderer notes the handlers it drops too (`handler`), which the same line says.
+    it("say its handlers on the same line: the handlers alone, with the scripts, and with a reference", async () => {
+        const { view, ackDropped, lines } = await startPrelude();
+        for (let i = 0; i < 3; i++) view.render('<p>', 'c' + i);
+        ackDropped(['handler']);
+        ackDropped(['handler', 'script']);
+        ackDropped(['handler', 'script', 'reference']);
+        expect(lines).toEqual([
+            '[Sandbox] sandboxView.render: the view runs no script, so the on… handlers of this render were dropped (code runs in the entry, in the worker).',
+            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements and on… handlers of this render were dropped (code runs in the entry, in the worker).',
+            '[Sandbox] sandboxView.render: the view runs no script, so the <script> elements and on… handlers of this render were dropped (code runs in the entry, in the worker); and a reference that names no file the view shows was dropped (the view shows CSS, raster images, fonts, audio, video and WebVTT; show SVG as inline <svg>).',
+        ]);
+    });
 });
 
 describe('R4-5: the view applies text and set: text is assigned, never parsed; values and checked states of form controls; focus only while the user\'s focus is in the sandbox', () => {

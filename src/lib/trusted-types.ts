@@ -1,10 +1,11 @@
 import { BRIDGE_PREFIX, WRAPPER_PREFIX } from './frame-documents';
+import { mintUncodedError } from './minted-errors';
 
 /**
  * The element's HTML sinks on a host page that enforces Trusted Types. Under the host page's
  * `require-trusted-types-for 'script'`, Chromium and WebKit throw a TypeError when a string reaches an HTML sink
  * (measured; R1:R3-1), and the element has three: the wrapper's `srcdoc`, the fetch bridge's frame's `srcdoc`, and the inert parse of guest markup it reads before a
- * build (DOMParser: strict mode's script warning, cooperative mode's file references). Without a policy the build fails with "could not
+ * build of cooperative mode (DOMParser: its script warning and its file references; a strict or sealed build reads no markup, BD7:LIM-1). Without a policy the build fails with "could not
  * be built (TypeError)". Host-side only.
  *
  * A page cannot be asked whether it enforces Trusted Types, and a string that an enforcing page refuses is reported to
@@ -44,7 +45,7 @@ function htmlPolicy(): HtmlPolicy | null {
         policy = factory.createPolicy(TRUSTED_TYPES_POLICY, {
             createHTML: (input: string) => {
                 if (typeof input === 'string' && (parsing || input.startsWith(WRAPPER_PREFIX) || input.startsWith(BRIDGE_PREFIX))) return input;
-                throw new TypeError(`the ${TRUSTED_TYPES_POLICY} policy creates only the sandbox's own documents`);
+                throw mintUncodedError(TypeError, `the ${TRUSTED_TYPES_POLICY} policy creates only the sandbox's own documents`);
             },
         });
     } catch {
@@ -54,7 +55,7 @@ function htmlPolicy(): HtmlPolicy | null {
 }
 
 // A Trusted Types refusal of a string: a TypeError on a page that has Trusted Types, and the policy was refused too.
-const refusal = (error: unknown) => (error instanceof TypeError && 'trustedTypes' in globalThis ? new TrustedTypesRefusal(`createPolicy('${TRUSTED_TYPES_POLICY}') was refused`) : error);
+const refusal = (error: unknown) => (error instanceof TypeError && 'trustedTypes' in globalThis ? mintUncodedError(TrustedTypesRefusal, `createPolicy('${TRUSTED_TYPES_POLICY}') was refused`) : error);
 
 /** Sets `iframe.srcdoc` to a document of the library's (a wrapper, or the bridge's frame), through the library's policy where the browser has Trusted Types. */
 export function setLibrarySrcdoc(iframe: HTMLIFrameElement, wrapper: string): void {

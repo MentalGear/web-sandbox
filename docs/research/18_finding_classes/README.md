@@ -674,11 +674,12 @@ classified for one effect only (`WORKER_STATE_READS`: does it read per-origin st
 **The list of allowed cases.** `SEALED_REACH` (`src/lib/sealed-reach.ts`) classifies every name against every row:
 `none`, with why; `neutralised`, naming the library's chokepoint, which the code must have; or `remains`, naming one of
 the row's residuals, each stated with the test that pins it. Each name has one surface (what it can do) and each row a
-column (what each surface is to it); `WORKER_STATE_READS` became the `permissionState` column. On 2026-11-07, after board
-pass 7: 722 names × 22 rows, 15,884 cells: 15,049 `none`, 333 `neutralised`, 502 `remains`. Of the 502, 462 are the
-view's rendering on the host page's thread (availability) and 40 the view's loads of registered files (`blob:`) under
-the page's fetch directives; none is of the host page's own state. The `permissionsPolicy` column also classifies every
-feature the view's document is allowed by default (`VIEW_FEATURES`). THREAT-MODEL renders the table
+column (what each surface is to it); `WORKER_STATE_READS` became the `permissionState` column. On 2026-11-07, with the
+host realm's passes ([below](#the-host-realm-the-third-side)) and after board pass 7: 740 names × 22 rows, 16,280 cells:
+15,237 `none`, 525 `neutralised`, 518 `remains`. Of the 518, 462 are the view's rendering on the host page's thread and
+16 the host realm's passes there (availability), and 40 the view's loads of registered files (`blob:`) under the page's
+fetch directives; none is of the host page's own state. The `permissionsPolicy` column also classifies every feature the
+view's document is allowed by default (`VIEW_FEATURES`). THREAT-MODEL renders the table
 ([What a sealed guest can reach](../../THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)).
 
 **The structural tests.**
@@ -716,7 +717,7 @@ feature the view's document is allowed by default (`VIEW_FEATURES`). THREAT-MODE
 name's value may hold was still decided by two rules: the renderer's URL attributes kept a list of allowed URLs, while
 guest CSS dropped a list of bad schemes (the server schemes), so every other scheme stayed in the CSSOM, the page's
 inherited fetch directives refused it, and Chromium and Firefox reported each refusal to the page's endpoint with the
-scheme whole (BD7:ISO-1, a channel the guest wrote into, through eight
+scheme whole ([BD7:ISO-1](../../archive/reviews/BOARD-PASS-7-2026-11-07.md#bd7-iso-1), a channel the guest wrote into, through eight
 carriers). Deconstructed, it is this class's root once more: a list of bad cases. The construction is one rule for every
 position the view loads from, markup, CSS and a registered stylesheet alike (`keepsUrl`, `src/lib/css-references.ts`): a
 URL is kept only when it is a URL the view minted, the empty URL, a fragment-only URL in a property whose `url()` names an
@@ -735,3 +736,48 @@ rule, and a scheme test outside it fails the scan; a feature an engine allows by
 The sweep does not reach members of interfaces it
 cannot construct from a URL, a string or nothing (a WebGL context, an IndexedDB object behind a refused `open()`): they
 are classified with their global.
+
+### The host realm, the third side
+
+**Why: the drift check after board pass 7.** Class A came back a fourth pass in a row, through a realm the domain left
+out. The enumeration covered the guest's two realms, the worker and the view; but a third realm handles guest content, the
+host page's own, where the element reads the config's `html`, the entry, the registered files and the guest's frames, and
+the browser consults the host page's policy for whatever that realm parses or loads.
+BD7:LIM-1: the element read `html` with the host page's
+`DOMParser` for a warning, and Chromium checked each guest style attribute, `<style>` and `<base>` against the page's
+`style-src` and `base-uri` and reported them. In the same pass
+BD7:LIM-2 found the entry scan, a host pass over guest
+content, quadratic. One root: there was no list of the host realm's passes over guest content, so nothing held them to
+"string work, linear cost".
+
+**The list.** `HOST_PASSES` (`src/lib/host-passes.ts`) names every function of the host realm that receives guest
+content, by the call graph's units, with what it does, the modes that run it, what bounds its cost, and its rule: `pure`
+(library code over strings and bytes: nothing of the guest's goes to a platform parser, loader, policy-checked API or
+markup sink, and the cost is linear in what it takes, which a cap bounds), `carries` (hands the content on without a
+pass), or `documented` (cooperative mode's reading of its own guest document, which its frame parses under the same
+policy). The rows a sealed build runs are the class-A table's third side (`host:<row>`): `neutralised` by the rule for
+every row a parse, a load or a sink of the host realm would consult, and the `thread` row's `hostPasses` residual for
+their cost.
+
+**By construction.** A strict or sealed build reads no markup in the host realm: the view's renderer notes the scripts
+and handlers it drops of the initial view (`VIEW_INITIAL`), and the element warns from that. The entry scan reads its
+trivia in one pass from the end, and refuses every import expression, its phases included
+(BD7:CHL-1). `html` longer than one render is refused at
+configuration (BD7:LIM-3).
+
+**The structural tests.**
+- `test/unit/host-passes.test.ts`: every element member that reads the element's guest state is an entry
+  (`GUEST_ENTRIES`); from the entries, guest content is followed through the call graph of `src/`
+  (`test/unit/guest-content-scan.ts`: a parameter, a declaration, an assignment, a loop or a callback that holds it), and a
+  function it reaches that no row names fails, as does a row's unit it no longer reaches; no platform parser, loader or
+  markup sink is reachable from a `pure` or `carries` row or from the view's frame builders, but the library's own
+  documents (`LIBRARY_SINKS`, whose call sites are held to the policy and the bootstrap).
+- `test/unit/host-passes-scaling.test.ts`: every row is timed on its adversarial shapes with `scalingRatio`, and a row
+  without shapes fails.
+- `test/e2e/host-realm-passes.spec.ts`, on three engines: the style makers and an absolute `<base>`, through every way
+  `html` reaches a build, on a host page with `'report-sample'` and a keyed endpoint: no report and no violation.
+
+**What the enumeration found.** A pass no review had named: at a strict or sealed build, `viewStylesheets` checked every
+network reference of a registered stylesheet against every slot of it, so a stylesheet whose network URLs interleave
+with references to registered files cost time quadratic in its references (a ratio of 47 at the scaling test's sizes).
+Its slots and references are now read in one walk.

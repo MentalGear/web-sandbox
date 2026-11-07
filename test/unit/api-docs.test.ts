@@ -331,3 +331,20 @@ describe('docs/API.md lists the public surface', () => {
         expect(withoutOpenItems).not.toMatch(/\b(previously|no longer|used to|backlog)\b/i);
     });
 });
+
+describe('Migrating to sealed as the default', () => {
+    const start = DOC.indexOf('### Migrating to sealed as the default');
+    const section = DOC.slice(start, DOC.indexOf('**What strict mode does not cover**', start));
+
+    // A config with no mode is a sealed config, so every refusal of the config schema except the unknown mode is one a
+    // no-mode embed can hit (BD7:DOC-2): each needs its row, with the reason's text, so the table cannot omit one.
+    it('has a row for every refusal a config with no mode can hit', () => {
+        const reasons = (Object.keys(TERMINATION_REASONS) as ReasonId[]).filter(id => TERMINATION_REASONS[id].decidedBy === 'config' && id !== 'unknownMode');
+        expect(reasons.length).toBeGreaterThan(0);
+        const rows = section.split('\n').filter(line => line.startsWith('| no `mode`'));
+        for (const id of reasons) {
+            const text = TERMINATION_REASONS[id].text;
+            expect(rows.some(row => row.includes(text)), `${id}: no migration row names "${text}"`).toBe(true);
+        }
+    });
+});

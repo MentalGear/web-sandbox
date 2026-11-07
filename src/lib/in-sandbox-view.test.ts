@@ -50,6 +50,39 @@ describe('BD5:NEW-3: the renderer notes, once each, the scripts it dropped and t
         expect(droppedBy('<img src="https://example.com/a.png"><img src="data:image/png;base64,AAAA">')).toEqual([]);
         expect(droppedBy('<p>text</p><svg><circle r="1"></circle></svg>')).toEqual([]);
     });
+
+    // BD7:LIM-1: the element's warning about scripts in `html` is said from the initial view's notes (VIEW_INITIAL), so the
+    // renderer notes every handler it meets, in every namespace and on every element it keeps, unwraps or removes, as it
+    // notes every <script>; and nothing the old host-side reading (markup-scripts.ts) did not count either.
+    it.each([
+        ['a handler in HTML', '<img alt="" onerror="1">'],
+        ['a handler, upper case', '<p ONCLICK="1">p</p>'],
+        ['a handler, mixed case', '<details open onToggle="1"></details>'],
+        ['a handler with no value', '<p onclick>p</p>'],
+        ['a handler on SVG', '<svg onload="1"></svg>'],
+        ['a handler on an SVG child', '<svg><rect ONCLICK="1"/></svg>'],
+        ['a handler on MathML', '<math><mi onclick="1">x</mi></math>'],
+        ['a handler on an element the renderer unwraps', '<unknown-x onclick="1">x</unknown-x><blink onclick="1">b</blink>'],
+        ['a handler on an element the renderer removes', '<iframe onload="1"></iframe>'],
+        ['a handler after a lot of markup', `${'<p>x</p>'.repeat(5000)}<b onclick="1">b</b>`],
+    ])('a handler is noted: %s', (_, html) => {
+        expect(droppedBy(html)).toEqual(['handler']);
+    });
+
+    it.each([
+        ['handler text in text', '<p>onclick=1 onload=2</p>'],
+        ['handler text in an attribute value', '<a title="onclick=1" href="#onload">a</a>'],
+        ['data-on* attributes', '<div data-onclick="1" data-on="x" data-onload="2"></div>'],
+        ['aria and other attributes that contain "on"', '<button aria-pressed="false" contenteditable="false" ion="1">b</button>'],
+        ['an attribute named on', '<div on="1"></div>'],
+        ['a handler in a comment', '<!-- <p onclick="1"> -->'],
+    ])('no handler is noted: %s', (_, html) => {
+        expect(droppedBy(html)).toEqual([]);
+    });
+
+    it('a script and handlers: each noted once, in the order the walk met them', () => {
+        expect(droppedBy('<p onclick="1"><b onmouseover="2">b</b></p><script>3</script><svg onload="4"><script>5</script></svg>')).toEqual(['handler', 'script']);
+    });
 });
 
 const serialise = (fragment: DocumentFragment) => {

@@ -386,6 +386,7 @@ BD5 (D5). Highs are as the verifiers confirmed them. There were no criticals.
 | BD4 | 2026-10-24 | 5 | 5 | 3 |
 | BD5 | 2026-10-25 | 10 | 10 (sealed) | 1 |
 | BD6 | 2026-11-07 | 5 | 5 (sealed) | 2 |
+| BD7 | 2026-11-07 | 3 | 3 (sealed) | 3 |
 
 The full counts per round, the analysis and the coordinator's evaluation after each pass are in
 [research 22](research/22_review_trajectory/README.md).
@@ -457,8 +458,35 @@ attacker-text sink sentence and the archive (this pull request). No availability
 and how each finding was resolved are kept in [BOARD-PASS-6-2026-11-07.md](archive/reviews/BOARD-PASS-6-2026-11-07.md);
 each item cites its findings by ID (`BD6:`).
 
-**Pass 7 reviews sealed mode again** (same scope), on the branch after these fixes: the two consecutive clean passes that
-clear the board start there.
+**Pass 7 (2026-11-07, `fbc2587`)** reviewed sealed mode again, with the same scope, after #89, #90 and the CSSOM fix of
+#93. **It was not clean** (0 of 2): 3 data findings reach sealed mode, all verified, down from 5. Two are high
+(BD7:LIM-1: on Chromium the library parsed the app's config `html` with the host realm's `DOMParser`, so the browser
+checked the guest's styles and `<base>` against the host page's policy and reported the guest's CSS samples and an
+absolute `<base>` URL to the host's endpoint; BD7:ISO-1: on Chromium and Firefox guest CSS kept every URL that was not a
+server URL, so a `data:`, custom or unminted `blob:` URL made the browser report to the host's endpoint with a scheme the
+guest chose, and the documented remedy does not close it) and one is medium (BD7:CHL-2: a library error that a host method
+lets propagate crossed with a message that holds the caller's path, a method name or another app's text, on all three
+engines). Also confirmed: BD7:LIM-2 (high, availability: the entry's `import(` scan is quadratic, a 128 KiB entry holds
+the host thread for 12 s) and BD7:ISO-3 (low: picture-in-picture in the sealed view on Chromium); the other findings are
+low or have no verdict (BD7:LIM-3 medium, availability; BD7:LIM-4, LIM-5, ISO-2 with CHL-1, DOC-1 to DOC-3, TST-1, TST-2,
+NEW-1, NEW-2). The count fell for the second time (10, 5, 3); the evaluation rule triggered in its second form for CHL-2
+and for LIM-2, LIM-4 and LIM-5. No owner decision was needed for any finding: each is solved by construction, in four
+fixes. The host-realm passes fix (BD7:LIM-1, LIM-2, LIM-3, ISO-2 with CHL-1, TST-2): no HTML parser in the host realm on a
+strict or sealed build, one registry of the host's passes over guest content, each pure and linear with a scaling test,
+every standalone `import` token in an entry refused, and `html` capped. The crossing-texts fix (BD7:CHL-2, NEW-2): a
+library error crosses as its code's fixed text, from one table, made by one factory. The URL-rule fix (BD7:ISO-1, ISO-3,
+LIM-4, LIM-5): one keep-predicate for markup and CSS, minted URLs and fragments only, and `disablepictureinpicture` and
+`disableremoteplayback` forced. The docs fix (BD7:DOC-1 to DOC-3, NEW-1, TST-1). BD7:LIM-2 and BD7:LIM-3 are availability
+findings that the board's rule would backlog, and are fixed with the host-realm passes fix. The reports, the verdicts and
+how each finding was resolved are kept in [BOARD-PASS-7-2026-11-07.md](archive/reviews/BOARD-PASS-7-2026-11-07.md); each
+item cites its findings by ID (`BD7:`). The coordinator's evaluation is in
+[research 22](research/22_review_trajectory/README.md#evaluations): the architecture has held since sealed mode while
+`src/` grew by 38%, and an open question for the owner (keep D6, the served-document mode, shelved with a trigger, or
+switch now) is pending the owner's answer.
+
+**Pass 8 reviews sealed mode again** (same scope), after the four fixes of pass 7 and a subtraction pass (the coordinator's
+plan: remove what the fixes made redundant before the board looks again): the two consecutive clean passes that clear the
+board start there.
 
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 

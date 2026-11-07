@@ -2,6 +2,7 @@ import { test, expect } from './fixture';
 import type { Page } from '@playwright/test';
 import type { SandboxConfig } from '@src/host';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
+import { CROSSING_TEXTS } from '@src/lib/minted-errors';
 import { useRecorder } from './recorder';
 import { inFrames, inView, waitInView } from './strict-view';
 
@@ -87,16 +88,20 @@ test.describe('sealed mode', () => {
     });
 
     // BD6:TST-1: the reserved method is registered by every build. A sealed build that follows a strict one with a fetch bridge
-    // answers `FETCH_NOT_ALLOWED` ("the fetch bridge is off"); the previous build's handler, closed over its aborted bridge,
-    // would answer FETCH_FAILED, and that bridge would be what a sealed guest's raw call reaches.
-    test("a sealed build after a strict one with a fetch bridge refuses the guest's raw call of sandbox:fetch as off, and the listener sees nothing", async ({ sandbox }) => {
+    // answers `FETCH_NOT_ALLOWED` (the host's console says "the fetch bridge is off"; the guest receives the code's fixed
+    // text, BD7:CHL-2); the previous build's handler, closed over its aborted bridge, would answer FETCH_FAILED, and that
+    // bridge would be what a sealed guest's raw call reaches.
+    test("a sealed build after a strict one with a fetch bridge refuses the guest's raw call of sandbox:fetch as off, and the listener sees nothing", async ({ sandbox, page }) => {
+        const warnings: string[] = [];
+        page.on('console', message => { if (message.type() === 'warning') warnings.push(message.text()); });
         const raw = `return await bridge.call('sandbox:fetch', { url: '${recorder.allowed}/after-bridge', method: 'POST', body: 'x' }).then(() => 'sent', (e) => e.code + ': ' + e.message);`;
         expect(await sandbox.mount({ mode: 'strict', fetchBridge: { allow: [recorder.allowed] }, hostContentSecurityPolicy: false })).toBe('ready');
         expect(await sandbox.inGuest(raw)).toBe('sent'); // the bridge is on in the strict build (positive control)
         await recorder.waitFor('allowed', '/after-bridge');
         recorder.clear();
         // (sealed mode runs no execute(): the same call is the sealed guest's entry, on the same element)
-        expect(await sandbox.inEntry({ mode: 'sealed' }, raw)).toMatch(/^FETCH_NOT_ALLOWED: .*the fetch bridge is off/);
+        expect(await sandbox.inEntry({ mode: 'sealed' }, raw)).toBe(`FETCH_NOT_ALLOWED: FETCH_NOT_ALLOWED: ${CROSSING_TEXTS.FETCH_NOT_ALLOWED}`);
+        expect(warnings.filter(text => text.startsWith('[Sandbox] "sandbox:fetch" failed') && text.includes('the fetch bridge is off'))).toHaveLength(1);
         await sandbox.page.waitForTimeout(500);
         expect(recorder.paths('allowed')).toEqual([]);
     });

@@ -1,16 +1,20 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { runInNewContext } from 'node:vm';
 import { defineWebSandbox } from '@src/host';
-import { createBroker, type RpcFrame, type RpcSend } from '@src/lib/rpc';
+import { createBroker, RPC_ERROR_CODES, RPC_LIBRARY_CODES, type RpcFrame, type RpcSend } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
-import { fileError } from '@src/lib/files';
-import { isMinted, markMinted } from '@src/lib/minted-errors';
+import { FILE_ERROR_CODES, fileError } from '@src/lib/files';
+import { FETCH_ERROR_CODES, fetchRefusal } from '@src/lib/fetch-bridge';
+import { ConfigRefusal } from '@src/lib/config-schema';
+import { CROSSING_TEXTS, crossingText, mintError, mintUncodedError, type LibraryErrorCode } from '@src/lib/minted-errors';
 
 /**
  * What crosses a call is what the value and the API show (class P, research 18), at the broker (rpc.ts, createBroker):
  * - a typed array or a DataView carries its own bytes only, never the rest of its buffer (BD5:LIM-1);
  * - a host handler's failure carries the embedder's own words only, never an engine's text, which quotes the data it was
  *   handling; a result that cannot be copied is refused with the library's own text (BD5:LIM-2, BD5:DOC-1);
+ * - an error the library made crosses as its code and a fixed text, never its message, which can quote the host's path,
+ *   a method name or another app's text (BD7:CHL-2);
  * - a method removed with the element's unexpose() is refused as one never exposed (BD5:DOC-3).
  * test/unit/structural.test.ts holds the property test over the posted snapshot and the source scans of the broker.
  */
@@ -139,7 +143,7 @@ describe('a typed array or DataView crosses with its own bytes only (BD5:LIM-1)'
 
 describe("a host handler's failure carries the embedder's words only (BD5:LIM-2, BD5:DOC-1)", () => {
     const withheld: [string, string, string][] = [];
-    const HOST = { transferResults: true, markMinted, isMinted, reportWithheld: (method: string, refusal: string, text: string) => { withheld.push([method, refusal, text]); } };
+    const HOST = { transferResults: true, host: { mint: mintError, crossingText, reportWithheld: (method: string, refusal: string, text: string) => { withheld.push([method, refusal, text]); } } };
     beforeEach(() => { withheld.length = 0; });
 
     class StoreError extends Error {}
@@ -177,21 +181,25 @@ describe("a host handler's failure carries the embedder's words only (BD5:LIM-2,
         expect(withheld.map(([, , text]) => text.includes(SECRET))).toEqual([true, true, true]);
     });
 
-    it("a thrown string and a plain Error's message cross as they are, withholding nothing; a library code still crosses", async () => {
+    it("a thrown string and a plain Error's message cross as they are, withholding nothing: the embedder's own words", async () => {
         expect((await answer(() => { throw 'stored text'; }, [], HOST)).frame.error).toBe('stored text');
         expect((await answer(() => { throw new Error('save: too long'); }, [], HOST)).frame.error).toBe('save: too long');
         expect((await answer(() => Promise.reject(new Error('later')), [], HOST)).frame.error).toBe('later');
-        const { broker } = recordingBroker(HOST);
-        broker.exposeReserved('sandbox:write', () => { throw fileError('FILES_QUOTA_EXCEEDED', 'the quota is spent'); });
-        const replies: any[] = [];
-        broker.handleMessage({ type: 'RPC_REQ', id: 2, method: 'sandbox:write', args: [] }, (frame: RpcFrame) => { replies.push(frame); });
-        await new Promise(resolve => setTimeout(resolve, 0));
-        expect([replies[0].code, replies[0].error]).toEqual(['FILES_QUOTA_EXCEEDED', '[Sandbox] the quota is spent']);
         expect(withheld).toEqual([]);
     });
 
-    // BD6:LIM-1: the refusal of this side's own call() holds the library's text, so a method that lets it propagate to the guest
-    // hands the guest that text; the clone's error, which quotes the data it was handling, is the refusal's cause and the console's.
+    it("a reserved method's refusal keeps its library code on the wire, and its text is the code's fixed text", async () => {
+        const { broker } = recordingBroker(HOST);
+        broker.exposeReserved('sandbox:write', () => { throw fileError('FILES_QUOTA_EXCEEDED', `the quota of ${SECRET} is spent`); });
+        const replies: any[] = [];
+        broker.handleMessage({ type: 'RPC_REQ', id: 2, method: 'sandbox:write', args: [] }, (frame: RpcFrame) => { replies.push(frame); });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect([replies[0].code, replies[0].error]).toEqual(['FILES_QUOTA_EXCEEDED', `FILES_QUOTA_EXCEEDED: ${CROSSING_TEXTS.FILES_QUOTA_EXCEEDED}`]);
+        expect(withheld).toEqual([['sandbox:write', `FILES_QUOTA_EXCEEDED: ${CROSSING_TEXTS.FILES_QUOTA_EXCEEDED}`, `[Sandbox] the quota of ${SECRET} is spent`]]);
+    });
+
+    // BD6:LIM-1, BD7:CHL-2: a method that lets the refusal of this side's own call() propagate hands the guest its code and
+    // a fixed text; the clone's error, which quotes the data it was handling, is the refusal's cause and the console's.
     const UNCLONEABLE: [string, () => unknown][] = [
         ['a function whose source holds the secret', () => ({ save() { return `${SECRET}-inline-token`; } })],
         ['a symbol described by the secret', () => Symbol(SECRET)],
@@ -199,18 +207,19 @@ describe("a host handler's failure carries the embedder's words only (BD5:LIM-2,
         ['a getter that reads a property of null named by the secret', () => ({ get x() { return (null as any)[SECRET]; } })],
     ];
     const NOT_TRANSFERABLE = 'RPC arguments are not transferable: they hold a value structured clone cannot carry';
+    const ARGS_CROSSING = `ARGS_NOT_TRANSFERABLE: ${CROSSING_TEXTS.ARGS_NOT_TRANSFERABLE}`;
 
-    it.each(UNCLONEABLE)("a method that lets the refusal of its own call() with %s propagate: the guest receives the library's text, never the engine's", async (_label, make) => {
+    it.each(UNCLONEABLE)("a method that lets the refusal of its own call() with %s propagate: the guest receives the code's fixed text, never the engine's", async (_label, make) => {
         const { broker } = recordingBroker(HOST);
         broker.expose('m', () => broker.call('apply', make()));
         const replies: any[] = [];
         broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'm', args: [] }, (frame: RpcFrame) => { replies.push(frame); });
         await new Promise(resolve => setTimeout(resolve, 0));
         expect(replies).toHaveLength(1);
-        expect([replies[0].ok, replies[0].code, replies[0].error]).toEqual([false, 'HANDLER_ERROR', NOT_TRANSFERABLE]);
+        expect([replies[0].ok, replies[0].code, replies[0].error]).toEqual([false, 'HANDLER_ERROR', ARGS_CROSSING]);
         expect(JSON.stringify(replies[0])).not.toContain(SECRET);
-        expect(withheld).toHaveLength(1);
-        expect(withheld[0]!.slice(0, 2)).toEqual(['apply', NOT_TRANSFERABLE]);
+        expect(withheld.map(([method, refusal]) => [method, refusal])).toEqual([['apply', NOT_TRANSFERABLE], ['m', ARGS_CROSSING]]);
+        expect(withheld[1]![2]).toBe(NOT_TRANSFERABLE); // the refusal's own message, for the host's console
     });
 
     it("the refusal of call() keeps the engine's error as its cause, host side, and the code the caller branches on", async () => {
@@ -218,7 +227,7 @@ describe("a host handler's failure carries the embedder's words only (BD5:LIM-2,
         const refusal: any = await broker.call('apply', Symbol(SECRET)).catch((error: any) => error);
         expect([refusal.code, refusal.message, refusal.cause instanceof Error]).toEqual(['ARGS_NOT_TRANSFERABLE', NOT_TRANSFERABLE, true]);
         expect(Object.keys(refusal)).toEqual(['code']);
-        expect(isMinted(refusal)).toBe(true);
+        expect(crossingText(refusal)).toBe(ARGS_CROSSING);
     });
 
     it("a send that throws is refused 'RPC call could not be sent' with the transport's error as the cause", async () => {
@@ -228,11 +237,12 @@ describe("a host handler's failure carries the embedder's words only (BD5:LIM-2,
         expect(withheld).toEqual([['apply', 'RPC call could not be sent', SECRET]]);
     });
 
-    it('an error the library made crosses as its fixed message whatever its prototype; its cause is not read', async () => {
-        class Refusal extends Error {}
-        const minted = markMinted(new Refusal('fixed library text'));
+    it('an error the library made crosses as its code and fixed text, never its message, its code property or its cause', async () => {
+        const minted = mintError('INVALID_PATH', `refused the path "${SECRET}/.."`);
         Object.defineProperty(minted, 'cause', { get() { throw new Error(SECRET); } });
-        expect((await answer(() => { throw minted; }, [], HOST)).frame.error).toBe('fixed library text');
+        minted.code = 'FILES_BUSY' as any; // what crosses was chosen when it was made
+        expect((await answer(() => { throw minted; }, [], HOST)).frame.error).toBe(`INVALID_PATH: ${CROSSING_TEXTS.INVALID_PATH}`);
+        class Refusal extends Error {}
         expect((await answer(() => { throw new Refusal('not registered'); }, [], HOST)).frame.error).toBe('the method failed (Error)');
     });
 
@@ -251,7 +261,127 @@ describe("a host handler's failure carries the embedder's words only (BD5:LIM-2,
     });
 });
 
-describe('the element: what a guest learns of a failed host method, and unexpose() (BD5:LIM-2, BD5:DOC-3)', () => {
+// BD7:CHL-2, class P: what crosses for an error the library made is chosen from a fixed table by its code when the error is
+// made (minted-errors.ts), never read from its message, which may quote the host's data or another app's text.
+describe('a library error crosses as its code and a fixed text, never its message (BD7:CHL-2)', () => {
+    const MARKER = 'HOSTMARKER-7f3a9c';
+    const withheld: [string, string, string][] = [];
+    const HOST = { transferResults: true, host: { mint: mintError, crossingText, reportWithheld: (method: string, refusal: string, text: string) => { withheld.push([method, refusal, text]); } } };
+    beforeEach(() => { withheld.length = 0; });
+    const fixed = (code: LibraryErrorCode) => `${code}: ${CROSSING_TEXTS[code]}`;
+    const tick = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms));
+    const CODES: LibraryErrorCode[] = [...RPC_ERROR_CODES, ...RPC_LIBRARY_CODES];
+
+    /** Answers one request for `method` on a host broker that exposes `fn` under it (reserved or not); the frame posted. */
+    async function refusalOf(method: string, fn: () => unknown) {
+        const { broker } = recordingBroker(HOST);
+        if (method.startsWith('sandbox:')) broker.exposeReserved(method, fn);
+        else broker.expose(method, fn);
+        const replies: any[] = [];
+        broker.handleMessage({ type: 'RPC_REQ', id: 1, method, args: [] }, (frame: RpcFrame) => { replies.push(frame); });
+        await tick();
+        expect(replies).toHaveLength(1);
+        return replies[0];
+    }
+
+    it('the table has one fixed text for every code the broker, the files and the fetch bridge use, and for no other', () => {
+        const codes = new Set<string>([...RPC_ERROR_CODES, ...RPC_LIBRARY_CODES, ...FILE_ERROR_CODES, ...FETCH_ERROR_CODES]);
+        expect(Object.keys(CROSSING_TEXTS).sort()).toEqual([...codes].sort());
+    });
+
+    it.each(CODES)('%s: an error minted with a marker in its message crosses from an exposed and from a reserved method without it; the console has it', async (code) => {
+        const exposed = await refusalOf('m', () => { throw mintError(code, `${MARKER}/.. quoted`); });
+        const reserved = await refusalOf('sandbox:x', () => Promise.reject(mintError(code, `${MARKER}/.. quoted`)));
+        expect([exposed.code, exposed.error]).toEqual(['HANDLER_ERROR', fixed(code)]);
+        // a reserved method's library code rides on the wire; any other code is HANDLER_ERROR, as before
+        expect([reserved.code, reserved.error]).toEqual([(RPC_LIBRARY_CODES as readonly string[]).includes(code) ? code : 'HANDLER_ERROR', fixed(code)]);
+        expect(JSON.stringify([exposed, reserved])).not.toContain(MARKER);
+        expect(withheld.map(([method, refusal, text]) => [method, refusal, text.includes(MARKER)])).toEqual([['m', fixed(code), true], ['sandbox:x', fixed(code), true]]);
+    });
+
+    it("the files' and the fetch bridge's own minting functions: every code, the caller's path or URL withheld", async () => {
+        for (const code of FILE_ERROR_CODES) expect((await refusalOf('m', () => { throw fileError(code, `refused the path "${MARKER}/.."`); })).error).toBe(fixed(code));
+        for (const code of FETCH_ERROR_CODES) expect((await refusalOf('m', () => { throw fetchRefusal(code, `https://${MARKER}.example is not in fetchBridge.allow`); })).error).toBe(fixed(code));
+        expect(withheld).toHaveLength(FILE_ERROR_CODES.length + FETCH_ERROR_CODES.length);
+        expect(withheld.every(([, , text]) => text.includes(MARKER))).toBe(true);
+    });
+
+    it("an error the library made without a code crosses as an engine's error of its kind does: its name only", async () => {
+        expect((await refusalOf('m', () => { throw mintUncodedError(TypeError, `[Sandbox] expose(): the name "${MARKER}" is longer than 256 characters`); })).error).toBe('the method failed (TypeError)');
+        expect((await refusalOf('m', () => { throw mintUncodedError(Error, `<${MARKER}> is already defined by another element`); })).error).toBe('the method failed (Error)');
+        expect((await refusalOf('m', () => { throw mintUncodedError(ConfigRefusal, MARKER); })).error).toBe('the method failed (ConfigRefusal)');
+        expect((await refusalOf('m', () => { throw new TypeError(MARKER); })).error).toBe('the method failed (TypeError)'); // an engine's, for comparison
+        expect(withheld.every(([, , text]) => text.includes(MARKER))).toBe(true);
+    });
+
+    // A host method that relays its call to another app (another element's broker, as the host's own): what that app
+    // answered, the method name the host chose, and the host's timeout reach the first app as the code's fixed text.
+    const ANSWERS: [string, string][] = [
+        ['HANDLER_ERROR', `APPB-${MARKER}: the other app's own text`],
+        ['UNKNOWN_METHOD', `unknown method: HOSTMETHOD-${MARKER}`],
+        ['RESULT_NOT_TRANSFERABLE', `result of ${MARKER}`],
+        ['BUSY', `busy with ${MARKER}`],
+        ['ARGS_NOT_TRANSFERABLE', `arguments of ${MARKER}`],
+        ['A_CODE_OF_ITS_OWN', `${MARKER} under a code of its own`],
+    ];
+
+    it.each(ANSWERS)("a relayed refusal %s with the other app's text: the first app receives the code's fixed text", async (code, text) => {
+        const other = recordingBroker(HOST);
+        const first = recordingBroker(HOST);
+        first.broker.expose('relay', () => other.broker.call(`HOSTMETHOD-${MARKER}`));
+        const replies: any[] = [];
+        first.broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'relay', args: [] }, (frame: RpcFrame) => { replies.push(frame); });
+        await tick();
+        other.broker.handleMessage({ type: 'RPC_RES', id: other.posts[0]!.frame.id, ok: false, code, error: text });
+        await tick();
+        const received = code === 'A_CODE_OF_ITS_OWN' ? 'HANDLER_ERROR' : code;
+        expect([replies[0].code, replies[0].error]).toEqual(['HANDLER_ERROR', fixed(received as LibraryErrorCode)]);
+        expect(JSON.stringify(replies)).not.toContain(MARKER);
+        expect(withheld).toEqual([['relay', fixed(received as LibraryErrorCode), text]]);
+    });
+
+    it("a relayed call's timeout and termination: the host's method name and text stay on the host", async () => {
+        const other = recordingBroker(HOST);
+        const first = recordingBroker(HOST);
+        first.broker.expose('timeout', () => other.broker.callWithTimeout(5, `HOSTMETHOD-${MARKER}`));
+        first.broker.expose('terminated', () => other.broker.call('x'));
+        const replies: any[] = [];
+        first.broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'timeout', args: [] }, (frame: RpcFrame) => { replies.push(frame); });
+        first.broker.handleMessage({ type: 'RPC_REQ', id: 2, method: 'terminated', args: [] }, (frame: RpcFrame) => { replies.push(frame); });
+        await tick(30);
+        other.broker.rejectAllPending(`[Sandbox] ${MARKER} was terminated`);
+        await tick();
+        expect(replies.map(frame => [frame.id, frame.error])).toEqual([[1, fixed('TIMEOUT')], [2, fixed('TERMINATED')]]);
+        expect(JSON.stringify(replies)).not.toContain(MARKER);
+        expect(withheld.map(([, , text]) => text.includes(MARKER))).toEqual([true, true]);
+    });
+
+    it("every refusal the host's broker makes is the factory's; the guest's broker (no host option) makes its own", async () => {
+        const { broker } = recordingBroker(HOST);
+        const refusals: unknown[] = await Promise.all([
+            broker.callWithTimeout(1, 'm').catch(error => error),
+            broker.call(42 as any).catch(error => error),
+            broker.call('x'.repeat(300)).catch(error => error),
+            broker.call('m', () => 1).catch(error => error),
+            broker.call('m', new Uint8Array(40 * 1024 * 1024)).catch(error => error),
+            broker.terminationError('gone'),
+        ]);
+        expect(refusals.map(crossingText)).toEqual([fixed('TIMEOUT'), fixed('INVALID_CALL'), fixed('INVALID_CALL'), fixed('ARGS_NOT_TRANSFERABLE'), fixed('ARGS_NOT_TRANSFERABLE'), fixed('TERMINATED')]);
+        const guest = recordingBroker({});
+        expect(crossingText(await guest.broker.call(42 as any).catch(error => error))).toBeNull();
+    });
+
+    it('a host group without the factory or its table fails closed: a plain Error is named, never forwarded', async () => {
+        const reportWithheld = HOST.host.reportWithheld;
+        for (const host of [{ crossingText, reportWithheld }, { mint: mintError, reportWithheld }]) {
+            const reply = await answer(() => { throw new Error(MARKER); }, [], { transferResults: true, host });
+            expect(reply.frame.error).toBe('the method failed (Error)');
+        }
+        expect((await answer(() => { throw 'a string'; }, [], { transferResults: true, host: { reportWithheld } })).frame.error).toBe('a string');
+    });
+});
+
+describe('the element: what a guest learns of a failed host method, and unexpose() (BD5:LIM-2, BD5:DOC-3, BD7:CHL-2)', () => {
     let warn: ReturnType<typeof vi.spyOn>;
     beforeEach(() => {
         vi.spyOn(window, 'postMessage').mockImplementation(() => {});
@@ -276,8 +406,57 @@ describe('the element: what a guest learns of a failed host method, and unexpose
         const call = (method: string, ...args: unknown[]): Promise<any> => new Promise(resolve => {
             el._onGuestMessage(port1, (reply: any) => resolve(reply.ok ? { ok: reply.value } : { code: reply.code, error: reply.error }), { type: 'RPC_REQ', id: ++id, method, args }, null);
         });
-        return { el, call, done: () => port1.close() };
+        // The guest's answer to the element's latest call (queued until the environment is ready), as the guest posts it.
+        const answerLast = (answer: Record<string, unknown>) => el._onGuestMessage(port1, () => {}, { type: 'RPC_RES', id: el._queue.at(-1).frame.id, ...answer }, null);
+        return { el, call, answerLast, done: () => port1.close() };
     }
+
+    // BD7:CHL-2: each way a host method lets a library error propagate, with the host's data in the error's message. The
+    // guest receives the code and a fixed text; the host's console has the message.
+    const MARKER = 'HOSTFOLDER-alice-7f3a9c';
+    const ROWS: [string, (el: any, other: ReturnType<typeof element>) => unknown, string][] = [
+        ['registerFiles(), a path of the host\'s', (el) => el.registerFiles({ [`${MARKER}/..`]: 'x' }), `INVALID_PATH: ${CROSSING_TEXTS.INVALID_PATH}`],
+        ['registerFiles(), a bad type', (el) => el.registerFiles({ [`${MARKER}/notes.txt`]: { content: 'x', type: 'not a type' } }), `INVALID_FILE: ${CROSSING_TEXTS.INVALID_FILE}`],
+        ['unregisterFiles()', (el) => el.unregisterFiles([`${MARKER}/..`]), `INVALID_PATH: ${CROSSING_TEXTS.INVALID_PATH}`],
+        ['commitGuestWrites()', (el) => el.commitGuestWrites([`${MARKER}/..`]), `INVALID_PATH: ${CROSSING_TEXTS.INVALID_PATH}`],
+        ['a timeout of the host\'s call', (el) => el.callWithTimeout(1, `HOSTMETHOD-${MARKER}`), `TIMEOUT: ${CROSSING_TEXTS.TIMEOUT}`],
+        ['a relayed call to a name the app lacks', (el) => {
+            const relayed = el.call(`HOSTMETHOD-unknown-${MARKER}`);
+            void Promise.resolve().then(() => el._onGuestMessage(el._port, () => {}, { type: 'RPC_RES', id: el._queue.at(-1).frame.id, ok: false, code: 'UNKNOWN_METHOD', error: `unknown method: HOSTMETHOD-unknown-${MARKER}` }, null));
+            return relayed;
+        }, `UNKNOWN_METHOD: ${CROSSING_TEXTS.UNKNOWN_METHOD}`],
+        ["a relayed call to another element, with that app's text", (_el, other) => {
+            const relayed = other.el.call('save');
+            void Promise.resolve().then(() => other.answerLast({ ok: false, code: 'HANDLER_ERROR', error: `APPB-${MARKER}: the other app's own words` }));
+            return relayed;
+        }, `HANDLER_ERROR: ${CROSSING_TEXTS.HANDLER_ERROR}`],
+    ];
+
+    it.each(ROWS)("%s: the guest receives the code and a fixed text, never the host's data; the console has it", async (_label, run, received) => {
+        const { el, call, done } = element();
+        const other = element();
+        el.expose('m', () => run(el, other));
+        warn.mockClear();
+        const answer = await call('m');
+        expect(answer).toEqual({ code: 'HANDLER_ERROR', error: received });
+        expect(JSON.stringify(answer)).not.toContain(MARKER);
+        const lines = warn.mock.calls.filter((args: unknown[]) => String(args[0]).startsWith('[Sandbox] "m" failed'));
+        expect(lines).toHaveLength(1);
+        expect(String(lines[0]![1])).toContain(MARKER);
+        other.done();
+        done();
+    });
+
+    it("the embedder's own words still cross as written: a thrown string, or a plain Error it made", async () => {
+        const { el, call, done } = element();
+        el.expose('string', () => { throw 'own words'; });
+        el.expose('plain', () => { throw new Error('own words'); });
+        el.expose('rejected', () => Promise.reject(new Error('own words, later')));
+        expect([await call('string'), await call('plain'), await call('rejected')]).toEqual([
+            { code: 'HANDLER_ERROR', error: 'own words' }, { code: 'HANDLER_ERROR', error: 'own words' }, { code: 'HANDLER_ERROR', error: 'own words, later' },
+        ]);
+        done();
+    });
 
     it('a handler that throws an engine error answers its name only, and writes the engine text to the console, once per call', async () => {
         const { el, call, done } = element();

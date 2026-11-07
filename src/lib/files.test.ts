@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-    CheckedFile, FALLBACK_TYPE, FileStore, MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES,
+    brokenPathRule, CheckedFile, describePath, FALLBACK_TYPE, FileStore, MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES, PATH_RULES,
     isJavaScriptType, isStylesheetType, isValidMimeType, isValidPath, mimeTypeFor, referenceCost, rewriteCost, SLOT_URL_BYTES,
-    type ByteEdits, type FileErrorCode, type FileSnapshotEntry,
+    type ByteEdits, type FileError, type FileErrorCode, type FileSnapshotEntry, type PathRule,
 } from './files';
+import { createGuestWrites, parseCommitArguments } from './guest-writes';
 
 const BASE = 'https://vfs.invalid/';
 
@@ -80,6 +81,67 @@ describe('isValidPath: a path is accepted only in its one canonical spelling', (
             }
         }
         expect(accepted).toBeGreaterThan(100); // the property was exercised, not vacuously true
+    });
+});
+
+// BD7:NEW-2: a refusal names the rule the path breaks, from the one table the check is made of (PATH_RULES).
+describe('a refused path: the message names the rule it breaks', () => {
+    // One path per rule that breaks it first (the rules before it hold), and the callers that refuse it.
+    const BREAKS: Record<PathRule, unknown> = {
+        string: 42,
+        length: '',
+        characters: 'a%2e/x.js',
+        leadingSlash: '/x.js',
+        trailingSlash: 'src/',
+        emptySegment: 'a//b.js',
+        dotSegment: 'a/../b.js',
+        urlRoundTrip: null, // implied by the rules before it: no path breaks it first (below)
+    };
+    const refusal = (run: () => unknown): { code?: string; message?: string } => {
+        try {
+            run();
+        } catch (error) {
+            return error as FileError;
+        }
+        return {};
+    };
+
+    it('every rule has a case here, and its text names it in words of its own', () => {
+        expect(Object.keys(BREAKS).sort()).toEqual(Object.keys(PATH_RULES).sort());
+        const texts = Object.values(PATH_RULES).map(rule => rule.text);
+        expect(new Set(texts).size).toBe(texts.length);
+    });
+
+    it.each(Object.entries(BREAKS).filter(([, path]) => path !== null))('%s: the first rule broken, and the text of registerFiles(), unregisterFiles() and the commit', (rule, path) => {
+        expect(brokenPathRule(path)).toBe(rule);
+        const text = PATH_RULES[rule as PathRule].text;
+        const store = new FileStore(() => {});
+        const refusals: [string, { code?: string; message?: string }][] = [
+            ['unregisterFiles()', refusal(() => store.unregister([path]))],
+            ['commitGuestWrites()', refusal(() => parseCommitArguments([path], undefined))],
+        ];
+        // a key of registerFiles()' object is always a string
+        if (typeof path === 'string') refusals.push(['registerFiles()', refusal(() => store.register({ [path]: 'x' }))]);
+        for (const [caller, error] of refusals) {
+            expect(error.code, caller).toBe('INVALID_PATH');
+            expect(error.message, caller).toBe(`[Sandbox] ${caller} refused the path ${describePath(path)}: ${text}.`);
+        }
+    });
+
+    it('urlRoundTrip: a path a URL parser rewrites breaks it, and every rule before it already refuses such a path', () => {
+        for (const path of ['a b.js', 'a/./b.js', 'a\\b.js', '%2e%2e/x.js', 'caf\u00E9.js']) expect(PATH_RULES.urlRoundTrip.holds(path), path).toBe(false);
+        for (const [, path] of REJECTED_PATHS) expect(brokenPathRule(path)).not.toBe('urlRoundTrip');
+    });
+
+    it('every refused path of the list above names a rule; every accepted one keeps them all', () => {
+        for (const [label, path] of REJECTED_PATHS) expect(brokenPathRule(path), label).not.toBeNull();
+        for (const path of ACCEPTED_PATHS) expect(brokenPathRule(path), path).toBeNull();
+    });
+
+    it("a guest's removal is refused by the same rule, with its own caller", () => {
+        const writes = createGuestWrites({ store: new FileStore(() => {}), built: new FileStore(() => {}) });
+        const error = refusal(() => writes.handle({ change: 'remove', path: '/x.js' }));
+        expect([error.code, error.message]).toEqual(['INVALID_PATH', `[Sandbox] sandboxFiles.remove() refused the path "/x.js": ${PATH_RULES.leadingSlash.text}.`]);
     });
 });
 

@@ -1,6 +1,7 @@
 import { ORIGIN_PATTERN, type Origin } from "../origin";
 import { admits, LOAD_KIND_NAMES, LOAD_KINDS } from "../load-kinds";
 import type { OriginKind, OriginPolicy } from "./origins";
+import { mintUncodedError } from "../minted-errors";
 
 /**
  * The guest policy: one template per mode, filled with the parsed origins (origins.ts) and the library's own
@@ -112,7 +113,7 @@ export function cooperativePolicy(input: PolicyInput): string {
 
 /** Strict mode: the view's policy (ADR-005), admitting only the bootstrap by its hash; the worker inherits it. */
 export function strictViewPolicy(input: PolicyInput & { bootstrapHash: string }): string {
-    if (!HASH_SOURCE.test(input.bootstrapHash)) throw new Error('[Sandbox] the strict view policy needs the bootstrap as one sha256 hash source.');
+    if (!HASH_SOURCE.test(input.bootstrapHash)) throw mintUncodedError(Error, '[Sandbox] the strict view policy needs the bootstrap as one sha256 hash source.');
     return format([
         ['default-src', []],
         ['script-src', [input.bootstrapHash, ...(input.scriptUnsafe ? [UNSAFE_EVAL] : [])]],
@@ -144,7 +145,7 @@ export interface SealedPolicyInput {
  * data:. The worker inherits it.
  */
 export function sealedViewPolicy(input: SealedPolicyInput): string {
-    if (!HASH_SOURCE.test(input.bootstrapHash)) throw new Error('[Sandbox] the sealed view policy needs the bootstrap as one sha256 hash source.');
+    if (!HASH_SOURCE.test(input.bootstrapHash)) throw mintUncodedError(Error, '[Sandbox] the sealed view policy needs the bootstrap as one sha256 hash source.');
     // only the four kinds are read, whatever else a cast set holds
     const files = (kind: SealedFileKind): string[] => (input.fileKinds.has(kind) ? [BLOB] : []);
     return format([
@@ -169,10 +170,10 @@ export function sealedViewPolicy(input: SealedPolicyInput): string {
  * reads (environment-check.ts, S74); no markup of anyone else's is in the document.
  */
 export function bridgeFramePolicy(input: { allow: readonly Origin[]; bootstrapHash: string }): string {
-    if (!HASH_SOURCE.test(input.bootstrapHash)) throw new Error('[Sandbox] the bridge frame policy needs the bootstrap as one sha256 hash source.');
+    if (!HASH_SOURCE.test(input.bootstrapHash)) throw mintUncodedError(Error, '[Sandbox] the bridge frame policy needs the bootstrap as one sha256 hash source.');
     const connect: string[] = [];
     for (const origin of input.allow) {
-        if (typeof origin !== 'string' || !ORIGIN_PATTERN.test(origin)) throw new Error('[Sandbox] the bridge frame policy was given something that is not an origin for connect-src; refused.');
+        if (typeof origin !== 'string' || !ORIGIN_PATTERN.test(origin)) throw mintUncodedError(Error, '[Sandbox] the bridge frame policy was given something that is not an origin for connect-src; refused.');
         connect.push(origin);
     }
     return format([
@@ -211,7 +212,7 @@ export function connectSources(input: PolicyInput): string[] {
 function sourcesOf(input: PolicyInput, kind: OriginKind): string[] {
     const sources: string[] = [];
     for (const origin of input.origins[kind] as readonly Origin[]) {
-        if (typeof origin !== 'string' || !ORIGIN_PATTERN.test(origin)) throw new Error(`[Sandbox] the policy was given something that is not an origin for ${KIND_DIRECTIVES[kind]}; refused.`);
+        if (typeof origin !== 'string' || !ORIGIN_PATTERN.test(origin)) throw mintUncodedError(Error, `[Sandbox] the policy was given something that is not an origin for ${KIND_DIRECTIVES[kind]}; refused.`);
         sources.push(origin);
     }
     if (input.fileKinds.has(kind)) sources.push(BLOB);

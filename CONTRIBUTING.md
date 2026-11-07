@@ -157,6 +157,7 @@ the registry [docs/ids.ts](docs/ids.ts):
 | `BD4:` and the finding's own ID | a finding of the S74 review board's pass 4 (ISO, CHL, LIM, DOC, TST, NEW) | `BD4:ISO-2` |
 | `BD5:` and the finding's own ID | a finding of the S74 review board's pass 5 (ISO, CHL, LIM, DOC, TST, NEW) | `BD5:ISO-1` |
 | `BD6:` and the finding's own ID | a finding of the S74 review board's pass 6 (ISO, CHL, LIM, DOC, TST, NEW) | `BD6:ISO-1` |
+| `BD7:` and the finding's own ID | a finding of the S74 review board's pass 7 (ISO, CHL, LIM, DOC, TST, NEW) | `BD7:ISO-1` |
 | `AR:`, `BR:`, `FR:`, `VR:` and the finding's own ID | a finding of the adversarial, broad and focused reviews and the verification | `BR:CB1` |
 | `S<n>`, `T<n>`; `BL:` for the B, C, D and H series | a backlog item | `S76`, `BL:D1` |
 | `ADR-<nnn>`, `ADR-<nnn>#<heading anchor>` | an ADR, or one of its sections | `ADR-005` |
