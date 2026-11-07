@@ -51,16 +51,19 @@
  * reported codes the message stays the other side's text verbatim, up to MAX_TEXT_LENGTH characters — the code, not the
  * text, is the part a caller can branch on.
  *
- * What a refusal's text carries (BD5:LIM-2, BD5:DOC-1; class P, what crosses is what the API shows). A refusal this
- * function makes itself has a fixed text of its own, never an engine's: a result structured clone cannot carry is
- * answered "result is not transferable: …" with no part of the clone's error, which on Chromium quotes the source of
- * the function it could not clone. A handler's throw is reported with its text as is on the guest's broker (the guest's
- * text, which the host receives as the guest's data). On the host's broker (`reportWithheld`) the text crosses by an
- * allow-list: a thrown string, or the message of an error whose prototype is exactly this realm's Error.prototype (a plain
- * `new Error(text)`, the embedder's own words). Any other throw, an engine's TypeError, SyntaxError or DOMException, a
- * subclass, an error of another realm, an object, is reported as `the method failed (<name>)`, its name checked as the
- * element's errorName checks one (FR:F3), because an engine's message quotes the data it was handling. The text withheld
- * goes to `reportWithheld`, the host's console.
+ * What a refusal's text carries (BD5:LIM-2, BD5:DOC-1, BD6:LIM-1; class P, what crosses is what the API shows). An error
+ * this function makes itself has a fixed text of its own, never an engine's: a result structured clone cannot carry is
+ * answered "result is not transferable: …", and arguments it cannot carry are refused "RPC arguments are not
+ * transferable: …", with no part of the clone's error, which on Chromium quotes the source of the function it could not
+ * clone. The engine's error is the refusal's `cause` (host side only, never read for a frame) and its text goes to
+ * `reportWithheld`. A handler's throw is reported with its text as is on the guest's broker (the guest's text, which the
+ * host receives as the guest's data). On the host's broker (`reportWithheld`) the text crosses by an allow-list: a thrown
+ * string, an error the library made (`isMinted`: the broker's own, a file or fetch refusal; its message is a fixed text),
+ * or the message of an error whose prototype is exactly this realm's Error.prototype (a plain `new Error(text)`, the
+ * embedder's own words). Any other throw, an engine's TypeError, SyntaxError or DOMException, a subclass, an error of
+ * another realm, an object, is reported as `the method failed (<name>)`, its name checked as the element's errorName
+ * checks one (FR:F3), because an engine's message quotes the data it was handling. The text withheld goes to
+ * `reportWithheld`, the host's console.
  * `code` is a plain own property rather than an Error subclass: a subclass would be a module-scope
  * class this function cannot close over (see above), and a property reads the same in every realm.
  *
@@ -236,6 +239,12 @@ export interface BrokerOptions {
     // broker withholds (an engine's error from a handler, or from the clone or the post of a result) is handed here with
     // the method's name and the refusal the other side received instead. The guest's broker forwards its handlers' texts.
     reportWithheld?: (method: string, refusal: string, text: string) => void;
+    // The host's broker only (BD6:LIM-1): the registry of the errors the library makes. `markMinted` is called with each error
+    // this broker makes (codedError); `isMinted` answers for those and for the ones the host's other modules make (a file
+    // refusal, a fetch refusal, another element's broker). A minted error's message is a fixed library text, so it crosses
+    // as it is, whatever its prototype; its `cause` (an engine's error) never does.
+    markMinted?: (error: Error) => void;
+    isMinted?: (error: unknown) => boolean;
     // The host's broker only (BD5:DOC-3): given, once, the function that removes one exposed method, or every one when
     // called with no name; reserved names are never removed. Like takeBusyRefusal it is never part of the returned object,
     // which the guest's bootstrap publishes as `bridge`.
@@ -357,12 +366,16 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const takeBusyRefusalOption = options.takeBusyRefusal;
     const reportWithheldOption = options.reportWithheld;
     const takeUnexposeOption = options.takeUnexpose;
+    const markMintedOption = options.markMinted;
+    const isMintedOption = options.isMinted;
     const sizeOf = typeof sizeOfOption === 'function' ? sizeOfOption : null;
     const admitOutbound = typeof admitOutboundOption === 'function' ? admitOutboundOption : null;
     const admitInbound = typeof admitInboundOption === 'function' ? admitInboundOption : null;
     const takeBusyRefusal = typeof takeBusyRefusalOption === 'function' ? takeBusyRefusalOption : null;
     const reportWithheld = typeof reportWithheldOption === 'function' ? reportWithheldOption : null;
     const takeUnexpose = typeof takeUnexposeOption === 'function' ? takeUnexposeOption : null;
+    const markMinted = typeof markMintedOption === 'function' ? markMintedOption : null;
+    const isMinted = typeof isMintedOption === 'function' ? isMintedOption : null;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     // Mirrors the exported RESERVED_METHOD_PREFIX: declared here to survive stringification, and typed by it, so the two
@@ -644,21 +657,33 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     }
 
     // The text of a handler's refusal (BD5:LIM-2; see the header). Without reportWithheld (the guest's broker), the
-    // handler's own text. With it (the host's), only what the embedder wrote crosses: a thrown string, or the message of a
-    // plain Error of this realm; any other throw is named, and its text goes to reportWithheld.
+    // handler's own text. With it (the host's), only what the embedder or the library wrote crosses: a thrown string, an
+    // error the library made (BD6:LIM-1, whose message is a fixed text), or the message of a plain Error of this realm; any
+    // other throw is named, and its text goes to reportWithheld.
     function handlerErrorText(method: string, error: unknown): string {
         if (!reportWithheld || typeof error === 'string') return errorMessage(error);
-        let plain = false;
-        try {
-            plain = typeof error === 'object' && error !== null && protoOf(error) === ErrorPrototype;
-        } catch {
-            plain = false; // a Proxy whose getPrototypeOf throws
-        }
-        if (plain) return errorMessage(error);
+        if (isMintedError(error) || hasPlainPrototype(error)) return errorMessage(error);
         const name = errorName(error);
         const refusal = `the method failed (${name})`;
         withhold(method, refusal, `${name}: ${errorMessage(error)}`);
         return refusal;
+    }
+
+    function isMintedError(error: unknown): boolean {
+        if (!isMinted) return false;
+        try {
+            return isMinted(error) === true;
+        } catch {
+            return false;
+        }
+    }
+
+    function hasPlainPrototype(error: unknown): boolean {
+        try {
+            return typeof error === 'object' && error !== null && protoOf(error) === ErrorPrototype;
+        } catch {
+            return false; // a Proxy whose getPrototypeOf throws
+        }
     }
 
     // Hands a text the other side does not receive to reportWithheld, which never takes the broker down.
@@ -673,19 +698,31 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
 
     // An Error with an own `code`, defined rather than assigned: an assignment would reach a setter guest code put on
     // Error.prototype or Object.prototype. Its message is cut to MAX_TEXT_LENGTH (R3:C-1): every rejection this function
-    // makes, a reported text received included, carries a bounded one.
-    function codedError(message: string, code: string): RpcError {
+    // makes, a reported text received included, carries a bounded one. The message is a fixed text of the library's or the
+    // other side's, never an engine's (BD6:LIM-1): an engine's error that caused the refusal is its `cause`, which stays with
+    // the caller of this side and is never read for a frame. The error is registered as the library's (markMinted).
+    function codedError(message: string, code: string, cause?: unknown): RpcError {
         const error = new ErrorConstructor(cutText(message)) as RpcError;
         defineOwn(error, 'code', { value: code, writable: true, enumerable: true, configurable: true });
+        if (cause !== undefined) defineOwn(error, 'cause', { value: cause, writable: true, enumerable: false, configurable: true });
+        if (markMinted) markMintedError(error);
         return error;
+    }
+
+    function markMintedError(error: Error): void {
+        try {
+            markMinted!(error);
+        } catch {
+            // the registry threw: the error is then not recognised, and its message is judged as a plain Error's
+        }
     }
 
     // Mints a refusal with a LOCAL code. Called only from this side's own state (its timer, teardown,
     // clone check, send, argument check) — never with anything taken from an inbound frame. That is what
     // makes a local code trustworthy: the other side has no path into this function. Its parameter type
     // admits only the local codes.
-    function localRefusal(code: Exclude<RpcErrorCode, 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE' | 'BUSY'>, message: string): RpcError {
-        return codedError(message, code);
+    function localRefusal(code: Exclude<RpcErrorCode, 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE' | 'BUSY'>, message: string, cause?: unknown): RpcError {
+        return codedError(message, code, cause);
     }
 
     // The guest's call refused by the per-second budget (R3:M-2), here, before it is sent, as the host would answer it:
@@ -695,8 +732,8 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         return refusal.code === CODE.ARGS_NOT_TRANSFERABLE ? CODE.ARGS_NOT_TRANSFERABLE : CODE.BUSY;
     }
     function budgetRefusal(refusal: BudgetRefusal): RpcError {
-        const reason = refusal.reason;
-        return codedError(reason, budgetCode(refusal));
+        const budgetText = refusal.reason;
+        return codedError(budgetText, budgetCode(refusal));
     }
 
     // Turns a failure the other side reported into a rejection. The inbound frame is untrusted, so its
@@ -963,7 +1000,9 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         try {
             sendableArgs = clone(args);
         } catch (error) {
-            return apply(rejected, PromiseConstructor, [localRefusal(CODE.ARGS_NOT_TRANSFERABLE, `RPC arguments are not transferable: ${errorMessage(error)}`)]) as Promise<unknown>;
+            const refusal = 'RPC arguments are not transferable: they hold a value structured clone cannot carry';
+            withhold(method, refusal, errorMessage(error));
+            return apply(rejected, PromiseConstructor, [localRefusal(CODE.ARGS_NOT_TRANSFERABLE, refusal, error)]) as Promise<unknown>;
         }
         // Each partial view in them carries its own bytes only (BD5:LIM-1, compactViews). The byte budget (R1:R3-3),
         // taken of the whole frame that will be sent (R3:C-1), after that: past it, nothing is sent.
@@ -992,7 +1031,9 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             } catch (error) {
                 // A failed send must leave nothing behind: drop the pending entry and disarm its timer.
                 takePending(id);
-                reject(localRefusal(CODE.SEND_FAILED, `RPC call could not be sent: ${errorMessage(error)}`));
+                const refusal = 'RPC call could not be sent';
+                withhold(method, refusal, errorMessage(error));
+                reject(localRefusal(CODE.SEND_FAILED, refusal, error));
                 return;
             }
             // Not posted: the environment this call was made for is gone (R3:L-2, RpcSend), and nothing else would settle it.

@@ -540,7 +540,7 @@ describe('non-transferable values (guarantee: a call with a non-transferable val
         other.expose('ping', ping);
 
         expect(await refusal(one.call('ping')))
-            .toEqual({ isError: true, code: 'SEND_FAILED', message: 'RPC call could not be sent: port unavailable' });
+            .toEqual({ isError: true, code: 'SEND_FAILED', message: 'RPC call could not be sent' });
         expect(ping).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0); // the failed call left no timer armed
         expect(await one.call('ping')).toBe('pong'); // and the broker carries on

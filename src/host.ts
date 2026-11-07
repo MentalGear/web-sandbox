@@ -17,6 +17,7 @@ import { scriptInMarkup } from "./lib/markup-scripts";
 import { LOAD_KINDS } from "./lib/load-kinds";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
+import { isMinted, markMinted } from "./lib/minted-errors";
 import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
@@ -781,8 +782,10 @@ export class WebSandbox extends ElementBase {
         sizeOf: createSizeOf(),
         transferResults: true,
         admitInbound: (bytes) => this._admitGuestCall(bytes),
+        markMinted,
+        isMinted,
         reportWithheld: (method, refusal, text) => {
-            console.warn(`[Sandbox] the host method "${method.slice(0, 64)}" failed, and the guest received "${refusal}" in place of its error, which was:`, text);
+            console.warn(`[Sandbox] "${method.slice(0, 64)}" failed, and the other side received "${refusal}" in place of its error, which was:`, text);
         },
         takeUnexpose: (unexpose) => { this._unexposeMethod = unexpose; },
     });
