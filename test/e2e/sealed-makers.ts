@@ -206,3 +206,50 @@ export const makerUrl = (maker: Maker, origins: Readonly<Record<MakerScheme, str
 export const makerCode = (maker: Maker, url: string) => maker.realm === 'worker' || maker.realm === 'set-css'
     ? `(() => { const U = ${JSON.stringify(url)}; return ${maker.code}; })()`
     : maker.code.replaceAll('{U}', url);
+
+// ---- the guest's styles ------------------------------------------------------------------------------------------------
+
+/**
+ * Every way guest CSS that names no network reaches the view's document (S74, class A: INHERITED_CONTEXT.cspReporting;
+ * BD6:ISO-2; docs/research/25_cssom_styles/README.md): a style attribute of an element of each namespace the renderer
+ * gives one (RENDER_ATTRIBUTES), a `<style>` in each namespace the renderer keeps one in (RENDER_ELEMENTS), and every
+ * operation that changes a style after a render: `text()` and a render into a `<style>`, a render that replaces one, a
+ * render that removes one, and `set({ css })`. As a style attribute or a `<style>` element, each would be an inline style
+ * that the host page's `style-src` checks, refuses and reports; the view applies each through the CSSOM.
+ * test/e2e/sealed-host-policy.spec.ts renders them on the realistic host with a `style-src` of hashes only, `'report-sample'`
+ * and a keyed report endpoint, on every engine: the endpoint receives nothing, no violation is raised, and each style
+ * applies. test/unit/sealed-makers.test.ts ties the list to the renderer's.
+ */
+export type StyleWay = 'attribute' | 'element' | 'text' | 'render-into' | 'replace' | 'remove' | 'set-css';
+
+export interface StyleMaker {
+    readonly id: string;
+    readonly way: StyleWay;
+    /** The namespace of the element that carries the style (an attribute, a set) or holds it (a `<style>`). */
+    readonly namespace: 'html' | 'svg' | 'mathml';
+    /** The markup the guest renders into the body. */
+    readonly markup: string;
+    /** What the guest does once that is rendered: one sandboxView call. */
+    readonly then?: string;
+    /** The element whose computed style shows the maker applied: its `property` computes to `value`. */
+    readonly check: { readonly id: string; readonly property: string; readonly value: string };
+}
+
+const APPLIED = 'rgb(1, 2, 3)';
+const OVERRIDDEN = 'rgb(9, 9, 9)';
+const UNSTYLED = 'rgb(0, 0, 0)';
+
+export const STYLE_MAKERS: readonly StyleMaker[] = Object.freeze([
+    { id: 'attribute', way: 'attribute', namespace: 'html', markup: `<p id="s-attribute" style="color: ${APPLIED}">a</p>`, check: { id: 's-attribute', property: 'color', value: APPLIED } },
+    { id: 'attribute-svg', way: 'attribute', namespace: 'svg', markup: `<svg width="9" height="9"><rect id="s-attribute-svg" width="9" height="9" style="fill: ${APPLIED}"/></svg>`, check: { id: 's-attribute-svg', property: 'fill', value: APPLIED } },
+    { id: 'attribute-mathml', way: 'attribute', namespace: 'mathml', markup: `<math><mi id="s-attribute-mathml" style="color: ${APPLIED}">m</mi></math>`, check: { id: 's-attribute-mathml', property: 'color', value: APPLIED } },
+    { id: 'element', way: 'element', namespace: 'html', markup: `<style>#s-element { color: ${APPLIED} }</style><p id="s-element">e</p>`, check: { id: 's-element', property: 'color', value: APPLIED } },
+    // the cascade among them: the later <style> wins, and one whose media does not match applies nothing
+    { id: 'element-order', way: 'element', namespace: 'html', markup: `<style>#s-order { color: ${OVERRIDDEN} }</style><style>#s-order { color: ${APPLIED} }</style><style media="print">#s-order { color: ${OVERRIDDEN} }</style><p id="s-order">o</p>`, check: { id: 's-order', property: 'color', value: APPLIED } },
+    { id: 'element-svg', way: 'element', namespace: 'svg', markup: `<svg width="9" height="9"><style>#s-element-svg { fill: ${APPLIED} }</style><rect id="s-element-svg" width="9" height="9"/></svg>`, check: { id: 's-element-svg', property: 'fill', value: APPLIED } },
+    { id: 'text', way: 'text', namespace: 'html', markup: '<style id="s-text-sheet"></style><p id="s-text">t</p>', then: `sandboxView.text('s-text-sheet', '#s-text { color: ${APPLIED} }')`, check: { id: 's-text', property: 'color', value: APPLIED } },
+    { id: 'render-into', way: 'render-into', namespace: 'svg', markup: `<svg width="9" height="9"><style id="s-into-sheet">#s-into { fill: ${OVERRIDDEN} }</style><rect id="s-into" width="9" height="9"/></svg>`, then: `sandboxView.render('#s-into { fill: ${APPLIED} }', 's-into-sheet')`, check: { id: 's-into', property: 'fill', value: APPLIED } },
+    { id: 'replace', way: 'replace', namespace: 'html', markup: `<div id="s-replace-slot"><style>#s-replace { color: ${OVERRIDDEN} }</style></div><p id="s-replace">r</p>`, then: `sandboxView.render('<style>#s-replace { color: ${APPLIED} }</style>', 's-replace-slot')`, check: { id: 's-replace', property: 'color', value: APPLIED } },
+    { id: 'remove', way: 'remove', namespace: 'html', markup: `<div id="s-remove-slot"><style>#s-remove { color: ${OVERRIDDEN} }</style></div><p id="s-remove">x</p>`, then: "sandboxView.render('', 's-remove-slot')", check: { id: 's-remove', property: 'color', value: UNSTYLED } },
+    { id: 'set-css', way: 'set-css', namespace: 'html', markup: '<p id="s-set">s</p>', then: "sandboxView.set('s-set', { css: { opacity: '0.5' } })", check: { id: 's-set', property: 'opacity', value: '0.5' } },
+]);

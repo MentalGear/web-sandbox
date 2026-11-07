@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { COOKIE_CARRIER_IDS } from '@src/lib/cookie-facts';
 import { STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
-import { RENDER_ATTRIBUTES, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES } from '@src/lib/in-sandbox-view';
+import { RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES } from '@src/lib/in-sandbox-view';
 import { LINK_REL_KINDS } from '@src/lib/load-kinds';
 import { cssReferences } from '@src/lib/css-references';
 import { ABSENT_COMPILERS, CODE_FROM_STRING_SINKS } from '@src/lib/code-from-strings';
 import { dynamicImportAt } from '@src/lib/entry-imports';
-import { CSS_PLACES, SEALED_MAKERS, makerCode, makerUrl, type CssKind, type CssPlace, type Maker, type MakerCovers } from '../e2e/sealed-makers';
+import { CSS_PLACES, SEALED_MAKERS, STYLE_MAKERS, makerCode, makerUrl, type CssKind, type CssPlace, type Maker, type MakerCovers, type StyleWay } from '../e2e/sealed-makers';
 
 /**
  * The enumeration of sealed mode's request makers (test/e2e/sealed-makers.ts, which test/e2e/sealed-no-network.spec.ts
@@ -132,6 +132,32 @@ describe('sealed mode\'s request makers: one enumeration, tied to the library\'s
                 : maker.realm === 'stylesheet' ? code
                 : (/<style>([\s\S]*?)<\/style>/.exec(code) ?? /style="([^"]*)"/.exec(code))![1]!;
             expect(cssReferences(css, 'network').map(reference => reference.kind), maker.id).toContain(cover.kind);
+        }
+    });
+
+    // BD6:ISO-2 (class A: INHERITED_CONTEXT.cspReporting): every way guest CSS reaches the view's document, which as an inline
+    // style the host page's style-src would check and report
+    it('every namespace the renderer keeps a style attribute or a <style> in, and every operation that changes a style, is a style maker', () => {
+        const ids = STYLE_MAKERS.map(maker => maker.id);
+        expect(new Set(ids).size).toBe(ids.length);
+        const namespaces = ['html', 'svg', 'mathml'] as const;
+        const attributes = namespaces.filter(namespace => (RENDER_ATTRIBUTES[namespace] as readonly string[]).includes('style'));
+        const elements = namespaces.filter(namespace => (RENDER_ELEMENTS[namespace] as readonly string[]).includes('style'));
+        expect([attributes, elements]).toEqual([['html', 'svg', 'mathml'], ['html', 'svg']]); // the lists read (positive control)
+        for (const namespace of attributes) expect(STYLE_MAKERS.some(maker => maker.way === 'attribute' && maker.namespace === namespace), `a style attribute in ${namespace}`).toBe(true);
+        for (const namespace of elements) expect(STYLE_MAKERS.some(maker => maker.way === 'element' && maker.namespace === namespace), `a <style> in ${namespace}`).toBe(true);
+        // every sandboxView operation that can change what a style applies: text() and render() into a <style>, a render that
+        // replaces or removes one, and set({ css }); each maker's own call is the one its way names
+        const calls: Record<StyleWay, string | null> = { attribute: null, element: null, text: 'sandboxView.text(', 'render-into': 'sandboxView.render(', replace: 'sandboxView.render(', remove: 'sandboxView.render(', 'set-css': 'sandboxView.set(' };
+        for (const [way, call] of Object.entries(calls) as [StyleWay, string | null][]) {
+            const makers = STYLE_MAKERS.filter(maker => maker.way === way);
+            expect(makers.length, way).toBeGreaterThan(0);
+            for (const maker of makers) expect(maker.then?.startsWith(call ?? '') ?? call === null, maker.id).toBe(true);
+        }
+        // each maker's markup holds the element its check reads, and the check's value is not what the element computes unstyled
+        for (const maker of STYLE_MAKERS) {
+            expect(maker.markup, maker.id).toContain(`id="${maker.check.id}"`);
+            if (maker.way !== 'remove') expect(maker.check.value, maker.id).not.toBe('rgb(0, 0, 0)');
         }
     });
 

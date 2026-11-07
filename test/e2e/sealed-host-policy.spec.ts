@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixture';
-import { RealisticHost, HOST_BASE, covering, type Directives, type HostOptions } from './realistic-host';
-import { makerCode, SEALED_MAKERS, type Maker } from './sealed-makers';
+import { RealisticHost, HOST_BASE, POLICY_HASHES, covering, type Directives, type HostOptions } from './realistic-host';
+import { makerCode, SEALED_MAKERS, STYLE_MAKERS, type Maker } from './sealed-makers';
+import { inView, waitInView } from './strict-view';
 import { CODE_FROM_STRING_REFUSAL } from '@src/lib/code-from-strings';
 import { VIOLATION_EVENT_FIELDS } from '@src/lib/violation';
 import { reasonText } from '@src/lib/reasons';
@@ -164,6 +165,55 @@ test.describe('sealed mode: the host page\'s policy can never be checked by the 
         expect((await host.configure({ entry: 'main.js', scriptUnsafe: true })).at(-1), covering('cspPolicyText', 'sealed mode refuses scriptUnsafe')).toEqual({ type: 'terminated', reason: reasonText('sealedScriptUnsafe') });
         // positive control: the same entry without the import() builds
         expect((await host.configure({ entry: 'main.js' })).at(-1)).toEqual({ type: 'ready', reason: null });
+    });
+
+    // BD6:ISO-2 (class A: INHERITED_CONTEXT.cspReporting): a style attribute or a <style> element of the guest's would be an
+    // inline style that the host page's style-src checks (Chromium as it parses it), refuses where the page lists hashes,
+    // and reports to the page's endpoint with its first characters. The view applies every guest style through the CSSOM.
+    test('every way the guest styles the view, on a host whose style-src has only the documented hashes, report-sample and a keyed report endpoint: no report, no violation, and every style applies', async ({ sandbox, browserName }) => {
+        const secrets = { nonce: `HN${tag()}`, key: `RK${tag()}` };
+        const host = await RealisticHost.open(sandbox, { mode: 'sealed', directives: withSecrets(secrets) });
+        const styleSrc = /(?:^|; )style-src ([^;]*)/.exec(host.csp)![1]!.split(' ');
+        expect(styleSrc, 'the page admits the library by its hashes alone (docs/API.md#host-page-policy)').toEqual(["'self'", POLICY_HASHES.wrapperStyle, POLICY_HASHES.animationStyle, "'report-sample'"]);
+        await host.hits(true);
+
+        const name = `SEALEDSTYLES${tag()} `;
+        const steps = STYLE_MAKERS.filter(maker => maker.then !== undefined).map(maker => `${maker.then};`).join('\n');
+        await host.sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(STYLE_MAKERS.map(maker => maker.markup).join('') + '<p id="s-done-slot"></p>')});
+${steps}
+sandboxView.render('<b id="s-done">done</b>', 's-done-slot');
+console.log(${JSON.stringify(name)} + 'sent');` });
+        expect((await host.configure({ entry: 'main.js' })).at(-1), 'the default sealed build is ready').toEqual({ type: 'ready', reason: null });
+        await host.sandbox.waitForLog(name, 30000);
+        await waitInView(host.page, browserName, "!!document.getElementById('s-done')", 15000);
+        await host.page.waitForTimeout(2000); // a report the browser sends after the check
+
+        // every style applies, with no sheet left over from a <style> that was replaced or removed
+        const checks = Object.fromEntries(STYLE_MAKERS.map(maker => [maker.id, maker.check.value]));
+        const seen = await inView<{ computed: Record<string, string>; adopted: number; sheets: number; inline: number }>(host.page, browserName, `(() => {
+            const makers = ${JSON.stringify(STYLE_MAKERS.map(maker => [maker.id, maker.check]))};
+            const computed = {};
+            for (const [id, check] of makers) { const element = document.getElementById(check.id); computed[id] = element ? getComputedStyle(element).getPropertyValue(check.property) : 'missing'; }
+            return { computed, adopted: document.adoptedStyleSheets.length, sheets: document.body.querySelectorAll('noframes').length, inline: document.querySelectorAll('style').length };
+        })()`);
+        expect(seen, 'the view answered').not.toBe('no-context');
+        const view = seen as Exclude<typeof seen, 'no-context'>;
+        expect(view.computed, covering('cspReporting', "every guest style applies under a style-src of hashes alone")).toEqual(checks);
+        expect(view.adopted, "one constructed stylesheet for each <style> the view shows, none for one it no longer does").toBe(view.sheets);
+        expect(view.sheets).toBe(8);
+        expect(view.inline, 'no <style> element in the view but the library\'s still stylesheet').toBe(1);
+
+        // nothing reached the endpoint, the page heard nothing, and the view raised no violation of the page's style-src
+        const hits = await host.hits();
+        expect(hits.reports, covering('cspReporting', "no report of a guest style reaches the host page's endpoint")).toEqual([]);
+        expect(await host.cspViolations(), covering('cspReporting', "the host page's own listener hears nothing")).toEqual([]);
+        expect((await sandbox.violations()).map(v => v.directive), covering('cspReporting', 'the view raises no style violation')).toEqual([]);
+        expect(await host.state()).toBe('ready');
+
+        // positive control: the host page's own inline style is refused and reported, with its sample, on this engine
+        await host.page.evaluate(() => document.body.setAttribute('style', 'outline: 1px solid red'));
+        await expect.poll(async () => (await host.hits()).reports.length, { message: "the host page's own inline style is reported (control)", timeout: 15000 }).toBeGreaterThan(0);
+        expect(JSON.stringify((await host.hits()).reports)).toContain('style-src');
     });
 
     test('report-to, where the engine delivers to it: the endpoint receives nothing from the guest', async ({ sandbox, browserName }) => {
