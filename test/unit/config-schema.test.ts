@@ -322,7 +322,8 @@ describe("the config schema, which docs/API.md's Configuration table is generate
         ['entry', 'main.js', 'sealed', 'main.js', null],
         ['allowAnimations', true, 'sealed', true, null],
         ['allowAutoplay', 'no', 'sealed', false, 'allowAutoplay must be a boolean; "no" was taken as false'],
-        ['workerExecutionTimeout', 1500, 'sealed', 1500, null],
+        ['workerExecutionTimeout', 1500, 'sealed', 0, null], // no execute() in sealed mode: inert
+        ['workerExecutionTimeout', 'x', 'sealed', 0, null],
         ['autoResize', true, 'sealed', true, null],
         ['scriptUnsafe', 'true', 'cooperative', false, null],
         ['scriptUnsafe', true, 'cooperative', true, 'scriptUnsafe is enabled'],

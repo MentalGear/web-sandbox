@@ -390,10 +390,11 @@ export interface SandboxConfigOptions {
      */
     allowAutoplay?: boolean;
     /**
-     * A deadline in ms for each `execute()`, in worker, strict and sealed mode. At the deadline the guest's event
+     * A deadline in ms for each `execute()`, in worker and strict mode. At the deadline the guest's event
      * loop must be free: the element pings the guest, and if no answer arrives within
      * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).
-     * Anything but a finite number above 0 is off, with a warning unless it is `0`. Not read in cooperative mode.
+     * Anything but a finite number above 0 is off, with a warning unless it is `0`. Not read in cooperative mode, nor in sealed mode, which has no `execute()` (ignored silently; `watchdogTimeout` bounds
+     * a sealed app that loops).
      *
      * @defaultValue `0` (off)
      */
@@ -1217,7 +1218,7 @@ export class WebSandbox extends ElementBase {
      * - While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the
      *   guest document is parsed (see docs/API.md#ready-and-the-startup-gate), in order with calls.
      * - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
-     * - In worker, strict and sealed mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
+     * - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
      *   the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a
      *   handler guest code cannot reach, and only a free event loop can run it. No answer within
      *   {@link EXECUTION_TIMEOUT_GRACE_MS} terminates the sandbox.

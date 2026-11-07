@@ -509,8 +509,9 @@ export const CONFIG_SCHEMA = {
         // the guard rail (S4): on in most presets and every e2e spec, so it says once what it costs
         notice: (_, read) => (read === true ? ["[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content."] : []),
     },
-    // not in cooperative mode: the guest document can share the host's thread, so no timer could fire meanwhile
-    workerExecutionTimeout: { default: 0, documented: '`0` (off)', modes: ['strict', 'sealed', 'worker'], ignoredIn: (mode) => mode === 'cooperative', read: delay('workerExecutionTimeout', 'no execute() deadline applies') },
+    // not in cooperative mode: the guest document can share the host's thread, so no timer could fire meanwhile; not in
+    // sealed mode, whose deadline would be an execute() call's, and sealed mode has no execute() (BD7:DOC-3)
+    workerExecutionTimeout: { default: 0, documented: '`0` (off)', modes: ['strict', 'worker'], ignoredIn: (mode) => mode === 'cooperative' || mode === 'sealed', read: delay('workerExecutionTimeout', 'no execute() deadline applies') },
     watchdogTimeout: { default: 0, documented: '`0` (off)', modes: ALL_MODES, read: delay('watchdogTimeout', 'no watchdog runs') },
     guestWrites: { default: false, documented: '`false`', modes: ALL_MODES, read: literalTrue },
 } satisfies Record<string, OptionRule>;
@@ -651,7 +652,7 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
             && config.unsafeCapabilities.every(capability => (UNSAFE_CAPABILITIES as readonly string[]).includes(capability)),
     },
     {
-        name: 'an option outside its modes holds its default (entry, allowAnimations, allowAutoplay outside strict and sealed; unsafeCapabilities in strict and sealed; html and autoResize in worker; workerExecutionTimeout in cooperative)',
+        name: 'an option outside its modes holds its default (entry, allowAnimations, allowAutoplay outside strict and sealed; unsafeCapabilities in strict and sealed; html and autoResize in worker; workerExecutionTimeout in cooperative and sealed)',
         holds: ({ config }) => CONFIG_OPTIONS.every(name => PARSED_APART.includes(name) || !ignoredIn(name, config.mode) || sameValue((config as unknown as Record<string, unknown>)[name], RULES[name].default)),
     },
     {
