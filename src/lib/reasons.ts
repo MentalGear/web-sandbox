@@ -11,7 +11,7 @@
  * string, which does not compile there: a reason names the problem, never the value, so `terminated.reason` is safe to
  * show as text whatever the configuration came from.
  */
-import { VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS } from './in-sandbox-view';
+import { VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_MAX_LENGTH } from './in-sandbox-view';
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
 
@@ -49,6 +49,7 @@ export const TERMINATION_REASONS = {
     unknownMode: { text: 'unknown mode: not strict, sealed, cooperative or worker…', decidedBy: 'config' },
     sealedNetwork: { text: "origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'`", decidedBy: 'config' },
     sealedScriptUnsafe: { text: "scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`", decidedBy: 'config' },
+    htmlTooLong: { text: `html is longer than ${VIEW_RENDER_MAX_LENGTH} characters, the most the view renders at once: render the rest from the entry`, decidedBy: 'config' },
     configRefused: { text: 'the configuration could not be used (…)', decidedBy: 'host' },
     buildFailed: { text: 'the environment could not be built (…)', decidedBy: 'host' },
     executionTimeout: { text: 'the executed code ran longer than workerExecutionTimeout', decidedBy: 'host' },
@@ -80,6 +81,7 @@ export const reasonCauses = () => ({
     unknownMode: "`mode` is not `strict`, `sealed`, `cooperative` or `worker`. For `'iframe'` the reason ends ` ('iframe' was renamed 'cooperative')`; otherwise nothing follows.",
     sealedNetwork: "`mode` is `'sealed'` or left out (sealed mode is the default), and the config names `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set.",
     sealedScriptUnsafe: "`mode` is `'sealed'` or left out, and `scriptUnsafe` is `true`. A string run as code is checked against the host page's policy, which the guest's worker inherits, and a refusal reports the page's policy text to the guest and the string to the page's report endpoint; sealed mode runs none. Nothing of the config is applied, as for `sealedNetwork`.",
+    htmlTooLong: `Strict and sealed mode: \`html\`, given to \`setConfig()\` or \`load()\`, is longer than \`VIEW_RENDER_MAX_LENGTH\` (${VIEW_RENDER_MAX_LENGTH}) characters, the most one render takes (the initial view is one). It is refused before anything reads it: nothing of the config is applied, as for \`sealedNetwork\`, and \`load()\` keeps the html the element had. Render the rest from the entry, in renders of that size.`,
     configRefused: "`setConfig()` got something that is not an object or cannot be cloned (the error's name follows, as in `(DataCloneError)`), an `origins` that is not an object (`(TypeError: origins is not an object)`), or a kind of it that is not a list (`(TypeError: origins.connect is not a list)`, naming the kind).",
     buildFailed: 'Building the frame failed.',
     executionTimeout: "The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline.",

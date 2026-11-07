@@ -1,10 +1,11 @@
 /**
  * docs/API.md's Configuration table. The option, its default and its modes come from CONFIG_SCHEMA; the type and the
  * prose from config-docs.ts, which cannot name an option the schema lacks or leave one out. The capability lists are
- * src/csp-directives.ts's.
+ * src/csp-directives.ts's, and `html`'s bound is VIEW_RENDER_MAX_LENGTH's value.
  */
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES } from '../../../src/csp-directives';
 import { CONFIG_SCHEMA, SANDBOX_MODES, type OptionName, type OptionRule } from '../../../src/lib/config-schema';
+import { VIEW_RENDER_MAX_LENGTH } from '../../../src/lib/in-sandbox-view';
 import { signatureOf, type Item } from '../engine';
 import { OPTION_WORDS } from './config-docs';
 import { codeList, code, row, table, type Extractor } from './markdown';
@@ -20,7 +21,10 @@ function modesCell(name: keyof typeof OPTION_WORDS): string {
     return words.modes ?? `${listed}${words.modesNote ?? ''}`;
 }
 
-const expand = (text: string) => text.replace('{safeCapabilities}', codeList(SAFE_CAPABILITIES)).replace('{unsafeCapabilities}', codeList(UNSAFE_CAPABILITIES));
+const expand = (text: string) => text
+    .replace('{safeCapabilities}', codeList(SAFE_CAPABILITIES))
+    .replace('{unsafeCapabilities}', codeList(UNSAFE_CAPABILITIES))
+    .replace('{VIEW_RENDER_MAX_LENGTH}', String(VIEW_RENDER_MAX_LENGTH));
 
 const items = (): Item[] => [
     ...documented().map(name => ({

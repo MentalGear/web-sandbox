@@ -32,6 +32,7 @@ import { hostSiteUndecided, onHostSite } from './host-site';
 import type { Origin } from './origin';
 import { RPC_MAX_BYTES, type BudgetRefusal } from './rpc';
 import { MAX_TOTAL_BYTES } from './files';
+import { VIEW_RENDER_MAX_LENGTH } from './in-sandbox-view';
 import { defineData, hasOwnField, ownField, type Complete, type Holds } from './utils';
 import { watchdogBudget } from './watchdog';
 import { fixedDetail, reasonText, type LibraryDetail } from './reasons';
@@ -179,6 +180,18 @@ export function sealedNetworkRefusal(mode: unknown, source: Record<string, unkno
 export function sealedScriptUnsafeRefusal(mode: unknown, source: Record<string, unknown>): ConfigRefusal | null {
     if (mode !== 'sealed') return null;
     return ownField(source, 'scriptUnsafe') === true ? new ConfigRefusal(reasonText('sealedScriptUnsafe')) : null;
+}
+
+/**
+ * Strict and sealed mode's `html` longer than one render may be (VIEW_RENDER_MAX_LENGTH: the initial view is a render) is
+ * refused with its reason (`htmlTooLong`), by setConfig() (normaliseConfig) and load() (host.ts) alike, before anything
+ * stores or reads it (BD7:LIM-3): the view parses the whole of its initial markup before its renderer can refuse any of
+ * it, so the bound is decided here, where the markup arrives. Cooperative mode's `html` is its guest document, which the
+ * browser parses as it is, and worker mode's is ignored.
+ */
+export function htmlRefusal(mode: unknown, html: unknown): ConfigRefusal | null {
+    if (!hasStrictView(mode) || typeof html !== 'string') return null;
+    return html.length > VIEW_RENDER_MAX_LENGTH ? new ConfigRefusal(reasonText('htmlTooLong')) : null;
 }
 
 // Old names of modes: refused like any other value that is not a mode, never an alias (nothing is published, so no
@@ -445,7 +458,8 @@ export const CONFIG_SCHEMA = {
     },
     html: {
         default: '', documented: "`''`", modes: ['strict', 'sealed', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
-        // a string or nothing (R1:R1-3): anything else is dropped with a warning, never refuses the config
+        // a string or nothing (R1:R1-3): anything else is dropped with a warning, never refuses the config; in strict and
+        // sealed mode one longer than VIEW_RENDER_MAX_LENGTH refused it before any rule ran (htmlRefusal, BD7:LIM-3)
         read: ({ given, present, warn }) => {
             if (typeof given === 'string') return given;
             if (present) warn(`[Sandbox] "html" must be a string; ${shown(given)} was dropped.`);
@@ -567,6 +581,8 @@ export function normaliseConfig(copy: unknown, hostPage: HostPage): Normalised {
     if (sealedNetwork !== null) return { value: null, warnings, refusal: sealedNetwork };
     const sealedScriptUnsafe = sealedScriptUnsafeRefusal(mode, source);
     if (sealedScriptUnsafe !== null) return { value: null, warnings, refusal: sealedScriptUnsafe };
+    const htmlTooLong = htmlRefusal(mode, ownField(source, 'html'));
+    if (htmlTooLong !== null) return { value: null, warnings, refusal: htmlTooLong };
     const values = Object.create(null) as Record<OptionName, unknown>;
     for (const name of SCHEMA_NAMES) values[name] = RULES[name].default; // what readIn(mode) leaves out holds its default
     try {

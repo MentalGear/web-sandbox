@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { viewBootstrapHash, viewBootstrapText } from '@src/lib/in-sandbox-view';
+import { VIEW_RENDER_MAX_LENGTH, viewBootstrapHash, viewBootstrapText } from '@src/lib/in-sandbox-view';
+import { ConfigRefusal, normaliseConfig } from '@src/lib/config-schema';
+import { reasonText, TERMINATION_REASONS } from '@src/lib/reasons';
 import { sealedViewPolicy, strictViewPolicy } from '@src/lib/csp/csp-generator';
 import { NO_ORIGINS, type SandboxOrigins } from '@src/lib/csp/origins';
 import { scriptInMarkup } from '@src/lib/markup-scripts';
@@ -95,6 +97,58 @@ describe('T8: a config that names no mode is sealed', () => {
         const strict: SandboxConfig = { mode: 'strict', html: '<p>hi</p>', origins: { images: ['https://cdn.example'] } };
         const cooperative: SandboxConfig = { mode: 'cooperative', origins: { scripts: ['https://cdn.example'] } };
         expect([renamed, noModeOrigins, strictScripts, strictFromVariable, sealed, strict, cooperative]).toHaveLength(7);
+    });
+});
+
+// BD7:LIM-3 (class E-cpu): `html` had no size cap, and the view parses the whole of its initial markup before its renderer
+// can refuse any of it. Markup longer than one render (the initial view is one) is refused where it arrives.
+describe('html longer than one render is refused at configuration, by setConfig() and load() (BD7:LIM-3)', () => {
+    const LONG = `<p>${'x'.repeat(VIEW_RENDER_MAX_LENGTH)}</p>`;
+    const FITS = `<p>${'x'.repeat(VIEW_RENDER_MAX_LENGTH - 7)}</p>`;
+    const reasons = (el: any) => {
+        const seen: string[] = [];
+        el.addEventListener('terminated', (event: CustomEvent) => seen.push(event.detail.reason));
+        return seen;
+    };
+    const settled = () => new Promise(resolve => setTimeout(resolve, 0));
+
+    it('the schema refuses it in strict and sealed mode, named or the default, with its reason; one that fits, and cooperative and worker mode, are kept', () => {
+        const host = { hostOrigin: 'https://host.example', hostSites: ['https://host.example'] };
+        expect(FITS.length).toBe(VIEW_RENDER_MAX_LENGTH);
+        for (const config of [{ html: LONG }, { mode: 'sealed', html: LONG }, { mode: 'strict', html: LONG }]) {
+            const { value, refusal } = normaliseConfig(config, host);
+            expect(value, JSON.stringify(config.mode)).toBeNull();
+            expect((refusal as ConfigRefusal).reason).toBe(reasonText('htmlTooLong'));
+        }
+        for (const config of [{ html: FITS }, { mode: 'strict', html: FITS }, { mode: 'cooperative', html: LONG }, { mode: 'worker', html: LONG }]) {
+            expect(normaliseConfig(config, host).refusal, `${config.mode} ${config.html.length}`).toBeNull();
+        }
+        expect(TERMINATION_REASONS.htmlTooLong.decidedBy).toBe('config');
+    });
+
+    it('setConfig() keeps nothing of it; load() keeps the html it had; both end the build with the reason, and the view never gets it', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await element();
+        document.body.appendChild(el);
+        const seen = reasons(el);
+        el.setConfig({ html: '<p>kept</p>' });
+        el.setConfig({ html: LONG });
+        await settled();
+        expect(el.state).toBe('terminated');
+        expect(el._config.html).toBe('<p>kept</p>');
+        el.setConfig({ html: '<p>kept</p>' });
+        expect(el.state).toBe('loading');
+        el.load(LONG);
+        await settled();
+        expect(el.state).toBe('terminated');
+        expect(seen).toEqual([reasonText('htmlTooLong'), reasonText('htmlTooLong')]);
+        expect(el._config.html).toBe('<p>kept</p>');
+        expect(el._strictInit).toBeNull();
+        el.reset(); // the html it kept builds
+        expect(el.state).toBe('loading');
+        expect(el._strictInit.html).toBe('<p>kept</p>');
+        el.load(FITS);
+        expect(el._strictInit.html).toBe(FITS);
     });
 });
 

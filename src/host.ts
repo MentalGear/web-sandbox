@@ -36,7 +36,7 @@ import { buildGuestDocument, buildWrapperDocument, permissionAttributes, setWrap
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { hostPageOrigin, hostSiteOrigins } from "./lib/host-site";
-import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
+import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, htmlRefusal, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
 import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from "./lib/environment";
@@ -1198,11 +1198,19 @@ export class WebSandbox extends ElementBase {
      * rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still
      * rebuilds.
      *
+     * @remarks
+     * In sealed and strict mode, markup longer than {@link VIEW_RENDER_MAX_LENGTH} characters is not stored: the build
+     * ends with the reason `html is longer than … characters`, and the element keeps the html it had, as `setConfig()`
+     * refuses such an `html`.
+     *
      * @param html - The markup, as for the `html` option of {@link SandboxConfigOptions}.
      */
     load(html: string) {
-        this._config.html = html;
-        step(this, { t: 'build', why: 'load', ctx: this._buildContext() }); // the reducer counts the change of `html`
+        // checked before it is stored (BD7:LIM-3): markup longer than the view takes refuses the build with its reason, as
+        // setConfig() refuses it, and the element keeps the html it had
+        const refusal = htmlRefusal(this._config.mode, html);
+        if (refusal === null) this._config.html = html;
+        step(this, { t: 'build', why: 'load', ctx: this._buildContext(refusal?.reason ?? null) }); // the reducer counts the change of `html`
     }
 
     /**
@@ -2060,11 +2068,12 @@ export class WebSandbox extends ElementBase {
     // to a window the element does not listen to), so they stop the environment instead, as insertion there does, and
     // the element stays idle. Asked first: in another document the element may have lost its prototype (BR:CB7), and
     // nothing else here is asked there.
-    private _buildContext(): BuildContext {
+    // `refused`: why the input that starts this build could not be used (load()'s html), which blocks it before anything else.
+    private _buildContext(refused: string | null = null): BuildContext {
         if (!buildsHere(this)) return NOT_HERE;
         const strict = hasStrictView(this._config.mode);
         // a bootstrap runs, and announces its port, exactly where the inline script can run (_getMarkupPlan's test, BR:CB1)
-        return { buildsHere: true, blocked: this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
+        return { buildsHere: true, blocked: refused ?? this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
     }
 
     // `loading` is bounded (BR:CB3): a build that has not completed within LOAD_TIMEOUT_MS of host ticks ends with a
