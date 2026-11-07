@@ -28,7 +28,7 @@ const REGIONS: Record<string, string[]> = {
         'example:sealed-app-html', 'example:sealed-app-css', 'example:sealed-app-host', 'example:sealed-app-guest',
     ],
     'docs/ADR-005-strict-mode.md': ['adr005-ports', 'adr005-init-view'],
-    'docs/THREAT-MODEL.md': ['cookie-facts', 'host-site-facts', 'cookie-carriers', 'connect-facts', 'inherited-context', 'engine-ledger'],
+    'docs/THREAT-MODEL.md': ['cookie-facts', 'host-site-facts', 'cookie-carriers', 'connect-facts', 'inherited-context', 'sealed-reach', 'sealed-reach-chokepoints', 'engine-ledger'],
     'README.md': ['cookie-sentence', 'connect-sentence'],
     'ARCHITECTURE.md': ['realms', 'stringified', 'csp-sealed', 'channels', 'frames', 'lifecycle-states', 'lifecycle-diagram', 'lifecycle-inputs', 'lifecycle-effects', 'module-map'],
 };

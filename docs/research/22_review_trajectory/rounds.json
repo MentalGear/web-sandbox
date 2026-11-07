@@ -642,5 +642,51 @@
   "notes": "Result: not clean (10 data findings reach sealed; 0 of 2). The evaluation rule triggered in its second form: most findings sit in code the previous round added (the sealed-app recipe and example, #84). The class moved from 'the library predicts host-page state' to 'the host to app API hands over more than intended'. Sealed mode's isolation held: no request reached a listener on any engine under about 45 mutants and 172 extra constructs, no forged frame, and one host-state read (ISO-1, WebKit permissions). Fixed by construction where the library could (#86: views compacted, only the embedder's words from a failed host method, `unexpose()`; #87: no `permissions`/`storage` in the worker, strict-mode generated sources, no echo in reasons, messages) and in the docs where only the embedder can (the pass-5 docs and test batch).",
   "unrated": 0,
   "unsplit_low_or_info": 0
+ },
+ {
+  "seq": 15,
+  "id": "BD6",
+  "name": "S74 review board, pass 6",
+  "source": "BOARD-PASS-6-2026-11-07.md",
+  "date": "2026-11-07",
+  "commit": "c404689",
+  "reviewers": 6,
+  "verifiers": 3,
+  "reviewers_detail": "ISO, CHL, LIM, DOC, TST, NEW; 3 verifiers (ISO-1 and ISO-2; LIM-1 and LIM-2; the low findings DOC-1 to DOC-4, CHL-2, CHL-3, CHL-4, NEW-1, NEW-2). TST-1 has no verdict.",
+  "total_findings": 13,
+  "critical": 0,
+  "high": 2,
+  "medium": 0,
+  "low": 11,
+  "info": 0,
+  "severity_basis": "As verified, without the merges. Reviewer ratings were high 2 / medium 1 / low 12 (15 findings). Changes: LIM-1 medium to low; CHL-1 is the same defect as LIM-1 and CHL-4 is merged with DOC-2, so neither is counted again. CHL-3 stays low, but its effect was raised by the verifier from a recipe bug to data. An unverified finding keeps the reviewer's rating. High: ISO-1 and ISO-2 (Chromium and Firefox; WebKit clean).",
+  "data_affecting": 5,
+  "availability_only": 0,
+  "no_data_effect": 8,
+  "effect_basis": "STATED by the verdicts, all five verified: ISO-1 (a read of the host page's policy text, nonce and report-endpoint key), ISO-2 (guest-chosen URLs and samples sent to the host's report endpoint: egress past sealed mode's no-network policy), LIM-1 with CHL-1 (host data in the engine's text of the library's own refusal), LIM-2 (the next app on an element receives the first app's data), CHL-3 (the first app of a failed mount writes the next app's state). No data effect: CHL-2, DOC-1, DOC-2 with CHL-4, DOC-3, DOC-4, TST-1, NEW-1, NEW-2. Availability-only: none.",
+  "data_ids": [
+   "ISO-1",
+   "ISO-2",
+   "LIM-1",
+   "LIM-2",
+   "CHL-3"
+  ],
+  "availability_ids": [],
+  "data_reaching_strict": null,
+  "data_reaching_strict_of": null,
+  "strict_basis": "Not counted for this round. The board's scope is sealed mode (D5, 2026-10-24); none of the BD6 findings needs `origins` or `fetchBridge`.",
+  "data_reaching_scope": 5,
+  "data_reaching_scope_of": 5,
+  "scope": "sealed",
+  "scope_basis": "Sealed mode, the default, with its own opt-ins, as for BD5. All 5 reach it and all 5 are verified; ISO-1, ISO-2 and LIM-1 reach strict and worker mode too.",
+  "dominant_classes": [
+   "A",
+   "P",
+   "L"
+  ],
+  "class_basis": "Reviewer and verifier classes: ISO-1 and ISO-2 A (the host page's context a sandbox document inherits: its policy text and its reporting endpoints), LIM-1 with CHL-1 P (what crosses is not what the API shows), LIM-2 and CHL-3 L (the element is the unit of isolation; the recipe shared one between apps).",
+  "notes": "Result: not clean (5 data findings reach sealed; 0 of 2). The count fell from 10 (BD5) to 5, on the same sealed basis, so the first condition of the evaluation rule does not hold. The second form triggered for LIM-2 and CHL-3, which sit in the recipe that the previous round rewrote (#88), and for LIM-1, an incomplete part of the pass-5 error-text fix (#86). ISO-1 and ISO-2 are a new channel and not fix-induced: the policy text and reporting endpoints of the inherited CSP list, which INHERITED_CONTEXT had no row for. Sealed mode's no-network property held under a newcomer's attempts (fetch, XHR, WebSocket, remote import, nested worker, beacons, frames, stylesheets and more), and 44 of 45 single-point mutations were caught by the unit suite. Fixed by construction: the guest's worker never reaches a refusing check of the host page's policy (no string run as code, no `import(` in an entry, violation events stopped and blank, the view runs no guest code, #90) and the view applies guest styles through the CSSOM; the library's own refusals carry fixed texts (#89); the recipe gives each app its own element (this pull request).",
+  "unrated": 0,
+  "unsplit_low_or_info": 0
  }
 ]

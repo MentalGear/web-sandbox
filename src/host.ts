@@ -21,7 +21,7 @@ import { isMinted, markMinted } from "./lib/minted-errors";
 import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
-import { keepOnlyWorkerGlobals, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
+import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
 import { dynamicImportAt } from "./lib/entry-imports";
 import { CODE_FROM_STRING_REFUSAL, FUNCTION_KINDS_SOURCE, REFUSED_GLOBALS, REFUSED_TIMERS, refuseCodeFromStrings } from "./lib/code-from-strings";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
@@ -186,7 +186,9 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions, NetworkSandbo
  * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
  * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
  * guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
- * URL (such as a link `href`), `eval`, template or `console` format-string sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
+ * URL (such as a link `href`), `eval`, template or `console` format-string sink, and do not forward it to a network sink,
+ * an error reporter or analytics (`fetch`, `navigator.sendBeacon`) as if it were your page's own event: whoever wrote
+ * the app reads that sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
  * `+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the
  * library's text, which never quotes a value of your configuration, or the text you passed to `terminate()`.
  */
@@ -585,10 +587,14 @@ function removeWebAssembly(g: { WebAssembly?: unknown }) {
 // every engine. `global` is the expression for the global object in that source.
 // The call is an expression whose value is the worker's postMessage, which it deleted (worker-globals.ts); strict mode
 // runs it as a statement and keeps nothing of it.
-// Strict mode's worker keeps STRICT_WORKER_GLOBALS: no importScripts, which its policy never lets load anything (S74).
-const workerGlobalsCall = (global: string, globals: readonly string[] = WORKER_GLOBALS) =>
-    `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(globals)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)})`;
-const workerGlobalsStatement = (global: string) => `${workerGlobalsCall(global, STRICT_WORKER_GLOBALS)};`;
+// Strict mode's worker keeps STRICT_WORKER_GLOBALS and STRICT_WORKER_NAVIGATOR_MEMBERS: no importScripts, which its policy
+// never lets load anything (S74), and none of the names only a secure context has, whose members removeSecureContextOnly
+// deletes next and whose isSecureContext it pins to false, so its surface is the same whatever the host page's URL and the
+// engine (class A: INHERITED_CONTEXT.secureContext; SECURE_CONTEXT_ONLY).
+const workerGlobalsCall = (global: string, globals: readonly string[] = WORKER_GLOBALS, navigatorMembers: readonly string[] = WORKER_NAVIGATOR_MEMBERS) =>
+    `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(globals)}, ${toInlineScriptLiteral(navigatorMembers)})`;
+const workerGlobalsStatement = (global: string) => `${workerGlobalsCall(global, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS)};`
+    + `(${removeSecureContextOnly.toString()})(${global}, ${toInlineScriptLiteral(SECURE_CONTEXT_ONLY.members)});`;
 
 // The strict prelude's last statement, before the guest's entry, unless scriptUnsafe (code-from-strings.ts; BD6:ISO-1,
 // class A): every code-from-string sink of the worker becomes the library's refusal, so no guest string reaches a check of

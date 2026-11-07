@@ -115,6 +115,7 @@ export const STRINGIFIED = {
     inSandboxImportMap: { module: 'src/lib/in-sandbox-files.ts', realms: ['cooperative'], capture: RUNS_FIRST, readOnce: true, typeofRead: true },
     inSandboxMarkup: { module: 'src/lib/in-sandbox-files.ts', realms: ['cooperative'], capture: RUNS_FIRST, readOnce: true, typeofRead: true },
     keepOnlyWorkerGlobals: { module: 'src/lib/worker-globals.ts', realms: ['worker', 'strict-worker'], capture: RUNS_FIRST, readOnce: true, typeofRead: RUNS_FIRST },
+    removeSecureContextOnly: { module: 'src/lib/worker-globals.ts', realms: ['strict-worker'], capture: RUNS_FIRST, readOnce: true, typeofRead: RUNS_FIRST },
     removeWebAssembly: { module: 'src/host.ts', realms: ['worker'], capture: RUNS_FIRST, readOnce: RUNS_FIRST, typeofRead: RUNS_FIRST },
     workerBootstrap: { module: 'src/lib/worker-bootstrap.ts', realms: ['worker-frame'], capture: NO_GUEST, readOnce: true, typeofRead: true },
     assertEntryScoped: { module: 'src/lib/in-sandbox-view.ts', realms: ['strict-worker'], capture: RUNS_FIRST, readOnce: VIEW_STATEMENTS, typeofRead: true },

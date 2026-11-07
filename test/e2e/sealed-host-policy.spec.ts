@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixture';
-import { RealisticHost, HOST_BASE, POLICY_HASHES, covering, type Directives, type HostOptions } from './realistic-host';
+import { RealisticHost, HOST_BASE, POLICY_HASHES, covering, withPolicySecrets, type HostOptions } from './realistic-host';
 import { makerCode, SEALED_MAKERS, STYLE_MAKERS, type Maker } from './sealed-makers';
 import { inView, waitInView } from './strict-view';
 import { CODE_FROM_STRING_REFUSAL } from '@src/lib/code-from-strings';
@@ -25,21 +25,8 @@ import { reasonText } from '@src/lib/reasons';
 
 const tag = () => randomUUID().replaceAll('-', '').slice(0, 16);
 
-type Secrets = { nonce: string; key: string };
-
 /** The realistic host's policy with what a production page keeps from the content it embeds: a script nonce, `'report-sample'`, a key in its report endpoint's URL. */
-const withSecrets = (secrets: Secrets, reportTo?: string) => (base: Directives): Directives => {
-    const report = base['report-uri']![0]!;
-    const directives: Directives = {
-        ...base,
-        'script-src': [...base['script-src']!, `'nonce-${secrets.nonce}'`, "'report-sample'"],
-        'style-src': [...base['style-src']!, "'report-sample'"],
-        'report-uri': [`${report}?sentry_key=${secrets.key}`],
-    };
-    if (reportTo === undefined) return directives;
-    const { 'report-uri': _reportUri, ...rest } = directives;
-    return { ...rest, 'report-to': [reportTo] };
-};
+const withSecrets = withPolicySecrets;
 
 const isWorkerMaker = (maker: Maker) => maker.realm === 'worker';
 const buildable = SEALED_MAKERS.filter(maker => isWorkerMaker(maker) && maker.outcome !== 'unbuildable');

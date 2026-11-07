@@ -89,7 +89,10 @@ test that enumerates the domain:
 - captured intrinsics with their source scan;
 - the snapshot measure and the frame builders.
 - class A, the host page's context a sandbox document inherits (`INHERITED_CONTEXT`, `src/lib/inherited-context.ts`): a finding that
-  the sandbox inherits something of the host page's adds a row, with how it is neutralised and the test that covers it.
+  the sandbox inherits something of the host page's adds a row, with how it is neutralised and the test that covers it,
+  and the row's column in `SEALED_REACH` (`src/lib/sealed-reach.ts`), which classifies every name a sealed guest can
+  reach (the worker's allowlist and the renderer's) against every row; a name added to either allowlist gets its surface
+  there, and what a sealed guest still reaches of a row is one of the row's residuals, with its test.
 
 A new mitigation (a stylesheet, a rewrite, a listener) is a new cost: measure it on every engine, as the code it guards
 is measured.
@@ -153,6 +156,7 @@ the registry [docs/ids.ts](docs/ids.ts):
 | `BD3:` and the finding's own ID | a finding of the S74 review board's pass 3 (ISO, CHL, LIM, DOC, TST, NEW) | `BD3:ISO-2` |
 | `BD4:` and the finding's own ID | a finding of the S74 review board's pass 4 (ISO, CHL, LIM, DOC, TST, NEW) | `BD4:ISO-2` |
 | `BD5:` and the finding's own ID | a finding of the S74 review board's pass 5 (ISO, CHL, LIM, DOC, TST, NEW) | `BD5:ISO-1` |
+| `BD6:` and the finding's own ID | a finding of the S74 review board's pass 6 (ISO, CHL, LIM, DOC, TST, NEW) | `BD6:ISO-1` |
 | `AR:`, `BR:`, `FR:`, `VR:` and the finding's own ID | a finding of the adversarial, broad and focused reviews and the verification | `BR:CB1` |
 | `S<n>`, `T<n>`; `BL:` for the B, C, D and H series | a backlog item | `S76`, `BL:D1` |
 | `ADR-<nnn>`, `ADR-<nnn>#<heading anchor>` | an ADR, or one of its sections | `ADR-005` |

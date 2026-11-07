@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keepOnlyWorkerGlobals, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS, WORKER_STATE_READS } from './worker-globals';
+import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
 
 /**
  * The worker globals allowlist (VR:V1), on a stand-in global shaped like a worker's
@@ -57,8 +57,10 @@ describe('V1: the worker keeps only the allowlisted globals', () => {
         expect(new Set(WORKER_GLOBALS).size).toBe(WORKER_GLOBALS.length);
     });
 
-    it("strict mode's list is the same without importScripts (its script-src is the view's hash, so importScripts() could load nothing), and the worker then has none", () => {
-        expect(STRICT_WORKER_GLOBALS).toEqual(WORKER_GLOBALS.filter(name => name !== 'importScripts'));
+    it("strict mode's list is the same without importScripts (its script-src is the view's hash, so importScripts() could load nothing) and without the secure-context-only names, and the worker then has none", () => {
+        const secureOnly = (list: readonly string[], name: string) => list.includes(name);
+        expect(STRICT_WORKER_GLOBALS).toEqual(WORKER_GLOBALS.filter(name => name !== 'importScripts' && !secureOnly(SECURE_CONTEXT_ONLY.globals, name)));
+        expect(STRICT_WORKER_NAVIGATOR_MEMBERS).toEqual(WORKER_NAVIGATOR_MEMBERS.filter(name => !secureOnly(SECURE_CONTEXT_ONLY.navigator, name)));
         const { g, scope } = standInWorker();
         new Function(`return (${keepOnlyWorkerGlobals.toString()})`)()(g, STRICT_WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS);
         expect(Object.getOwnPropertyNames(scope).sort()).toEqual(['constructor', 'fetch', 'navigator', 'setTimeout']);
@@ -66,61 +68,58 @@ describe('V1: the worker keeps only the allowlisted globals', () => {
     });
 });
 
-// BD5:ISO-1, BD5:ISO-2 (class A, the host page's context; the allowlist is the chokepoint): a kept name that reads browser
-// state keyed to an origin or to the profile can be answered from the host page's own record (WebKit's permissions were).
-// Every such name is classified with what it reads (WORKER_STATE_READS); every other name of the allowlists was reviewed
-// as reading none, and is listed below. A name added to the allowlists fails here until it is put in one of the two.
-const REVIEWED_NO_STATE = `
-    globalThis Infinity NaN undefined eval isFinite isNaN parseFloat parseInt decodeURI decodeURIComponent encodeURI encodeURIComponent
-    escape unescape Object Function Array Number Boolean String Symbol BigInt RegExp Promise Proxy Reflect JSON Math Atomics Iterator
-    Error AggregateError EvalError RangeError ReferenceError SyntaxError TypeError URIError SuppressedError InternalError
-    ArrayBuffer SharedArrayBuffer DataView Int8Array Uint8Array Uint8ClampedArray Int16Array Uint16Array Int32Array Uint32Array Float16Array
-    Float32Array Float64Array BigInt64Array BigUint64Array Map Set WeakMap WeakSet WeakRef FinalizationRegistry DisposableStack
-    AsyncDisposableStack WebAssembly
-    self navigator name close onerror onrejectionhandled onunhandledrejection onlanguagechange onoffline ononline setTimeout clearTimeout
-    setInterval clearInterval queueMicrotask requestAnimationFrame cancelAnimationFrame structuredClone reportError atob btoa console crypto
-    createImageBitmap scheduler DedicatedWorkerGlobalScope WorkerGlobalScope WorkerLocation WorkerNavigator
-    fetch XMLHttpRequest XMLHttpRequestEventTarget XMLHttpRequestUpload WebSocket importScripts
-    Request Response Headers FormData AbortController AbortSignal Event EventTarget CustomEvent ErrorEvent MessageEvent ProgressEvent
-    PromiseRejectionEvent CloseEvent SecurityPolicyViolationEvent DOMException QuotaExceededError DOMStringList MessageChannel MessagePort
-    Blob File FileList FileReader FileReaderSync URL URLSearchParams URLPattern TextDecoder TextEncoder TextDecoderStream TextEncoderStream
-    CompressionStream DecompressionStream ReadableStream ReadableStreamDefaultReader ReadableStreamBYOBReader ReadableStreamBYOBRequest
-    ReadableStreamDefaultController ReadableByteStreamController WritableStream WritableStreamDefaultWriter WritableStreamDefaultController
-    TransformStream TransformStreamDefaultController ByteLengthQueuingStrategy CountQueuingStrategy Crypto CryptoKey SubtleCrypto
-    IDBCursor IDBCursorWithValue IDBDatabase IDBIndex IDBKeyRange IDBObjectStore IDBOpenDBRequest IDBRecord IDBRequest IDBTransaction
-    IDBVersionChangeEvent Scheduler TaskController TaskSignal TaskPriorityChangeEvent
-    Performance PerformanceEntry PerformanceMark PerformanceMeasure PerformanceObserver PerformanceObserverEntryList PerformanceResourceTiming
-    PerformanceServerTiming
-    DOMMatrix DOMMatrixReadOnly DOMPoint DOMPointReadOnly DOMQuad DOMRect DOMRectReadOnly ImageData ImageBitmap ImageBitmapRenderingContext
-    OffscreenCanvas OffscreenCanvasRenderingContext2D CanvasGradient CanvasPattern Path2D TextMetrics
-    WebGLRenderingContext WebGL2RenderingContext WebGLActiveInfo WebGLBuffer WebGLContextEvent WebGLFramebuffer WebGLObject WebGLProgram
-    WebGLQuery WebGLRenderbuffer WebGLSampler WebGLShader WebGLShaderPrecisionFormat WebGLSync WebGLTexture WebGLTransformFeedback
-    WebGLUniformLocation WebGLVertexArrayObject
-    AudioData AudioDecoder AudioEncoder EncodedAudioChunk EncodedVideoChunk VideoColorSpace VideoDecoder VideoEncoder VideoFrame
-    ImageDecoder ImageTrack ImageTrackList
-`.trim().split(/\s+/);
+// Class A (INHERITED_CONTEXT.secureContext): on Firefox and WebKit the worker's secure context follows the host page's URL,
+// so strict and sealed mode's worker has none of what only a secure context has, and reads isSecureContext as false.
+describe('the strict worker is the same whatever the host page is: no secure-context-only name, and isSecureContext false', () => {
+    const run = (g: object) => new Function(`return (${removeSecureContextOnly.toString()})`)()(g, SECURE_CONTEXT_ONLY.members);
 
-describe('the allowlists read no state of the host page: every name that reads origin- or profile-keyed state is classified (BD5:ISO-1)', () => {
-    const listed = [...WORKER_GLOBALS, ...WORKER_NAVIGATOR_MEMBERS.map(name => `navigator.${name}`)];
-    const classified = Object.keys(WORKER_STATE_READS);
+    function secureStandIn() {
+        class WorkerGlobalScope extends EventTarget {}
+        Object.defineProperty(WorkerGlobalScope.prototype, 'isSecureContext', { get: () => true, configurable: true });
+        class Crypto {}
+        Object.defineProperty(Crypto.prototype, 'subtle', { get: () => ({}), configurable: true });
+        Object.defineProperty(Crypto.prototype, 'randomUUID', { value: () => 'uuid', writable: true, configurable: true });
+        Object.defineProperty(Crypto.prototype, 'getRandomValues', { value: (array: unknown) => array, writable: true, configurable: true });
+        class PerformanceResourceTiming {}
+        Object.defineProperty(PerformanceResourceTiming.prototype, 'serverTiming', { get: () => [], configurable: true });
+        Object.defineProperty(PerformanceResourceTiming.prototype, 'duration', { get: () => 0, configurable: true });
+        const g = new WorkerGlobalScope() as any;
+        for (const [name, value] of [['Crypto', Crypto], ['PerformanceResourceTiming', PerformanceResourceTiming], ['crypto', new Crypto()]] as const) {
+            Object.defineProperty(g, name, { value, writable: true, configurable: true });
+        }
+        return { g, scope: WorkerGlobalScope.prototype, Crypto, PerformanceResourceTiming };
+    }
 
-    it('every name of the allowlists is either a classified state read or reviewed as reading none, never both', () => {
-        const unreviewed = listed.filter(name => !classified.includes(name) && !REVIEWED_NO_STATE.includes(name));
-        expect(unreviewed, 'classify each new name: in WORKER_STATE_READS with what it reads and its measured answer, or in this list if it reads no state').toEqual([]);
-        expect(classified.filter(name => REVIEWED_NO_STATE.includes(name))).toEqual([]);
-        expect(new Set(REVIEWED_NO_STATE).size).toBe(REVIEWED_NO_STATE.length);
+    it('deletes each member SECURE_CONTEXT_ONLY lists and keeps the others; isSecureContext reads false, on the global object only', () => {
+        const { g, scope, Crypto, PerformanceResourceTiming } = secureStandIn();
+        run(g);
+        expect(Object.getOwnPropertyNames(Crypto.prototype).sort()).toEqual(['constructor', 'getRandomValues']);
+        expect(Object.getOwnPropertyNames(PerformanceResourceTiming.prototype).sort()).toEqual(['constructor', 'duration']);
+        expect('subtle' in g.crypto).toBe(false);
+        expect(g.isSecureContext).toBe(false);
+        expect(Object.getOwnPropertyNames(scope)).not.toContain('isSecureContext');
+        expect(Reflect.defineProperty(g, 'isSecureContext', { value: true })).toBe(false); // guest code cannot set it back
     });
 
-    it('every classified name and every reviewed one is on the allowlists (no stale entry), and each classification says why', () => {
-        for (const name of [...classified, ...REVIEWED_NO_STATE]) expect(listed, name).toContain(name);
-        for (const [name, why] of Object.entries(WORKER_STATE_READS)) expect(why.length, name).toBeGreaterThan(20);
+    it('an interface the engine does not have is skipped; a member that cannot be deleted throws, so nothing after it in the worker runs', () => {
+        const absent = secureStandIn();
+        delete absent.g.PerformanceResourceTiming;
+        run(absent.g);
+        expect(absent.g.isSecureContext).toBe(false);
+        const stuck = secureStandIn();
+        Object.defineProperty(stuck.Crypto.prototype, 'subtle', { get: () => ({}), configurable: false });
+        expect(() => run(stuck.g)).toThrowError(/could not remove Crypto\.prototype\.subtle/);
     });
 
-    it('every navigator member is classified: the navigator is where an engine answers from its per-origin or profile records', () => {
-        for (const member of WORKER_NAVIGATOR_MEMBERS) expect(classified, member).toContain(`navigator.${member}`);
-    });
-
-    it("the permission API and the storage manager are not offered (WebKit answered permissions from the host origin's grants; Firefox's estimate() ended the task)", () => {
-        for (const name of ['Permissions', 'PermissionStatus', 'StorageManager', 'navigator.permissions', 'navigator.storage']) expect(listed, name).not.toContain(name);
+    it('the lists are disjoint from what the strict worker keeps, and each name is one the allowlists list', () => {
+        for (const name of SECURE_CONTEXT_ONLY.globals) {
+            expect(WORKER_GLOBALS, name).toContain(name);
+            expect(STRICT_WORKER_GLOBALS, name).not.toContain(name);
+        }
+        for (const name of SECURE_CONTEXT_ONLY.navigator) {
+            expect(WORKER_NAVIGATOR_MEMBERS, name).toContain(name);
+            expect(STRICT_WORKER_NAVIGATOR_MEMBERS, name).not.toContain(name);
+        }
+        for (const [owner] of SECURE_CONTEXT_ONLY.members) expect(STRICT_WORKER_GLOBALS, owner).toContain(owner);
     });
 });

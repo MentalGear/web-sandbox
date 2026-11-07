@@ -841,7 +841,9 @@ array in it, a guest's log arguments included. What cannot be frozen stays as it
 clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
 line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
 guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
-URL (such as a link `href`), `eval`, template or `console` format-string sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
+URL (such as a link `href`), `eval`, template or `console` format-string sink, and do not forward it to a network sink,
+an error reporter or analytics (`fetch`, `navigator.sendBeacon`) as if it were your page's own event: whoever wrote
+the app reads that sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
 `+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the
 library's text, which never quotes a value of your configuration, or the text you passed to `terminate()`.
 
@@ -1185,7 +1187,7 @@ In the guest, the codes other than `NOT_FOUND` come from the element through the
 
 ## Guest globals
 
-<!-- describes: worker-globals sig:9705 -->
+<!-- describes: worker-globals sig:59bf -->
 What guest code can use, by mode. Everything here is installed by the library's bootstrap before any guest code
 runs; in cooperative mode that needs `allow-scripts` (the policy always admits it).
 
@@ -1206,6 +1208,18 @@ nothing runs there either; deleting it keeps WebKit's compiler away from guest b
 cooperative mode keeps it, a frozen limit), and in strict and sealed mode `URL.createObjectURL`. In strict and sealed mode the view document
 runs no guest code at all, and acts only on trusted events: a synthetic event is never forwarded to `sandboxView.on`.
 
+**The same on every engine, whatever your page's URL** (strict and sealed mode's worker): a worker is a secure context
+when its page's top-level URL is `https:` or a loopback host, and on Firefox and WebKit the guest's worker follows your
+page, which would tell the guest which kind of URL your page has and give it a different API on each engine. So it keeps
+nothing only a secure context has (`SECURE_CONTEXT_ONLY`): no `SubtleCrypto` and `CryptoKey` (no `crypto.subtle`), no
+`crypto.randomUUID()`, no Web Locks (`navigator.locks`, `LockManager`, `Lock`), no WebCodecs coders (`AudioDecoder`,
+`AudioEncoder`, `VideoDecoder`, `VideoEncoder`) or image decoder (`ImageDecoder`, `ImageTrack`, `ImageTrackList`), no
+server timing (`PerformanceServerTiming`, `serverTiming`), no `navigator.deviceMemory` or `navigator.gpu`; and
+`isSecureContext` reads `false`. That is what Chromium's sealed worker has on every page, so no app could count on any of
+them. `crypto.getRandomValues()`, `AudioData`, `VideoFrame` and the encoded chunks stay. An app that needs a hash, a key
+or a codec calls a method your page exposes (`expose()`), which runs with your page's own APIs. Worker mode keeps them where
+the engine offers them.
+
 **No string runs as code** in strict and sealed mode's worker (unless `scriptUnsafe`, which sealed mode refuses): before the
 entry runs, `eval`, `Function`, the constructor of every function kind (async, generator, async generator) and
 `setTimeout` and `setInterval` given a handler that is not a function throw an `EvalError` of the library's
@@ -1224,8 +1238,9 @@ only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WOR
 make a request are `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`), which are the library's
 [request gate](#the-request-gate) in every mode (in strict and sealed mode `WebSocket` is kept as a name but refuses every
 socket: [no `WebSocket`](#strict-no-websocket)), and in worker mode `importScripts` (`script-src`). Strict mode's worker
-has no `importScripts`: its policy's `script-src` is the view's hash, so it could never load anything. Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
-encoding, streams, `crypto`, `Blob`, `File`, `URL`, `OffscreenCanvas` with 2D and WebGL, WebCodecs,
+has no `importScripts`: its policy's `script-src` is the view's hash, so it could never load anything, and nothing only a
+secure context has ([Guest globals](#guest-globals): no `crypto.subtle`, Web Locks or WebCodecs coders, in any engine). Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
+encoding, streams, `crypto` (`getRandomValues()`), `Blob`, `File`, `URL`, `OffscreenCanvas` with 2D and WebGL, WebCodecs' frames and chunks (worker mode: its coders, where the engine offers them),
 `performance`, `scheduler`, `BroadcastChannel`, and `indexedDB`, which is present but stores nothing: in the sandbox's opaque
 origin `indexedDB.open()` rejects with a `SecurityError` on all three engines (measured on Chromium 145, Firefox 146 and
 WebKit 26). Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace`
@@ -1446,11 +1461,14 @@ vector graphics as inline `<svg>`.
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
 `about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and
 Enter still reach `sandboxView.on`, and the browser's own actions on it (copy link address, open in a new tab,
-drag) carry no URL of the guest's. To open an external page, expose a host method and call it from a click handler.
+drag) carry no URL of the guest's. To open an external page, expose a host method and call it from a click handler. The browser lets your page open a
+window only while it has a user activation, and an activation is the page's, not the view's: a click or key anywhere on
+the page, the view included, starts it, and the app's call can fall in it whether or not the app's own handler saw that
+click.
 **An address you open is a request your page makes, and every part of it (path, query, fragment) can carry the app's data
 to that server**, so the app never supplies the address: it names one of a fixed set of links, and your page holds the
 addresses. (Opening text the app wrote, even after checking its scheme and origin, lets the app send what it holds to that
-origin in the path or query, one tab per click.)
+origin in the path or query, one tab per user activation.)
 
 ```js
 const LINKS = new Map([ // every address the app may open, written by you
@@ -1465,8 +1483,8 @@ sandbox.expose('openExternal', (name) => {
 // in the worker: sandboxView.on('click', 'docs', () => bridge.call('openExternal', 'docs'));
 ```
 
-What is left to the app is which of your links it opens and when: a few bits per user click. Never build the address from
-the app's text, and do not list an address whose server forwards its query (a redirector).
+What is left to the app is which of your links it opens and when: a few bits per user activation of your page (a click
+or key anywhere on it, not only the click the app's handler reacts to). Never build the address from the app's text, and do not list an address whose server forwards its query (a redirector).
 `test/unit/attacker-text-docs.test.ts` runs this snippet as written and holds that no address but a listed one is opened.
 
 An event handler receives:
@@ -1662,49 +1680,63 @@ li { list-style: none; font: 14px sans-serif; }
 
 ### The host
 
-`mountTodoApp` takes your own id for the app (`appId`) and returns `stop()`, which ends the app and clears the element for
-the next one.
+`mountTodoApp` takes the container to mount in and your own id for the app (`appId`). It creates the app's own
+`<web-sandbox>` there and returns `{ sandbox, stop }`: the element, to send it data (`pushAll`), and `stop()`, which ends
+the app and removes the element. To run another app, mount it again: **an element is one app's for its life** ([below](#app-to-host)).
 
 <!-- generated:begin example:sealed-app-host -->
 ```js
 // The embedder's side: register the bundle, answer the app's calls, feed it data.
 const MAX_TODOS = 1000; // the app stops adding at the same number (app.js)
 
-// `appId` is yours: your own id for this app, never a name the bundle gives itself. It keys the app's state in your store,
-// so one app is never handed another's. Returns stop(), which ends the app and clears the element for the next one.
-export async function mountTodoApp(sandbox, { bundle, appId, store }) {
+// An element is one app's for its life: its file registry, its exposed methods, its pending guest writes and every handle
+// a host method holds outlive an app that is stopped, so the next app on it would meet the first one's. So each mount makes
+// its own element in `container` and returns it with stop(), which ends the app and removes the element; to run another
+// app, call mountTodoApp again. `appId` is yours: your own id for this app, never a name the bundle gives itself. It keys
+// the app's state in your store, so one app is never handed another's.
+export async function mountTodoApp(container, { bundle, appId, store }) {
     const key = `todos:${appId}`;
+    const sandbox = document.createElement('web-sandbox');
     let running = true;
-    const get = (name) => fetch(`${bundle}/${name}`);
-    sandbox.registerFiles({
-        'app.js': await (await get('app.js')).text(),
-        'app.css': await (await get('app.css')).text(),
-        'logo.png': new Uint8Array(await (await get('logo.png')).arrayBuffer()),
-    });
 
-    // The app's call runs here with your page's rights, and its argument is the app's data: check its type and size,
-    // and keep a copy of what you expect, not the object itself.
-    sandbox.expose('save', async (todos) => {
-        if (!Array.isArray(todos) || todos.length > MAX_TODOS) throw new Error(`save: expected at most ${MAX_TODOS} todos`);
-        const clean = todos.map((todo) => {
-            if (typeof todo?.text !== 'string' || todo.text.length > 200 || typeof todo.done !== 'boolean') throw new Error('save: bad todo');
-            return { text: todo.text, done: todo.done };
-        });
-        // A call that started before stop() runs on: only its answer is dropped. Check the flag right before the write.
-        if (!running) return;
-        await store.setItem(key, JSON.stringify(clean));
-    });
-
-    sandbox.setConfig({ entry: 'app.js', html: await (await get('app.html')).text(), guestWrites: true });
-    await sandbox.call('load', JSON.parse((await store.getItem(key)) ?? '[]')); // queued until the app is ready
-
-    // Stopping the app, or giving the element to another one: methods and files belong to the element, not to the app.
-    return function stop() {
+    // Built before anything that can fail. After stop() the element is gone: whatever an earlier handler still holds
+    // reaches nothing, and the flag keeps a handler that started before it from writing to your store.
+    const stop = () => {
         running = false;
         sandbox.terminate();
-        sandbox.unexpose();
-        sandbox.unregisterFiles();
+        sandbox.remove();
     };
+
+    try {
+        container.append(sandbox);
+        const get = (name) => fetch(`${bundle}/${name}`);
+        sandbox.registerFiles({
+            'app.js': await (await get('app.js')).text(),
+            'app.css': await (await get('app.css')).text(),
+            'logo.png': new Uint8Array(await (await get('logo.png')).arrayBuffer()),
+        });
+
+        // The app's call runs here with your page's rights, and its argument is the app's data: check its type and size,
+        // and keep a copy of what you expect, not the object itself. Array.from visits every index, so a sparse array
+        // cannot store holes.
+        sandbox.expose('save', async (todos) => {
+            if (!Array.isArray(todos) || todos.length > MAX_TODOS) throw new Error(`save: expected at most ${MAX_TODOS} todos`);
+            const clean = Array.from(todos, (todo) => {
+                if (typeof todo?.text !== 'string' || todo.text.length > 200 || typeof todo.done !== 'boolean') throw new Error('save: bad todo');
+                return { text: todo.text, done: todo.done };
+            });
+            // A call that started before stop() runs on: only its answer is dropped. Check the flag right before the write.
+            if (!running) return;
+            await store.setItem(key, JSON.stringify(clean));
+        });
+
+        sandbox.setConfig({ entry: 'app.js', html: await (await get('app.html')).text(), guestWrites: true });
+        await sandbox.call('load', JSON.parse((await store.getItem(key)) ?? '[]')); // queued until the app is ready
+    } catch (error) {
+        stop(); // a mount that failed leaves nothing running
+        throw error;
+    }
+    return { sandbox, stop }; // the element, to push data to (pushAll), and stop(), to end the app
 }
 
 // A stream: the host sends a batch when it has one, and the next only after the app took the last.
@@ -1799,8 +1831,15 @@ The host publishes methods with `sandbox.expose()` and the app calls them with `
   you open is a request, and its path and query carry the app's data to that server.
 - **Never expose a generic proxy**: no `fetch(url)`, no `get(key)`/`set(key, value)` over `localStorage` or IndexedDB, no
   `run(name, ...args)` dispatcher. Each method does one thing the app needs, to a destination you fixed (this app's own
-  storage key, a listed endpoint), at a size you capped. Sealed mode has no network, so what you expose is the app's only
-  way out: a proxy hands it your page's network, cookies and storage.
+  storage key, a listed endpoint), at a size you capped. Sealed mode has no network, so a method you expose is the only code
+  of your page the app can run: a proxy hands it your page's network, cookies and storage.
+- **Everything the app can send your page is the app's data and attacker text**, not only the arguments of your methods:
+  its `sandbox-log` lines, the details of `violation` events (`blockedURI`, `sourceFile`), the paths and types of its guest
+  writes (`fileswritten`, `listGuestWrites()`) and the height of its auto-resize. None of it is a request, and none can run
+  code, but each is chosen by the app. Show it with `textContent` and never pass it to a URL or HTML sink, and do not
+  forward it to a network sink, an error reporter or analytics (`fetch`, `navigator.sendBeacon`, a tracker's `capture()`)
+  as if it were your page's own event: whoever wrote the app reads that sink, so what you forward is a channel from the app
+  to them.
 - **Never make a URL of the app's bytes with the app's type.** What the app wrote (`listGuestWrites()`) or returned (a `Blob`
   from `call()`) becomes a document of your origin when its object URL is opened. Show images in the sandbox view, or in
   an `<img>` from a `Blob` you typed `image/png` after checking its signature; offer anything else as a download of an
@@ -1811,14 +1850,32 @@ The host publishes methods with `sandbox.expose()` and the app calls them with `
   subclass of `Error`, reaches it as `the method failed (<name>)`, with no text of its own, because an engine's message
   quotes the data it was handling. A result that cannot be copied reaches it as `RESULT_NOT_TRANSFERABLE` with the
   library's text. Each text the app does not receive is written to your page's console (`console.warn`, once per call).
-- **One element per app; to switch apps on one element, clear it first.** Methods and files belong to the element, not to
-  the app. They survive `reset()`, `load()` and `setConfig()`, so an app you load next on the same element can call the
-  methods you exposed for the last one and read its files. Give each app its own element, or call `unexpose()` and
-  `unregisterFiles()` first (`stop()` in the example does): a method removed so is refused `UNKNOWN_METHOD` as one that
-  was never exposed.
+- **An element is one app's for its life; to run another app, use a new element.** The element is the unit of isolation:
+  its files, its exposed methods, its pending guest writes and every handle a host method holds (`sandbox.call`) belong to
+  the element, not to the app. They survive `reset()`, `load()`, `setConfig()` and `terminate()`, so an app you load next
+  on the same element can call the methods you exposed for the last one and read its files, a `commitGuestWrites()` or a
+  late `call()` meant for the first app lands in the second, and two mounts that overlap (the first still waiting for your
+  store) meet. `mountTodoApp` therefore makes an element for each mount, and `stop()` terminates it and removes it.
+  After `stop()`:
+  - the app is ended and its element is out of the page: its pending guest writes are gone with it, and a `call()` that a
+    handler of the app makes later on the element it holds is refused;
+  - a handler that was already running goes on, and the flag it checks right before it writes to your store (`running`
+    above) is what keeps it from writing; nothing it does through the element reaches the next app;
+  - the app's methods and files are gone with the element: there is nothing for the next app to call or read.
+
+  `stop()` does not undo what a handler already did to your own state (a write that finished before it), and the flag
+  covers your store, not other globals your handler uses. If you do reuse an element, `unexpose()` and
+  `unregisterFiles()` clear its methods and files (a method removed so is refused `UNKNOWN_METHOD` as one that was never
+  exposed), but not a handle or a pending write that is already in a handler's hands: one mount at a time, and a new
+  element for each app.
+- **A mount that fails leaves nothing running.** `mountTodoApp` builds `stop()` before anything that can fail (a fetch of
+  the bundle, your store, the app's `load`) and calls it and rethrows on any failure, so the app of a failed mount is
+  ended, its element removed and its methods unreachable. A `mount` of your own that returns only after `load` should do
+  the same.
 - **Key each app's state by an id you choose.** The store key carries your own id for the app (`appId` in the example),
   never a fixed key and never a name from the bundle: a fixed key hands every app mounted next the state of the last,
-  and lets it overwrite it, on a new element as much as on the same one.
+  and lets it overwrite it, on a new element as much as on the same one. The store is your page's, not the element's, so a
+  new element does not separate it.
 - **A handler that started outlives the app.** `terminate()`, `reset()` and `setConfig()` drop the answer of a call that
   is running; they do not stop the handler. A handler that writes (`save` here) should check a flag you clear when you
   stop the app, right before the write, and you should delete the app's data only after its handlers have settled.
@@ -1858,13 +1915,17 @@ as a download. Never `new Blob([content], { type })` with the app's `type`, and 
 ```js
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const write = sandbox.listGuestWrites().find((w) => w.path === 'progress.png' && w.change === 'write');
-if (write && PNG.every((byte, i) => write.content[i] === byte)) {
+if (write === undefined) return; // the app has written nothing yet
+if (PNG.every((byte, i) => write.content[i] === byte)) {
     img.src = URL.createObjectURL(new Blob([write.content], { type: 'image/png' })); // an <img> only, never a link target
+    return;
 }
 // anything else the app made: a download, typed so that it cannot be shown as a page
 link.href = URL.createObjectURL(new Blob([write.content], { type: 'application/octet-stream' }));
 link.download = 'export.bin'; // a name you chose
 ```
+
+(The snippet is the body of a function you call when the app's `fileswritten` fires, hence the `return`s.)
 
 The app cannot `fetch()` its own files either: sealed mode's `connect-src` is `'none'`, so `fetch(sandboxFiles.url(path))` is
 refused. Read them with `sandboxFiles.read()` or `text()`, which make no request.
@@ -1997,7 +2058,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | Guest log lines, to `sandbox-log`: the console relay, and the uncaught errors and rejections it relays | `LOG_EVENTS_PER_SECOND` (1000) lines in any second, counted by the guest and again by the host; `LOG_MAX_ARGS` (64) arguments a line | `LOG_MAX_BYTES` (1048576) a line, measured by both ends, placeholders included; `LOG_BYTES_PER_SECOND` (4194304) a second, by the guest; a string argument cut at `LOG_MAX_STRING` (65536) characters | none of its own: one event a line | none beyond the count and the bytes | none: the lines reach the host page only | test/unit/relay-and-rpc-budgets.test.ts (R3-3); test/unit/structural.test.ts |
 | Uncaught errors and unhandled rejections of the guest's worker, which the browser reports (worker and strict mode) | `UNCAUGHT_PER_SECOND` (1000) in any second, rejections handled later included; past it the sandbox ends | `UNCAUGHT_CHARACTERS_PER_SECOND` (1048576) characters of their names and messages in any second; past it the sandbox ends | none of its own: the count and the characters | Firefox reports each on the host page's thread, cancelled or not: bounded by the count and the characters, and past them the sandbox ends; one report is not bounded, since the browser makes it before the sandbox can end | none | test/e2e/error-cost-and-queued-calls.spec.ts (N-1); test/unit/egress.test.ts |
-| Calls the guest makes (`bridge.call`), to the embedder's methods | `callLimits.maxPerSecond` in any second, by default `GUEST_CALLS_PER_SECOND` (1000), counted by the guest and again by the host; `MAX_INBOUND_IN_FLIGHT` (256) running at once | `RPC_MAX_BYTES` (34603008) a call, its whole frame measured by both ends; `callLimits.maxBytesPerSecond` a second, by default `GUEST_CALL_BYTES_PER_SECOND` (67108864); `RPC_MAX_INBOUND_BYTES` (67108864) of arguments running at once; a method name of at most `MAX_NAME_LENGTH` (256) characters | none of its own: the embedder's methods run as long as they take | none beyond the count and the bytes | none of the library's: the embedder's methods are the guest's only way out, so they are all it can reach | test/unit/rpc-bounds-and-call-limits.test.ts (M-2, C-1); test/unit/config-schema.test.ts; test/unit/rate-limit.prop.test.ts |
+| Calls the guest makes (`bridge.call`), to the embedder's methods | `callLimits.maxPerSecond` in any second, by default `GUEST_CALLS_PER_SECOND` (1000), counted by the guest and again by the host; `MAX_INBOUND_IN_FLIGHT` (256) running at once | `RPC_MAX_BYTES` (34603008) a call, its whole frame measured by both ends; `callLimits.maxBytesPerSecond` a second, by default `GUEST_CALL_BYTES_PER_SECOND` (67108864); `RPC_MAX_INBOUND_BYTES` (67108864) of arguments running at once; a method name of at most `MAX_NAME_LENGTH` (256) characters | none of its own: the embedder's methods run as long as they take | none beyond the count and the bytes | none of the library's: the only code of the host page the guest can run is the embedder's methods, so they are all it can reach | test/unit/rpc-bounds-and-call-limits.test.ts (M-2, C-1); test/unit/config-schema.test.ts; test/unit/rate-limit.prop.test.ts |
 | Answers to the host's calls (`bridge.expose`) | one a call the host made: the host's pending calls | `RPC_MAX_BYTES` (34603008) an answer, measured by both ends; an error text cut at `MAX_TEXT_LENGTH` (65536) characters by both ends | the host's call timeout (`callWithTimeout`; by default `DEFAULT_TIMEOUT_MS` (30000) ms) | none beyond the host's pending calls and the bytes | none | test/unit/rpc-bounds-and-call-limits.test.ts (C-1); test/unit/structural.test.ts |
 | Guest writes (`sandboxFiles.write`, `remove`) | `GUEST_WRITES_PER_SECOND` (100) requests in any second, and each as a call; what is kept, at most `MAX_FILES` (1000) files with the registered ones | `GUEST_WRITE_BYTES_PER_SECOND` (8388608) in any second; what is kept, at most `MAX_TOTAL_BYTES` (8388608) with the registered files | none of its own: the count and the bytes | none beyond the count and the bytes | none: the host keeps them | test/unit/guest-writes.test.ts; test/e2e/guest-writes.spec.ts |
 | `sandboxFetch()`: a request the host decides and the bridge's frame makes, on the guest's behalf | `fetchBridge.maxConcurrent` at once, at most `MAX_MAX_CONCURRENT` (16); and each as a call | `fetchBridge.maxBytes` a response, at most `MAX_MAX_BYTES` (33554432); its status text and headers at most `MAX_RESPONSE_HEAD` (262144) characters together | `fetchBridge.timeoutMs` a request, at most `MAX_TIMEOUT_MS` (120000) ms | none beyond the count, the bytes and the time: each request is one fetch of the bridge's frame (an opaque origin: no Service Worker, no wrapper of the host page's), its body crossing to the host page one chunk at a time, as the host reads it | none: `sandboxFetch()` rejects in the guest with `FETCH_NOT_ALLOWED` and sends nothing; no bridge frame is built | src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts; test/e2e/fetch-bridge-isolation.spec.ts; test/unit/sealed-build.test.ts; test/e2e/sealed-no-network.spec.ts |
@@ -2016,7 +2077,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 counts and bytes above bound); and where the view shares the host page's thread it cannot run during a stall of the view
 ([(b)](#b-the-single-operation-bound)).
 
-<!-- describes: budgets sig:e205 -->
+<!-- describes: budgets sig:e5d2 -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;
@@ -2252,12 +2313,17 @@ policy must allow:
   `style-src` of hashes alone, `'report-sample'` and all, refuses and reports none of the guest's styles (all three
   engines; [research 25](research/25_cssom_styles/README.md)). What the view still has checked against your policy is
   its loads of registered files: a `blob:` load under an `img-src`, `media-src`, `font-src` or `style-src` without
-  `blob:` is refused and reported to your endpoint, naming `blob` as blocked and nothing of the file; how many there are,
-  and when, is the guest's choice. Admit `blob:` as the table above says, or treat those reports as the guest's data.
+  `blob:` is refused and reported to your endpoint, naming `blob` as blocked and nothing of the file (Chromium and
+  Firefox; WebKit sends no report from the view); how many there are, and when, is the guest's choice. Admit `blob:` as the table above says, or treat those reports as the guest's data.
   Strict mode with `scriptUnsafe`, cooperative mode and worker mode run guest strings and scripts that your policy checks:
   your endpoint then receives reports whose URLs and samples the guest chose, as many as the engine sends (it throttles
   bursts, not a steady rate). Treat every field of them as untrusted guest data, or serve the embedding page without
   reporting.
+- **Your page's URL scheme.** A frame is a secure context when its top-level page's URL is potentially trustworthy
+  (`https:`, or a loopback host), and on Firefox and WebKit a worker follows it. Strict and sealed mode's worker keeps
+  nothing that depends on it and reads `isSecureContext` as `false` ([Guest globals](#guest-globals)), so a guest cannot
+  tell which kind of URL your page has; worker mode's worker and cooperative mode's guest document can, on Firefox and
+  WebKit ([the host page's context](THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)).
 - **Your `img-src`, `media-src`, `font-src` and the other fetch directives narrow `origins` silently**, in the engines
   that apply the inherited list: an origin listed in `origins` that your page's policy does not allow is refused in the
   sandbox too. The refusal happens in the sandbox's documents, so it arrives as the element's `violation` event (where the

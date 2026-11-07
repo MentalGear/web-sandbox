@@ -251,6 +251,9 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     display. Show it with `textContent`, and never pass it to an HTML (`innerHTML`, `insertAdjacentHTML`), URL (a link
     `href`), `eval`, template or `console` format-string sink (as the first argument of a `console` method it is a
     format string, `%c` styles the line and `%s` takes the next argument: put a fixed text first, as the examples do).
+    Do not forward any of it to a network sink, an error reporter or analytics (`fetch`, `navigator.sendBeacon`) as if
+    it were your page's own event: whoever wrote the app reads that sink. The methods you expose are not the app's only
+    way to your page: its log lines, violation details, guest writes and auto-resize height arrive there too.
     (`terminated.reason` is the library's own text: it names the problem and never quotes your `entry`, your `mode` or
     a guest's words; the exception is the text you pass to `terminate()`, which it dispatches as given.)
 *   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`
@@ -344,8 +347,11 @@ string). Without it, the worker of strict and sealed mode refuses every string i
 The host and the guest can call each other's functions and await the result. Each side publishes
 functions with `expose(name, fn)` and calls the other side's with `call(method, ...args)`, which
 returns a promise for the handler's return value; if the handler throws, the promise rejects with
-the same message. On the host these are methods of the element; in the guest they live on the
-global `bridge`.
+`HANDLER_ERROR`. A guest handler's message crosses as written (it is attacker text). A host method's message crosses
+only when it is your own words: a thrown string or the message of a plain `Error`. Any other throw (the `SyntaxError` of
+a `JSON.parse` of your data, a `TypeError`, a subclass of `Error`) reaches the guest as `the method failed (<name>)`,
+because an engine's message quotes the data it was handling ([details](docs/API.md#app-to-host)). On the host these
+are methods of the element; in the guest they live on the global `bridge`.
 
 ```js
 sandbox.expose('ping', () => 'pong');                       // host method, callable by the guest

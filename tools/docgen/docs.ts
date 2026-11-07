@@ -20,9 +20,10 @@ import { limits } from './extractors/limits';
 import type { Extractor } from './extractors/markdown';
 import { modules } from './extractors/modules';
 import { reasons } from './extractors/reasons';
+import { sealedReach } from './extractors/sealed-reach';
 import { surface } from './extractors/surface';
 
-export const EXTRACTORS: readonly Extractor[] = [api, budgets, config, connectFacts, cookieFacts, csp, engineLedger, examples, frames, inheritedContext, lifecycle, limits, modules, reasons, surface];
+export const EXTRACTORS: readonly Extractor[] = [api, budgets, config, connectFacts, cookieFacts, csp, engineLedger, examples, frames, inheritedContext, lifecycle, limits, modules, reasons, sealedReach, surface];
 
 export const plugin: Plugin = {
     extractors: {},

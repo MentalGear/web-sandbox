@@ -23,8 +23,12 @@
  * `caches`, Notification (its icon), the Service Worker and Push interfaces, nested Worker and SharedWorker (a realm
  * this prelude never reaches), the RTC interfaces, MediaSource, BackgroundFetch, Reporting. On the navigator:
  * `serviceWorker` and `connection`. Absent too, because an engine answers them from the host page's per-origin state
- * (WORKER_STATE_READS, below): `Permissions`, `PermissionStatus` and `StorageManager`, and the navigator's `permissions`
- * and `storage`.
+ * (BD5:ISO-1, BD5:ISO-2): `Permissions`, `PermissionStatus` and `StorageManager`, and the navigator's `permissions` and
+ * `storage`.
+ *
+ * Every name listed here is classified against every row of the host page's context a sandbox document inherits
+ * (SEALED_REACH, sealed-reach.ts; S74, class A): a name added to a list fails test/unit/sealed-reach.test.ts until it has
+ * a surface there, which says what it is to each row.
  *
  * Absent too, the worker's own channel to its parent (R4:M-1): `postMessage`, `onmessage` and
  * `onmessageerror`. A dedicated worker's postMessage reaches the Worker object in the document that made it (worker
@@ -92,68 +96,52 @@ export const WORKER_GLOBALS: readonly string[] = [
 ];
 
 /**
- * Strict mode's worker: {@link WORKER_GLOBALS} without `importScripts`. The strict policy's script-src is the view
+ * What the worker has only when it is a secure context (S74, class A: INHERITED_CONTEXT.secureContext). A worker is one
+ * when its owner is, and a document when its top-level page's URL is potentially trustworthy, so on Firefox and WebKit
+ * the guest's `blob:` worker has these, and `isSecureContext` reads true, exactly when the host page's URL is `https:` or
+ * a loopback host; Chromium counts that worker as not secure on every page. Strict and sealed mode's worker has none of
+ * them on any engine, and reads `isSecureContext` as false: the globals and navigator members are off its allowlists
+ * (STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS), and {@link removeSecureContextOnly} deletes the members of
+ * kept interfaces and pins `isSecureContext`. That is the surface Chromium's worker has on every page, so the guest's API
+ * is the same whatever the host page and the engine, and nothing of the host page's URL reaches the guest through it.
+ *
+ * The list is what differs on Chromium, Firefox and WebKit between the sealed worker of a host page served from a URL that
+ * is not potentially trustworthy and one on a loopback host, every global and every member it leads to compared
+ * (test/e2e/sealed-reach.spec.ts, which fails on any name that differs). `navigator.deviceMemory` and `navigator.gpu` are
+ * secure-context only too, and absent from the worker on every engine of the suite.
+ */
+export const SECURE_CONTEXT_ONLY = {
+    globals: [
+        'SubtleCrypto', 'CryptoKey', 'Lock', 'LockManager', 'AudioDecoder', 'AudioEncoder', 'VideoDecoder', 'VideoEncoder',
+        'ImageDecoder', 'ImageTrack', 'ImageTrackList', 'PerformanceServerTiming',
+    ],
+    navigator: ['locks', 'deviceMemory', 'gpu'],
+    /** [interface, member]: a member of the interface's prototype. */
+    members: [['Crypto', 'subtle'], ['Crypto', 'randomUUID'], ['PerformanceResourceTiming', 'serverTiming']],
+} as const satisfies { globals: readonly string[]; navigator: readonly string[]; members: readonly (readonly [string, string])[] };
+
+const secureContextOnly = (list: readonly string[]) => (name: string) => list.includes(name);
+
+/**
+ * Strict mode's worker: {@link WORKER_GLOBALS} without `importScripts`, and without the names only a secure context has
+ * ({@link SECURE_CONTEXT_ONLY}). The strict policy's script-src is the view
  * bootstrap's hash (ADR-005), so `importScripts()` can never load anything there; it is not offered at all, and with it
  * goes the one request API whose refusals an engine reported elsewhere (Firefox raises them in the view). The strict
  * worker requests only through fetch, XMLHttpRequest and WebSocket, which the request gate governs (in-sandbox-script.ts).
  */
-export const STRICT_WORKER_GLOBALS: readonly string[] = WORKER_GLOBALS.filter(name => name !== 'importScripts');
+export const STRICT_WORKER_GLOBALS: readonly string[] = WORKER_GLOBALS.filter(name => name !== 'importScripts' && !secureContextOnly(SECURE_CONTEXT_ONLY.globals)(name));
 
 /**
  * What guest code may find on the worker's navigator (its prototype's members): no `serviceWorker`, no `connection`, no
- * `permissions` and no `storage` (BD5:ISO-1, BD5:ISO-2: {@link WORKER_STATE_READS}).
+ * `permissions` and no `storage` (BD5:ISO-1, BD5:ISO-2: SEALED_REACH, the `permissionState` column, sealed-reach.ts).
  */
 export const WORKER_NAVIGATOR_MEMBERS: readonly string[] = [
     'appCodeName', 'appName', 'appVersion', 'platform', 'product', 'userAgent', 'language', 'languages',
     'onLine', 'hardwareConcurrency', 'deviceMemory', 'globalPrivacyControl', 'locks', 'mediaCapabilities', 'gpu',
 ];
 
-/**
- * Every name of the allowlists that reads browser state keyed to an origin or to the user's profile, with what it reads
- * and why the guest learns nothing of the host page from it (S74, class A: INHERITED_CONTEXT.permissionState). The
- * worker is a `blob:` worker of an opaque origin, but an engine may still answer it from the host page's own record:
- * WebKit answered `navigator.permissions.query()` there with the host origin's grants (BD5:ISO-1), and Firefox's
- * `navigator.storage.estimate()` ended the caller's task without settling (BD5:ISO-2). So `navigator.permissions`,
- * `Permissions`, `PermissionStatus`, `navigator.storage` and `StorageManager` are not listed: no API a permission gates
- * exists in the worker, and the storage manager stores nothing in an opaque origin.
- *
- * Measured in the sealed guest's worker on Chromium, Firefox and WebKit, with the host origin holding permission grants, an
- * IndexedDB database, a held Web Lock, `localStorage` and a `BroadcastChannel` listener, and without them: each answer
- * below was the same both ways (BD5:ISO-1).
- * src/lib/worker-globals.test.ts fails on a name of the allowlists that is neither here nor in its reviewed list of names
- * that read no such state, so a new one is classified before it ships.
- */
-export const WORKER_STATE_READS: Readonly<Record<string, string>> = Object.freeze({
-    'indexedDB': "the origin's databases: `open()`, `databases()` and `deleteDatabase()` give a SecurityError in the opaque origin on every engine; the host page's database is not visible",
-    'IDBFactory': "indexedDB's interface: as indexedDB",
-    'navigator.locks': "the origin's Web Locks: `query()` and `request()` give a SecurityError (Firefox, WebKit); absent on Chromium; a lock the host page holds is not visible",
-    'Lock': "navigator.locks's interface: as navigator.locks",
-    'LockManager': "navigator.locks's interface: as navigator.locks",
-    'BroadcastChannel': "the origin's channels: the guest's opaque origin is its own, and a channel of the host page's (or of a plain sandboxed frame's) of the same name never receives or delivers its messages",
-    'navigator.mediaCapabilities': 'what the engine and the device decode: the same answer for any page',
-    'MediaCapabilities': "navigator.mediaCapabilities's interface: as navigator.mediaCapabilities",
-    'navigator.gpu': 'the device: absent from the worker on every engine of the suite',
-    'navigator.deviceMemory': 'the device: absent from the worker on every engine of the suite',
-    'navigator.hardwareConcurrency': 'the device: the same for any page',
-    'navigator.language': "the profile's language: the same for any page",
-    'navigator.languages': "the profile's languages: the same for any page",
-    'Intl': "the profile's locale and time zone: the same for any page",
-    'Date': "the profile's time zone: the same for any page",
-    'Temporal': "the profile's time zone: the same for any page",
-    'navigator.globalPrivacyControl': "the profile's privacy setting (Firefox): the same for any page",
-    'navigator.onLine': 'the device: the same for any page',
-    'navigator.userAgent': 'the browser: the same for any page',
-    'navigator.appVersion': 'the browser: the same for any page',
-    'navigator.platform': 'the browser: the same for any page',
-    'navigator.appCodeName': 'a constant of the platform',
-    'navigator.appName': 'a constant of the platform',
-    'navigator.product': 'a constant of the platform',
-    'origin': "the worker's own origin: `'null'`",
-    'location': "the worker's own URL: `blob:null/<uuid>`",
-    'isSecureContext': "the worker's own context",
-    'crossOriginIsolated': "the worker's own context: false (the element refuses an isolated host page)",
-    'performance': "the worker's own timeline: its own entries only",
-});
+/** Strict mode's worker's navigator: {@link WORKER_NAVIGATOR_MEMBERS} without the ones only a secure context has. */
+export const STRICT_WORKER_NAVIGATOR_MEMBERS: readonly string[] = WORKER_NAVIGATOR_MEMBERS.filter(name => !secureContextOnly(SECURE_CONTEXT_ONLY.navigator)(name));
 
 /**
  * Deletes every global of the worker that is not in `allowed`, and every member of its navigator's prototype that is
@@ -200,4 +188,33 @@ export function keepOnlyWorkerGlobals(g: object, allowed: readonly string[], nav
     const navigator = (g as { navigator?: object }).navigator;
     if (navigator) prune(O.getPrototypeOf(navigator), navigatorMembers, 'navigator.');
     return postToParent;
+}
+
+/**
+ * Strict and sealed mode's worker, right after keepOnlyWorkerGlobals (which took the secure-context-only globals and
+ * navigator members off: STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS): deletes each member of `members`
+ * (SECURE_CONTEXT_ONLY.members, [interface, member] of the interface's prototype), and puts `isSecureContext` on the
+ * global object as `false`, every copy on its prototype chain removed. Stringified into the worker's source (host.ts);
+ * self-contained, and it reaches nothing but `g`, the object literals' own Object and the arguments.
+ *
+ * Fails closed, as keepOnlyWorkerGlobals does: a member that is still there after its deletion, or an `isSecureContext`
+ * that cannot be put in place, throws, and the worker script ends there, before the library's channel or any guest code
+ * exists (strict mode's entry never starts).
+ */
+export function removeSecureContextOnly(g: object, members: readonly (readonly [string, string])[]) {
+    const O = ({}).constructor as ObjectConstructor;
+    const remove = (owner: object, name: string, where: string) => {
+        Reflect.deleteProperty(owner, name);
+        if (O.getOwnPropertyDescriptor(owner, name)) throw new Error('[Sandbox] the worker could not remove ' + where + name + '; it did not start');
+    };
+    for (let i = 0; i < members.length; i++) {
+        const member = members[i]!;
+        const found = (g as Record<string, unknown>)[member[0]];
+        const prototype = typeof found === 'function' ? (found as { prototype?: unknown }).prototype : undefined;
+        if (prototype !== null && typeof prototype === 'object') remove(prototype, member[1], member[0] + '.prototype.');
+    }
+    for (let owner: object | null = g; owner && owner !== O.prototype; owner = O.getPrototypeOf(owner)) remove(owner, 'isSecureContext', '');
+    if (!Reflect.defineProperty(g, 'isSecureContext', { value: false, writable: false, enumerable: true, configurable: false })) {
+        throw new Error('[Sandbox] the worker could not put isSecureContext in place; it did not start');
+    }
 }

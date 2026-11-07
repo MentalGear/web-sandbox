@@ -92,17 +92,23 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
 
 - **What leaves the default's path**: the host-site and host-policy decisions, the cookie and connect fact tables,
   `origins` parsing, the fetch bridge and its frame, the request gate's allow path, network URLs in the renderer
-  (research 24, §1). Of the 21 rows of the host page's inherited context, 5 do not apply in sealed mode, 2 are reduced and
-  14 remain, each failing closed with a reason, closed by construction, or costing availability only
-  ([THREAT-MODEL](THREAT-MODEL.md#the-host-pages-context)).
+  (research 24, §1). Of the 22 rows of the host page's inherited context, 5 do not apply in sealed mode, 2 are reduced and
+  15 remain, each failing closed with a reason, closed by construction (`permissionState`; `secureContext`: the worker
+  keeps nothing only a secure context has and reads `isSecureContext` as false, on every engine), or costing availability
+  only ([THREAT-MODEL](THREAT-MODEL.md#the-host-pages-context)). Every name a sealed guest can reach is classified against
+  every row ([`SEALED_REACH`](THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)).
 - **What an embedder sees**: an embed with no `mode` and no network option builds sealed mode, the same view, worker and
   API, and a script in its `html` still never runs. One with `origins` or `fetchBridge` and no `mode` is refused with
   the reason above, and a type error in TypeScript; the fix is `mode: 'strict'`
   ([migration](API.md#migrating-to-sealed-as-the-default)). A guest `fetch()` of its own file's URL is refused in sealed
   mode (`connect-src` has no `blob:`); `sandboxFiles.read()` reads the file.
 - **What the app gives up**: every request, every string run as code (`eval`, `new Function`, a timer given a string:
-  each throws the library's `EvalError`), `import()` (bundle the modules into the entry), and `execute()`. The host is its only way out, through the methods it `expose()`s, so those
-  methods are the whole surface an attacker reaches: copy arguments with spread and validate each one.
+  each throws the library's `EvalError`), `import()` (bundle the modules into the entry), and `execute()`. The only code of the host page it can run is the methods the host `expose()`s, so those
+  methods are the whole surface an attacker reaches: copy arguments with spread and validate each one. What else reaches
+  the host page is the app's data and attacker text: its log lines (`sandbox-log`), the details of `violation` events,
+  its guest writes (`fileswritten`) and the auto-resize height. None is a request or runs code, and an embedder that
+  forwards one to a network sink, an error reporter or analytics gives the app a channel to whoever reads it
+  ([API.md](API.md#app-to-host)).
 - **Two modes share one view**, so drift between them is the risk. The tests that hold sealed mode to "no network" each
   fail if a network path reaches it, whatever the path (research 24's test plan): the type and the schema
   (`test/unit/sealed-mode.test.ts`), the policy template over every subset of file kinds (the same file), the build's

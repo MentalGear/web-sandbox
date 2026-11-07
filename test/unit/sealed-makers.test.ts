@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { COOKIE_CARRIER_IDS } from '@src/lib/cookie-facts';
-import { STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES } from '@src/lib/in-sandbox-view';
 import { LINK_REL_KINDS } from '@src/lib/load-kinds';
 import { cssReferences } from '@src/lib/css-references';
@@ -55,7 +55,10 @@ describe('sealed mode\'s request makers: one enumeration, tied to the library\'s
 
     it('every request maker the allowlist keeps out of the worker is a maker, absent there: importScripts (strict\'s), and the platform\'s other makers', () => {
         const globals = covered('global');
-        for (const name of WORKER_GLOBALS.filter(name => !STRICT_WORKER_GLOBALS.includes(name))) expect(globals.some(({ cover }) => cover.global === name), name).toBe(true);
+        // strict's list leaves out importScripts, a maker, and the names only a secure context has, which make no request
+        const offStrict = WORKER_GLOBALS.filter(name => !STRICT_WORKER_GLOBALS.includes(name));
+        expect(offStrict.filter(name => !(SECURE_CONTEXT_ONLY.globals as readonly string[]).includes(name))).toEqual(['importScripts']);
+        for (const name of offStrict.filter(name => name === 'importScripts')) expect(globals.some(({ cover }) => cover.global === name), name).toBe(true);
         for (const { maker, cover } of globals) {
             expect(STRICT_WORKER_GLOBALS, `${maker.id}: on the allowlist, so not absent: its outcome is no longer 'absent'`).not.toContain(cover.global);
             expect(maker.outcome, maker.id).toBe('absent');
