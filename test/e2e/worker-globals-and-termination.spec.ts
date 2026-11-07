@@ -1,6 +1,7 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { useRecorder, wss } from './recorder';
 import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { LIBRARY_GUEST_GLOBALS } from '@src/lib/sealed-reach';
 import { isViewMode, VIEW_MODES } from './view-modes';
 
 /**
@@ -23,8 +24,8 @@ import { isViewMode, VIEW_MODES } from './view-modes';
 const recorder = useRecorder();
 
 // The globals the library itself puts on the worker after the allowlist ran (bridge, sandboxFiles, sandboxFetch,
-// sandboxView, and strict mode's per-build entry marker).
-const LIBRARY_GLOBALS = ['bridge', 'sandboxFiles', 'sandboxFetch', 'sandboxView'];
+// sandboxView: LIBRARY_GUEST_GLOBALS, sealed-reach.ts; and strict mode's per-build entry marker, checked below by its prefix).
+const LIBRARY_GLOBALS: readonly string[] = LIBRARY_GUEST_GLOBALS;
 
 // Every network-capable thing a worker global has offered on some engine, aimed at the blocked listener.
 const ATTEMPTS = (blocked: string) => `

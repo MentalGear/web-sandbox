@@ -97,7 +97,7 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Sealed mode: strict mode with no network
 
-<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e2dafc8c9eee4 -->
+<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e2daf3920eee4 -->
 
 Sealed mode, the default (no `mode`, or `mode: 'sealed'`), is strict mode's view and worker with no network
 ([research 24](docs/research/24_sealed_mode/README.md), [ADR-008](docs/ADR-008-sealed-mode.md)). It is not strict mode
@@ -127,6 +127,9 @@ with its network options left empty: the sealed path never reaches the code that
   every mode); `hostContentSecurityPolicy` serves only Trusted Types where the browser has none. Which inherited channels
   remain in sealed mode is the sealed column of the [host page's context](docs/THREAT-MODEL.md#the-host-pages-context),
   and what each channel of guest activity reaches of the network, the sealed column of [Budgets](docs/API.md#budgets).
+  What the guest's code and markup can reach of each inherited channel is classified name by name
+  ([`SEALED_REACH`](docs/THREAT-MODEL.md#what-a-sealed-guest-can-reach-row-by-row)): of the host page's own state, a
+  sealed guest learns one bit, on Firefox and WebKit, whether its top-level URL is potentially trustworthy.
 
 `test/unit/sealed-build.test.ts` holds this by construction and by run: the call graph of the sealed path reaches none of
 the network code, the host page is never asked, and each check has strict mode with a network as its positive control.
@@ -387,6 +390,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/reasons.ts` | The texts the element gives |
 | `src/lib/rpc.ts` | β — a typed, bidirectional RPC broker that rides the MessageChannel already connecting host and guest |
 | `src/lib/sandbox-log.ts` | The detail of the element's 'sandbox-log' event |
+| `src/lib/sealed-reach.ts` | Everything a sealed guest can reach, classified against every row of INHERITED_CONTEXT |
 | `src/lib/srcset.ts` | The URLs of a `srcset` attribute |
 | `src/lib/structured-size.ts` | The one measure of the byte budgets on log lines and RPC messages: how many bytes structured clone copies for a value |
 | `src/lib/trusted-types.ts` | The element's HTML sinks on a host page that enforces Trusted Types |

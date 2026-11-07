@@ -219,7 +219,6 @@ export function inSandboxScript(
     const WeakMapConstructor = WeakMap;
     const weakGet = WeakMap.prototype.get;
     const weakSet = WeakMap.prototype.set;
-    const weakDelete = WeakMap.prototype.delete;
     const clearTimer = g.clearTimeout;
     // BR:PD4 (below): the traversal methods' owners.
     const HistoryConstructor = g.History;
@@ -630,14 +629,18 @@ export function inSandboxScript(
     // XMLHttpRequest: open() checks the URL and hands the platform the resolved URL, or, for a refused one, a placeholder
     // it never sends; send() of a refused request fails as a network error does (asynchronously: loadstart, then
     // readystatechange, error and loadend, with readyState 4 and status 0; a synchronous one throws a NetworkError), and
-    // abort() and readyState follow the same states. A record per refused request, by index: [state, URL, async, timer].
+    // abort() and readyState follow the same states. A record per opened request, by index: [state, URL, async, timer], whose
+    // state is `admitted` for a URL the gate admitted. The platform's send() is called for an admitted record only: a request
+    // the gate never opened, or opened with a refused URL, never reaches it, whatever a later open() that throws left
+    // behind (class A: INHERITED_CONTEXT.cspReporting; a send of the platform's to the placeholder is a check of the host
+    // page's inherited policy, which reports it to the page's endpoint).
     const xhrReady = typeof NativeXMLHttpRequest === 'function' && xhrPrototype && typeof xhrOpen === 'function' && typeof xhrSend === 'function'
         && typeof xhrAbort === 'function' && xhrReadyState && xhrWithCredentials && typeof ProgressEventConstructor === 'function'
         && typeof EventConstructor === 'function' && DOMExceptionConstructor && urlReady;
     if (xhrReady) {
         const readyStateOfRequest = xhrReadyState!;
-        const refusedRequests = construct(WeakMapConstructor, []) as WeakMap<object, unknown[]>;
-        const recordOf = (xhr: unknown): unknown[] | undefined => apply(weakGet, refusedRequests, [xhr]) as unknown[] | undefined;
+        const openedRequests = construct(WeakMapConstructor, []) as WeakMap<object, unknown[]>;
+        const recordOf = (xhr: unknown): unknown[] | undefined => apply(weakGet, openedRequests, [xhr]) as unknown[] | undefined;
         const progressInit = setPrototype({ lengthComputable: false, loaded: 0, total: 0 }, null);
         const fire = (xhr: unknown, type: string) => apply(dispatch, xhr, [type === 'readystatechange' ? construct(EventConstructor, [type]) : construct(ProgressEventConstructor, [type, progressInit])]);
         const settle = (xhr: unknown, record: unknown[], type: string) => {
@@ -649,30 +652,28 @@ export function inSandboxScript(
         const open = function open(this: unknown, method: unknown, url: unknown) {
             apply(readyStateOfRequest, this, []); // the platform's own check that `this` is a request
             const count = arguments.length;
-            const earlier = recordOf(this);
-            if (earlier) {
-                apply(clearTimer, g, [earlier[3]]);
-                apply(weakDelete, refusedRequests, [this]);
-            }
             const href = count >= 2 ? addressOf(urlText(url)) : '';
-            const refused = count >= 2 && !admits(href);
+            const refused = count < 2 || !admits(href);
             const args: unknown[] = list();
             append(args, method);
             if (count >= 2) append(args, refused ? 'about:blank' : href);
             for (let i = 2; i < count; i++) append(args, arguments[i]);
             apply(xhrOpen, this, args);
-            if (!refused) return;
+            // The platform opened it (an open() that throws, the gate's or the platform's, changes neither's state): it
+            // replaces the earlier open, and its record says whether the URL the platform now holds is one the gate admitted.
+            const earlier = recordOf(this);
+            if (earlier) apply(clearTimer, g, [earlier[3]]);
             const record: unknown[] = list();
-            append(record, 'opened');
+            append(record, refused ? 'opened' : 'admitted');
             append(record, href);
             append(record, count < 3 || !!arguments[2]);
             append(record, undefined);
-            apply(weakSet, refusedRequests, [this, record]);
+            apply(weakSet, openedRequests, [this, record]);
         };
         const sendRequest = function send(this: unknown, body?: unknown) {
             const record = recordOf(this);
-            if (!record) return apply(xhrSend, this, arguments.length === 0 ? [] : [body]);
-            if (record[0] !== 'opened') throw construct(DOMExceptionConstructor!, ['send() needs an opened request', 'InvalidStateError']);
+            if (record && record[0] === 'admitted') return apply(xhrSend, this, arguments.length === 0 ? [] : [body]);
+            if (!record || record[0] !== 'opened') throw construct(DOMExceptionConstructor!, ['send() needs an opened request', 'InvalidStateError']);
             refuse(record[1] as string);
             if (record[2] !== true) {
                 record[0] = 'done';
@@ -688,7 +689,7 @@ export function inSandboxScript(
         const abort = function abort(this: unknown) {
             const record = recordOf(this);
             apply(xhrAbort, this, []);
-            if (!record) return;
+            if (!record || record[0] === 'admitted') return;
             const state = record[0];
             if (state === 'sending') {
                 apply(clearTimer, g, [record[3]]);

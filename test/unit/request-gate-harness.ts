@@ -30,8 +30,18 @@ export function createGateHarness() {
         static readonly DONE = 4;
         private state = 0;
         private target = '';
-        open(_method: string, url: string) { opened.push(url); this.target = url; this.state = 1; }
-        send() { sent.push(this.target); }
+        // as the platform's: a method that is not an HTTP token is refused before anything changes, and an unopened request
+        // is not sent
+        open(method: string, url: string) {
+            if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(String(method))) throw new DOMException(`'${String(method)}' is not a valid HTTP method`, 'SyntaxError');
+            opened.push(url);
+            this.target = url;
+            this.state = 1;
+        }
+        send() {
+            if (this.state !== 1) throw new DOMException('the object state must be OPENED', 'InvalidStateError');
+            sent.push(this.target);
+        }
         abort() {}
         get readyState() { return this.state; }
         get withCredentials() { return false; }
