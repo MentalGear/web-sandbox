@@ -131,10 +131,10 @@ export const HOST_PASSES = {
         cost: `linear in the entry, one pass of its trivia from the right (BD7:LIM-2); ${FILES_CAP}`,
     },
     fileStore: {
-        does: "registerFiles(), unregisterFiles() and a commit: each path checked (a pattern, and a URL parse of the path alone), each entry's bytes copied and encoded, the quota counted; snapshot() orders the stylesheets after the files they name (one walk of the reference graph)",
+        does: "registerFiles(), unregisterFiles() and a commit: each path checked against PATH_RULES (a URL parse of the path alone among them), a refusal minted with the rule it breaks, each entry's bytes copied and encoded, the quota counted; snapshot() orders the stylesheets after the files they name (one walk of the reference graph)",
         takes: ['files', 'writes'], modes: ALL, rule: 'pure',
         units: [
-            'src/lib/files.ts#FileStore', 'src/lib/files.ts#describePath', 'src/lib/files.ts#fileError', 'src/lib/minted-errors.ts#markMinted', 'src/lib/files.ts#isStylesheetType',
+            'src/lib/files.ts#FileStore', 'src/lib/files.ts#checkPath', 'src/lib/files.ts#brokenPathRule', 'src/lib/files.ts#describePath', 'src/lib/files.ts#fileError', 'src/lib/minted-errors.ts#mintError', 'src/lib/files.ts#isStylesheetType',
             'src/lib/files.ts#isUint8Array', 'src/lib/files.ts#isValidPath', 'src/lib/files.ts#toBytes', 'src/lib/files.ts#toBase64', 'src/lib/files.ts#referenceCost', 'src/lib/files.ts#rewriteCost',
             'src/lib/files.ts#stronglyConnectedComponents', 'src/lib/load-kinds.ts#admits',
         ],

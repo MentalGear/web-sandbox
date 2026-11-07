@@ -192,7 +192,7 @@ export function sealedScriptUnsafeRefusal(mode: unknown, source: Record<string, 
  */
 export function htmlRefusal(mode: unknown, html: unknown): ConfigRefusal | null {
     if (!hasStrictView(mode) || typeof html !== 'string') return null;
-    return html.length > VIEW_RENDER_MAX_LENGTH ? new ConfigRefusal(reasonText('htmlTooLong')) : null;
+    return html.length > VIEW_RENDER_MAX_LENGTH ? mintUncodedError(ConfigRefusal, reasonText('htmlTooLong')) : null;
 }
 
 // Old names of modes: refused like any other value that is not a mode, never an alias (nothing is published, so no
