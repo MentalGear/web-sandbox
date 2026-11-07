@@ -39,3 +39,16 @@ describe('a relative XMLHttpRequest URL against a base that cannot resolve one (
         expect(() => request.open('GET', 'http://')).toThrow(expect.objectContaining({ name: 'SyntaxError', message: 'the URL does not parse' }));
     });
 });
+
+describe('a relative WebSocket URL against a base that cannot resolve one (BD6:NEW-2)', () => {
+    it.each(['/socket', 'socket', '//elsewhere.example/socket'])('new WebSocket(%s) is refused in the gate\'s words and reported, not a parse error', (url) => {
+        clear();
+        expect(() => new WebSocket(url)).toThrow(expect.objectContaining({ name: 'SecurityError', message: 'WebSocket refused by the sandbox: sealed mode opens no WebSocket (it has no network)' }));
+        expect(reports()).toEqual([expect.objectContaining({ type: 'VIOLATION', directive: 'connect-src', sourceFile: GATE_SOURCE_FILE })]);
+    });
+
+    it('a URL that parses nowhere still throws the SyntaxError', () => {
+        clear();
+        expect(() => new WebSocket('ws://')).toThrow(expect.objectContaining({ name: 'SyntaxError', message: 'the URL does not parse' }));
+    });
+});

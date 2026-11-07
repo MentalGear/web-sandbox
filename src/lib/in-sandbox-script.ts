@@ -505,21 +505,26 @@ export function inSandboxScript(
             throw construct(DOMExceptionConstructor!, ['the URL does not parse', 'SyntaxError']);
         }
     };
-    const resolved = (value: unknown): URL => resolveText(urlText(value));
-    // The address XMLHttpRequest.open() checks: the resolved URL, or, for a relative one that no base here can resolve (a
-    // blob worker's location, `blob:null/…`, has no path to resolve against), the text as written. It names no address
-    // the gate could admit, so the request is refused in the gate's words, not by a parse error of the platform's (BD6:NEW-2).
-    const addressOf = (text: string): string => {
+    // A URL text resolved against the base they use, or null for a relative one that no base here can resolve (a blob
+    // worker's location, `blob:null/…`, has no path to resolve against). Such a text names no address the gate could
+    // admit, so XMLHttpRequest and WebSocket refuse it in the gate's words, not by a parse error of the platform's
+    // (BD6:NEW-2). A text that is not a URL at all still throws the SyntaxError.
+    const resolvedOrRelative = (text: string): URL | null => {
         try {
-            return apply(urlHref!, resolveText(text), []) as string;
+            return resolveText(text);
         } catch (error) {
             try {
                 parseUrl(text, 'https://base.invalid/');
             } catch {
                 throw error; // not a relative reference either: the platform's SyntaxError
             }
-            return text;
+            return null;
         }
+    };
+    // The address XMLHttpRequest.open() checks: the resolved URL, or the text as written for a relative one no base resolves.
+    const addressOf = (text: string): string => {
+        const target = resolvedOrRelative(text);
+        return target ? (apply(urlHref!, target, []) as string) : text;
     };
     // The refusal's words per mode (BD6:NEW-1): sealed mode has no origins option to point at (it refuses one); it has no
     // network, and what the app can do is call a method the host page exposes.
@@ -708,7 +713,12 @@ export function inSandboxScript(
             const count = arguments.length;
             if (count === 0 && socketsRefused) throw construct(TypeErrorConstructor, ["Failed to construct 'WebSocket': 1 argument required"]);
             if (count === 0) return construct(NativeWebSocket, [], new.target);
-            const target = resolved(url);
+            const text = urlText(url);
+            const target = resolvedOrRelative(text);
+            if (!target) {
+                refuse(text);
+                throw construct(DOMExceptionConstructor!, ['WebSocket ' + (socketsRefused ? socketRefusal : refusal), 'SecurityError']);
+            }
             const protocol = apply(protocolOf!, target, []);
             if (protocol === 'https:') apply(protocolTo!, target, ['wss:']);
             else if (protocol === 'http:') apply(protocolTo!, target, ['ws:']);
