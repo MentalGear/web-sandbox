@@ -14,6 +14,8 @@ import { createBroker } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
 import { limitValues } from '@src/lib/limits';
+import { refuseCodeFromStrings } from '@src/lib/code-from-strings';
+import { reasonText } from '@src/lib/reasons';
 import { inheritedContext } from '../../tools/docgen/extractors/inherited-context';
 
 /**
@@ -539,5 +541,50 @@ describe("the warning about scripts in `html` names sealed mode in sealed mode",
         expect(said[0]).toMatch(/^\[Sandbox\] sealed mode: .*sealed mode has no network\. Register the file instead\.$/);
         expect(said[0]).not.toContain('origins');
         expect(said[1]).toMatch(/^\[Sandbox\] strict mode: .*from an origin listed in origins\.$/);
+    });
+});
+
+// ---- BD7:TST-2: sealed mode's wirings, held by the unit run as well as by the e2e specs
+
+describe("sealed mode's wirings are held by the unit run: the code-from-string refusal and the entry's import refusal (BD7:TST-2)", () => {
+    const refusal = refuseCodeFromStrings.toString();
+
+    it("the worker's source holds the code-from-string refusal exactly when scriptUnsafe is off: always in sealed mode, in strict mode without scriptUnsafe", async () => {
+        const el = await mount();
+        el.registerFiles({ 'main.js': 'void 0' });
+        const sourceOf = (config: Record<string, unknown>) => {
+            el.setConfig(config);
+            expect(el.state, JSON.stringify(config)).toBe('loading');
+            return el._strictInit.workerSource as string;
+        };
+        for (const config of [{}, { mode: 'sealed' }, { mode: 'sealed', entry: 'main.js' }, { mode: 'strict' }, { mode: 'strict', entry: 'main.js' }]) {
+            const source = sourceOf(config);
+            expect(source.split(refusal), `${JSON.stringify(config)}: the refusal runs once, before the entry`).toHaveLength(2);
+            expect(source.indexOf(refusal), JSON.stringify(config)).toBeLessThan(source.indexOf('\n(function () {\n'));
+        }
+        // positive control: strict mode's scriptUnsafe runs strings as code, so its worker has no refusal
+        expect(sourceOf({ mode: 'strict', scriptUnsafe: true }).includes(refusal)).toBe(false);
+    });
+
+    it("an entry that holds an import expression is refused by the build in sealed and strict mode, with its reason; one without builds", async () => {
+        const el = await mount();
+        const reasons: string[] = [];
+        el.addEventListener('terminated', (event: CustomEvent) => reasons.push(event.detail.reason));
+        for (const mode of ['sealed', 'strict'] as const) {
+            for (const entry of ["import('https://x.example/a')", "import.source('https://x.example/a')", "import /* */ . defer('https://x.example/a')", "x = 1; // import(later)"]) {
+                el.registerFiles({ 'main.js': entry });
+                el.setConfig({ mode, entry: 'main.js' });
+                expect(el.state, `${mode}: ${entry}`).toBe('terminated');
+                expect(el._buildRefusal(), `${mode}: ${entry}`).toBe(reasonText('entryImport'));
+            }
+            el.registerFiles({ 'main.js': 'const imports = 1; sandboxView.render("<p>x</p>");' });
+            el.setConfig({ mode, entry: 'main.js' });
+            expect(el.state).toBe('loading');
+            expect(el._buildRefusal(), `${mode}: no import expression`).toBeNull();
+        }
+        // the termination says why
+        el.registerFiles({ 'main.js': "import.defer('https://x.example/a')" });
+        el.setConfig({ entry: 'main.js' });
+        await vi.waitFor(() => expect(reasons.at(-1)).toBe(reasonText('entryImport')));
     });
 });
