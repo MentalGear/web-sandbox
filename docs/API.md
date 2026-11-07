@@ -1629,8 +1629,9 @@ What changes for an embed written when strict mode was the default:
 
 | You have | Now | What to do |
 | :--- | :--- | :--- |
-| no `mode`, and no `origins` or `fetchBridge` | sealed mode: the same view, worker and API, nothing visible changes. A `<script>` or `on…` handler in `html` behaves as in strict mode: it never runs, and the one warning says `sealed mode (the default) runs no script in html; …`. `connect-src` has no `blob:`, so a guest `fetch()` of its own file's URL is refused: read the file with `sandboxFiles.read()` or `text()` | nothing |
+| no `mode`, and no `origins`, `fetchBridge`, `scriptUnsafe: true` and no `execute()` | sealed mode: the same view, worker and API, nothing visible changes. A `<script>` or `on…` handler in `html` behaves as in strict mode: it never runs, and the one warning says `sealed mode (the default) runs no script in html; …`. `connect-src` has no `blob:`, so a guest `fetch()` of its own file's URL is refused: read the file with `sandboxFiles.read()` or `text()` | nothing |
 | no `mode`, with `origins` or `fetchBridge` | refused: nothing is built, and the sandbox terminates with the reason `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``; in TypeScript, a type error | add `mode: 'strict'` |
+| no `mode`, with `scriptUnsafe: true` (which `execute()` needs) | refused: nothing is built, and the sandbox terminates with the reason `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'` ``; in TypeScript, a type error. Sealed mode runs only the registered `entry`: without `scriptUnsafe`, `execute()` does nothing | add `mode: 'strict'` |
 | `mode: 'strict'`, `'cooperative'` or `'worker'` | unchanged | nothing |
 | TypeScript that types a config with no mode as `StrictSandboxConfig` | `mode` is required there | add `mode: 'strict'`, or type it `SealedSandboxConfig` |
 | a host page policy that lists origins for the sandbox in `img-src`, `connect-src` and so on | sealed mode needs none of them | keep `blob:`; drop the origins if nothing else of the page needs them |
