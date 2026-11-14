@@ -3,18 +3,21 @@
 // inside the interpreter, where the worker's own interval evaluates `tick()` and runs the interpreter's pending jobs
 // ('interp' shares one 16 Mi string, as research 19 did; 'interp-fresh' makes a new one for every rejection). The host
 // page's busy share is measured through test/e2e/host-share.ts (the best of N windows against the page's idle baseline).
-//   INTERP_DIR=… bun docs/research/26_interpreter_logic_tier/q5-flood.mjs <engine> [runs]
+//   INTERP_DIR=… bun docs/research/26_interpreter_logic_tier/q5-flood.mjs <engine> [runs] [native|interp|interp-fresh …]
 import { busyShare, describeShare } from '../../../test/e2e/host-share.ts';
 import { emit, engineArgs, launch, loadavg, waitForQuiet } from './lib.mjs';
 import { startServer } from './server.mjs';
 
 const runs = Number(process.argv.slice(2).find((a) => /^\d+$/.test(a)) ?? 2);
+const KINDS = ['native', 'interp', 'interp-fresh'];
+const named = process.argv.slice(2).filter((a) => KINDS.includes(a));
+const kinds = named.length ? named : KINDS;
 const server = await startServer();
 for (const engine of engineArgs()) {
     const { browser, version, close } = await launch(engine);
     try {
         for (let run = 0; run < runs; run++) {
-            for (const kind of ['native', 'interp', 'interp-fresh']) {
+            for (const kind of kinds) {
                 await waitForQuiet(3, `${engine} ${kind}`);
                 const load = loadavg();
                 const page = await browser.newPage();
