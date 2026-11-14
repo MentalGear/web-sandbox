@@ -1,4 +1,4 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { inView } from './strict-view';
 import { drain, mountInput, sleep } from './view-input';
 import { VIEW_MODES } from './view-modes';
@@ -27,6 +27,7 @@ const ENTRY = `
 `;
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('a guest with no gesture in the view takes no focus from the host page: its typing reaches the host input and no event of the worker', async ({ sandbox, page, browserName }) => {
         await page.evaluate(() => { const input = document.createElement('input'); input.id = 'host-input'; document.body.prepend(input); input.focus(); });
         await mountInput(mode, sandbox, browserName, ENTRY, MARKUP);
