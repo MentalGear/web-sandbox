@@ -1,0 +1,8 @@
+q6.run {"engine":"firefox","version":"146.0.1","date":"2026-11-14T13:49:01.988Z","load1":1.21}
+q6 {"engine":"firefox","case":"idle","median":12,"range":"12-17","gaps":[17,12,12,12,12],"load1":[1.21,1.12,1.12,1.03,1.03]}
+q6 {"engine":"firefox","case":"today's srcdoc frame","median":1201,"range":"1199-1205","gaps":[1200,1201,1205,1201,1199],"load1":[0.94,0.94,0.94,0.87,0.87]}
+q6 {"engine":"firefox","case":"served frame","median":1201,"range":"1200-1201","gaps":[1200,1200,1201,1201,1201],"load1":[0.88,0.88,0.89,0.89,0.9]}
+q6 {"engine":"firefox","case":"served frame's srcdoc child","median":1201,"range":"1200-1203","gaps":[1200,1201,1202,1200,1203],"load1":[0.9,0.83,0.83,0.76,0.76]}
+q6 {"engine":"firefox","case":"served frame's blob: worker","median":15,"range":"12-24","gaps":[24,17,14,12,15],"load1":[0.76,0.7,0.7,0.72,0.72]}
+q6 {"engine":"firefox","case":"cross-site frame, no sandbox (control)","median":1201,"range":"1201-1202","gaps":[1201,1201,1201,1202,1202],"load1":[0.75,0.75,0.77,0.77,0.7]}
+q6 {"engine":"firefox","case":"same-origin frame, no sandbox (control)","median":1200,"range":"1198-1208","gaps":[1200,1201,1198,1200,1208],"load1":[0.7,0.65,0.65,0.65,0.6]}
