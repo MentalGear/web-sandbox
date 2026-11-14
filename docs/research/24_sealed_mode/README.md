@@ -55,7 +55,7 @@ engines.
 | # | Decision |
 | :---: | :--- |
 | D8 | Sealed mode switches to the served-document mode ([research 20](../20_served_document_mode/README.md)) now, without waiting for a trigger: its documents start a policy of their own, so the host page's policy is no longer inherited ([research 22](../22_review_trajectory/README.md)). Supersedes D6. Not built yet. |
-| D9 | Cooperative mode, worker mode and strict mode's network options (`origins`, `fetchBridge`) stay as they are, behind a build flag that is off by default. Not built yet. |
+| D9 | Cooperative mode, worker mode and strict mode's network options (`origins`, `fetchBridge`) stay as they are, behind a build flag that is off by default. **Built** ([ADR-009](../../ADR-009-network-modes-build-flag.md)): `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib`; the default build is sealed mode alone, by two entries and a classified module graph (`test/unit/default-build.test.ts`). Strict mode is behind the flag whole, which is the owner's to confirm. |
 
 ## 1. What sealed removes (from the code)
 

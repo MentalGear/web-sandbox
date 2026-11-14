@@ -1,6 +1,8 @@
 # ADR-008: Sealed mode — the default has no network
 
-**Status**: Accepted · **Date**: 2026-10-24
+**Status**: Accepted · **Date**: 2026-10-24 · Amended by [ADR-009](ADR-009-network-modes-build-flag.md): the package as
+built by default holds sealed mode alone, and strict, cooperative and worker mode are in a build only with its flag on.
+What this record says of strict mode describes that build.
 
 ## Context
 

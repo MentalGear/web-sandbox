@@ -224,7 +224,7 @@ worker allowlist already covers, two once-per-element warning sets, a guard the 
 forced-attribute table); the rest are unit tests that are special cases of the URL keep-rule's enumeration. So the growth
 is the constructions and their registries, not layers left behind. The large removals would be public features outside
 the board's scope, cooperative and worker modes (roughly 2k lines, not traced) and strict mode's network options (about
-1.9k); the owner's answer: they stay, behind a build flag that is off by default ([research 24](../24_sealed_mode/README.md), D9). Pass 8 reviews sealed mode again after the internal removals.
+1.9k); the owner's answer: they stay, behind a build flag that is off by default ([research 24](../24_sealed_mode/README.md), D9; built: [ADR-009](../../ADR-009-network-modes-build-flag.md), which measured the default build at 47 modules of 17.3k lines against 52 of 20.4k). Pass 8 reviews sealed mode again after the internal removals.
 
 **The question for the owner (D6), answered.**
 <!-- owner-question:begin -->
@@ -239,7 +239,8 @@ static file. Every class-A data finding since pass 5 came through a list the bro
 
 ## What capability it has cost
 
-52 capabilities were removed or restricted because of a finding ([the table](clipped-capabilities.md)). What a UI author
+52 capabilities were removed or restricted because of a finding, and one more by the owner's decision D9: the package as
+built by default holds sealed mode alone, and the other modes need its build flag ([the table](clipped-capabilities.md)). What a UI author
 notices most: the strict view renders an allowlist (no `canvas`, SVG filters or animation, popovers or `contenteditable`;
 links and forms navigate nowhere); CSS animations and transitions and autoplay are opt-ins; the network is typed exact
 origins with credentials omitted; the worker keeps an allowlist of globals, and since BD5 that list holds neither `navigator.permissions` nor
