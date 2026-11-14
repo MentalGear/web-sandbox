@@ -283,7 +283,7 @@ export function inSandboxScript(
     // own (no prototype, so no inherited getter), and the code after works on the snapshot only. An event's fields are
     // read through the platform's getters captured above; an option object's through the captured Reflect.get. A field
     // whose read throws is undefined. test/unit/read-once.test.ts scans that no function reads a property of a guest value
-    // twice.
+    // twice, and test/unit/event-reads.test.ts that no listener reads a member of its event (BD1:TST-1).
     const snapshotOf = (): Record<string, unknown> => setPrototype({}, null);
     const keep = (snapshot: Record<string, unknown>, field: string, value: unknown) => defineOwn(snapshot, field, { value, enumerable: true });
     const readOptions = (value: unknown, fields: readonly string[]): Record<string, unknown> => {
