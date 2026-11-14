@@ -36,7 +36,9 @@ if (show('q3')) for (const l of of('q3')) console.log('q3', l.engine, l.limitMiB
 if (show('q4')) {
     for (const engine of ['chromium', 'firefox', 'webkit']) {
         for (const bundle of ['worker-wasm.min.js', 'worker-asmjs.min.js']) {
-            const rs = of('q4').filter((l) => l.engine === engine && l.bundle === bundle && !l.error);
+            const all = of('q4').filter((l) => l.engine === engine && l.bundle === bundle && !l.error);
+            // runs that recorded the series' total supersede those that did not
+            const rs = all.some((r) => r.app?.native?.totalMs !== undefined) ? all.filter((r) => r.app?.native?.totalMs !== undefined) : all;
             if (!rs.length) continue;
             const out = { engine, bundle, runs: rs.length, load: rs.map((r) => r.load.split(' ')[0]).join(' ') };
             out.nativeSpawnMs = stat(rs.map((r) => r.nativeSpawnMs));
@@ -51,7 +53,8 @@ if (show('q4')) {
                 out[`${b}.ratio`] = stat(rs.map((r) => r.speed[b].ratio));
                 out[`${b}.same`] = rs.every((r) => r.speed[b].same);
             }
-            const turn = (r, k) => median(r.app[k].times);
+            // one turn, as the series' total over its turns where recorded (a single turn is below a 1 ms clock step)
+            const turn = (r, k) => (r.app[k].totalMs !== undefined ? Math.round((r.app[k].totalMs / r.app[k].times.length) * 100) / 100 : median(r.app[k].times));
             out['turn.native'] = stat(rs.map((r) => turn(r, 'native')));
             out['turn.interp'] = rs.every((r) => r.app.interp.times) ? stat(rs.map((r) => turn(r, 'interp'))) : rs.map((r) => r.app.interp.error).join('|');
             out['turn.ratio'] = rs.every((r) => r.app.interp.times) ? stat(rs.map((r) => Math.round((turn(r, 'interp') / turn(r, 'native')) * 10) / 10)) : '–';

@@ -1,8 +1,8 @@
 {
   "worker-wasm.min.js": {
-    "raw": 66491,
-    "gzip": 19889,
-    "brotli": 17814
+    "raw": 67000,
+    "gzip": 19986,
+    "brotli": 17878
   },
   "quickjs.wasm": {
     "raw": 503134,
@@ -10,18 +10,18 @@
     "brotli": 199016
   },
   "worker-asmjs.min.js": {
-    "raw": 1051903,
-    "gzip": 338594,
-    "brotli": 277708
+    "raw": 1052434,
+    "gzip": 338684,
+    "brotli": 277545
   },
   "worker-wasm.js": {
-    "raw": 110571,
-    "gzip": 24431,
-    "brotli": 21441
+    "raw": 111313,
+    "gzip": 24586,
+    "brotli": 21547
   },
   "worker-asmjs.js": {
-    "raw": 4035569,
-    "gzip": 455220,
-    "brotli": 344960
+    "raw": 4036311,
+    "gzip": 455376,
+    "brotli": 345089
   }
 }

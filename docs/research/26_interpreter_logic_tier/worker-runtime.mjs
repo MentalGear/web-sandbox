@@ -365,6 +365,7 @@ async function nativeApp(turns) {
     self.APP_NATIVE(sandboxView, bridge, sandboxFiles);
     await exposed.get('load')(seedTodos(100));
     const times = [];
+    const start = now();
     for (let i = 0; i < turns; i++) {
         const done = new Promise((resolve) => { saved = resolve; });
         const t0 = now();
@@ -372,7 +373,7 @@ async function nativeApp(turns) {
         await done;
         times.push(round(now() - t0));
     }
-    return { times, sink };
+    return { times, totalMs: round(now() - start), sink };
 }
 
 /**
@@ -454,6 +455,7 @@ async function interpApp(rt, appSource, turns) {
     seed.dispose();
     while (pending.size) await Promise.all([...pending]);
     const times = [];
+    const start = now();
     for (let i = 0; i < turns; i++) {
         const done = new Promise((resolve) => { saved = resolve; });
         const t0 = now();
@@ -464,7 +466,7 @@ async function interpApp(rt, appSource, turns) {
         times.push(round(now() - t0));
         while (pending.size) await Promise.all([...pending]);
     }
-    return { times, sink };
+    return { times, totalMs: round(now() - start), sink };
 }
 
 export function start(variant) {

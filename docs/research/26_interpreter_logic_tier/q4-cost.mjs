@@ -20,7 +20,7 @@ for (const engine of engineArgs()) {
             for (const bundle of ['worker-wasm.min.js', 'worker-asmjs.min.js']) {
                 const load = loadavg();
                 const v = bundle.startsWith('worker-wasm') ? 'sealed-wue' : 'sealed';
-                const { event, events } = await runJob(page, server.origin, { v, bundle, extra: 'cost.js', job: { name: 'cost', bench: BENCH, app: APP_SOURCE(), turns: 20 }, timeoutMs: 180000 });
+                const { event, events } = await runJob(page, server.origin, { v, bundle, extra: 'cost.js', job: { name: 'cost', bench: BENCH, app: APP_SOURCE(), turns: 100 }, timeoutMs: 180000 });
                 const spawnMs = events.find((e) => e.type === 'worker-started')?.spawnMs;
                 emit('q4', { engine, version, run, bundle, nativeSpawnMs, spawnMs, ...event, type: undefined, load, date: new Date().toISOString() });
             }
