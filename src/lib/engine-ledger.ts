@@ -70,7 +70,7 @@ export const ENGINE_DIFFERENCES = {
         firefox: "The error and its text, in the worker and in cooperative mode",
         webkit: "`Script error.` in cooperative mode's inline scripts and in worker mode's worker; strict mode's view relays the real text and counts its characters in the uncaught budget",
         why: "WebKit mutes errors whose script it cannot resolve to the document's origin. Worker mode has no view to count in, and cooperative mode no API; the line is the browser's",
-        tests: [`${E2E}relay-and-rpc-budgets.spec.ts`, `${E2E}error-cost-and-queued-calls.spec.ts`],
+        tests: [`${E2E}relay-and-rpc-budgets.spec.ts`, `${E2E}error-cost-and-queued-calls.spec.ts`, `${E2E}uncaught-event-reads.spec.ts`],
     },
     'worker-violation-reports': {
         what: "`securitypolicyviolation` reports raised inside a worker (`source: 'logic'`) for `importScripts` or a module `import()` in worker mode (strict and sealed mode's build refuses an entry that calls `import()`, and their worker has no `importScripts`; a refused `fetch()`, `XMLHttpRequest` or `WebSocket` is the request gate's own report on every engine)",

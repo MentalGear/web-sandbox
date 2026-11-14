@@ -39,7 +39,12 @@ for (const mode of ['worker', ...VIEW_MODES] as const) {
     test.describe(`${mode} mode`, () => {
         for (const [name, flood] of Object.entries(FLOODS)) {
             for (const replaced of [false, true]) {
-                test(`three ${name} of 2 Mi characters ${replaced ? 'with the event accessors the listener reads replaced by the guest' : '(control: nothing replaced)'} end the sandbox with the uncaught-budget reason`, async ({ sandbox }) => {
+                test(`three ${name} of 2 Mi characters ${replaced ? 'with the event accessors the listener reads replaced by the guest' : '(control: nothing replaced)'} end the sandbox with the uncaught-budget reason`, async ({ sandbox, browserName }) => {
+                    // WebKit mutes the text of a worker's uncaught error ("Script error.", no error object): there is no large message for the
+                    // bootstrap's error listener to read, and in the view modes the view counts the muted error instead, so the effect this
+                    // spec looks for is not there, and the same flood ends the sandbox with or without the listener's read
+                    // ledger: webkit-muted-errors
+                    test.skip(browserName === 'webkit' && name === 'uncaught errors', 'WebKit mutes the text of a worker\'s uncaught error');
                     test.setTimeout(60000);
                     await raise(sandbox, mode, flood(replaced));
                     await expect.poll(async () => (await sandbox.terminations()).map(termination => termination.reason), { timeout: 20000 }).toEqual([expect.stringMatching(UNCAUGHT_REASON)]);
