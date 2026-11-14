@@ -153,7 +153,7 @@ test.describe('sealed mode', () => {
         void sandbox;
         for (const config of [{ scriptUnsafe: true }, { mode: 'sealed', scriptUnsafe: true, html: '<p>x</p>' }]) {
             expect(await apply(page, config as SandboxConfig), JSON.stringify(config)).toBe('terminated');
-            expect((await sandbox.terminations()).at(-1)!.reason).toBe("scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`");
+            expect((await sandbox.terminations()).at(-1)!.reason).toBe("scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1)");
         }
         expect(await apply(page, { mode: 'strict', scriptUnsafe: true, html: '<p>x</p>', hostContentSecurityPolicy: false })).toBe('ready');
     });

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { defineWebSandbox, WebSandbox } from '@src/index';
 import { BUILD_ENTRIES, buildFor, buildOfMode, BUILDS, NETWORK_MODES_FLAG } from '@src/lib/build-flag';
 import { BUILD_CLASSES, BUILD_MODULES, modulesOf, type ModuleClass, type SourceModule } from '@src/lib/build-modules';
-import { CONFIG_SCHEMA, ConfigRefusal, NETWORK_MODES, NETWORK_OPTIONS, normaliseConfig, NO_HOST_PAGE, readIn, SANDBOX_MODES } from '@src/lib/config-schema';
+import { CONFIG_SCHEMA, ConfigRefusal, NETWORK_MODES, NETWORK_OPTIONS, normaliseConfig, NO_HOST_PAGE, readIn, SANDBOX_MODES, unknownModeReason } from '@src/lib/config-schema';
 import { BRIDGE_ROLE, viewBootstrapText } from '@src/lib/in-sandbox-view';
 import { NETWORK_ELEMENT_METHODS, networkModes } from '@src/lib/network-modes';
 import { NETWORK_MODE_REALMS, STRINGIFIED, type StringifiedName } from '@src/lib/realms';
@@ -289,6 +289,43 @@ describe('the refusal: the default build takes no config of a network mode or op
         // a mode that is none is stored and refused at every build, as before; it reads no network option either
         const { value } = refusalOf({ mode: 'banana' });
         expect(value!.config.mode).toBe('banana');
+    });
+
+    // A reason that tells its reader to set a mode this build refuses would lead to a second refusal: every reason the
+    // build gives a config names the flag wherever it names a network mode.
+    it('no reason the build gives a config names a network mode without the flag that builds it: scriptUnsafe in sealed mode, and a mode that is none', () => {
+        const flag = `${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on}`;
+        const namesNetworkMode = (text: string) => NETWORK_MODES_FLAG.modes.some(mode => new RegExp(`\\b${mode}\\b`).test(text));
+        const given: Record<string, readonly string[]> = {
+            networkModesOff: [REASON],
+            sealedScriptUnsafe: [(refusalOf({ scriptUnsafe: true }).refusal as ConfigRefusal).reason, (refusalOf({ mode: 'sealed', scriptUnsafe: true }).refusal as ConfigRefusal).reason],
+            unknownMode: [unknownModeReason('banana')!, unknownModeReason('iframe')!, unknownModeReason(7)!],
+        };
+        for (const [id, reasons] of Object.entries(given)) {
+            for (const reason of reasons) {
+                expect(namesNetworkMode(reason), id).toBe(true);
+                expect(reason, id).toContain(flag);
+            }
+        }
+        expect(given.unknownMode).toEqual([
+            `unknown mode: not strict, sealed, cooperative or worker; this build has sealed mode alone (${flag} builds the others)`,
+            `unknown mode: not strict, sealed, cooperative or worker ('iframe' was renamed 'cooperative'); this build has sealed mode alone (${flag} builds the others)`,
+            `unknown mode: not strict, sealed, cooperative or worker; this build has sealed mode alone (${flag} builds the others)`,
+        ]);
+        // the domain: the config's reasons whose text names a network mode are those above and `sealedNetwork`, which this
+        // build never gives (a network option is refused with `networkModesOff` before sealed mode's rule reads it: above)
+        const naming: string[] = [];
+        for (const [id, { text, decidedBy }] of Object.entries(TERMINATION_REASONS)) {
+            if (decidedBy === 'config' && namesNetworkMode(text)) naming.push(id);
+        }
+        expect(naming.sort()).toEqual([...Object.keys(given), 'sealedNetwork'].sort());
+    });
+
+    it("the warning for a mode that is none says the build has sealed mode alone, and that 'sealed' or no mode starts the sandbox", () => {
+        const { warnings } = refusalOf({ mode: 'banana' });
+        expect(warnings).toEqual([
+            `[Sandbox] mode "banana" is not one of strict, sealed, cooperative, worker; this build has sealed mode alone (${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on} builds the others): the sandbox will not start until setConfig() names 'sealed', or no mode.`,
+        ]);
     });
 
     it('the element: the config is refused before anything of it is applied, the sandbox terminates with the reason, and a sealed config builds again', async () => {

@@ -33,7 +33,7 @@ import { MAX_TOTAL_BYTES } from './files';
 import { VIEW_RENDER_MAX_LENGTH } from './in-sandbox-view';
 import { defineData, hasOwnField, ownField, type Complete, type Holds } from './utils';
 import { watchdogBudget } from './watchdog';
-import { fixedDetail, reasonText, type LibraryDetail } from './reasons';
+import { fixedDetail, joinDetails, reasonText, type LibraryDetail } from './reasons';
 import { mintUncodedError } from './minted-errors';
 
 /** The per-second budget of the calls the guest makes, per environment: what both ends count. */
@@ -222,8 +222,23 @@ export function renamedModeNote(mode: unknown): LibraryDetail {
 /** A mode as a warning shows it (a reason never does: BD5:DOC-2): a string, clamped, or its type. */
 export const describeMode = (mode: unknown): string => (typeof mode === 'string' ? JSON.stringify(mode.slice(0, 32)) : `of type ${mode === null ? 'null' : typeof mode}`);
 
+// A build without the network modes has sealed mode alone (ADR-009): what an unknown mode's refusal and warning add
+// there, so that neither sends its reader to a mode the build refuses next.
+const SEALED_ALONE_NOTE = fixedDetail(`; this build has sealed mode alone (${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on} builds the others)`);
+
+/** "; this build has sealed mode alone (…)" in a build without the network modes, else ''. */
+export function buildModesNote(): LibraryDetail {
+    return networkModes() === null ? SEALED_ALONE_NOTE : fixedDetail('');
+}
+
 /** Why no environment is built for a mode that is not one (the build's refusal, _buildRefusal), or null. */
-export const unknownModeReason = (mode: unknown): string | null => (isSandboxMode(mode) ? null : reasonText('unknownMode', renamedModeNote(mode)));
+export const unknownModeReason = (mode: unknown): string | null => (isSandboxMode(mode) ? null : reasonText('unknownMode', joinDetails(renamedModeNote(mode), buildModesNote())));
+
+/** The warning for a mode that is not one: the modes there are, the build's own among them, and what starts the sandbox. */
+export function unknownModeNotice(mode: unknown): string {
+    const startsWith = networkModes() === null ? "'sealed', or no mode" : 'one of them';
+    return `[Sandbox] mode ${describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}${renamedModeNote(mode)}${buildModesNote()}: the sandbox will not start until setConfig() names ${startsWith}.`;
+}
 
 // The sandbox flags of strict mode's view, always (why: host.ts, at its import): listing one of them in `capabilities`
 // there asks for nothing more, so it is kept, not dropped.
@@ -368,7 +383,7 @@ export const CONFIG_SCHEMA = {
         default: 'sealed', documented: "`'sealed'`", modes: ALL_MODES,
         // any other value is kept, and refused at every build (unknownModeReason), never read as the default (AR:A4)
         read: ({ given }) => (given === undefined ? 'sealed' : given),
-        notice: ({ mode }) => (isSandboxMode(mode) ? [] : [`[Sandbox] mode ${describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}${renamedModeNote(mode)}: the sandbox will not start until setConfig() names one of them.`]),
+        notice: ({ mode }) => (isSandboxMode(mode) ? [] : [unknownModeNotice(mode)]),
     },
     capabilities: {
         default: [], documented: '`[]`', modes: ALL_MODES,

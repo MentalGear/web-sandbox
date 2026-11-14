@@ -24,10 +24,23 @@ const BOUNDARY = new Set(['src/host.ts#step']);
 const ELEMENT_CLASSES: Readonly<Record<string, string>> = { 'src/host.ts': 'WebSandbox', 'src/lib/network-host.ts': 'NetworkMethods' };
 const isElementFile = (file: string) => Object.hasOwn(ELEMENT_CLASSES, file);
 
-/** A file of the repository (repository-relative), comments blanked: what the graph reads as code. */
-export function code(file: string): string {
+const codes = new Map<string, string>();
+
+function blanked(file: string): string {
     let text = readFileSync(path.join(ROOT, file), 'utf8');
     for (const comment of comments(text)) text = text.slice(0, comment.start) + ' '.repeat(comment.end - comment.start) + text.slice(comment.end);
+    return text;
+}
+
+/**
+ * A file of the repository (repository-relative), comments blanked: what the graph reads as code. Read once per run:
+ * a scan over every module asks for each of them many times, and no test writes a file it reads here.
+ */
+export function code(file: string): string {
+    const known = codes.get(file);
+    if (known !== undefined) return known;
+    const text = blanked(file);
+    codes.set(file, text);
     return text;
 }
 
