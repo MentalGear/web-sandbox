@@ -1,12 +1,13 @@
 // Research 26, Q2: can the host stop content that runs inside the interpreter?
 //
-//   cpu       the content loops for ever on one operation (worker-runtime.mjs, OPS); the host page then has the view call
-//             Worker.terminate() (and removes the frame 6 s later), or removes the frame alone. The CPU of the browser's
-//             whole process tree is read from /proc in 100 ms windows (research 24, M4); "idle" is the first window after
-//             which every window is under 0.3 cores. With the interpreter's interrupt handler wired (it calls a
-//             JavaScript function of the worker every time QuickJS polls for an interrupt) and not wired.
+//   cpu       the content runs one operation (worker-runtime.mjs, OPS) in an endless loop ('repeat'), or once followed by
+//             `for (;;) {}` ('once'); the host page then has the view call Worker.terminate() (and removes the frame 6 s
+//             later), or removes the frame alone. The CPU of the browser's whole process tree is read from /proc in
+//             100 ms windows (research 24, M4). With the interpreter's interrupt handler wired (it calls a JavaScript
+//             function of the worker every time QuickJS polls for an interrupt) and not wired.
 //   watchdog  no terminate(): the interrupt handler returns true once a deadline has passed; how long after the
-//             deadline control comes back (3 runs), and each operation's own duration (3 runs, unwired).
+//             deadline control comes back (3 runs), each operation's own duration (3 runs), and how many turns of a
+//             cheap loop run between two polls.
 //
 //   INTERP_DIR=… bun docs/research/26_interpreter_logic_tier/q2-stop.mjs <engine> [cpu|watchdog] [op …]
 import { cpuWindows, emit, engineArgs, idleFrom, launch, loadavg, runJob, sleep } from './lib.mjs';
