@@ -411,14 +411,14 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
             });
         }
 
-        test('an entry that does not parse: the same reason, host line and state on every engine; the guest line carries the engine\'s own SyntaxError text, and on Firefox, which gives none, the library\'s stated placeholder', async ({ sandbox, browserName }) => {
+        test('an entry that does not parse: the same reason, host line and state on every engine; the guest line carries the engine\'s own SyntaxError text, and on Firefox and WebKit, which give none, the library\'s stated placeholder', async ({ sandbox, browserName }) => {
             await sandbox.registerFiles({ 'bad.js': 'var a = ;\n\nvar b = (;' });
             await sandbox.mount(inMode(mode, { entry: 'bad.js' }));
             expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
             const line = await sandbox.waitForLog(/^Uncaught /);
             expect(await sandbox.state()).toBe('terminated');
             // ledger: entry-parse-detail
-            if (browserName === 'firefox') expect(line).toBe('Uncaught the entry did not parse (this browser gives no detail)');
+            if (browserName !== 'chromium') expect(line).toBe('Uncaught the entry did not parse (this browser gives no detail)');
             else expect(line).toMatch(/^Uncaught SyntaxError: \S/);
         });
 

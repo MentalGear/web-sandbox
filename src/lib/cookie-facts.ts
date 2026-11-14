@@ -81,7 +81,7 @@ export const COOKIE_ENGINE_FACTS = {
         measured: "S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23",
         siteFrom: 'not measured: in every layout it sends `SameSite=None` only, as to any third party',
         siteMeasured: "S74 board, BD4:ISO-1 and BD4:ISO-3, 2026-10-24, Playwright's Firefox: a host page whose origin is opaque, one in a sandboxed frame and one framed by another site send what a third-party page sends; test/e2e/host-site-layouts.spec.ts: no Lax or Strict cookie in any layout",
-        hasAncestorOrigins: false,
+        hasAncestorOrigins: true,
     },
     webkit: {
         name: 'WebKit',
@@ -89,8 +89,8 @@ export const COOKIE_ENGINE_FACTS = {
         sends: { sameSite: ['None', 'Lax', 'Strict'], crossSite: ['None'] },
         protectedBy: { configuration: 'Safari, which blocks third-party cookies', measured: false, sends: { sameSite: ['None', 'Lax', 'Strict'], crossSite: [] } },
         measured: "S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23",
-        siteFrom: "the top-level document's URL, whatever the host page's own origin",
-        siteMeasured: "S74 board, BD4:ISO-1 and BD4:ISO-3, 2026-10-24, Playwright's WebKit: a request to the top-level URL's site carries its `SameSite=None, Lax and Strict` cookies from a host page whose origin is opaque and from one framed by that site; test/e2e/host-site-layouts.spec.ts: a plain sandboxed frame's handshake carries them, the guest's none",
+        siteFrom: "the top-level document's URL and the frame's own URL, whatever the host page's own origin",
+        siteMeasured: "BD4:ISO-1 and BD4:ISO-3, 2026-11-14, Playwright 1.65.1's WebKit 27.2: a request to the top-level URL's site carries its `SameSite=None, Lax and Strict` cookies from a host page whose URL is on that site (one whose origin is opaque included) and its `SameSite=None` cookies only from a host page whose URL is on another site (one framed by that site, or framing it); test/e2e/host-site-layouts.spec.ts: a plain sandboxed frame's handshake carries them, the guest's none",
         hasAncestorOrigins: true,
     },
 } as const satisfies Record<CookieEngine, CookieEngineFacts>;

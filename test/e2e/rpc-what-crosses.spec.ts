@@ -174,8 +174,7 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
     expect(results.blobSlice).toEqual({ kind: 'Blob', size: 3 });
     own(results.wasmHeap, 3, 'OUT'); // 3 bytes, not the 16 MiB heap
     // ledger: shared-memory-view-clone
-    if (browserName === 'webkit') own(results.sharedMemory, 2);
-    else expect(results.sharedMemory).toEqual({ error: 'RESULT_NOT_TRANSFERABLE', message: 'result is not transferable: it holds a value structured clone cannot carry' });
+    expect(results.sharedMemory).toEqual({ error: 'RESULT_NOT_TRANSFERABLE', message: 'result is not transferable: it holds a value structured clone cannot carry' });
     // host -> app: call() arguments
     own(report.takes.subarray as Described, 3, 'PUB');
     own((report.takes.nested as Described).values.a.values[0].values.v, 3, 'PUB');
@@ -183,8 +182,7 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
     expect((report.takes.twoViewsOneBuffer as Described).sameBuffer).toBe(false);
     own(report.takes.wasmHeap as Described, 3, 'OUT');
     // ledger: shared-memory-view-clone
-    if (browserName === 'webkit') own(report.takes.sharedMemory as Described, 2);
-    else expect(report.takes.sharedMemory).toMatchObject({ error: 'ARGS_NOT_TRANSFERABLE' });
+    expect(report.takes.sharedMemory).toMatchObject({ error: 'ARGS_NOT_TRANSFERABLE' });
     // app -> host
     expect(report.guestToHost).toEqual({ byteLength: 8, bufferLength: 8, text: 'GUESTPUB', nested: [4, 4] });
     expect(report.hostBufferAfter).toBe(`PUB${SECRET}`); // only the snapshot was transferred

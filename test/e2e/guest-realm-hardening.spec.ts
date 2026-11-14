@@ -255,13 +255,13 @@ test.describe('PD2: fetch() with keepalive is refused in the guest realm', () =>
         });
     }
 
-    test('residual (measured): a frame the guest creates has the platform\'s fetch; Firefox still sends its keepalive request past connect-src', async ({ sandbox, browserName }) => {
+    test('residual (measured): a frame the guest creates has the platform\'s fetch, whose keepalive request every engine checks against connect-src', async ({ sandbox }) => {
         expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         await sandbox.run(`const f = document.createElement('iframe'); f.srcdoc = ${JSON.stringify(`<script>fetch('${recorder.blocked}/pd2-nested', { keepalive: true, method: 'POST', body: 'x' }).catch(() => {}); fetch('${recorder.allowed}/pd2-nested-control').catch(() => {});</script>`)}; document.body.append(f);`);
         await recorder.waitFor('allowed', '/pd2-nested-control'); // the nested frame's scripts run (positive control)
         await sandbox.page.waitForTimeout(800);
         // ledger: keepalive-fetch
-        expect(recorder.paths('blocked')).toEqual(browserName === 'firefox' ? ['/pd2-nested'] : []);
+        expect(recorder.paths('blocked')).toEqual([]);
     });
 });
 
@@ -327,7 +327,7 @@ test.describe('PD5: focus and the clipboard (residuals, measured)', () => {
         const guestKeys = (await sandbox.logs()).filter(line => line.startsWith('PD5-KEY')).at(-1) ?? null;
         const hostValue = await page.evaluate(() => (document.getElementById('host-input') as HTMLInputElement).value);
         // ledger: focus-and-clipboard
-        const measured = { chromium: ['web-sandbox', 'PD5-KEY abc', ''], firefox: ['web-sandbox', null, ''], webkit: ['input', null, 'abc'] }[browserName as 'chromium'];
+        const measured = { chromium: ['input', null, 'abc'], firefox: ['web-sandbox', null, ''], webkit: ['input', null, 'abc'] }[browserName as 'chromium'];
         expect([active, guestKeys, hostValue]).toEqual(measured);
     });
 

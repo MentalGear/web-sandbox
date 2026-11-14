@@ -8,9 +8,8 @@ export const SAFE_CAPABILITIES = [
 
 // Capabilities that reach outside the frame, so they need an explicit opt-in via `unsafeCapabilities`:
 // - allow-forms: a submission is a navigation, and inside the frame form-action 'none' and the wrapper frame stop it.
-//   But a submit button clicked with a modifier, by the user or by a click the guest's own script synthesizes, opens
-//   the submission in a new top-level tab, and Chromium checks no form-action for it: the form's fields reach any URL
-//   (R1:R2-2). It is opt-in for that reason; strict mode always sets it on its view, where no guest script runs and
+//   But a submit button clicked with a modifier by the user opens the submission in a new top-level tab, and Chromium
+//   checks no form-action for it: the form's fields reach any URL (R1:R2-2). It is opt-in for that reason; strict mode always sets it on its view, where no guest script runs and
 //   every submit is cancelled (host.ts, _getSandboxFlags), so strict mode is unaffected.
 // - allow-popups: a popup is a new top-level window, untouched by the frame's CSP -> URL exfiltration. Leaving it
 //   out does not stop every new window in cooperative mode: a modifier click on a guest link opens one (R1:R2-2, a

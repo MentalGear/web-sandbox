@@ -4,16 +4,17 @@ import { TRUSTED_TYPES_RULES } from '@src/lib/csp/host-trusted-types';
 
 /**
  * Trusted Types answer the same on every engine (INHERITED_CONTEXT.trustedTypesRequirement; src/lib/csp/host-trusted-types.ts).
- * Chromium and WebKit have them, and the browser refuses: a `trusted-types` list that does not name the library's policy
- * ends the build with the Trusted Types reason, and `execute()`'s string is not evaluated. Firefox, at the version measured,
- * has none, so the library reads the same two directives from the host page's policy and refuses as the browsers do.
+ * All three engines have them (Firefox since 159; 146 had none), and the browser refuses: a `trusted-types` list that does not
+ * name the library's policy ends the build with the Trusted Types reason, and `execute()`'s string is not evaluated. A
+ * browser without them is given the page's policy as `hostContentSecurityPolicy`, from which the library reads the same
+ * two directives and refuses as the browsers do.
  *
  * Each rule of TRUSTED_TYPES_RULES runs here in every mode (sealed mode answers as strict mode) on a real host page
  * (vite.config.ts, /__host-policy, with a Trusted Types default policy of its own where the engine has any), with the
  * policy given as `hostContentSecurityPolicy`
- * so that all engines have it. The browsers that have Trusted Types are the oracle: the table is what they do, and Firefox
- * has to equal it. Then without the option: a browser without Trusted Types applies none (the library never asks the page
- * for its policy), and the browsers that have them go on applying theirs.
+ * so that all engines have it. The browsers that have Trusted Types are the oracle: the table is what they do. Then
+ * without the option: the browsers go on applying theirs (a browser without Trusted Types would apply none: the library
+ * never asks the page for its policy).
  */
 
 const TRUSTED_TYPES = "the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)";
@@ -78,20 +79,19 @@ async function outcomes(sandbox: SandboxDriver, extra: object = {}) {
 }
 
 const ALL_ENDED = { strict: ENDED, sealed: ENDED, worker: ENDED, cooperative: ENDED };
-const ALL_READY = { strict: READY, sealed: READY, worker: READY, cooperative: READY };
 
 test.describe('without hostContentSecurityPolicy', () => {
     const POLICY = "require-trusted-types-for 'script'; trusted-types other; connect-src 'self'";
 
-    test('the browser decides where it has Trusted Types; where it has none nothing is applied, though the page asks for it', async ({ sandbox, page, browserName }) => {
+    test('the browser decides where it has Trusted Types, and every engine has them', async ({ sandbox, page }) => {
         await openWithPolicy(page, POLICY);
         // ledger: trusted-types
-        expect(await outcomes(sandbox), browserName === 'firefox' ? 'Firefox has no Trusted Types, and the library was not given the page\'s directives' : 'the browser applies it').toEqual(browserName === 'firefox' ? ALL_READY : ALL_ENDED);
+        expect(await outcomes(sandbox), 'the browser applies it').toEqual(ALL_ENDED);
     });
 
-    test('given as hostContentSecurityPolicy, the same policy applies on every engine, and false applies none of it', async ({ sandbox, page, browserName }) => {
+    test('given as hostContentSecurityPolicy, the same policy applies on every engine, and false changes nothing where the browser has Trusted Types', async ({ sandbox, page }) => {
         await openWithPolicy(page, POLICY);
         expect(await outcomes(sandbox, { hostContentSecurityPolicy: POLICY }), 'given').toEqual(ALL_ENDED);
-        expect(await outcomes(sandbox, { hostContentSecurityPolicy: false }), 'false').toEqual(browserName === 'firefox' ? ALL_READY : ALL_ENDED);
+        expect(await outcomes(sandbox, { hostContentSecurityPolicy: false }), 'false').toEqual(ALL_ENDED);
     });
 });

@@ -277,11 +277,11 @@ test.describe('cooperative mode', () => {
         expect(guest.referrer, covering('referrer', 'the guest document has no referrer')).toBe('');
         expect(String(guest.cookie), covering('documentOrigin', "the guest reads none of the host's cookies (WebKit answers an empty string, the others throw)")).not.toMatch(/hs_|script_visible/);
         expect(String(guest.storage), covering('documentOrigin', "and none of the host's storage")).toMatch(/^ERR SecurityError$/);
-        // location.ancestorOrigins: the host origin, which is not a secret (documented as a cooperative limit; Firefox has none)
+        // location.ancestorOrigins: the host origin, which is not a secret (documented as a cooperative limit; Firefox lists 'null' for it)
         const ancestors: string[] = guest.ancestors;
         expect(ancestors.filter(origin => origin !== 'null' && origin !== ORIGIN), covering('ancestorOrigins', 'the guest sees at most the host origin and the opaque wrapper')).toEqual([]);
         // ledger: ancestor-origins
-        if (browserName === 'firefox') expect(ancestors, covering('ancestorOrigins', 'Firefox has no ancestorOrigins')).toEqual([]);
+        if (browserName === 'firefox') expect(ancestors, covering('ancestorOrigins', "Firefox lists 'null' for the host page: its origin is not shown")).toEqual(['null', 'null']);
         else expect(ancestors, covering('ancestorOrigins', 'the host origin is shown to the guest (documented)')).toEqual(['null', ORIGIN]);
         expect(page.url(), covering('uiSurfaces', "the guest's attempt to navigate the top window did not move the host page")).toContain('/__realistic-host/page?');
         expect(String(guest.topNav), covering('uiSurfaces', 'and threw in the guest')).toMatch(/^ERR /);

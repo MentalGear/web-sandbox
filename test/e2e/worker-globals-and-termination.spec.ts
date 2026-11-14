@@ -100,8 +100,8 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
     const ABSENT_GLOBALS: Record<string, string[]> = {
         // ledger: worker-global-set
         chromium: ['InternalError', 'onoffline', 'ononline', 'CryptoKey', 'SubtleCrypto', 'Lock', 'LockManager', 'AudioDecoder', 'AudioEncoder', 'VideoDecoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrack', 'ImageTrackList'],
-        firefox: ['SecurityPolicyViolationEvent', 'QuotaExceededError', 'IDBRecord', 'WebGLObject'],
-        webkit: ['Temporal', 'SuppressedError', 'InternalError', 'DisposableStack', 'AsyncDisposableStack', 'onlanguagechange', 'scheduler', 'QuotaExceededError', 'IDBRecord', 'Scheduler', 'TaskController', 'TaskSignal', 'TaskPriorityChangeEvent', 'WebGLObject', 'ImageDecoder', 'ImageTrack', 'ImageTrackList'],
+        firefox: ['SecurityPolicyViolationEvent', 'QuotaExceededError', 'WebGLObject'],
+        webkit: ['InternalError', 'onlanguagechange', 'scheduler', 'Scheduler', 'TaskController', 'TaskSignal', 'TaskPriorityChangeEvent', 'WebGLObject'],
     };
     const ABSENT_NAVIGATOR_MEMBERS: Record<string, string[]> = {
         // ledger: worker-global-set
@@ -157,14 +157,14 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         expect(recorder.hits.find(hit => hit.path.startsWith('/es-allowed'))?.headers.accept).toBe('text/event-stream');
     });
 
-    test('residual (measured), cooperative mode: a worker the guest creates is a realm of its own; Firefox sends its EventSource and loads its FontFace past the policy, Chromium and WebKit do not', async ({ sandbox, browserName }) => {
+    test('residual (measured), cooperative mode: a worker the guest creates is a realm of its own; no engine sends its EventSource or loads its FontFace past the policy', async ({ sandbox }) => {
         expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         const body = `try { new EventSource('${recorder.blocked}/v1-guest-worker-es') } catch (e) {} try { new FontFace('v1', 'url(${recorder.blocked}/v1-guest-worker-font.woff)').load().catch(() => {}) } catch (e) {} fetch('${recorder.allowed}/v1-guest-worker-control').catch(() => {});`;
         await sandbox.run(`new Worker(URL.createObjectURL(new Blob([${JSON.stringify(body)}], { type: 'text/javascript' })));`);
         await recorder.waitFor('allowed', '/v1-guest-worker-control'); // the guest's worker runs (positive control)
         await sandbox.page.waitForTimeout(1000);
         // ledger: worker-eventsource-fontface
-        expect(recorder.paths('blocked').sort()).toEqual(browserName === 'firefox' ? ['/v1-guest-worker-es', '/v1-guest-worker-font.woff'] : []);
+        expect(recorder.paths('blocked').sort()).toEqual([]);
     });
 });
 

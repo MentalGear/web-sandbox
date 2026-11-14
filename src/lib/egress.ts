@@ -116,7 +116,7 @@ export const WINDOW_EVENT_TYPES: readonly string[] = [
     'contentvisibilityautostatechange', 'contextlost', 'contextmenu', 'contextrestored', 'copy', 'cuechange', 'cut',
     'dblclick', 'devicemotion', 'deviceorientation', 'deviceorientationabsolute', 'drag', 'dragend', 'dragenter',
     'dragexit', 'dragleave', 'dragover', 'dragstart', 'drop', 'durationchange', 'emptied', 'ended', 'error', 'focus',
-    'formdata', 'gamepadconnected', 'gamepaddisconnected', 'gotpointercapture', 'hashchange', 'input', 'invalid',
+    'formdata', 'gamepadconnected', 'gamepaddisconnected', 'gotpointercapture', 'hashchange', 'input', 'installresult', 'invalid',
     'keydown', 'keypress', 'keyup', 'languagechange', 'load', 'loadeddata', 'loadedmetadata', 'loadstart',
     'lostpointercapture', 'message', 'messageerror', 'mousedown', 'mouseenter', 'mouseleave', 'mousemove', 'mouseout',
     'mouseover', 'mouseup', 'mousewheel', 'mozfullscreenchange', 'mozfullscreenerror', 'offline', 'online',

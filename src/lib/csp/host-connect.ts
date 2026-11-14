@@ -168,7 +168,7 @@ export const HOST_SOURCE_RULES: readonly HostSourceRule[] = [
         ],
     },
     {
-        kind: 'self', source: "`'self'`", admits: "nothing: in a sandboxed frame one engine lets it admit origins it does not name, so name the origin",
+        kind: 'self', source: "`'self'`", admits: "nothing: in a sandboxed frame an engine may let it admit origins it does not name, so name the origin",
         examples: [
             ["connect-src 'self'", 'https://app.example', false],
             ["connect-src 'self' https://app.example", 'https://app.example', true],
