@@ -18,12 +18,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      # Both builds of the package (ADR-009) in one run: a test file's build is its imports. A file that tests a network
+      # mode imports the network build's entry; every other file's element is the default build's (sealed mode alone),
+      # and test/unit/default-build.test.ts holds that build to its modules, in the module graph and in the bundle.
       - run: bun run test:unit
       - run: bun run build
-      # the public API against its reviewed report, etc/web-sandbox.api.md, and the checked-in doc model etc/web-sandbox.api.json against the build (bun run api:update accepts a change)
+      # each build's public API against its reviewed report (etc/web-sandbox.api.md, the default build; etc/web-sandbox.network.api.md,
+      # the build with the network modes), and the checked-in doc models against the builds (bun run api:update accepts a change)
       - run: bun run api:check
-      # the generated regions and the markers of the handwritten sections against the code; the API reference is read from the checked-in doc model, so this needs no build (bun run docs:gen, docs:gen --accept)
+      # the generated regions and the markers of the handwritten sections against the code; the API reference is read from the checked-in doc models, so this needs no build (bun run docs:gen, docs:gen --accept)
       - run: bun run docs:check
+      # packs, installs and type-checks each build: the network build, then the default one (the package as published)
       - run: ./scripts/smoke-package.sh
 
   e2e:
@@ -39,6 +44,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps ${{ matrix.browser }}
+      # Both builds in one run, each test once (ADR-009): a test names its build (test.use({ build }); the default is the
+      # default build), the server serves both entries and both bundles (dist/, dist-network/), and a page refuses a
+      # config that is the other build's to test, so no spec passes against the wrong build.
       - run: bunx playwright test --project=${{ matrix.browser }}
       # the strict-mode design probes (research 15) that ADR-005 rests on; skipped under the root config above
       - run: bun run test:probes --project=${{ matrix.browser }}
