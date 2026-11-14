@@ -1,0 +1,2 @@
+POLLGAP start {"op":"'x'.repeat(2e8) in an endless loop","deadlineMs":1000,"at":"2026-11-14T23:06:42.691Z"}
+exit 124 at 2026-11-14T23:07:42Z load 4.87 2.98 2.18
