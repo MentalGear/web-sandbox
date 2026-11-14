@@ -22,8 +22,8 @@ const show = (q) => !only || only === q;
 if (show('q1')) for (const l of of('q1')) console.log('q1', l.engine, l.bundle, l.host, l.view, l.runs ? 'RUNS' : 'no', (l.error ?? '').slice(0, 90), 'worker:', l.workerViolations?.join('|'), 'doc:', l.documentViolations?.join('|'), l.load);
 
 if (show('q2')) {
-    for (const l of of('q2.watchdog')) console.log('wd', l.engine, l.op, 'durations', l.durations?.join(' '), 'overshoots', l.overshoots?.join(' '), l.interrupted, 'usable', l.usableAfter, l.error ?? '', l.load);
-    for (const l of of('q2.cpu')) console.log('cpu', l.engine, l.op, l.wired ? 'wired' : 'unwired', l.how, 'busy', l.whileLooping, 'idleMs', l.idleMsAfterStop, 'afterRemoval', l.idleAfterRemoval ?? '', 'close', l.afterPageClose, l.error ?? '', l.load);
+    for (const l of of('q2.watchdog')) console.log('wd', l.engine, l.op, 'durations', l.durations?.join(' '), 'overshoots', l.overshoots?.join(' '), l.interrupted, 'usable', l.usableAfter, 'turnsBetweenPolls', l.turnsBetweenPolls, l.error ?? '', l.load);
+    for (const l of of('q2.cpu')) console.log('cpu', l.engine, l.op, l.form, l.wired ? 'wired' : 'unwired', l.how, 'busy', l.whileLooping, 'idleMs', l.idleMsAfterStop, 'afterRemoval', l.idleAfterRemoval ?? '', 'close', l.afterPageClose, l.error ?? '', l.load);
 }
 if (show('q3')) for (const l of of('q3')) console.log('q3', l.engine, l.limitMiB, l.wasmMaxMiB, l.content, JSON.stringify(l.result), l.workerThrew ?? '', 'ms', l.ms, 'usable', JSON.stringify(l.usableAfter), 'ctx', JSON.stringify(l.newContextAfter), 'mod', JSON.stringify(l.newModuleAfter), 'wasmMiB', l.wasmMemoryMiB, 'stall', l.hostStallMs, 'alive', l.hostAlive, l.workerErrors?.join('|') ?? '', l.error ?? '', l.load);
 if (show('q4')) {

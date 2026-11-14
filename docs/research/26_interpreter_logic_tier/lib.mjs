@@ -99,7 +99,9 @@ export const BENCH = {
  * an event of type `until` (or `timeoutMs`); `onPage(page)` runs once the host page is loaded, before the worker starts.
  * Returns the event and every event so far.
  */
-export async function runJob(page, origin, { h = 'none', v = 'sealed', bundle = 'worker-wasm.min.js', job, extra = '', until = 'done', timeoutMs = 60000, onPage }) {
+export async function runJob(page, origin, { h = 'none', v, bundle = 'worker-wasm.min.js', job, extra = '', until = 'done', timeoutMs = 60000, onPage }) {
+    // the view's sealed policy, with 'wasm-unsafe-eval' (the opt-in research 24 names) unless the build is the asm.js one
+    v ??= bundle.startsWith('worker-wasm') ? 'sealed-wue' : 'sealed';
     await page.goto(`${origin}/host?h=${h}&v=${v}`);
     if (onPage) await onPage(page);
     await page.evaluate((args) => window.startJob(args), { bundle, wasm: bundle.startsWith('worker-wasm'), job, extra });

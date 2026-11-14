@@ -25,6 +25,8 @@ export const OPS = {
     regex: { setup: "globalThis.s = 'a'.repeat(40) + 'b';", step: '/^(a+)+$/.test(s);' },
     sortArray: { setup: 'globalThis.a = []; for (let i = 0; i < 3e6; i++) a.push((i * 7919) % 1000003);', step: 'globalThis.b = a.slice(); b.sort();' },
     sortTyped: { setup: 'globalThis.f = new Float64Array(1e7); for (let i = 0; i < f.length; i++) f[i] = (i * 7919) % 1000003;', step: 'globalThis.g = f.slice(); g.sort();' },
+    // the same sort in place, over and over: no allocation, so no call out to JavaScript for memory growth
+    sortInPlace: { setup: 'globalThis.g = new Float64Array(1e7); for (let i = 0; i < g.length; i++) g[i] = (i * 7919) % 1000003;', step: 'g.reverse(); g.sort();' },
     stringify: { setup: "globalThis.o = []; for (let i = 0; i < 1e6; i++) o.push({ a: i, b: 'xxxxxxxxxx', c: [1, 2, 3] });", step: 'JSON.stringify(o).length;' },
     parse: { setup: "globalThis.j = JSON.stringify(Array.from({ length: 1e6 }, (_, i) => ({ a: i, b: 'xxxxxxxxxx', c: [1, 2, 3] })));", step: 'JSON.parse(j).length;' },
     repeat: { setup: '', step: "'x'.repeat(2e8).length;" },
@@ -86,16 +88,17 @@ const JOBS = {
     },
 
     /** Q2: content loops on one operation for ever; the host then terminates the worker or removes the frame. */
-    async stop(init, { op, wired }) {
+    async stop(init, { op, wired, form = 'repeat' }) {
         const Q = await makeModule(init);
         const rt = runtimeWith(Q);
         let calls = 0;
         if (wired) rt.setInterruptHandler(() => { calls++; return false; });
         const vm = rt.newContext();
-        const setup = evaluate(vm, OPS[op].setup);
+        const setup = evaluate(vm, `${OPS[op].setup}\n;0`);
         if (setup.error) return post('done', { error: `setup ${setup.error}` });
         post('spinning', { calls });
-        const end = evaluate(vm, `for (;;) { ${OPS[op].step} }`);
+        // 'repeat': the operation over and over; 'once': the operation once, then a cheap endless loop
+        const end = evaluate(vm, form === 'once' ? `${OPS[op].step}\n;for (;;) {}` : `for (;;) { ${OPS[op].step} }`);
         post('done', { ended: end, calls });
     },
 
@@ -103,34 +106,44 @@ const JOBS = {
      * Q2: the interpreter's own interrupt as a watchdog (no terminate()): the handler returns true once a deadline has
      * passed; how long after the deadline does control come back? Also each operation's duration, alone, unwired.
      */
-    async watchdog(init, { op, deadlineMs = 1000, reps = 3 }) {
+    async watchdog(init, { op, reps = 3 }) {
         const Q = await makeModule(init);
         const rt = runtimeWith(Q);
         let deadline = Infinity;
         let calls = 0;
         rt.setInterruptHandler(() => { calls++; return now() > deadline; });
         const vm = rt.newContext();
-        const setup = evaluate(vm, OPS[op].setup);
+        const setup = evaluate(vm, `${OPS[op].setup}\n;0`);
         if (setup.error) return post('done', { error: `setup ${setup.error}` });
         const durations = [];
         for (let i = 0; i < reps && op !== 'loop' && op !== 'regex'; i++) {
             const t0 = now();
-            const r = evaluate(vm, OPS[op].step);
+            const r = evaluate(vm, `${OPS[op].step}\n;0`);
             durations.push(round(now() - t0));
             if (r.error) return post('done', { error: `step ${r.error}` });
         }
+        // the watchdog: a deadline that has already passed when the content starts; how long until control comes back.
+        // 'loop' and 'regex' run for ever; every other operation runs once and is followed by a cheap endless loop.
         const overshoots = [];
         let interrupted = '';
         for (let i = 0; i < reps; i++) {
             calls = 0;
-            deadline = now() + deadlineMs;
-            const r = evaluate(vm, `for (;;) { ${OPS[op].step} }`);
+            const code = op === 'loop' || op === 'regex' ? `for (;;) { ${OPS[op].step} }` : `${OPS[op].step}\n;for (;;) {}`;
+            deadline = now();
+            const r = evaluate(vm, code);
             overshoots.push(round(now() - deadline));
             deadline = Infinity;
             interrupted = r.error ?? `returned ${r.value}`;
         }
+        // how many turns of a loop of cheap native calls run between two interrupt polls (the poll counter of QuickJS)
+        deadline = 0;
+        evaluate(vm, "globalThis.n = 0; for (;;) { n++; 'x'.repeat(1000).length; }");
+        deadline = 0;
+        evaluate(vm, "globalThis.n = 0; for (;;) { n++; 'x'.repeat(1000).length; }");
+        deadline = Infinity;
+        const turnsBetweenPolls = evaluate(vm, 'n').value;
         const after = evaluate(vm, '1 + 1');
-        post('done', { op, durations, overshoots, interrupted, usableAfter: after.value === 2, calls });
+        post('done', { op, durations, overshoots, interrupted, turnsBetweenPolls, usableAfter: after.value === 2, calls });
     },
 
     /** Q3: content allocates past a limit. What does the content see, and the worker? */

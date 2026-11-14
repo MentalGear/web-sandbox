@@ -12,20 +12,23 @@
 import { cpuWindows, emit, engineArgs, idleFrom, launch, loadavg, runJob, sleep } from './lib.mjs';
 import { startServer } from './server.mjs';
 
-const OPS = ['loop', 'regex', 'sortArray', 'sortTyped', 'stringify', 'parse', 'repeat', 'join', 'bigintToString'];
+const OPS = ['loop', 'regex', 'sortArray', 'sortTyped', 'sortInPlace', 'stringify', 'parse', 'repeat', 'join', 'bigintToString'];
+// the cpu part runs these unless ops are named
+const CPU_OPS = ['loop', 'regex', 'sortTyped', 'stringify', 'repeat', 'bigintToString'];
 const args = process.argv.slice(2);
 const parts = args.filter((a) => a === 'cpu' || a === 'watchdog');
 const onlyOps = args.filter((a) => OPS.includes(a));
 const ops = onlyOps.length ? onlyOps : OPS;
+const cpuOps = onlyOps.length ? onlyOps : CPU_OPS;
 const WINDOW = 100;
 
-async function cpuCase(browser, pid, origin, { op, wired, how }) {
+async function cpuCase(browser, pid, origin, { op, wired, how, form }) {
     const page = await browser.newPage();
     const load = loadavg();
-    const { event } = await runJob(page, origin, { bundle: 'worker-wasm.min.js', job: { name: 'stop', op, wired }, until: 'spinning', timeoutMs: 90000 });
-    if (event.type !== 'spinning') { await page.close(); return { op, wired, how, error: JSON.stringify(event).slice(0, 300) }; }
-    await sleep(500);
-    const [whileLooping] = await cpuWindows(pid, 1000, 1000);
+    const { event } = await runJob(page, origin, { bundle: 'worker-wasm.min.js', job: { name: 'stop', op, wired, form }, until: 'spinning', timeoutMs: 90000 });
+    if (event.type !== 'spinning') { await page.close(); return { op, form, wired, how, error: JSON.stringify(event).slice(0, 300) }; }
+    await sleep(100);
+    const [whileLooping] = await cpuWindows(pid, 500, 500);
     let afterStop;
     let afterRemoval = [];
     if (how === 'terminate') {
@@ -43,7 +46,7 @@ async function cpuCase(browser, pid, origin, { op, wired, how }) {
     const [afterPageClose] = await cpuWindows(pid, 1000, 1000);
     const idleMs = idleFrom(afterStop, WINDOW);
     return {
-        op, wired, how, whileLooping, idleMsAfterStop: idleMs,
+        op, form, wired, how, whileLooping, idleMsAfterStop: idleMs,
         idleAfterRemoval: how === 'terminate' && idleMs === null ? idleFrom(afterRemoval, WINDOW) : undefined,
         afterStop: afterStop.join(' '), afterRemoval: afterRemoval.join(' '), afterPageClose, contentEnded: ended, load,
     };
@@ -57,15 +60,18 @@ for (const engine of engineArgs(args)) {
             for (const op of ops) {
                 const page = await browser.newPage();
                 const load = loadavg();
-                const { event } = await runJob(page, server.origin, { bundle: 'worker-wasm.min.js', job: { name: 'watchdog', op, deadlineMs: 1000, reps: 3 }, timeoutMs: 180000 });
+                const { event } = await runJob(page, server.origin, { bundle: 'worker-wasm.min.js', job: { name: 'watchdog', op, reps: 3 }, timeoutMs: 180000 });
                 emit('q2.watchdog', { engine, version, ...event, type: undefined, load, date: new Date().toISOString() });
                 await page.close();
             }
         }
         if (!parts.length || parts.includes('cpu')) {
+            // a loop of nothing, in both wirings, ended by terminate() and by removing the frame; each heavy operation once
+            // (then a cheap endless loop) in both wirings; and two heavy operations over and over with the handler wired
             const cases = [];
-            for (const op of ops) for (const wired of [false, true]) cases.push({ op, wired, how: 'terminate' });
-            for (const op of ops.filter((o) => ['loop', 'sortTyped', 'bigintToString'].includes(o))) for (const wired of [false, true]) cases.push({ op, wired, how: 'remove' });
+            for (const wired of [false, true]) cases.push({ op: 'loop', form: 'repeat', wired, how: 'terminate' }, { op: 'loop', form: 'repeat', wired, how: 'remove' });
+            for (const op of cpuOps.filter((o) => o !== 'loop')) for (const wired of [false, true]) cases.push({ op, form: op === 'regex' || op === 'sortInPlace' ? 'repeat' : 'once', wired, how: 'terminate' });
+            for (const op of cpuOps.filter((o) => o === 'sortTyped' || o === 'bigintToString')) cases.push({ op, form: 'repeat', wired: true, how: 'terminate' });
             for (const c of cases) emit('q2.cpu', { engine, version, ...(await cpuCase(browser, pid, server.origin, c)), date: new Date().toISOString() });
         }
     } finally {
