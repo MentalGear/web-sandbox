@@ -13,7 +13,7 @@ host page (Q4), which hosts can serve it (Q5) and where it runs (Q6).
 
 **Measured on headless Playwright 1.58.1 on a shared 4-core VM** (Chromium 145.0.7632.6 headless shell, Firefox 146.0.1,
 WebKit 26.0), 2026-11-14, from `cd12c26`. No library code: plain HTML served by a `node:http` server on loopback, as in
-research 20. Every cell below names its engine; a cell not measured says so. Raw output is in [`results/`](results/).
+research 20. Every cell below names its engine; a cell not measured says so. Raw output is in [`results/`](results/README.md).
 
 ## Answer in brief
 
@@ -119,19 +119,28 @@ The same host header with its framing directive varied ([`results/q1-framesrc-*.
 
 | Host policy | Chromium 145 | Firefox 146 | WebKit 26.0 |
 | :--- | :--- | :--- | :--- |
-| `frame-src 'self'` (control) | loads, runs | loads, runs | Q1C_WK_SELF |
-| `child-src 'self'` only (no `frame-src`) | loads, runs | loads, runs | Q1C_WK_CHILD |
-| neither (`default-src 'none'` governs) | **not requested**; `frame-src` event on the host page, report; the iframe's `load` fires (error page) | **not requested**; event, report; **no `load` event** | Q1C_WK_NONE |
-| `frame-src 'none'`; `frame-src blob: data:` | the same as "neither" | the same as "neither" | Q1C_WK_NONE2 |
+| `frame-src 'self'` (control) | loads, runs | loads, runs | loads, runs |
+| `child-src 'self'` only (no `frame-src`) | loads, runs | loads, runs | loads, runs |
+| neither (`default-src 'none'` governs) | **not requested**; `frame-src` event on the host page, report; the iframe's `load` fires (error page) | **not requested**; event, report; **no `load` event** | **not requested**; event, report; the iframe's `load` fires |
+| `frame-src 'none'`; `frame-src blob: data:` | the same as "neither" | the same as "neither" | the same as "neither" |
 
 So a host page with a strict policy must list the file's URL (or `'self'`) in `frame-src` or `child-src`. If it does not,
 the browser refuses the navigation before any request, the host page gets a `securitypolicyviolation` for `frame-src`
-and a report, and the sandbox is an empty frame (Chromium still fires `load`; Firefox does not). Today's `srcdoc` frame
+and a report, and the sandbox is an empty frame (Chromium and WebKit still fire `load`; Firefox does not). Today's `srcdoc` frame
 needs nothing of the kind.
 
 ### What a `<meta>` does not carry (Q1b)
 
-Q1B_TABLE
+A file whose `<meta>` is `sandbox allow-scripts; frame-ancestors 'none'; img-src 'none'; report-uri /__report?from=meta`
+([`results/q1-ignored-*.txt`](results/README.md), `q1-framesrc-ignored-webkit.txt`):
+
+| | Chromium 145 | Firefox 146 | WebKit 26.0 |
+| :--- | :--- | :--- | :--- |
+| Opened top-level: origin | `http://L` (no sandbox) | `http://L` | `http://L` |
+| Framed by a cross-site page without the attribute | loads (no `frame-ancestors`), origin `http://L` | the same | the same |
+| `img-src 'none'` in the same `<meta>` (control: the `<meta>` is read) | image refused, event | refused, event | refused, event |
+| Report at the `<meta>`'s `report-uri` | none | none | none |
+| Console | "The Content Security Policy directive 'sandbox' / 'frame-ancestors' / 'report-uri' is ignored when delivered via a `<meta>` element." | "Ignoring source 'sandbox' / 'frame-ancestors' / 'report-uri' (Not supported when delivered via meta element)." | the same as Chromium, "via an HTML meta element" |
 
 From research 11 and the rows above, for this file:
 - **`sandbox`**: ignored in a `<meta>`, so the file has no sandbox of its own; it is opaque only when its embedder puts the
