@@ -18,12 +18,19 @@ for (const file of readdirSync(dir).sort()) {
 const of = (tag) => lines.filter((l) => l.tag === tag);
 const stat = (xs) => (xs.length ? `${median(xs)} (${range(xs)})` : '–');
 const show = (q) => !only || only === q;
+// The loop keeps one core busy (0.9–1.4 per 100 ms window); the browser's own background work makes single windows of up
+// to 0.8 (Firefox). "Stopped" is the first window after which no window reaches 0.85 cores; null if one does to the end.
+const stoppedFrom = (text, windowMs = 100) => {
+    const w = text.split(' ').map(Number);
+    for (let i = 0; i < w.length; i++) if (w.slice(i).every((cores) => cores < 0.85)) return i * windowMs;
+    return null;
+};
 
 if (show('q1')) for (const l of of('q1')) console.log('q1', l.engine, l.bundle, l.host, l.view, l.runs ? 'RUNS' : 'no', (l.error ?? '').slice(0, 90), 'worker:', l.workerViolations?.join('|'), 'doc:', l.documentViolations?.join('|'), l.load);
 
 if (show('q2')) {
     for (const l of of('q2.watchdog')) console.log('wd', l.engine, l.op, 'durations', l.durations?.join(' '), 'overshoots', l.overshoots?.join(' '), l.interrupted, 'usable', l.usableAfter, 'turnsBetweenPolls', l.turnsBetweenPolls, l.error ?? '', l.load);
-    for (const l of of('q2.cpu')) console.log('cpu', l.engine, l.op, l.form, l.wired ? 'wired' : 'unwired', l.how, 'busy', l.whileLooping, 'idleMs', l.idleMsAfterStop, 'afterRemoval', l.idleAfterRemoval ?? '', 'close', l.afterPageClose, l.error ?? '', l.load);
+    for (const l of of('q2.cpu')) console.log('cpu', l.engine, l.op, l.form, l.wired ? 'wired' : 'unwired', l.how, 'busy', l.whileLooping, 'stoppedMs', l.afterStop ? stoppedFrom(l.afterStop) : '', 'afterRemoval', l.afterRemoval ? stoppedFrom(l.afterRemoval) : '', 'close', l.afterPageClose, l.error ?? '', l.load);
 }
 if (show('q3')) for (const l of of('q3')) console.log('q3', l.engine, l.limitMiB, l.wasmMaxMiB, l.content, JSON.stringify(l.result), l.workerThrew ?? '', 'ms', l.ms, 'usable', JSON.stringify(l.usableAfter), 'ctx', JSON.stringify(l.newContextAfter), 'mod', JSON.stringify(l.newModuleAfter), 'wasmMiB', l.wasmMemoryMiB, 'stall', l.hostStallMs, 'alive', l.hostAlive, l.workerErrors?.join('|') ?? '', l.error ?? '', l.load);
 if (show('q4')) {

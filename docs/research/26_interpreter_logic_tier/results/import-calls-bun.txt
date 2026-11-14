@@ -1,0 +1,20 @@
+sortInPlace setup calls {"a.f":1,"a.e":1,"a.p":1,"a.k":1} wrapped true
+sortInPlace turn 0 1620 ms {}
+sortInPlace turn 1 582 ms {}
+sortInPlace turn 2 624 ms {}
+sortTyped setup calls {"a.k":1} wrapped true
+sortTyped turn 0 1691 ms {"a.k (a) => { var c = K.length; a >>>= 0; if (2147483648 < a) retur":1}
+sortTyped turn 1 1645 ms {"a.k (a) => { var c = K.length; a >>>= 0; if (2147483648 < a) retur":1}
+sortTyped turn 2 1616 ms {}
+bigintToString setup calls {} wrapped true
+bigintToString turn 0 4247 ms {}
+bigintToString turn 1 4336 ms {}
+bigintToString turn 2 4260 ms {}
+stringify setup calls {"a.k":2} wrapped true
+stringify turn 0 1779 ms {"a.k (a) => { var c = K.length; a >>>= 0; if (2147483648 < a) retur":1}
+stringify turn 1 1570 ms {}
+stringify turn 2 1682 ms {}
+repeat setup calls {} wrapped true
+repeat turn 0 643 ms {"a.k (a) => { var c = K.length; a >>>= 0; if (2147483648 < a) retur":1}
+repeat turn 1 628 ms {}
+repeat turn 2 728 ms {}
