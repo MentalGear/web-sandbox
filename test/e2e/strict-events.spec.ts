@@ -1,7 +1,10 @@
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { VIEW_MODES, type ViewMode } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode's events (ADR-005): the worker subscribes with sandboxView.on(type, id | null, handler) and the
@@ -51,6 +54,7 @@ async function mountWithEvents(mode: ViewMode, sandbox: SandboxDriver, browserNa
 const events = (sandbox: SandboxDriver) => sandbox.page.evaluate(() => (window as any).viewEvents as { label: string; detail: any }[]);
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('the schema: a click on a button inside a box, an input and its keys, a checkbox, a submit with its fields', async ({ sandbox, page, browserName }) => {
         await mountWithEvents(mode, sandbox, browserName, `for (const type of ['click', 'input', 'change', 'submit', 'keydown']) sandboxView.on(type, null, report(type));`);
         await clickInSandbox(page, 30, 15); // #btn inside #box

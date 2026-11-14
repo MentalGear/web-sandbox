@@ -189,7 +189,7 @@ export const CHOKEPOINTS = {
     noDelegation: {
         what: "strict and sealed mode's frames carry no `allow` attribute: no feature is delegated, so a host Permissions-Policy only narrows what no frame has",
         file: 'src/host.ts',
-        token: 'if (hasStrictView(this._config.mode)) return permissions;',
+        token: 'buildWrapperDocument(view, sandboxFlags, [])',
     },
     viewEventList: {
         what: 'the view forwards only the event types of VIEW_EVENT_TYPES, none of them a media event',

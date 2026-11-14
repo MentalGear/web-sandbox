@@ -2,6 +2,9 @@ import { test, expect, type ViolationRecord } from './fixture';
 import { useRecorder } from './recorder';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Backlog S16: an empty list means deny. An empty kind of `origins` emits its directive as 'none', and default-src is
  * always 'none' (src/lib/csp/csp-generator.ts, ADR-007): no browser consults a fallback. The unit tests cover every

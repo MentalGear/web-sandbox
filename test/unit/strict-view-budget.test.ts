@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, afterEach } from 'vitest';
 import { inStrictWorker, RENDER_RULES, sanitizeRender, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_URLS_PER_SECOND, viewBootstrapSource, viewBudget, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { defineWebSandbox } from '@src/host';

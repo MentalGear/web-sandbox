@@ -1,7 +1,10 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { inView, waitInView } from './strict-view';
 import { boxOf, drain, mountInput, sleep } from './view-input';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode's in-view drag and custom controls (research 23), on every engine, built from guest code in the worker
@@ -21,6 +24,7 @@ const DRAG = '<div id="pad" style="position:absolute;inset:0;touch-action:none;u
     + '<p id="ready" style="position:absolute;left:0;bottom:0;margin:0">ready</p>';
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('a drag: the thumb follows the pointer through set({ css }), captured, and a native drag inside it does not take the gesture', async ({ sandbox, page, browserName }) => {
         await mountInput(mode, sandbox, browserName, `
             let start = null;

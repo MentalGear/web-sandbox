@@ -2,6 +2,9 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixture';
 import { useRecorder } from './recorder';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * `ready` means the guest's startup script checked in (backlog S46; ADR-002 and ADR-003 amendments): the host is
  * ready when it accepts the bootstrap's announcement, not when the wrapper frame has loaded (which waits for the

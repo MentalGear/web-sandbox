@@ -3,6 +3,9 @@ import { isDevServerNoise } from './dev-server-noise';
 import { inFrames, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The host page's own policy (R1:R2-1 = R1:R3-1; docs/API.md#host-page-policy). The sandbox's frames are srcdoc
  * documents, which inherit the policies of the page that made them: a copy of its CSP list (CSP3), its Trusted Types
@@ -214,6 +217,8 @@ test.describe('host page policy', () => {
     // test/unit/lifecycle-reentry.test.ts, which plays the default policy by the srcdoc setter). The library's sinks go
     // through its own policy from the first write now (trusted-types.ts), so the default policy is never asked for them:
     // here a default policy that calls reset() is not called at all, and the one build stays ready past LOAD_TIMEOUT_MS.
+    test.describe('with a sealed config beside a cooperative one', () => {
+    test.use({ otherBuildConfigs: true }); // the default config, sealed, on the build that has cooperative mode too
     test("LM-2: the host page's Trusted Types default policy is not asked for the library's own writes: a reset() from it never runs, and the one build is ready and stays ready past LOAD_TIMEOUT_MS (Firefox: no Trusted Types)", async ({ sandbox, page }) => {
         await openWithPolicy(page, { csp: "require-trusted-types-for 'script'; trusted-types default web-sandbox", ttDefault: true });
         test.skip(!(await page.evaluate(() => 'trustedTypes' in window)), 'no Trusted Types in this engine');
@@ -234,6 +239,7 @@ test.describe('host page policy', () => {
             await page.waitForTimeout(5000 + 1500); // LOAD_TIMEOUT_MS, and a margin
             expect(await page.evaluate(() => [(document.querySelector('web-sandbox') as any).state, (window as any).sandboxEvents]), label).toEqual(['ready', [{ type: 'ready', reason: null }]]);
         }
+    });
     });
 
     // The wrapper's warning only: the default `allowAnimations: false` has its own (view-switches.spec.ts).

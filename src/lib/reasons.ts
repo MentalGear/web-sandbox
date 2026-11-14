@@ -14,6 +14,7 @@
 import { VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_MAX_LENGTH } from './in-sandbox-view';
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
+import { NETWORK_MODES_FLAG } from './build-flag';
 
 export interface ReasonRow {
     /** The reason, with `…` where it varies. */
@@ -47,6 +48,7 @@ export const TERMINATION_REASONS = {
     viewLost: { text: 'the sandbox view stopped responding', decidedBy: 'host' },
     viewOverrun: { text: `the view spent more than ${OVERRUN_MS} ms on one operation twice within ${OVERRUN_MINUTES} minutes`, decidedBy: 'host' },
     unknownMode: { text: 'unknown mode: not strict, sealed, cooperative or worker…', decidedBy: 'config' },
+    networkModesOff: { text: `strict, cooperative and worker mode, origins and fetchBridge are the network modes, which this build of the package does not have: build it with ${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on} (${NETWORK_MODES_FLAG.command})`, decidedBy: 'config' },
     sealedNetwork: { text: "origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'`", decidedBy: 'config' },
     sealedScriptUnsafe: { text: "scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`", decidedBy: 'config' },
     htmlTooLong: { text: `html is longer than ${VIEW_RENDER_MAX_LENGTH} characters, the most the view renders at once: render the rest from the entry`, decidedBy: 'config' },
@@ -79,7 +81,8 @@ export const reasonCauses = () => ({
     viewLost: 'Strict and sealed mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on).',
     viewOverrun: `Strict and sealed mode: an operation of the view (a render, \`text()\` or \`set()\` applied, with its layout and the rendering update that showed it) took longer than ${OVERRUN_MS} ms, measured as the view's time budget measures it, and another one had, at most ${OVERRUN_MINUTES} minutes before it. The first such operation only logs a \`warn\` line (see [\`sandbox-log\`](#sandbox-log--sandboxlog)); see [\`sandboxView\`](#sandboxview-strict-mode).`,
     unknownMode: "`mode` is not `strict`, `sealed`, `cooperative` or `worker`. For `'iframe'` the reason ends ` ('iframe' was renamed 'cooperative')`; otherwise nothing follows.",
-    sealedNetwork: "`mode` is `'sealed'` or left out (sealed mode is the default), and the config names `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set.",
+    networkModesOff: `The package was built without the network modes (the default: [Builds](#builds)), and the config names \`mode: 'strict'\`, \`'cooperative'\` or \`'worker'\`, or \`origins\` or \`fetchBridge\` (with any value but \`undefined\`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set. Such a build has sealed mode alone; build the package with \`${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on}\` for the others.`,
+    sealedNetwork: "In a build with the network modes: `mode` is `'sealed'` or left out (sealed mode is the default), and the config names `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set.",
     sealedScriptUnsafe: "`mode` is `'sealed'` or left out, and `scriptUnsafe` is `true`. A string run as code is checked against the host page's policy, which the guest's worker inherits, and a refusal reports the page's policy text to the guest and the string to the page's report endpoint; sealed mode runs none. Nothing of the config is applied, as for `sealedNetwork`.",
     htmlTooLong: `Strict and sealed mode: \`html\`, given to \`setConfig()\` or \`load()\`, is longer than \`VIEW_RENDER_MAX_LENGTH\` (${VIEW_RENDER_MAX_LENGTH}) characters, the most one render takes (the initial view is one). It is refused before anything reads it: nothing of the config is applied, as for \`sealedNetwork\`, and \`load()\` keeps the html the element had. Render the rest from the entry, in renders of that size.`,
     configRefused: "`setConfig()` got something that is not an object or cannot be cloned (the error's name follows, as in `(DataCloneError)`), an `origins` that is not an object (`(TypeError: origins is not an object)`), or a kind of it that is not a list (`(TypeError: origins.connect is not a list)`, naming the kind).",

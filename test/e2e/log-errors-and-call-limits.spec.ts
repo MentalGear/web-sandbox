@@ -1,4 +1,7 @@
-import { test, expect, type MountConfig } from './fixture';
+import { test, expect, type MountConfig, buildOfMode } from './fixture';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Findings of R3 where the browser decides, on Chromium, Firefox and WebKit: what structured clone makes
@@ -16,6 +19,8 @@ const MODES: Record<string, MountConfig> = {
 
 test.describe('C-3: an error nested in a logged value crosses as { name, message, stack }', () => {
     for (const [mode, config] of Object.entries(MODES)) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: in an object, an array and Promise.allSettled results; no line says "byte budget"`, async ({ sandbox, page }) => {
             expect(await sandbox.mount(config)).toBe('ready');
             await page.evaluate(() => {
@@ -32,6 +37,7 @@ test.describe('C-3: an error nested in a logged value crosses as { name, message
                 [{ name: 'RangeError', message: 'r', stack: expect.any(String) }],
                 [{ status: 'rejected', reason: { name: 'TypeError', message: 't', stack: expect.any(String) } }],
             ]);
+        });
         });
     }
 });
@@ -83,6 +89,8 @@ test.describe("L-2: a call whose argument's getter ends the environment settles"
 
 test.describe('M-2: callLimits, a lower budget than the default', () => {
     for (const [mode, config] of Object.entries(MODES)) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: maxPerSecond 10: the guest's 11th call in one second is refused BUSY before it is sent; the host method ran 10 times`, async ({ sandbox, page }) => {
             expect(await sandbox.mount({ ...config, callLimits: { maxPerSecond: 10 } })).toBe('ready');
             await page.evaluate(() => {
@@ -96,6 +104,7 @@ test.describe('M-2: callLimits, a lower budget than the default', () => {
             `);
             expect(outcomes).toEqual([...Array(10).fill('ok'), 'BUSY']);
             expect(await page.evaluate(() => (window as any).hostRuns)).toBe(10);
+        });
         });
     }
 });

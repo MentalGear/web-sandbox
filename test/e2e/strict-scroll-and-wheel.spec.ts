@@ -1,7 +1,10 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { inView, waitInView } from './strict-view';
 import { boxOf, mountInput, sleep, take, type Kept } from './view-input';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode's wheel and scroll input, and set({ scroll }) (research 23), on every engine:
@@ -32,6 +35,7 @@ const VIRTUAL = `
     bridge.expose('jump', (top) => { sandboxView.set('list', { scroll: { top } }); return true; });`;
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('wheel: the deltas of what a frame coalesced are summed, with the pointer where it was', async ({ sandbox, page, browserName }) => {
         await mountInput(mode, sandbox, browserName, `sandboxView.on('wheel', 'pad', keep('wheel'));`);
         const box = await boxOf(page);

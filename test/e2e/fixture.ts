@@ -1,8 +1,10 @@
-import { test as base, expect, type Page } from '@playwright/test';
+import { test as base, expect, type BrowserContext, type Page } from '@playwright/test';
 import type { SandboxConfig, SandboxConfigOptions } from '@src/host';
 import type { SandboxOrigins } from '@src/lib/csp/origins';
+import type { UnsafeCapability } from '@src/csp-directives';
 import type { SandboxViolation } from '@src/lib/violation';
 import type { FetchBridgeConfig, FetchRecord } from '@src/lib/fetch-bridge';
+import { NETWORK_MODES_FLAG, type Build } from '@src/lib/build-flag';
 import { E2E_ORIGIN, E2E_PORT } from './server';
 
 // The e2e server's origin: the one serving this checkout (server.ts; 4444 in CI, a port of the checkout's own locally).
@@ -30,7 +32,7 @@ export const BASELINE_CONFIG: SandboxConfig = {
  * SandboxConfig, which narrows each mode's options (R1:R3-6): specs also mount what a mode drops at run
  * time, to assert that it is dropped.
  */
-export type MountConfig = SandboxConfigOptions & { mode?: 'strict' | 'sealed' | 'cooperative' | 'worker'; origins?: SandboxOrigins; fetchBridge?: FetchBridgeConfig };
+export type MountConfig = SandboxConfigOptions & { mode?: 'strict' | 'sealed' | 'cooperative' | 'worker'; origins?: SandboxOrigins; fetchBridge?: FetchBridgeConfig; unsafeCapabilities?: UnsafeCapability[] };
 
 /** Why a test that drives its guest with execute() does not run in sealed mode. */
 export const SEALED_HAS_NO_EXECUTE = 'execute() runs nothing in sealed mode, which refuses scriptUnsafe: this test runs in strict mode, whose view and worker are sealed mode\'s';
@@ -333,6 +335,74 @@ export class SandboxDriver {
     }
 }
 
+/**
+ * The pairing of a test with its build (ADR-009), for every page of `target`, before any script of a page runs:
+ *
+ * - the page is told its build (`window.sandboxBuild`), which every harness page loads the library by (library.ts);
+ * - `setConfig()` of every element the page defines refuses, by throwing, a config that is the other build's to test: on
+ *   the default build one of a network mode (strict, cooperative, worker), on the network build one of sealed mode (no
+ *   mode, or `'sealed'`). So a spec cannot pass against the wrong build: its first config stops it, with the fix.
+ *   `otherBuildConfigs` lifts that for a test whose subject is exactly such a config (the default build's refusal of a
+ *   network mode; the network build's own sealed mode).
+ *
+ * The fixture calls it for the test's context, so for every page of it. A spec that makes a browser context of its own
+ * calls it for that context.
+ */
+export async function pairWithBuild(target: BrowserContext | Page, build: Build, otherBuildConfigs = false): Promise<void> {
+    PAIRED.set(target, build);
+    await target.addInitScript(({ build, strict, networkModes }) => {
+        // Only in a page a server sent: an init script runs in every frame, and the sandbox's own frames are the guest's realm.
+        if (!location.protocol.startsWith('http')) return;
+        Object.defineProperty(window, 'sandboxBuild', { value: build, configurable: true });
+        if (!strict) return;
+        const refusal = (config: unknown): string | null => {
+            if (config === null || typeof config !== 'object' || Array.isArray(config)) return null;
+            const mode = (config as { mode?: unknown }).mode;
+            const sealed = mode === undefined || mode === 'sealed';
+            const network = (networkModes as readonly unknown[]).includes(mode);
+            if (build === 'default' && network) return `a config of ${String(mode)} mode was set on the default build, which has sealed mode alone: declare test.use({ build: 'network' }) for this test`;
+            if (build === 'network' && sealed) return "a sealed config was set on the build with the network modes: a sealed test runs on the default build (test.use({ build: 'default' }), the fixture's default; buildOfMode(mode) in a loop over modes)";
+            return null;
+        };
+        const define = CustomElementRegistry.prototype.define;
+        CustomElementRegistry.prototype.define = function (this: CustomElementRegistry, name: string, constructor: CustomElementConstructor, options?: ElementDefinitionOptions) {
+            const prototype = constructor.prototype as { setConfig?: (config: unknown) => unknown };
+            const setConfig = prototype.setConfig;
+            if (typeof setConfig === 'function' && !Object.hasOwn(setConfig, 'pairedWithBuild')) {
+                const paired = function (this: unknown, config: unknown) {
+                    const refused = refusal(config);
+                    if (refused !== null) throw new Error(`[e2e] ${refused}. A test whose subject is such a config declares test.use({ otherBuildConfigs: true }).`);
+                    return Reflect.apply(setConfig, this, [config]);
+                };
+                Object.defineProperty(paired, 'pairedWithBuild', { value: true });
+                prototype.setConfig = paired;
+            }
+            return Reflect.apply(define, this, [name, constructor, options]);
+        };
+    }, { build, strict: !otherBuildConfigs, networkModes: [...NETWORK_MODES_FLAG.modes] });
+}
+
+// The build each paired context or page was told, for what the test's own side needs of it (the hash of its bootstrap).
+const PAIRED = new WeakMap<object, Build>();
+
+/** The build the pages of `page` run: the one its context, or the page itself, was paired with; the default build otherwise. */
+export const buildOfPage = (page: Page): Build => PAIRED.get(page) ?? PAIRED.get(page.context()) ?? 'default';
+
+/** What a test declares about its build with `test.use()`. */
+export interface BuildOptions {
+    /**
+     * The build of the library the test's pages run: `'default'`, the package as published (sealed mode alone), or
+     * `'network'`, the build with the network modes. A test of sealed mode runs on the default build, a test of strict,
+     * cooperative or worker mode on the network build; `buildOfMode(mode)` gives the build of a mode in a loop over modes.
+     */
+    build: Build;
+    /**
+     * Whether the test gives its build a config that is the other build's to test, on purpose (pairWithBuild): the
+     * default build's refusal of a network mode, or the network build's own sealed mode.
+     */
+    otherBuildConfigs: boolean;
+}
+
 // Injected into the page: resolves once the sandbox reports 'ready' or 'terminated'.
 // settleOutcome turns a call's promise into a CallOutcome, for page-side code that awaits several at once.
 declare global {
@@ -340,7 +410,14 @@ declare global {
     function settleOutcome(promise: Promise<unknown>): Promise<CallOutcome>;
 }
 
-export const test = base.extend<{ sandbox: SandboxDriver }>({
+export const test = base.extend<{ sandbox: SandboxDriver; paired: void } & BuildOptions>({
+    build: ['default', { option: true }],
+    otherBuildConfigs: [false, { option: true }],
+    // Every page of the test's context is paired with its build, whether or not the test drives the harness's own element.
+    paired: [async ({ context, build, otherBuildConfigs }, use) => {
+        await pairWithBuild(context, build, otherBuildConfigs);
+        await use();
+    }, { auto: true }],
     sandbox: async ({ page }, use, testInfo) => {
         await page.addInitScript(() => {
             // Every termination is self-explaining (the e2e fixture's rule): each 'terminated' event any sandbox on the
@@ -403,3 +480,4 @@ function formatTerminations(terminations: TerminationRecord[]): string {
 }
 
 export { expect };
+export { buildOfMode, type Build } from '@src/lib/build-flag';

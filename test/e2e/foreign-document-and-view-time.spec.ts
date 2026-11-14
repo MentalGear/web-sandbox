@@ -1,5 +1,8 @@
-import { test, expect, type MountConfig } from './fixture';
+import { test, expect, type MountConfig, buildOfMode } from './fixture';
 import { busyShare, describeShare, viewBound } from './host-share';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Findings of R2 where the browser decides, on Chromium, Firefox and WebKit. The host page's own policy
@@ -54,6 +57,8 @@ test.describe("Review round 2, L-1 and L-5: in another window's document", () =>
 
 test.describe('C-3: what a call answers is measured as it is posted, by an allow-list', () => {
     for (const [mode, config] of Object.entries(MODES)) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: a guest method answering a large Error or ImageData is refused RESULT_NOT_TRANSFERABLE (each measured ~16 bytes before); a small answer resolves`, async ({ sandbox }) => {
             expect(await sandbox.mount(config)).toBe('ready');
             await sandbox.exposeGuest('bigError', `() => new Error('x'.repeat(${PAST_BUDGET}))`);
@@ -77,6 +82,7 @@ test.describe('C-3: what a call answers is measured as it is posted, by an allow
                 twoFaced: 'resolved 5', // the snapshot measured is the one posted: the getter is read once
                 small: 'resolved 3 a',
             });
+        });
         });
     }
 });

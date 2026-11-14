@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';

@@ -1,8 +1,11 @@
-import { test, expect, type SandboxDriver, SEALED_HAS_NO_EXECUTE } from './fixture';
+import { test, expect, type SandboxDriver, SEALED_HAS_NO_EXECUTE, buildOfMode } from './fixture';
 import type { MountConfig } from './fixture';
 import { useRecorder } from './recorder';
 import { busyShare, describeShare, MARGIN } from './host-share';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 const recorder = useRecorder();
 
@@ -26,6 +29,8 @@ const UNCLONABLE_TEXT = '[function] Symbol(s) [object Event] [object Response] [
 
 test.describe('R4-1: the console relay never throws', () => {
     for (const [mode, config] of Object.entries(MODES)) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: a line of values clone refuses arrives with each named by its kind, and the guest's console call does not throw`, async ({ sandbox }) => {
             expect(await sandbox.mount(config)).toBe('ready');
             const outcome = await sandbox.inGuest(`
@@ -36,9 +41,11 @@ test.describe('R4-1: the console relay never throws', () => {
             const line = await sandbox.waitForLog(/^R41 /);
             expect(line).toBe(`R41 ${UNCLONABLE_TEXT}${mode === 'cooperative' ? ' [object HTMLBodyElement]' : ''}`);
         });
+        });
     }
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('before the worker is attached: an entry that logs unclonable values at its top level starts, and its lines arrive', async ({ sandbox }) => {
             await sandbox.registerFiles({ 'main.js': `console.log('R41 entry', ${UNCLONABLE}[0], ${UNCLONABLE}[3]); console.log('R41 entry done');` });
             expect(await sandbox.mount({ mode, entry: 'main.js' })).toBe('ready');
@@ -77,6 +84,8 @@ test.describe('R4-2, R4-6, R4-7: uncaught errors and unhandled rejections reach 
     });
 
     for (const mode of ['worker', ...VIEW_MODES] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: a later uncaught error and an unhandled rejection are one line each, "Uncaught" once (WebKit's worker mode: muted)`, async ({ sandbox, browserName }) => {
             expect(await sandbox.mount(MODES[mode]!)).toBe('ready');
             await sandbox.run(`setTimeout(() => { throw new Error('later') }); Promise.reject(new TypeError('promised'));`);
@@ -90,9 +99,11 @@ test.describe('R4-2, R4-6, R4-7: uncaught errors and unhandled rejections reach 
             expect(logs.filter(line => line.startsWith('Uncaught Uncaught'))).toEqual([]);
             expect(await sandbox.state()).toBe('ready');
         });
+        });
     }
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('an Error argument arrives as { name, message, stack }', async ({ sandbox, page }) => {
             test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
             expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');
@@ -111,6 +122,7 @@ test.describe('R4-2, R4-6, R4-7: uncaught errors and unhandled rejections reach 
 
 test.describe('R3-3: byte budgets on log lines and RPC messages', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('a 64 MiB typed array logged by the guest crosses as a few bytes; an RPC call past the budget is refused in the guest', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');
             await sandbox.exposeHost('sink', '(...args) => args.length');
@@ -140,13 +152,17 @@ test.describe('R3-3: byte budgets on log lines and RPC messages', () => {
 
 test.describe('R4-8, R2-4: the guest globals say what the docs say', () => {
     for (const [mode, config] of Object.entries(MODES)) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: sandboxFetch exists without the fetch bridge and rejects with FETCH_NOT_ALLOWED`, async ({ sandbox }) => {
             expect(await sandbox.mount(config)).toBe('ready');
             expect(await sandbox.inGuest(`try { await sandboxFetch('https://api.example/'); return 'resolved'; } catch (error) { return error.code; }`)).toBe('FETCH_NOT_ALLOWED');
         });
+        });
     }
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('the worker mints no URL for a type the view would not show (SVG): NOT_FOUND; its bytes stay readable; a PNG gets one', async ({ sandbox }) => {
             await sandbox.registerFiles({ 'i.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>', 'p.png': { base64: 'iVBORw0KGgo=' } });
             expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');

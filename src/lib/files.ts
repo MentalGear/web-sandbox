@@ -11,7 +11,7 @@ import { moduleSpecifierEdits, VIRTUAL_ROOT } from './module-specifiers';
 import { mintError } from './minted-errors';
 import type { Complete, Holds } from './utils';
 import { cssReferences, cssUrlReferences, keepsUrl } from './css-references';
-import { virtualPathOf } from './markup-references';
+import { virtualPathOf } from './references';
 import { admits, type LoadKindName } from './load-kinds';
 
 // The cap (backlog C3). Module constants rather than config: each value was measured to load in all

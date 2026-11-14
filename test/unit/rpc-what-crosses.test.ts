@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { runInNewContext } from 'node:vm';
 import { defineWebSandbox } from '@src/host';

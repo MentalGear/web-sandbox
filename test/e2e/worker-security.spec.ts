@@ -2,6 +2,9 @@ import { test, expect } from './fixture';
 import { useRecorder } from './recorder';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 // Evidence (backlog T5): the load outcome inside the worker, a listener outside the browser that every
 // attempt targets (recorder.ts), and the violation where the engine raises one in a worker. Positive
 // control: the last test, the same loads to an allowlisted origin.

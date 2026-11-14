@@ -1,7 +1,10 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { drain, mountInput, sleep, take } from './view-input';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode's focusin and focusout (research 23), on every engine: which of the view's elements gains or loses focus,
@@ -18,6 +21,7 @@ const FIELDS = '<input id="a" name="first" style="position:absolute;left:10px;to
     + '<p id="ready" style="position:absolute;left:0;bottom:0;margin:0">ready</p>';
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('focusin and focusout as the user moves focus: into the view, between its fields, and out to the host page', async ({ sandbox, page, browserName }) => {
         await mountInput(mode, sandbox, browserName, `sandboxView.on('focusin', null, keep('in')); sandboxView.on('focusout', null, keep('out'));`, FIELDS);
         await clickInSandbox(page, 50, 25);

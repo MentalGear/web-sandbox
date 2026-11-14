@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { afterEach, describe, expect, it } from 'vitest';
 import { createBroker } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';

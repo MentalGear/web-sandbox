@@ -1,7 +1,9 @@
 /**
  * The reference parts of docs/API.md that the public API declares: the element's property and methods, the events with
  * their details, the option types `fetchBridge` and `callLimits`, and the list of exports. They are rendered from the TSDoc
- * of the exports, as api-extractor's doc model keeps it (etc/web-sandbox.api.json, read by ./api-model.ts), so a doc is
+ * of the exports, as api-extractor's doc models keep it (read by ./api-model.ts): etc/web-sandbox.network.api.json, the
+ * build with the network modes, which exports everything; and etc/web-sandbox.api.json, the default build, by which the
+ * lists of exports say which ones only the network build has (ADR-009). So a doc is
  * written once, next to the code. The guide parts of the page stay handwritten, and a section that describes an export
  * names it in a marker (`api:Name` or `api:Name.member`), which goes stale when its declaration changes.
  *
@@ -15,11 +17,20 @@ import { INERT_TYPES } from '../../../src/lib/guest-writes';
 import { signatureOf, type Item } from '../engine';
 import { flatten, oneLine, readApiModel, type ApiMember } from './api-model';
 import { code, codeList, row, table, type Extractor } from './markdown';
+import type { Build } from '../../../src/lib/build-flag';
 
-const MODEL = path.resolve(import.meta.dirname, '../../../etc/web-sandbox.api.json');
+const MODELS = {
+    default: path.resolve(import.meta.dirname, '../../../etc/web-sandbox.api.json'),
+    network: path.resolve(import.meta.dirname, '../../../etc/web-sandbox.network.api.json'),
+} as const satisfies Record<Build, string>;
 
-let loaded: ApiMember[] | undefined;
-const model = (): ApiMember[] => (loaded ??= readApiModel(MODEL));
+const loaded: Partial<Record<Build, ApiMember[]>> = {};
+const modelOf = (build: Build): ApiMember[] => (loaded[build] ??= readApiModel(MODELS[build]));
+/** The whole API: the network build's, which exports what the default build does and the network modes' own. */
+const model = (): ApiMember[] => modelOf('network');
+
+/** Whether the default build exports `member` too: an export of the same name and kind. */
+const inDefaultBuild = (member: ApiMember): boolean => modelOf('default').some(item => item.name === member.name && item.kind === member.kind);
 
 /** The one export called `name` (the class and the interface that share `WebSandbox` are told apart by `kind`). */
 function exported(name: string, kind?: ApiMember['kind']): ApiMember {
@@ -134,7 +145,8 @@ const BUBBLES = /\s*(Does not bubble|Bubbles)\.(?=\s|$)/;
 
 /** The event map's members in the order of ELEMENT_EVENTS, each checked against it: the same events, the same bubbling. */
 function events(): { name: string; member: ApiMember; bubbles: boolean }[] {
-    const map = exported('WebSandboxEventMap');
+    // the element's own events, and the ones the network modes add to its map (NetworkModeEvents, merged into it)
+    const map = { members: [...exported('WebSandboxEventMap').members, ...exported('NetworkModeEvents').members] };
     const names = Object.keys(ELEMENT_EVENTS);
     const declared = map.members.map(member => member.name.replace(/^["']|["']$/g, ''));
     if (names.slice().sort().join() !== declared.slice().sort().join()) {
@@ -205,21 +217,24 @@ function renderReactions(): string {
     }).join('\n');
 }
 
-/** The first sentence of each export, for the lists of what the package exports. */
-const exportRow = (member: ApiMember) => row([code(member.name), prose(firstSentence(member.doc.summary), member.path)]);
+/** The build that has an export, as the lists say it: every build, or the one with the network modes. */
+const buildOf = (member: ApiMember) => (inDefaultBuild(member) ? 'every build' : 'network');
+
+/** The first sentence of each export, for the lists of what the package exports, with the build that has it. */
+const exportRow = (member: ApiMember) => row([code(member.name), buildOf(member), prose(firstSentence(member.doc.summary), member.path)]);
 
 const KIND_ORDER = ['Function', 'Class', 'Variable'];
 
 function renderValues(): string {
     const values = model().filter(member => KIND_ORDER.includes(member.kind));
     const ordered = [...values].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.name.localeCompare(b.name));
-    return table(['Export', 'What it is'], ordered.map(exportRow));
+    return table(['Export', 'Build', 'What it is'], ordered.map(exportRow));
 }
 
 function renderTypes(): string {
     const types = model().filter(member => member.kind === 'Interface' || member.kind === 'TypeAlias');
     // the interface that shares the class's name adds the typed listeners to it; the class is listed
-    return table(['Type', 'What it is'], [...types].filter(member => !(member.kind === 'Interface' && member.name === 'WebSandbox')).sort((a, b) => a.name.localeCompare(b.name)).map(exportRow));
+    return table(['Type', 'Build', 'What it is'], [...types].filter(member => !(member.kind === 'Interface' && member.name === 'WebSandbox')).sort((a, b) => a.name.localeCompare(b.name)).map(exportRow));
 }
 
 function renderFetchRecord(): string {

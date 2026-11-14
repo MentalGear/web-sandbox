@@ -1,6 +1,9 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import type { Page } from '@playwright/test';
 
+// The build with the network modes (ADR-009), and every mode in one test, sealed mode among them, on the build that has them all.
+test.use({ build: 'network', otherBuildConfigs: true });
+
 /**
  * The environment check (S74, class B; src/lib/environment-check.ts): the first statement of every bootstrap that runs
  * in a sandbox document confirms that the document is the one the library built (an opaque origin, about:srcdoc, the

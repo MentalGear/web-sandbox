@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test, expect, HARNESS, ORIGIN } from './fixture';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Backlog S15: the guest cannot learn the host page's URL. The harness is opened at a URL with a
  * distinctive query and fragment, so any value that carries the host page's path, query or fragment is

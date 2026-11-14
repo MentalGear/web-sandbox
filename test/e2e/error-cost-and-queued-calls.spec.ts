@@ -1,9 +1,12 @@
 import { deflateSync } from 'node:zlib';
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, buildOfMode } from './fixture';
 import { waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { busyShare, describeShare, floodControl, interleavedShare, pausableFlood } from './host-share';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Findings of R5 where the browser decides, on Chromium, Firefox and WebKit. Each names its class
@@ -119,6 +122,7 @@ test.describe('L-1 (L): queued calls are posted only when the build is ready', (
     // is made with several timeouts, one build each, and every call that timed out before its build's `ready` is checked;
     // a call that timed out after `ready` had been posted may run (it is not in the queue).
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test("the owner's repro: a call that times out before `ready` never runs, at any timeout", async ({ sandbox, page, browserName }) => {
             test.setTimeout(90000);
             await sandbox.registerFiles({ 'main.js': `bridge.expose('m', (text) => console.log('L1 ' + text));` });
@@ -181,6 +185,7 @@ test.describe('N-4 (D): the view shows what the guest sees', () => {
     const image = (id: string) => `(() => { const i = document.getElementById('${id}'); return i && (i.complete || !/^blob:/.test(i.getAttribute('src'))) ? { size: i.naturalWidth + 'x' + i.naturalHeight, src: i.getAttribute('src') } : null; })()`;
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('a registered image the host unregistered after the build, then removed by the guest, names nothing in the view; another registered image still shows (positive control)', async ({ sandbox, page, browserName }) => {
             expect(await sandbox.registerFiles({ 'pic.png': { base64: png(3, 5) }, 'kept.png': { base64: png(7, 4) } })).toBe('ok');
             expect(await sandbox.mount({ mode, guestWrites: true, scriptUnsafe: true })).toBe('ready');

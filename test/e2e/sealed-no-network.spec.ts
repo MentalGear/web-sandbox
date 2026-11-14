@@ -238,6 +238,8 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         expect(await sandbox.state()).toBe('ready');
     });
 
+    test.describe('in the build with the network modes', () => {
+    test.use({ build: 'network' });
     test('positive control: strict mode with the listener in every origins list runs the same makers, and each one strict mode admits reaches it, with no cookie', async ({ sandbox, page, browserName }) => {
         test.setTimeout(60000);
         const listed = [listener.origins.https, listener.origins.http];
@@ -250,6 +252,7 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         expect(expected.length).toBe(12);
         expect(expected.map(maker => maker.id).filter(id => !reached.has(id))).toEqual([]);
         expect(listener.hits.filter(hit => hit.cookie !== '').map(hit => hit.path)).toEqual([]);
+    });
     });
 
     test('positive control: a plain sandboxed frame of the host page makes the same requests, and they reach the listener, with the jar\'s cookie', async ({ page, browserName }) => {

@@ -60,11 +60,15 @@ cooperative mode's are ([S74](BACKLOG.md#s74)). `scriptUnsafe` is for testing an
 
 ## Trust boundaries
 
-<!-- describes: realms, channels sig:8bc73794 -->
+<!-- describes: realms, channels sig:70d03794 -->
 
 The realms and the channels between them are generated from the code in [ARCHITECTURE.md](../ARCHITECTURE.md#modes-and-realms)
 (which realm runs guest code, which library functions are stringified into it) and
 [Channels and frames](../ARCHITECTURE.md#channels-and-frames) (every frame type, its route, and what bounds each field).
+The package as built by default holds sealed mode alone ([ADR-009](ADR-009-network-modes-build-flag.md)): of the
+realms, the host page, the wrapper, the view and the view's worker. Cooperative mode's guest document, worker mode's frame
+and worker, and the fetch bridge's frame exist only in a build with the network modes, and so do the properties and the
+residuals this page states for those modes and for `origins` and `fetchBridge`; the default build refuses their configs.
 The boundaries those tables cross:
 
 1. **The host page and the sandbox.** Every frame of the sandbox is a sandboxed `srcdoc` frame that never gets

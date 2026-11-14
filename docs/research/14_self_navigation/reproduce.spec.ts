@@ -3,6 +3,9 @@ import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Research 14: the guest frame navigating itself (backlog S10 / S11, issue #6 N1 + N2).
  *

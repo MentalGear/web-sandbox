@@ -1,8 +1,10 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineWebSandbox } from '@src/host';
+import { elementSource } from './element-source';
 import { ELEMENT_EVENTS, elementEvent, freezeDeep } from '@src/lib/element-events';
 import { LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { createSizeOf } from '@src/lib/structured-size';
@@ -46,7 +48,7 @@ describe('one constructor for every event the element dispatches', () => {
     });
 
     it('every type of the table is dispatched by host.ts, and host.ts dispatches no other', () => {
-        const host = readFileSync(path.join(ROOT, 'src/host.ts'), 'utf8');
+        const host = elementSource(); // the class, and the network modes' methods, which dispatch `fetch`
         const dispatched = new Set([...host.matchAll(/elementEvent\('([\w-]+)'/g)].map(match => match[1]!));
         expect([...dispatched].sort()).toEqual(Object.keys(ELEMENT_EVENTS).sort());
     });

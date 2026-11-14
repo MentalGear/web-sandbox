@@ -1,5 +1,8 @@
 import { test, expect } from './fixture';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Configuration guard rails: a setting that weakens the sandbox, or that the browser would silently
  * discard, is announced on the console, once per instance.

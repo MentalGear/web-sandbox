@@ -9,6 +9,9 @@ import { test, expect, ORIGIN } from './fixture';
 import { startNameProxy } from './name-proxy';
 import { COOKIE_ENGINE_FACTS, type CookieEngine } from '@src/lib/cookie-facts';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The host page's site in each layout of the host page (S74, class A; BD4:ISO-1, BD4:ISO-3; src/lib/host-site.ts). An
  * engine decides whether a request of the sandbox's frames is same-site from the frames above them (WebKit: from the

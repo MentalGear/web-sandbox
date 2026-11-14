@@ -15,6 +15,10 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
     strict mode carries a cookie, on any engine (its worker opens no WebSocket), and it admits no `origins` entry on the
     host page's site (see [Cookies](#limits)). [Cooperative mode](#modes) runs guest script in a document, for content
     that cooperates, with the [limits listed below](#limits).
+*   **Sealed mode alone, unless you build the others in:** the package as built by default holds sealed mode and
+    nothing of strict, cooperative or worker mode, `origins` or `fetchBridge`: their code is not in the bundle, and a
+    config that asks for one is refused with a reason that names the fix. They are behind one build flag,
+    `WEB_SANDBOX_NETWORK_MODES=1` ([Modes](#modes), [ADR-009](docs/ADR-009-network-modes-build-flag.md)).
 *   **Unified:** Use the same "Preset" definitions for both manual testing (Playground) and automated regression testing.
 
 ## Getting Started
@@ -45,7 +49,8 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
 4.  **Type-check and build the package**
     ```bash
     bun run typecheck   # src, tests, playground
-    bun run build:lib   # dist/: ESM bundle + .d.ts
+    bun run build:lib   # dist/: ESM bundle + .d.ts of the default build (sealed mode alone)
+    WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib   # the same, with strict, cooperative and worker mode, origins and fetchBridge
     ```
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full workflow.
@@ -89,9 +94,12 @@ const sandbox = document.querySelector('web-sandbox');
 sandbox.load('<h1>Hello</h1>');     // sealed mode, the default: shown, no script in it runs, no network
 ```
 
-**Need the network? Use `mode: 'strict'`.** Sealed mode has no `origins` and no `fetchBridge`: a config that names
-either without `mode: 'strict'` is refused, and the sandbox terminates with the reason ``origins and fetchBridge open
-the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``. An embed written when strict mode
+**Need the network? Build the package with the network modes, and use `mode: 'strict'`.** Sealed mode has no `origins`
+and no `fetchBridge`, and the package as built by default has no other mode: there a config that names either option, or
+a mode other than sealed, is refused, and the sandbox terminates with a reason that names the build flag,
+`WEB_SANDBOX_NETWORK_MODES=1` ([Modes](#modes)). In a build with the network modes a config that names either option
+without `mode: 'strict'` is refused with the reason ``origins and fetchBridge open the network, which sealed mode (the
+default) does not have: set `mode: 'strict'` ``. An embed written when strict mode
 was the default: [Migrating to sealed as the default](docs/API.md#migrating-to-sealed-as-the-default).
 
 **Building an app that your page drives?** Saved HTML and CSS plus the app's JavaScript, with your page as its only input
@@ -100,7 +108,8 @@ and output: [Building an app in sealed mode](docs/API.md#building-an-app-in-seal
 
 Importing the module registers nothing, so you choose the tag name. The element is a block by default; give it a
 height. The package is private and not published yet ([D1](docs/BACKLOG.md#bl-d1)), so `import … from 'web-sandbox'`
-resolves only in a project that links or packs a checkout; from a checkout, import `./src/index.ts`, or build the package
+resolves only in a project that links or packs a checkout; from a checkout, import `./src/index.ts` (`./src/network.ts`
+for the build with the network modes), or build the package
 (`bun run build:lib`) and import `dist/index.js`: only the built package has the same `viewScriptHash()` in a build step and in
 the browser ([Host page policy](docs/API.md#host-page-policy)). `bun run dev` serves the playground on port 4444 only
 (`strictPort`).
@@ -120,9 +129,16 @@ mode (the default) or strict mode.
 | Mode | Guest code runs in | For |
 | :--- | :--- | :--- |
 | `sealed` (default) | a worker; the view runs only the library's own script, admitted by its hash, and shows what the worker renders. No network: the view's policy admits only `blob:` for registered files and `connect-src 'none'`, and a config that names `origins` or `fetchBridge` is refused | content you do not trust ([Strict mode](#strict-mode) describes the view and worker it shares; [API](docs/API.md#modes)) |
-| `strict` | as sealed, with the network options: `origins` and `fetchBridge` (named with `mode: 'strict'`) | content you do not trust that needs the network ([Strict mode](#strict-mode)) |
-| `cooperative` | the guest document: its scripts, handlers and `execute()` | cooperative content: code that does not attack the page, such as your own, within the [cooperative-mode limits](#cooperative-mode-limits) |
-| `worker` | a worker inside a hidden frame; no markup, code through `execute()` | headless code; frozen, to be folded into strict mode |
+| `strict` (network build) | as sealed, with the network options: `origins` and `fetchBridge` (named with `mode: 'strict'`) | content you do not trust that needs the network ([Strict mode](#strict-mode)) |
+| `cooperative` (network build) | the guest document: its scripts, handlers and `execute()` | cooperative content: code that does not attack the page, such as your own, within the [cooperative-mode limits](#cooperative-mode-limits) |
+| `worker` (network build) | a worker inside a hidden frame; no markup, code through `execute()` | headless code; frozen, to be folded into strict mode |
+
+**Two builds.** `bun run build:lib` writes the default build: sealed mode alone. Strict, cooperative and worker mode,
+with `origins` and `fetchBridge`, are the **network modes**, and are in the package only when it is built with the flag
+`WEB_SANDBOX_NETWORK_MODES=1` (`WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib`). The default build's bundle holds none
+of their code and its types none of their configurations; given a config that names one of those modes or options it
+applies nothing and terminates with a reason that names the flag. Everything below about those modes describes the
+network build ([API](docs/API.md#builds), [ADR-009](docs/ADR-009-network-modes-build-flag.md)).
 
 In sealed and strict mode `html` (and `load()`) is the initial view: its `<script>` elements and `on…` handlers never
 run, and the element says so once (`sealed mode (the default) runs no script in html; …`, or `strict mode …`). Put the
@@ -138,7 +154,7 @@ may load each kind from in `origins` (`connect`, `images`, `styles`, `fonts`, `m
 its policy is fixed:
 
 ```js
-sandbox.setConfig({
+sandbox.setConfig({ // in a build with the network modes
     mode: 'strict', // the network options need it: without a mode the config is sealed, and refused
     entry: 'main.js',
     origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] },

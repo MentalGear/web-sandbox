@@ -2,6 +2,9 @@ import { test, expect, ORIGIN } from './fixture';
 import { useRecorder, wss } from './recorder';
 import { CROSSING_TEXTS } from '@src/lib/minted-errors';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The host-mediated fetch bridge (backlog B5, ADR-006): sandboxFetch() in the guest, made by the host under
  * the bridge discipline (src/lib/fetch-bridge.ts), reported as a 'fetch' event.

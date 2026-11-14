@@ -1,5 +1,8 @@
 import { test, expect } from './fixture';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 test('executes code and relays console output to the host', async ({ sandbox }) => {
     expect(await sandbox.mount()).toBe('ready');
 

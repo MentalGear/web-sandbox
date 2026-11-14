@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { code, graphOf, member, reach } from './call-graph';
 import { hostPageOrigin, hostSiteOrigins } from '@src/lib/host-site';
@@ -311,12 +312,12 @@ describe("sealed mode's sandboxFetch(): defined, and refused in the guest with F
 
 /** The network code by node: the reads of the host page, the narrowing, the origins, the bridge, the non-sealed templates. */
 const FORBIDDEN = [
-    'src/lib/host-site.ts#hostPageOrigin', 'src/lib/host-site.ts#hostSiteOrigins', 'src/host.ts#readHostPage',
-    'src/lib/csp/host-connect.ts#hostReach', 'src/lib/csp/origins.ts#parseOrigins', 'src/lib/config-schema.ts#limitHostReach',
+    'src/lib/host-site.ts#hostPageOrigin', 'src/lib/host-site.ts#hostSiteOrigins', 'src/lib/network-config.ts#readHostPage',
+    'src/lib/csp/host-connect.ts#hostReach', 'src/lib/csp/origins.ts#parseOrigins', 'src/lib/network-config.ts#limitHostReach',
     'src/lib/fetch-bridge.ts#toFetchPolicy', 'src/lib/fetch-bridge.ts#createFetchBridge',
     'src/lib/bridge-frame.ts#prepareBridgeFrame', 'src/lib/bridge-frame.ts#createBridgeFrame', 'src/lib/frame-documents.ts#buildBridgeDocument',
     'src/lib/csp/csp-generator.ts#connectSources', 'src/lib/csp/csp-generator.ts#strictViewPolicy', 'src/lib/csp/csp-generator.ts#cooperativePolicy', 'src/lib/csp/csp-generator.ts#bridgeFramePolicy',
-    'src/host.ts#this._reach', 'src/host.ts#this._startFetchBridge', 'src/host.ts#this._prepareNetwork', 'src/host.ts#this._gateConnect', 'src/host.ts#this._guestPolicy', 'src/host.ts#this._policyInput',
+    'src/lib/network-host.ts#this._reach', 'src/lib/network-host.ts#this._startFetchBridge', 'src/lib/network-host.ts#this._prepareNetwork', 'src/lib/network-host.ts#this._gateConnect', 'src/lib/network-host.ts#this._guestPolicy', 'src/lib/network-host.ts#this._policyInput',
 ];
 const forbiddenIn = (paths: Map<string, string[]>) => FORBIDDEN.filter(node => paths.has(node)).map(node => paths.get(node)!.join(' → '));
 
@@ -338,14 +339,14 @@ describe('T5: the call graph of the sealed build path reaches no network code', 
         }
         const whole = reach('src/host.ts', member('_prepareBuild'));
         expect(forbiddenIn(whole).map(trail => trail.split(' → ').at(-1))).toEqual(expect.arrayContaining([
-            'src/host.ts#this._reach', 'src/lib/csp/host-connect.ts#hostReach', 'src/host.ts#this._prepareNetwork', 'src/lib/bridge-frame.ts#prepareBridgeFrame',
+            'src/lib/network-host.ts#this._reach', 'src/lib/csp/host-connect.ts#hostReach', 'src/lib/network-host.ts#this._prepareNetwork', 'src/lib/bridge-frame.ts#prepareBridgeFrame',
             'src/lib/csp/csp-generator.ts#connectSources', 'src/lib/csp/csp-generator.ts#strictViewPolicy', 'src/lib/csp/csp-generator.ts#cooperativePolicy',
         ]));
         // and strict mode's own frame reaches the narrowing's output, the gate list, the template and the bridge
-        expect(forbiddenIn(reach('src/host.ts', member('_prepareStrictFrame'))).length).toBeGreaterThan(0);
+        expect(forbiddenIn(reach('src/lib/network-host.ts', member('_prepareStrictFrame'))).length).toBeGreaterThan(0);
         // the attach reaches the bridge, and through it the host page's origin: what the sealed attach must not run
         expect(forbiddenIn(reach('src/host.ts', member('_attachBuild'))).map(trail => trail.split(' → ').at(-1))).toEqual(expect.arrayContaining([
-            'src/host.ts#this._startFetchBridge', 'src/lib/bridge-frame.ts#createBridgeFrame', 'src/lib/fetch-bridge.ts#createFetchBridge', 'src/lib/host-site.ts#hostPageOrigin',
+            'src/lib/network-host.ts#this._startFetchBridge', 'src/lib/bridge-frame.ts#createBridgeFrame', 'src/lib/fetch-bridge.ts#createFetchBridge', 'src/lib/host-site.ts#hostPageOrigin',
         ]));
     });
 
@@ -367,32 +368,30 @@ describe('T5: the call graph of the sealed build path reaches no network code', 
 
     it("the attach runs the network only for a build that has one: without that statement it reaches no network code, and a sealed build has none (T4)", () => {
         const attach = member('_attachBuild');
-        const guarded = 'prepared.network ? this._startFetchBridge(prepared.network) : null;';
+        const guarded = 'prepared.network ? networkElement(this)?._startFetchBridge(prepared.network) ?? null : null;';
         expect(attach.split(guarded)).toHaveLength(2);
         expect(forbiddenIn(reach('src/host.ts', attach.replace(guarded, '')))).toEqual([]);
     });
 
-    it("the host page's origin and site are read in two places of host.ts: readHostPage (the config, when a network rule asks) and the bridge's start", () => {
-        const host = graphOf('src/host.ts');
-        const readers = [...host.units].filter(([, body]) => /\bhostPageOrigin\(|\bhostSiteOrigins\(/.test(body)).map(([name]) => name).sort();
-        expect(readers).toEqual(['readHostPage', 'this._startFetchBridge']);
-        const handedOn = [...host.units].filter(([name, body]) => name !== 'readHostPage' && /\breadHostPage\b/.test(body)).map(([name]) => name);
-        expect(handedOn).toEqual(['this._applyConfig']);
+    it("the host page's origin and site are read nowhere in the element's class, and in two places of the network modes: readHostPage (the config, when a network rule asks) and the bridge's start", () => {
+        const readersIn = (file: string) => [...graphOf(file).units].filter(([, body]) => /\bhostPageOrigin\(|\bhostSiteOrigins\(/.test(body)).map(([name]) => name).sort();
+        expect(readersIn('src/host.ts')).toEqual([]);
+        expect(readersIn('src/lib/network-config.ts')).toEqual(['readHostPage']);
+        expect(readersIn('src/lib/network-host.ts')).toEqual(['this._startFetchBridge']);
+        // the class hands the config the reader the seam holds, which a build without the network modes does not have
+        expect(member('_applyConfig')).toContain('normaliseConfig(copy, networkModes()?.readHostPage ?? NO_HOST_PAGE)');
     });
 
-    it("config-schema.ts: the host page is asked (host()) only by the rules of the network options, which sealed mode never runs (readIn)", () => {
-        const text = code('src/lib/config-schema.ts');
+    it("the host page is asked (host()) only by the rules of the network options, which are the network modes' (network-config.ts) and which sealed mode never runs (readIn)", () => {
+        // config-schema.ts defines `host` and never calls it: no rule of its own reads the host page
+        expect([...code('src/lib/config-schema.ts').matchAll(/\bhost\(\)/g)]).toEqual([]);
+        const text = code('src/lib/network-config.ts');
         const asks = [...text.matchAll(/\bhost\(\)/g)].map(match => match.index!);
-        const ruleOf = (name: string) => {
-            const start = text.indexOf(`\n    ${name}: {`);
-            return [start, text.indexOf('\n    },', start)] as const;
-        };
-        const rules = NETWORK_OPTIONS.map(ruleOf);
-        for (const [start, end] of rules) {
-            expect(start, 'a network rule').toBeGreaterThan(0);
-            expect(end).toBeGreaterThan(start);
-        }
-        // the one definition (normaliseConfig's `host`), and the asks inside the two rules
+        const table = text.indexOf('\nexport const NETWORK_RULES = {');
+        const rules = [[table, text.indexOf('\n} as const;', table)] as const];
+        expect(table, 'the network rules').toBeGreaterThan(0);
+        for (const name of NETWORK_OPTIONS) expect(text.slice(...rules[0]!), name).toContain(`\n    ${name}: (`);
+        // the asks are inside the two rules, and nowhere else
         const outside = asks.filter(index => !rules.some(([start, end]) => index > start && index < end));
         expect(outside.map(index => text.slice(index - 40, index + 10).trim())).toEqual([]);
         expect(asks.length).toBeGreaterThanOrEqual(NETWORK_OPTIONS.length);

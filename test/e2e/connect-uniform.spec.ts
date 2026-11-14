@@ -5,6 +5,9 @@ import { HOST_SOURCE_RULES, policyNotGiven } from '@src/lib/csp/host-connect';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
 import type { Page } from '@playwright/test';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The library's connect lists mean the same on every engine (ADR-007; INHERITED_CONTEXT.cspFetch;
  * docs/API.md#host-page-policy, #origins). Two rules, both applied by the library itself because the engines differ

@@ -4,9 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { comments, SyntaxKind, tokenize } from '../../scripts/js-tokens';
 
 /**
- * A call graph over src/: a node is a module-level function or const of a file, or a member of host.ts's element class;
- * an edge is any reference to one in another's text (a call, or a function handed on), resolved through the file's
- * imports. Conservative: a reference counts as a call. Comments are not code. The lifecycle executor (`step`) is where a
+ * A call graph over src/: a node is a module-level function or const of a file, or a member of the element: of its class
+ * (host.ts), or of the methods the network build installs on it (network-host.ts, NetworkMethods; ADR-009). An edge is
+ * any reference to one in another's text (a call, or a function handed on), resolved through the file's imports; a
+ * member is reached through `this`, from either file, and the network modes' also where the class calls them through the
+ * seam (`networkElement(this)?.name(`, `network.name(`). Conservative: a reference counts as a call. Comments are not code. The lifecycle executor (`step`) is where a
  * path hands the reducer an input and ends: what the reducer starts from it is a build path of its own.
  *
  * Shared by the scans that ask what a path of the code can reach: sealed mode's build path (test/unit/sealed-build.test.ts,
@@ -17,6 +19,10 @@ export type Graph = { units: Map<string, string>; imports: Map<string, string> }
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const files = new Map<string, Graph>();
 const BOUNDARY = new Set(['src/host.ts#step']);
+
+/** The files that hold members of the element, each with the class whose body they are in. */
+const ELEMENT_CLASSES: Readonly<Record<string, string>> = { 'src/host.ts': 'WebSandbox', 'src/lib/network-host.ts': 'NetworkMethods' };
+const isElementFile = (file: string) => Object.hasOwn(ELEMENT_CLASSES, file);
 
 /** A file of the repository (repository-relative), comments blanked: what the graph reads as code. */
 export function code(file: string): string {
@@ -51,11 +57,11 @@ export function graphOf(file: string): Graph {
     const starts: { name: string; at: number; close: RegExp }[] = [];
     for (const match of text.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm)) starts.push({ name: match[1]!, at: match.index!, close: /^\}$/m });
     for (const match of text.matchAll(/^(?:export\s+)?const\s+(\w+)/gm)) starts.push({ name: match[1]!, at: match.index!, close: /^(?=\S)/m });
-    // a class of a module (its methods are its text), but host.ts's element, whose members are units of their own
-    if (file !== 'src/host.ts') for (const match of text.matchAll(/^(?:export\s+)?class\s+(\w+)/gm)) starts.push({ name: match[1]!, at: match.index!, close: /^\}$/m });
-    if (file === 'src/host.ts') {
-        // the element class's members only (the interfaces below it name some of the same members)
-        const from = text.indexOf('\nexport class WebSandbox ');
+    // a class of a module (its methods are its text), but the element's, whose members are units of their own
+    if (!isElementFile(file)) for (const match of text.matchAll(/^(?:export\s+)?class\s+(\w+)/gm)) starts.push({ name: match[1]!, at: match.index!, close: /^\}$/m });
+    if (isElementFile(file)) {
+        // the class's members only (the interfaces around it name some of the same members)
+        const from = text.indexOf(`\nexport class ${ELEMENT_CLASSES[file]} `);
         const to = text.indexOf('\n}\n', from);
         const body = text.slice(from, to);
         for (const match of body.matchAll(/^ {4}(?:(?:private|public|static|async|get|set)\s+)*(\w+)\s*\(/gm)) starts.push({ name: `this.${match[1]}`, at: from + match.index!, close: /^ {4}\}$/m });
@@ -72,6 +78,17 @@ export function graphOf(file: string): Graph {
     return graph;
 }
 
+// The element file that has the member `name`, as `receiver.name` in `file` reaches it: through `this`, the file's own
+// or the other's (the installed methods and the class are one object at run time); and from the class, a member of the
+// network modes through the seam's receiver (`networkElement(…)?.name`, or a variable of it).
+export function memberOwner(file: string, name: string, receiver: { kind: SyntaxKind; text: string } | undefined): string | null {
+    if (!isElementFile(file) || receiver === undefined) return null;
+    const holders = Object.keys(ELEMENT_CLASSES).filter(candidate => graphOf(candidate).units.has(`this.${name}`));
+    if (receiver.kind === SyntaxKind.ThisKeyword) return holders.find(candidate => candidate === file) ?? holders[0] ?? null;
+    const throughSeam = receiver.kind === SyntaxKind.CloseParenToken || (receiver.kind === SyntaxKind.Identifier && receiver.text === 'network');
+    return throughSeam ? holders.find(candidate => candidate !== 'src/host.ts') ?? null : null;
+}
+
 /** The nodes a text references: `this.name` (host.ts's members), a module-level unit of its file, an import. */
 export function references(file: string, text: string): string[] {
     const { units, imports } = graphOf(file);
@@ -81,7 +98,8 @@ export function references(file: string, text: string): string[] {
         if (token.kind !== SyntaxKind.Identifier) return;
         const before = tokens[i - 1];
         if (before?.kind === SyntaxKind.DotToken || before?.kind === SyntaxKind.QuestionDotToken) {
-            if (tokens[i - 2]?.kind === SyntaxKind.ThisKeyword && units.has(`this.${token.text}`)) found.add(`${file}#this.${token.text}`);
+            const owner = memberOwner(file, token.text, tokens[i - 2]);
+            if (owner !== null) found.add(`${owner}#this.${token.text}`);
             return;
         }
         if (units.has(token.text)) found.add(`${file}#${token.text}`);
@@ -113,5 +131,8 @@ export function unitOf(node: string): string | undefined {
     return graphOf(owner).units.get(name);
 }
 
-/** A member of host.ts's element class. */
-export const member = (name: string) => graphOf('src/host.ts').units.get(`this.${name}`)!;
+/** A member of the element: of its class (host.ts), or of the network modes' methods (network-host.ts). */
+export const member = (name: string) => (graphOf('src/host.ts').units.get(`this.${name}`) ?? graphOf('src/lib/network-host.ts').units.get(`this.${name}`))!;
+
+/** The node of a member of the element, wherever it is declared. */
+export const memberNode = (name: string) => `${graphOf('src/host.ts').units.has(`this.${name}`) ? 'src/host.ts' : 'src/lib/network-host.ts'}#this.${name}`;

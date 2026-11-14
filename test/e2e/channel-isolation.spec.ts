@@ -2,6 +2,9 @@ import type { Page } from '@playwright/test';
 import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Channels and lifecycle (AR:B1 to AR:B8), in the browser:
  *   B1  another frame on the host page that announces a port to the host window (SANDBOX_PORT, with or without a

@@ -1,9 +1,12 @@
-import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
+import { test, expect, ORIGIN, type SandboxDriver, buildOfMode } from './fixture';
 import { inView, waitInView } from './strict-view';
 import { busyShare, describeShare, floodControl, IDLE_MS, IDLE_WINDOWS, interleavedShare, LOAD_SHARE, pausableFlood, ticks, TIME_SHARE, WARMUP_MS } from './host-share';
 import type { Page } from '@playwright/test';
 import { STILL_PROPERTIES, STILL_PROPERTY_PATTERN, VIEW_MAX_URLS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Findings of R4 where the browser decides, on Chromium, Firefox and WebKit: what reaches the host page's
@@ -53,6 +56,7 @@ test.describe("M-1: the guest worker's own postMessage is gone; the library's po
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test("none, from the entry's top level on (before the worker has its port) and after", async ({ sandbox }) => {
             await mountEntry(sandbox, `console.log('AT ENTRY ' + typeof postMessage + ' ' + typeof self.postMessage + ' ' + ('onmessage' in self));`, { mode });
             await sandbox.waitForLog('AT ENTRY undefined undefined false');
@@ -171,6 +175,7 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('a style attribute that names no animation is applied exactly as written; one that does loses only its animations; one that declares `all` goes whole', async ({ sandbox, page, browserName }) => {
             await mountEntry(sandbox, `sandboxView.render('<p id="a" style="all:unset">a</p><p id="b" style="COLOR:red;margin:0">b</p><p id="c" style="color: red; transition: color 1s; animation: spin 1s">c</p><p id="d" style="all:unset;animation:spin 1s">d</p><p id="e" style="transform: rotate(1deg); color: transparent">e</p>');`, { ...{ allowAnimations: false }, mode });
             await waitInView(page, browserName, `!!document.getElementById('e')`);
@@ -301,6 +306,7 @@ const imageFlood = (prefix: string, perRender: number) => `
 
 test.describe('M-2: what the browser does with the URLs a render holds is bounded', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('a refused source: the renderer drops every refused URL, and the view reports each as the browser did (img-src, the URL), at most 100', async ({ sandbox, page, browserName }) => {
             await mountEntry(sandbox, `sandboxView.render('<img id="i" src="https://u:p@r.example:8443/p/a.png?q=1#f" alt="x"><video id="v" src="https://r.example/v.mp4" poster="https://r.example/p.png"></video><picture><source id="s" srcset="https://r.example/s.png"><img alt="y"></picture>' + '<img src="https://r.example/many.png">'.repeat(150));`, { mode });
             await waitInView(page, browserName, `!!document.getElementById('s')`);
@@ -361,6 +367,7 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
     }
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`the view holds at most VIEW_MAX_URLS (${VIEW_MAX_URLS}) URL-bearing attributes: a render past it is refused whole, and said`, async ({ sandbox, page, browserName }) => {
             await sandbox.registerFiles({ 'x.png': { base64: PNG.toString('base64') } }); // a URL the view mints, so it is kept and counted
             await mountEntry(sandbox, `

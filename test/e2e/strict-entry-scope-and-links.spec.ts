@@ -1,7 +1,10 @@
-import { test, expect, type SandboxDriver, type MountConfig } from './fixture';
+import { test, expect, type SandboxDriver, type MountConfig, buildOfMode } from './fixture';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import { VIEW_MODES, type ViewMode } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode and files (each label below is cited as AR:<label>):
@@ -34,6 +37,7 @@ async function render(sandbox: SandboxDriver, browserName: string, html: string,
 }
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe('C1: the view renders no blob: content but registered files', () => {
         test("the worker's own source URL is revoked once the worker has run its script: the view can no longer fetch it, and referenced from <style> text and a CSS-escaped style attribute it is dropped (keepsUrl: no URL the view did not mint) and applies no rule", async ({ sandbox, page, browserName }) => {
             // the entry carries a CSS rule inside a JS comment: lenient CSS parsing of the worker source would apply it

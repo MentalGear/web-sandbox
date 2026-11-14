@@ -1,8 +1,11 @@
 import { deflateSync } from 'node:zlib';
-import { test, expect, type MountConfig, type SandboxDriver } from './fixture';
+import { test, expect, type MountConfig, type SandboxDriver, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The owner's decisions on the open findings R1:R2-2, R1:R4-4 and R1:R4-5, where
@@ -79,6 +82,7 @@ test.describe('R4-4: the strict view shows the raster images the guest writes, f
     const image = (id: string) => `(() => { const i = document.getElementById('${id}'); return i && (i.complete || !/^blob:/.test(i.getAttribute('src'))) ? { size: i.naturalWidth + 'x' + i.naturalHeight, src: i.getAttribute('src') } : null; })()`;
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('a chart the guest draws on an OffscreenCanvas and writes as PNG shows in an <img> named by its path, without a rebuild; the worker gets no URL for it', async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount({ ...WRITES, mode })).toBe('ready');
             const url = await sandbox.inGuest(`
@@ -175,6 +179,7 @@ test.describe('R4-5: sandboxView.text() and sandboxView.set()', () => {
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('set(): the values of an input, a textarea and a select, the checked state of a checkbox, read from outside; the guest\'s TypeError for an unknown key', async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount({ ...STRICT, mode })).toBe('ready');
             await render(sandbox, '<input id="name"><textarea id="notes"></textarea><select id="size"><option value="s">s</option><option value="l">l</option></select><input id="ok" type="checkbox">', 'r1');

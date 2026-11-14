@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_SANDBOX_FLAGS } from '@src/csp-directives';
 import { runBootstrap } from './sandbox-environment';

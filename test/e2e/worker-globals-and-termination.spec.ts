@@ -1,8 +1,11 @@
-import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
+import { test, expect, ORIGIN, type SandboxDriver, buildOfMode } from './fixture';
 import { useRecorder, wss } from './recorder';
 import { STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { LIBRARY_GUEST_GLOBALS } from '@src/lib/sealed-reach';
 import { isViewMode, VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The worker's globals and the guest's termination (V1 to V3 are cited as VR:V1 to VR:V3), where browser behaviour decides:
@@ -110,6 +113,8 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         webkit: ['deviceMemory', 'globalPrivacyControl', 'gpu'],
     };
     for (const mode of ['worker', ...VIEW_MODES] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: the allowlisted globals and navigator members an engine does not have are exactly the ones the ledger states (worker-global-set); nothing outside the allowlist is present`, async ({ sandbox, browserName }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             const seen = await sandbox.inGuest(`
@@ -130,10 +135,13 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
             expect(navigatorMembers.filter(name => !seen.navigatorMembers.includes(name)).sort()).toEqual(expectedAbsentMembers);
             expect(WORKER_NAVIGATOR_MEMBERS.filter(name => !navigatorMembers.includes(name) && seen.navigatorMembers.includes(name))).toEqual([]);
         });
+        });
     }
 
     // docs/API.md lists indexedDB among the kept globals and says it stores nothing (BD3:NEW-6): the worker's origin is opaque.
     for (const mode of ['worker', ...VIEW_MODES] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: indexedDB is kept, and open() is denied with a SecurityError on every engine, so the sandbox stores nothing in it`, async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             expect(WORKER_GLOBALS).toContain('indexedDB');
@@ -147,6 +155,7 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
                     } catch (e) { done(e && e.name); }
                 });`);
             expect(outcome).toEqual({ kind: 'object', error: 'SecurityError' });
+        });
         });
     }
 
@@ -181,6 +190,8 @@ const BC_GUEST = (label: string, name: string) => `
 
 test.describe('V4: a guest\'s BroadcastChannel reaches only its own opaque origin (cooperative, worker and strict mode)', () => {
     for (const mode of ['cooperative', 'worker', ...VIEW_MODES] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: messages cross neither from the host page nor from a second sandbox into the guest, nor from the guest out; each party's own channels hear each other (positive controls)`, async ({ sandbox, page }) => {
             const name = `v4-${mode}-${Date.now()}`;
             expect(await sandbox.mount({ mode })).toBe('ready');
@@ -212,12 +223,14 @@ test.describe('V4: a guest\'s BroadcastChannel reaches only its own opaque origi
             expect((await sandbox.logs()).filter((line) => line.startsWith('BC-RX ')).sort()).toEqual(['BC-RX main from-main-guest', 'BC-RX second from-second-guest']);
             expect(await page.evaluate(() => (window as any).bcHostRx)).toEqual(['from-host']);
         });
+        });
     }
 });
 
 // ---- V2: a strict entry's synchronous console lines -------------------------------------------------------------
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('V2: an entry\'s synchronous console lines arrive as sandbox-log, in order, before its asynchronous ones (before: only the asynchronous ones did)', async ({ sandbox }) => {
         await sandbox.registerFiles({ 'main.js': `console.log('V2 sync 1'); console.info('V2 sync 2'); console.warn('V2 sync 3'); setTimeout(() => console.log('V2 async'), 0);` });
         expect(await sandbox.mount({ mode, entry: 'main.js' })).toBe('ready');
@@ -302,6 +315,7 @@ test.describe('V3: the user\'s modifier clicks and Enter on a guest link (cooper
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('every rendered link is inert (about:blank#): no action opens a tab or reaches the guest\'s URL, on any engine', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             await sandbox.run(`sandboxView.render(${JSON.stringify(LINKS(recorder.blocked))})`);

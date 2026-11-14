@@ -2,6 +2,9 @@ import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 // The server-side session store this finding targeted no longer exists (srcdoc architecture).
 // What remains to verify: the sandbox cannot reach a server at all.
 // Evidence (backlog T5): the guest's own outcome, the violation for the absolute form, and a listener

@@ -1,6 +1,9 @@
 import { test, expect, ORIGIN } from './fixture';
 import { fromPreset } from './presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The capability-filter presets (backlog T4): each runs with its own rules, which ask for a capability the
  * sandbox must not grant, and asserts the refusal itself plus, where one exists, a positive control showing

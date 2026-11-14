@@ -118,7 +118,7 @@ export const HOST_PASSES = {
         takes: ['html'], modes: ALL, rule: 'pure',
         units: [
             'src/host.ts#this._configure', 'src/host.ts#this._applyConfig', 'src/host.ts#this.load', 'src/host.ts#this._buildContext',
-            'src/lib/config-schema.ts#normaliseConfig', 'src/lib/config-schema.ts#htmlRefusal', 'src/lib/config-schema.ts#hasStrictView', 'src/lib/config-schema.ts#ignoredIn',
+            'src/lib/config-schema.ts#normaliseConfig', 'src/lib/config-schema.ts#networkModesOffRefusal', 'src/lib/config-schema.ts#readOf', 'src/lib/config-schema.ts#htmlRefusal', 'src/lib/config-schema.ts#hasStrictView', 'src/lib/config-schema.ts#ignoredIn',
             'src/lib/config-schema.ts#readIn', 'src/lib/config-schema.ts#sealedNetworkRefusal', 'src/lib/config-schema.ts#sealedScriptUnsafeRefusal',
             'src/lib/utils.ts#defineData', 'src/lib/utils.ts#hasOwnField', 'src/lib/utils.ts#ownField',
         ],
@@ -149,7 +149,7 @@ export const HOST_PASSES = {
     stylesheetReferences: {
         does: "a registered stylesheet's `url()` and `@import` references, found by the library's tokenizer (css-references.ts, a subset of css-syntax), become ranges of its bytes",
         takes: ['files'], modes: ALL, rule: 'pure',
-        units: ['src/lib/files.ts#stylesheetReferences', 'src/lib/css-references.ts#cssUrlReferences', 'src/lib/css-references.ts#cssReferences', 'src/lib/markup-references.ts#virtualPathOf'],
+        units: ['src/lib/files.ts#stylesheetReferences', 'src/lib/css-references.ts#cssUrlReferences', 'src/lib/css-references.ts#cssReferences', 'src/lib/references.ts#virtualPathOf'],
         cost: `linear in the file; ${FILES_CAP}`,
     },
     viewStylesheets: {
@@ -162,7 +162,7 @@ export const HOST_PASSES = {
         does: "the strict or sealed build: the entry and the files become the worker's source (the files as an escaped literal, toInlineScriptLiteral), and that source and `html` travel to the view in INIT_VIEW, a structured clone; the wrapper and the view documents are the library's own (the policy and the bootstrap), so no markup of the guest's reaches a sink or a parser of the host realm (BD7:LIM-1)",
         takes: ['html', 'entry', 'files'], modes: VIEW_MODES, rule: 'pure',
         units: [
-            'src/host.ts#this._prepareBuild', 'src/host.ts#this._prepareSealedFrame', 'src/host.ts#this._prepareStrictFrame', 'src/host.ts#this._prepareViewFrame',
+            'src/host.ts#this._prepareBuild', 'src/host.ts#this._prepareSealedFrame', 'src/lib/network-host.ts#this._prepareNetworkBuild', 'src/lib/network-host.ts#this._prepareStrictFrame', 'src/host.ts#this._prepareViewFrame',
             'src/host.ts#this._getStrictWorkerSource', 'src/lib/frame-documents.ts#toInlineScriptLiteral', 'src/lib/in-sandbox-view.ts#buildViewDocument',
             'src/lib/frame-documents.ts#buildWrapperDocument', 'src/lib/frame-documents.ts#escapeAttribute',
         ],
@@ -172,7 +172,7 @@ export const HOST_PASSES = {
         does: "each registered file's type, and only its type, chooses which fixed directives of the policy admit `blob:`: the policy holds nothing of the guest's",
         takes: ['files'], modes: ALL, rule: 'pure',
         units: [
-            'src/host.ts#this._sealedPolicy', 'src/host.ts#this._viewFileKinds', 'src/host.ts#this._guestPolicy', 'src/host.ts#this._policyInput', 'src/host.ts#this._gateConnect',
+            'src/host.ts#this._sealedPolicy', 'src/host.ts#this._viewFileKinds', 'src/lib/network-host.ts#this._guestPolicy', 'src/lib/network-host.ts#this._policyInput', 'src/lib/network-host.ts#this._gateConnect',
             'src/lib/csp/csp-generator.ts#sealedViewPolicy', 'src/lib/csp/csp-generator.ts#strictViewPolicy', 'src/lib/csp/csp-generator.ts#cooperativePolicy',
             'src/lib/csp/csp-generator.ts#fileKinds', 'src/lib/csp/csp-generator.ts#connectSources', 'src/lib/csp/csp-generator.ts#fetchDirectives',
             'src/lib/csp/csp-generator.ts#format', 'src/lib/csp/csp-generator.ts#sourcesOf',
@@ -182,7 +182,7 @@ export const HOST_PASSES = {
     workerBuild: {
         does: "worker mode's build: the files become the bootstrap's literal (toInlineScriptLiteral), with the library's own scripts; no markup",
         takes: ['files'], modes: ['worker', 'cooperative'], rule: 'pure',
-        units: ['src/host.ts#this._getWorkerBootstrapScript', 'src/host.ts#this._getSandboxCommsScript', 'src/lib/in-sandbox-view.ts#environmentGate'],
+        units: ['src/lib/network-host.ts#this._getWorkerBootstrapScript', 'src/lib/network-host.ts#this._getSandboxCommsScript', 'src/lib/in-sandbox-view.ts#environmentGate'],
         cost: FILES_CAP,
     },
     cooperativeDocument: {
@@ -190,12 +190,12 @@ export const HOST_PASSES = {
         takes: ['html', 'files'], modes: ['cooperative', 'worker'], rule: 'documented',
         why: "cooperative mode runs the guest's own document under the host page's policy, which checks the same markup there (THREAT-MODEL, cooperative mode's limits); its host-side reading is not the board's scope (S74: sealed mode, the default), and a strict or sealed build never reaches it (the scan of _prepareViewFrame)",
         units: [
-            'src/host.ts#this._warnAboutNoScripts', 'src/lib/markup-scripts.ts#scriptInMarkup', 'src/lib/markup-scripts.ts#holdsScript', 'src/lib/trusted-types.ts#parseInert',
-            'src/host.ts#this._getMarkupPlan', 'src/lib/markup-references.ts#rewriteGuestMarkup', 'src/lib/markup-references.ts#resolveReference', 'src/lib/markup-references.ts#scriptType',
+            'src/lib/network-host.ts#this._warnAboutNoScripts', 'src/lib/markup-scripts.ts#scriptInMarkup', 'src/lib/markup-scripts.ts#holdsScript', 'src/lib/trusted-types.ts#parseInert',
+            'src/lib/network-host.ts#this._getMarkupPlan', 'src/lib/markup-references.ts#rewriteGuestMarkup', 'src/lib/markup-references.ts#resolveReference', 'src/lib/markup-references.ts#scriptType',
             'src/lib/markup-references.ts#serialiseDocument', 'src/lib/module-specifiers.ts#rewriteInlineModule', 'src/lib/module-specifiers.ts#applyEdits', 'src/lib/srcset.ts#srcsetCandidates',
             'src/lib/srcset.ts#isWhitespace', 'src/lib/load-kinds.ts#linkKinds', 'src/lib/import-map.ts#mergeGuestImportMaps', 'src/lib/import-map.ts#mergeSpecifierMap',
             'src/lib/import-map.ts#isPlainObject', 'src/lib/frame-documents.ts#buildGuestDocument', 'src/lib/csp/script-hash.ts#assertParserSafeScript',
-            'src/host.ts#this._getCooperativeBootstrapScript', 'src/host.ts#this._prepareDocumentFrame',
+            'src/lib/network-host.ts#this._getCooperativeBootstrapScript', 'src/lib/network-host.ts#this._prepareDocumentFrame',
         ],
         cost: "the browser's parser, linear in `html`, which cooperative mode does not cap (its guest document is that markup, which its frame parses anyway)",
     },
@@ -211,7 +211,7 @@ export const HOST_PASSES = {
     rpcFrames: {
         does: "every frame on the guest's port is validated by the broker and measured as a snapshot (createSizeOf) before its value reaches the embedder's method or a reserved one; a probe's answer is a number",
         takes: ['calls'], modes: ALL, rule: 'pure',
-        units: ['src/host.ts#this._onGuestMessage', 'src/lib/rpc.ts#createBroker', 'src/host.ts#this._passExecutionProbe'],
+        units: ['src/host.ts#this._onGuestMessage', 'src/lib/rpc.ts#createBroker', 'src/lib/network-host.ts#this._passExecutionProbe'],
         cost: 'linear in the frame, which RPC_MAX_INBOUND_BYTES caps, at most callLimits a second',
     },
     logLines: {
@@ -236,16 +236,16 @@ export const HOST_PASSES = {
         does: "strict mode's `sandboxFetch()`: the request's URL is parsed and checked against `fetchBridge.allow`, its headers and body against their budgets, and the bridge's frame makes it; the response's chunks are counted against `maxBytes`",
         takes: ['fetches'], modes: ['strict', 'cooperative', 'worker'], rule: 'pure',
         units: [
-            'src/host.ts#this._handleFetch', 'src/host.ts#this._exposeFetch', 'src/host.ts#this._startFetchBridge', 'src/lib/fetch-bridge.ts#createFetchBridge', 'src/lib/fetch-bridge.ts#validateRequest',
+            'src/host.ts#this._handleFetch', 'src/host.ts#this._exposeFetch', 'src/lib/network-host.ts#this._startFetchBridge', 'src/lib/fetch-bridge.ts#createFetchBridge', 'src/lib/fetch-bridge.ts#validateRequest',
             'src/lib/fetch-bridge.ts#toHeaders', 'src/lib/fetch-bridge.ts#readBody', 'src/lib/fetch-bridge.ts#hasNoBody', 'src/lib/fetch-bridge.ts#recordOf', 'src/lib/fetch-bridge.ts#abortedRecord',
-            'src/lib/fetch-bridge.ts#fetchRefusal', 'src/lib/bridge-frame.ts#createBridgeFrame', 'src/lib/long-timer.ts#setLongTimeout', 'src/lib/watchdog.ts#startWatchdog',
+            'src/lib/fetch-method.ts#fetchRefusal', 'src/lib/bridge-frame.ts#createBridgeFrame', 'src/lib/long-timer.ts#setLongTimeout', 'src/lib/watchdog.ts#startWatchdog',
         ],
         cost: 'linear in the request and the response, which `fetchBridge.maxBytes` caps',
     },
     announcement: {
         does: "the guest frame's announcement: a port, taken once from the guest frame's own window, or a bootstrap's refusal, whose name is looked up in the library's table (ENVIRONMENT_REFUSALS) and whose reason, a text of the library's, ends the build",
         takes: ['announcement'], modes: ALL, rule: 'pure',
-        units: ['src/host.ts#this._listenForAnnouncement', 'src/host.ts#this._refusedByHostPage', 'src/host.ts#hostNotice', 'src/lib/reasons.ts#hostLine', 'src/lib/reasons.ts#fill'],
+        units: ['src/host.ts#this._listenForAnnouncement', 'src/lib/network-host.ts#this._onAnnouncement', 'src/host.ts#this._step', 'src/host.ts#this._refusedByHostPage', 'src/host.ts#hostNotice', 'src/lib/reasons.ts#hostLine', 'src/lib/reasons.ts#fill'],
         cost: 'constant: a lookup of one name',
     },
     carried: {

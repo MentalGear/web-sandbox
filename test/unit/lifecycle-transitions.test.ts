@@ -1,4 +1,5 @@
 // @vitest-environment node
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, expect, it } from 'vitest';
 import { admits, INITIAL_LIFECYCLE, isStale, LC_EFFECTS, LC_INPUTS, LC_STATES, reduce, type Effect, type Generation, type LcInput, type LcInputKind, type LcOutput, type LcState } from '../../src/lib/lifecycle';
 import { exploreLifecycle, lifecycleTransitions, transitionKey, type Transition } from '../../src/lib/lifecycle-transitions';

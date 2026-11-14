@@ -1,4 +1,5 @@
 // @vitest-environment node
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { INITIAL_LIFECYCLE, admits, isStale, reduce, runEffects, step, type BuildContext, type Effect, type Generation, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice } from '../../src/lib/lifecycle';
 import { reasonText, TERMINATION_REASONS } from '../../src/lib/reasons';
 import { generate, shrink } from '../model/generator';
+import { elementSource } from './element-source';
 import { DEFAULT_TERMINATE_REASON, ENTRY_FAILED_REASON, unknownModeReason, type Sequence } from '../model/lifecycle-model';
 import { forTheReducer, runReducerSequence, validConfig, type ReducerRunOptions } from '../model/reducer-runner';
 
@@ -651,11 +653,13 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
     });
 
     it('host.ts steps every transition, and `_lc` is written by the executor only', () => {
-        const stepped = new Set([...host.matchAll(/step\((?:this|element), \{ t: '(\w+)'/g)].map(match => match[1]!));
+        // the element's class steps through `step`; the network modes' methods (network-host.ts), which are not in its
+        // module, through the element's `_step`
+        const stepped = new Set([...elementSource().matchAll(/(?:\bstep\((?:this|element), |this\._step\()\{ t: '(\w+)'/g)].map(match => match[1]!));
         expect([...stepped].sort()).toEqual(['announced', 'build', 'connect', 'disconnect', 'filesChanged', 'frameLoad', 'loadDeadline', 'setConfig', 'terminate', 'viewReady']);
         // removed, each a second path or a second store of the lifecycle (PRs B to D)
         expect(host).not.toMatch(/_endEnvironment|private initialize\(|function stop\(|_buildInputs|_configRefusal|_isCurrentConfig|_enterState|_enterReady|_finishBuild|_completeBuild|_frameLoaded|_expectAnnouncement|_guestWindow|notYet/);
-        // the tests' entry is not the element's (_step: the platform's inputs by hand, where jsdom cannot deliver them)
+        // the class itself never calls its `_step` (the network modes' methods' entry, and the tests': the platform's inputs by hand)
         expect(host).not.toMatch(/this\._step\(/);
         const writes = [...host.matchAll(/\._lc = |\blc = next/g)].map(match => match.index!);
         const writers = [bodyOf(host, 'function lifecycleHostOf(')];
@@ -665,7 +669,9 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
 
     // LM-2: a build's resources are one set, made by the build the reducer attached and released by the teardown.
     it("LM-2: preparing a build assigns nothing on the element; every per-build resource is made by _attachBuild, or by what it alone calls", () => {
-        for (const name of ['_prepareBuild', '_prepareStrictFrame']) {
+        const host = elementSource(); // the class, and the network modes' methods, which prepare and start their part of a build
+        const method = (name: string) => bodyOf(host, `    private ${name}(`, '\n    }\n');
+        for (const name of ['_prepareBuild', '_prepareNetworkBuild', '_prepareStrictFrame', '_prepareDocumentFrame']) {
             expect(host.slice(...method(name)), name).not.toMatch(/this\.\w+ = |this\._listenForAnnouncement\(|appendChild\(|this\._start\w+\(/);
         }
         // field: the methods that may give it a value other than null (the teardown, and strict mode's hand-over, clear them)
@@ -684,7 +690,7 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
         }
         // and those starters run from _attachBuild only, or (the deadline) from the executor's effect that follows it
         for (const starter of ['_listenForAnnouncement', '_startFetchBridge', '_startGuestWrites']) {
-            const calls = [...host.matchAll(new RegExp(`this\\.${starter}\\(`, 'g'))].map(match => match.index!);
+            const calls = [...host.matchAll(new RegExp(`(?:this|networkElement\\(this\\)\\?)\\.${starter}\\(`, 'g'))].map(match => match.index!);
             expect(calls, starter).toHaveLength(1);
             expect(inside(calls[0]!, method('_attachBuild')), starter).toBe(true);
         }

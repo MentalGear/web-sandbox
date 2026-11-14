@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createFetchBridge, toFetchPolicy, validateRequest, type FetchRecord } from '@src/lib/fetch-bridge';
 import { cooperativePolicy, fileKinds, strictViewPolicy } from '@src/lib/csp/csp-generator';

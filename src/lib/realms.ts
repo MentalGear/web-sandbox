@@ -39,21 +39,21 @@ export const REALMS = {
     'cooperative': {
         summary: "Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts.",
         guestCode: true,
-        builder: 'src/host.ts, _getSandboxCommsScript',
+        builder: 'src/lib/network-host.ts, _getSandboxCommsScript',
         channels: ['announcement', 'logic-port'],
         egress: 'cooperative',
     },
     'worker-frame': {
         summary: "Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup.",
         guestCode: false,
-        builder: 'src/host.ts, _getWorkerBootstrapScript',
+        builder: 'src/lib/network-host.ts, _getWorkerBootstrapScript',
         channels: ['announcement', 'worker'],
         egress: 'frame',
     },
     'worker': {
         summary: "Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code.",
         guestCode: true,
-        builder: 'src/host.ts, _getWorkerBootstrapScript',
+        builder: 'src/lib/network-host.ts, _getWorkerBootstrapScript',
         channels: ['logic-port', 'worker'],
         egress: 'worker',
     },
@@ -74,13 +74,20 @@ export const REALMS = {
     'bridge-frame': {
         summary: "The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it.",
         guestCode: false,
-        builder: 'src/lib/in-sandbox-view.ts, viewBootstrapSource',
+        builder: 'src/lib/network-install.ts, BRIDGE_BOOTSTRAP',
         channels: ['announcement', 'bridge-init', 'bridge-port'],
         egress: 'bridge-frame',
     },
 } as const satisfies Record<string, RealmRow>;
 
 export type RealmId = keyof typeof REALMS;
+
+/**
+ * The realms only the network modes build (ADR-009): cooperative mode's guest document, worker mode's frame and worker,
+ * and the fetch bridge's frame. The default build builds none of them, so a function stringified into these alone is
+ * not in its bundle (test/unit/default-build.test.ts).
+ */
+export const NETWORK_MODE_REALMS = ['cooperative', 'worker-frame', 'worker', 'bridge-frame'] as const satisfies readonly RealmId[];
 
 /** A scan of the stringified code applies (true), or the reason it does not. */
 export type Scan = true | string;

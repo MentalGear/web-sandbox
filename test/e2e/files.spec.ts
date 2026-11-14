@@ -3,6 +3,9 @@ import { MAX_TOTAL_BYTES, mimeTypeFor } from '@src/lib/files';
 import { useRecorder, wss } from './recorder';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Files (ADR-004): the host registers files on the element, every environment build snapshots them
  * into the guest bootstrap, and the guest gets them as blob: URLs created in its own realm, through

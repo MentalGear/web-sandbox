@@ -1,9 +1,9 @@
 import { inSandboxFiles } from './in-sandbox-files';
-import { BRIDGE_FRAME_OPTIONS, inBridgeFrame } from './in-bridge-frame';
+import { networkModes } from './network-modes';
 import { checkSandboxEnvironment, ENVIRONMENT_EXPECTED } from './environment-check';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
 import { escapeAttribute } from './frame-documents';
-import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './markup-references';
+import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './references';
 import { admits, LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
@@ -4052,8 +4052,8 @@ export const VIEW_OPTIONS: ViewOptions = {
     still: { pseudoElements: VIEW_STILL_PSEUDO_ELEMENTS, declarations: VIEW_STILL_DECLARATIONS },
 };
 
-let cachedText: string | null = null;
-let cachedHash: string | null = null;
+// The bootstrap's text and its hash, with the bridge frame's part they were built for (the network modes', or none).
+let cached: { bridge: string | null; text: string; hash: string | null } | null = null;
 
 /**
  * What viewScriptHash() warns, once, when the library runs from its sources and not from the built package (BD3:NEW-1):
@@ -4093,15 +4093,17 @@ export function environmentGate(host: string, stopParsing: boolean, body: string
 }
 
 /**
- * The bootstrap's text for `options`, built from the functions it runs (the tests build it with other options): strict
- * mode's view, or the fetch bridge's frame where its script element has the bridge's role (BRIDGE_ROLE).
+ * The bootstrap's text for `options`, built from the functions it runs (the tests build it with other options): the
+ * view of strict and sealed mode and, in a build with the network modes, the fetch bridge's frame where its script
+ * element has the bridge's role (BRIDGE_ROLE). `bridge` is that frame's part (network-modes.ts, bridgeBootstrap), or
+ * null: a build without the network modes has no such frame, and its bootstrap runs the view alone.
  */
-export function viewBootstrapSource(options: ViewOptions): string {
-    const script = 'var s = document.currentScript;';
-    const bridge = `(${inBridgeFrame.toString()})(${JSON.stringify(BRIDGE_FRAME_OPTIONS).replaceAll('<', '\\u003c')});`;
+export function viewBootstrapSource(options: ViewOptions, bridge: string | null = bridgeBootstrap()): string {
     const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`;
-    // The gate first (environment-check.ts): a refusal goes to the host page's window, which is the bridge frame's parent and
-    // the view's grandparent.
+    // The gate first (environment-check.ts): a refusal goes to the host page's window, which is the view's grandparent
+    // and the bridge frame's parent.
+    if (bridge === null) return `(function () {${environmentGate('parent.parent', false, view)}})();`;
+    const script = 'var s = document.currentScript;';
     const host = `(document.currentScript && document.currentScript.getAttribute('data-role') === '${BRIDGE_ROLE}' ? parent : parent.parent)`;
     return `(function () {${environmentGate(host, false, `${script} if (s && s.getAttribute('data-role') === '${BRIDGE_ROLE}') {${bridge}} else {${view}}`)}})();`;
 }
@@ -4125,29 +4127,43 @@ declare const __WEB_SANDBOX_VIEW_BOOTSTRAP__: string | undefined;
  * or NUL, or anything that ends a script element.
  */
 export function viewBootstrapText(): string {
-    if (cachedText !== null) return cachedText;
-    const text = typeof __WEB_SANDBOX_VIEW_BOOTSTRAP__ === 'string' ? __WEB_SANDBOX_VIEW_BOOTSTRAP__ : viewBootstrapSource(VIEW_OPTIONS);
-    assertHashableScript(text);
-    cachedText = text;
-    return text;
+    return bootstrap().text;
 }
 
 /** The hash-source of the view bootstrap, computed once per page (script-hash.ts). */
 export function viewBootstrapHash(): string {
-    if (cachedHash === null) cachedHash = scriptHashSource(viewBootstrapText());
-    return cachedHash;
+    const built = bootstrap();
+    built.hash ??= scriptHashSource(built.text);
+    return built.hash;
+}
+
+// The fetch bridge frame's part of the bootstrap in this build: the network modes', or null where the build has none.
+const bridgeBootstrap = (): string | null => networkModes()?.bridgeBootstrap ?? null;
+
+// The bootstrap of this build, made once: again only if the network modes were installed since (the network build's
+// entry installs them as it is imported, before anything asks).
+function bootstrap(): NonNullable<typeof cached> {
+    const bridge = bridgeBootstrap();
+    if (cached !== null && cached.bridge === bridge) return cached;
+    const text = typeof __WEB_SANDBOX_VIEW_BOOTSTRAP__ === 'string' ? __WEB_SANDBOX_VIEW_BOOTSTRAP__ : viewBootstrapSource(VIEW_OPTIONS, bridge);
+    assertHashableScript(text);
+    cached = { bridge, text, hash: null };
+    return cached;
 }
 
 /**
- * The CSP hash source of the library's bootstrap for this release of the package, to allow in the host page's own
- * Content-Security-Policy (R1:R4-5): strict mode's view runs it, and so does the fetch bridge's frame.
+ * The CSP hash source of the library's bootstrap for this build of the package, to allow in the host page's own
+ * Content-Security-Policy (R1:R4-5): the view of sealed and strict mode runs it and, in a build with the network modes,
+ * so does the fetch bridge's frame.
  *
  * @remarks
- * It is the very value the element puts in the `script-src` of both documents, and both inherit the host page's policy
- * (docs/API.md#host-page-policy), so one hash admits them both: the view in strict mode, and with `fetchBridge` the
- * frame that makes the bridge's requests, in every mode (BD1:ISO-1). In the built package the bootstrap is a string
- * literal of the bundle, so the hash is the same in a build step (importing the package needs no DOM) and in the browser,
- * however the embedder's app is bundled or minified. It changes only with the package's version.
+ * It is the very value the element puts in the `script-src` of its documents, which inherit the host page's policy
+ * (docs/API.md#host-page-policy), so one hash admits them: the view in sealed and strict mode, and with `fetchBridge`
+ * the frame that makes the bridge's requests, in every mode that has it (BD1:ISO-1). In the built package the bootstrap
+ * is a string literal of the bundle, so the hash is the same in a build step (importing the package needs no DOM) and in
+ * the browser, however the embedder's app is bundled or minified. It changes only with the package's version and its
+ * build: the default build's bootstrap has no bridge frame's part, so its hash is not the network build's
+ * (docs/API.md#builds).
  *
  * The sources have no such literal: a project that bundles `src/index.ts` (not the built package) gets the hash of the
  * functions as its own transpiler prints them, which a build step that imports the sources does not compute. There the

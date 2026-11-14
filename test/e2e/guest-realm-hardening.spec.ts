@@ -2,6 +2,9 @@ import type { Page } from '@playwright/test';
 import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder, wss } from './recorder';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The guest realm's hardening (each label below is cited as BR:<label>), where browser behaviour decides:
  *   CB1  the guest's port is announced by the bootstrap, never handed into the guest: document.open() before the

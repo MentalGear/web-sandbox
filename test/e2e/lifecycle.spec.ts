@@ -1,5 +1,8 @@
-import { test, expect, type CallOutcome, SEALED_HAS_NO_EXECUTE } from './fixture';
+import { test, expect, type CallOutcome, SEALED_HAS_NO_EXECUTE, buildOfMode } from './fixture';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The element's lifecycle (backlog B2, ADR-003): `state` follows idle → loading → ready and agrees
@@ -18,6 +21,8 @@ function terminatedRefusal(message: string): CallOutcome {
 }
 
 for (const mode of MODES) {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe(`lifecycle (${mode})`, () => {
         test('state goes idle → loading → ready as the element is mounted, and reads ready when the event fires', async ({ sandbox, page }) => {
             test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
@@ -166,5 +171,6 @@ for (const mode of MODES) {
             await sandbox.exposeGuest('sum', '(a, b) => a + b');
             expect(await sandbox.call('sum', 4, 5)).toBe(9);
         });
+    });
     });
 }

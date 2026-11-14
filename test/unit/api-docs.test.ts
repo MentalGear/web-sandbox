@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as publicApi from '@src/index';
+import * as publicApi from '@src/network';
+import { networkMethodNames } from './element-source';
 import { WebSandbox, VIEW_LIVENESS_TIMEOUT_MS } from '@src/host';
 import { createBroker } from '@src/lib/rpc';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
@@ -96,7 +97,8 @@ function interfaceKeys(file: string, name: string): string[] {
 describe('docs/API.md lists the public surface', () => {
     it('every export of the package entry point', () => {
         const names: string[] = [];
-        for (const block of read('src/index.ts').matchAll(/export (?:type )?\{([^}]+)\}/g)) {
+        // the network build's entry: what the default build exports (sealed.ts), and the network modes' exports
+        for (const block of [read('src/sealed.ts'), read('src/network.ts')].join('\n').matchAll(/export (?:type )?\{([^}]+)\}/g)) {
             for (const name of block[1]!.split(',')) if (name.trim()) names.push(name.trim());
         }
         expect(names.length).toBeGreaterThan(20);
@@ -136,7 +138,8 @@ describe('docs/API.md lists the public surface', () => {
 
     it('every config option of the schema is one of the option interfaces, and no other', () => {
         const documented = (Object.keys(CONFIG_SCHEMA) as (keyof typeof CONFIG_SCHEMA)[]).filter(name => !('removed' in CONFIG_SCHEMA[name]));
-        const keys = ['SandboxConfigOptions', 'NetworkSandboxOptions', 'SealedSandboxConfig', 'CooperativeSandboxConfig', 'WorkerSandboxConfig', 'StrictSandboxConfig'].flatMap(name => interfaceKeys('src/host.ts', name));
+        const declaredIn = (name: string) => (['SandboxConfigOptions', 'SealedSandboxConfig'].includes(name) ? 'src/host.ts' : 'src/lib/network-types.ts');
+        const keys = ['SandboxConfigOptions', 'NetworkSandboxOptions', 'SealedSandboxConfig', 'CooperativeSandboxConfig', 'WorkerSandboxConfig', 'StrictSandboxConfig'].flatMap(name => interfaceKeys(declaredIn(name), name));
         expect(sorted(documented)).toEqual(sorted(keys));
         expect(sorted(rowKeys(section('## Configuration', true)))).toEqual(sorted(keys));
     });
@@ -175,7 +178,8 @@ describe('docs/API.md lists the public surface', () => {
     });
 
     it('every public method of the element, and no other', () => {
-        const isPrivate = new Set([...read('src/host.ts').matchAll(/^ {4}private (\w+)/gm)].map(match => match[1]!));
+        // the element's private members, and the methods the network build installs on it (network-host.ts): none is public
+        const isPrivate = new Set([...[...read('src/host.ts').matchAll(/^ {4}private (\w+)/gm)].map(match => match[1]!), ...networkMethodNames()]);
         const callbacks = new Set(['constructor', 'connectedCallback', 'disconnectedCallback', 'adoptedCallback', 'state']);
         const methods = Object.getOwnPropertyNames(WebSandbox.prototype).filter(name => !isPrivate.has(name) && !callbacks.has(name));
         const documented = [...section('## Methods').matchAll(/^### `(\w+)\(/gm)].map(match => match[1]!);

@@ -1,5 +1,8 @@
-import { test, expect, type CallOutcome, SEALED_HAS_NO_EXECUTE } from './fixture';
+import { test, expect, type CallOutcome, SEALED_HAS_NO_EXECUTE, buildOfMode } from './fixture';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * β — the bidirectional RPC broker (backlog B1), exercised across BOTH real realms (iframe and
@@ -36,6 +39,8 @@ const TERMINATE_BY_SECOND_LOAD = () => new Promise<string>(resolve => {
 });
 
 for (const mode of MODES) {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe(`broker correctness (${mode}): a call resolves with its own handler result`, () => {
         test('host calls a guest method and receives its return value', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
@@ -414,6 +419,7 @@ for (const mode of MODES) {
             await sandbox.run(`bridge.call('reloadThenAnswer')`); // the previous frame's first call: id 1
             expect(await sandbox.waitForLog('NEXT_FRAME_GOT', 8000)).toBe('NEXT_FRAME_GOT fresh answer for the next frame');
         });
+    });
     });
 }
 

@@ -1,7 +1,10 @@
 import fc from 'fast-check';
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import type { MountConfig, SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 useRecorder();
 
@@ -100,6 +103,8 @@ test.describe('S77: the measure counts at least what the browser delivers, for e
 const LONG_TYPE = `'a/' + 'b'.repeat(65533)`;
 
 for (const [mode, config] of Object.entries(MODES)) {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe(`S77: ${mode} mode: an oversized File name or a sparse array meets the existing budgets`, () => {
         test('a log line: a File with a name past LOG_MAX_BYTES and a sparse array arrive as the budget\'s placeholder, and the line after them at once', async ({ sandbox }) => {
             expect(await sandbox.mount(config)).toBe('ready');
@@ -165,5 +170,6 @@ for (const [mode, config] of Object.entries(MODES)) {
             expect(await sandbox.callOutcome('small')).toEqual({ status: 'resolved', value: [['photo.png', 'image/png'], [null, 'text/plain']] });
             expect(await sandbox.state()).toBe('ready');
         });
+    });
     });
 }

@@ -1,6 +1,9 @@
 import { test, expect } from '../../../test/e2e/fixture';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 // The preset reads before it writes, so running it in two sandboxes shows whether the second can read what
 // the first stored.
 const preset = fromPreset('storage-sharing');

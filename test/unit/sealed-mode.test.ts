@@ -1,5 +1,8 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
+import type { FetchPolicy } from '@src/lib/fetch-bridge';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import type { NetworkSandboxOptions, SandboxConfig, SealedSandboxConfig, StrictSandboxConfig } from '@src/host';
+import type { SandboxConfig, SealedSandboxConfig } from '@src/host';
+import type { NetworkSandboxOptions, StrictSandboxConfig } from '@src/lib/network-types';
 import { CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, ConfigRefusal, NETWORK_OPTIONS, normaliseConfig, SANDBOX_MODES, type NormaliseContext, type OptionRule } from '@src/lib/config-schema';
 import { fileKinds, SEALED_FILE_KINDS, sealedViewPolicy, type SealedFileKind, type SealedPolicyInput } from '@src/lib/csp/csp-generator';
 import { NO_ORIGINS } from '@src/lib/csp/origins';
@@ -144,7 +147,7 @@ describe('T2: the schema: no network option reaches sealed mode', () => {
             const { value, refusal } = normaliseConfig({ mode, origins: { images: ['https://cdn.example'] }, fetchBridge: { allow: ['https://api.example'] } }, context);
             expect(refusal, String(mode)).toBeNull();
             expect(value!.origins.images, String(mode)).toEqual(['https://cdn.example']);
-            expect(value!.fetchPolicy!.allow, String(mode)).toEqual(['https://api.example']);
+            expect((value!.fetchPolicy as FetchPolicy).allow, String(mode)).toEqual(['https://api.example']);
         }
     });
 

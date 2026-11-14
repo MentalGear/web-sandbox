@@ -1,4 +1,4 @@
-import { test, expect, ORIGIN } from './fixture';
+import { test, expect, ORIGIN, buildOfMode } from './fixture';
 import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { waitInView, inFrames } from './strict-view';
 import {
@@ -7,6 +7,9 @@ import {
 } from './realistic-host';
 import type { Page } from '@playwright/test';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The library's core flows on a host page that looks like a production application (realistic-host.ts: a strict CSP that
@@ -98,6 +101,7 @@ async function ownRequestControl(host: RealisticHost, name: string, browserName:
 
 test.describe('the view modes: sealed (the default) and strict', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('the default configuration starts on the production host, renders, runs its worker, and stops cleanly', async ({ sandbox, page, browserName }) => {
             const host = await RealisticHost.open(sandbox, { mode });
             const baseline = await quietBaseline(host);
@@ -399,6 +403,8 @@ test.describe('cross-origin isolation (COOP same-origin, COEP require-corp): not
     const ISOLATED = TERMINATION_REASONS.environmentIsolated.text;
 
     for (const mode of [...VIEW_MODES, 'cooperative', 'worker'] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode on an isolated host: ends with the isolation reason, builds no frame, runs nothing of the guest`, async ({ sandbox, page, browserName }) => {
             const host = await RealisticHost.open(sandbox, { mode, isolation: true, guestCode: mode === 'worker' ? 'execute' : 'none' });
             expect(await page.evaluate(() => self.crossOriginIsolated), 'the host page is cross-origin isolated').toBe(true);
@@ -411,11 +417,14 @@ test.describe('cross-origin isolation (COOP same-origin, COEP require-corp): not
             expect(await host.frames(), covering('coep', 'no frame was created')).toBe(0);
             await expect(host.guestResult(1500), covering('coep', 'and nothing of the guest ran')).rejects.toThrow();
         });
+        });
     }
 });
 
 test.describe('teardown', () => {
     for (const mode of ['cooperative', ...VIEW_MODES] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode}: removing the element while the host has focus and lifecycle listeners throws nothing at the host, leaves no frame, and the host page answers`, async ({ sandbox, page }) => {
             const host = await RealisticHost.open(sandbox, { mode });
             // positive control: the host's own focus reaches its listeners
@@ -430,15 +439,17 @@ test.describe('teardown', () => {
             expect(host.pageErrors, covering('eventDispatch', 'nor an uncaught exception')).toEqual([]);
             expect(await page.evaluate(() => (window as any).removedElement.shadowRoot.querySelectorAll('iframe').length), covering('eventDispatch', 'the removed element holds no frame')).toBe(0);
             // a new element on the same page builds afterwards: the removal left no state behind
-            const next = await page.evaluate(() => new Promise<string>(resolve => {
+            // (a config of the test's build: a cooperative one without scripts, or on the default build the default, sealed)
+            const next = await page.evaluate((config) => new Promise<string>(resolve => {
                 const element = document.createElement('web-sandbox') as any;
                 element.addEventListener('ready', () => resolve('ready'), { once: true });
                 element.addEventListener('terminated', () => resolve('terminated'), { once: true });
-                element.setConfig({ mode: 'cooperative' });
+                element.setConfig(config);
                 document.body.appendChild(element);
-            }));
+            }), buildOfMode(mode) === 'network' ? { mode: 'cooperative' } : {});
             expect(next, covering('eventDispatch', 'and a new element builds on the same page')).toBe('ready');
             expect(await host.hostFetch('after'), covering('thread', 'the host page works after the sandbox was removed')).toMatchObject({ status: 200 });
+        });
         });
     }
 });

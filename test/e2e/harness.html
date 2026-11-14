@@ -6,9 +6,12 @@
     <!--
         Minimal host page for the e2e and research specs (see test/e2e/fixture.ts).
         Kept separate from the playground so a playground change cannot break the security suite.
+        The library is the build the test asked for (test/e2e/library.ts): the default build, or the one with the network modes.
     -->
     <script type="module">
-        import { defineWebSandbox } from '/src/host.ts';
+        import { buildSettled, loadLibrary } from '/test/e2e/library.ts';
+
+        const { defineWebSandbox } = await loadLibrary();
 
         defineWebSandbox();
 
@@ -32,6 +35,9 @@
         window.addEventListener('fileswritten', (event) => {
             window.sandboxWrites.push({ sandbox: event.target.id || 'main', paths: [...event.detail.paths], at: performance.now() });
         });
+        // the element below was upgraded by defineWebSandbox() and builds its default environment: a spec starts once that has settled
+        await customElements.whenDefined('web-sandbox');
+        await buildSettled(document.querySelector('web-sandbox'));
         window.harnessReady = true;
     </script>
     <style>web-sandbox { display: block; width: 400px; height: 300px; }</style>

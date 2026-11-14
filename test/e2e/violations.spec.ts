@@ -1,6 +1,9 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Backlog S5: CSP violations in the guest reach the host as a 'violation' event on the element.
@@ -169,6 +172,7 @@ test.describe('4. worker mode', () => {
 
 test.describe('5. strict and sealed mode', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('view reports are labelled view, the request gate\'s logic (the same on every engine); a flood on the logic port is logic and uses up only the logic cap', async ({ sandbox, page }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             // the worker's own refusal, by the request gate; the strict worker has no importScripts
