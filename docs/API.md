@@ -1673,7 +1673,7 @@ CSS probing the view's own content (CSS loads nothing from the network there), t
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;
-requests the gate does not cover (`sendBeacon()`, `EventSource`, `<a ping>`: [their cookies](#cookie-carriers)); focus and the clipboard; messages to the host window; the user's link actions and the modifier clicks the guest's script
+requests the gate does not cover (`sendBeacon()`, `EventSource`, `<a ping>`: [their cookies](#cookie-carriers)); focus and the clipboard (guest code takes focus from the host page and receives the user's keystrokes in Firefox (in Chromium and WebKit the host page keeps focus), and after a click in the guest writes the clipboard (`writeText()` in Firefox and WebKit, `execCommand('copy')` in Chromium and Firefox)); messages to the host window; the user's link actions and the modifier clicks the guest's script
 synthesizes (a new top-level tab without `allow-popups`, in Firefox; with `allow-forms`, a user's own modifier click in Chromium submits a form that way past
 `form-action`); session history; guest-only stalls; forgeable reports; the host page's URL and origin; the host page's
 Trusted Types requirement. Each is described in the

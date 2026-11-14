@@ -787,9 +787,7 @@ the default, or in strict mode. Measured per engine and asserted by tests; worke
     a frame or worker the guest creates (their own `fetch()` with `credentials: 'include'`). The request gate covers
     `fetch()`, `XMLHttpRequest` and `WebSocket` only. [The table](docs/API.md#cookie-carriers) lists them, and
     [the cookies by engine](docs/API.md#cookies-by-engine) say what each engine sends.
-*   **Focus and the clipboard**: guest code takes focus from the host page (Firefox) and, in a user's click,
-    writes the clipboard (`writeText()` in Firefox and, in the click's own handler, WebKit; `execCommand('copy')` in
-    Chromium and Firefox).
+*   **Focus and the clipboard**: guest code takes focus from the host page and receives the user's keystrokes in Firefox (in Chromium and WebKit the host page keeps focus), and after a click in the guest writes the clipboard (`writeText()` in Firefox and WebKit, `execCommand('copy')` in Chromium and Firefox).
 *   **Messages**: the guest can post to the host window; check `event.source`.
 *   **The user's link actions**: Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens a new tab at
     the guest's URL in Chromium and Firefox, without `allow-popups`. A modifier click the guest's own script

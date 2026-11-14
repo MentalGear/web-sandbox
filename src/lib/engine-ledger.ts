@@ -36,6 +36,27 @@ const connect = (engine: (typeof CONNECT_ENGINES)[number]) => {
     return `a \`'self'\` source ${facts.selfAdmitsOtherOrigins ? 'admits' : 'does not admit'} an origin it does not name; a host without a scheme: ${facts.bareHostAdmitted}; \`wss://h\` ${facts.wssSourceAdmitsHttps ? 'also admits' : 'does not admit'} \`https://h\``;
 };
 
+/**
+ * What each engine does when a cooperative guest takes focus and uses the clipboard (the row `focus-and-clipboard`, whose
+ * cells are rendered from these values; test/e2e/guest-realm-hardening.spec.ts expects exactly them). Values of
+ * Chromium 159, Firefox 159 and WebKit 27.2 (Playwright 1.65.1).
+ */
+export const FOCUS_AND_CLIPBOARD_FACTS = {
+    // a frame's focus() without a user's gesture is ignored
+    chromium: { guestTakesFocus: false, keystrokesReachGuest: false, writeTextAfterClick: false, writeTextInClickHandler: false, copyAfterClick: true },
+    firefox: { guestTakesFocus: true, keystrokesReachGuest: true, writeTextAfterClick: true, writeTextInClickHandler: true, copyAfterClick: true },
+    webkit: { guestTakesFocus: false, keystrokesReachGuest: false, writeTextAfterClick: true, writeTextInClickHandler: true, copyAfterClick: false },
+} as const;
+
+const focusAndClipboard = (engine: keyof typeof FOCUS_AND_CLIPBOARD_FACTS) => {
+    const facts = FOCUS_AND_CLIPBOARD_FACTS[engine];
+    const focus = facts.guestTakesFocus
+        ? `Focus moves to the guest's element and ${facts.keystrokesReachGuest ? 'the keystrokes reach the guest' : 'the keystrokes do not reach the guest'}`
+        : 'The host page keeps focus, so the keystrokes go to the host page';
+    const write = facts.writeTextAfterClick ? 'works after a click' : facts.writeTextInClickHandler ? "is refused after a click and works in the click's own handler" : 'is refused';
+    return `${focus}; \`writeText()\` ${write}; \`execCommand('copy')\` ${facts.copyAfterClick ? 'works' : 'is refused'} after a click`;
+};
+
 const E2E = 'test/e2e/';
 
 /** The ledger, by row id. */
@@ -330,9 +351,9 @@ export const ENGINE_DIFFERENCES = {
     },
     'focus-and-clipboard': {
         what: "Guest focus and the clipboard (cooperative)",
-        chromium: "The host page keeps focus (a frame's `focus()` without a user's gesture is ignored), so keystrokes go to the host page; `writeText()` is refused, `execCommand('copy')` works after a click",
-        firefox: "Focus moves to the element and keystrokes reach the guest (159; 146: they did not); `writeText()` works after a click",
-        webkit: "The host page keeps focus; `writeText()` works after a click and in the click's own handler (27.2; 26: only in the handler)",
+        chromium: focusAndClipboard('chromium'),
+        firefox: focusAndClipboard('firefox'),
+        webkit: focusAndClipboard('webkit'),
         why: "Each browser's focus and user-activation rules for an opaque-origin frame. Residuals of cooperative mode (S36)",
         tests: [`${E2E}guest-realm-hardening.spec.ts`, `${E2E}strict-entry-scope-and-links.spec.ts`],
     },

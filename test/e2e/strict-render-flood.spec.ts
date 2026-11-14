@@ -13,7 +13,7 @@ import { VIEW_MODES } from './view-modes';
  *   2. under a sustained flood of maximal renders (256 Ki characters, as fast as the flow control allows)
  *      the host's largest stall is one apply, and the worker still answers calls: bounded by one apply as it costs
  *      in the same run (test/e2e/host-share.ts, oneApplyStall).
- * Measured as an example (this machine, Playwright 1.58 builds; not re-measured on 1.65), host lag max / call round trip max under a 3 s flood:
+ * Measured as an example (this machine, Playwright 1.58 builds), host lag max / call round trip max under a 3 s flood:
  *   Chromium ≤ 10 ms / ≤ 15 ms when it ran the view out of process; Firefox 50–95 ms / 70–150 ms;
  *   WebKit 110–470 ms / 130–390 ms. Chromium may also keep the view in the host page's process (BR:ST2:
  *   no iframe target, both frames local): then 45–130 ms / 65–180 ms alone (the same with the allowlist renderer

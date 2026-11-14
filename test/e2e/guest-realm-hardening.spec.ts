@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder, wss } from './recorder';
+import { FOCUS_AND_CLIPBOARD_FACTS } from '@src/lib/engine-ledger';
 
 /**
  * The guest realm's hardening (each label below is cited as BR:<label>), where browser behaviour decides:
@@ -327,7 +328,8 @@ test.describe('PD5: focus and the clipboard (residuals, measured)', () => {
         const guestKeys = (await sandbox.logs()).filter(line => line.startsWith('PD5-KEY')).at(-1) ?? null;
         const hostValue = await page.evaluate(() => (document.getElementById('host-input') as HTMLInputElement).value);
         // ledger: focus-and-clipboard
-        const measured = { chromium: ['input', null, 'abc'], firefox: ['web-sandbox', null, ''], webkit: ['input', null, 'abc'] }[browserName as 'chromium'];
+        const facts = FOCUS_AND_CLIPBOARD_FACTS[browserName as 'chromium'];
+        const measured = [facts.guestTakesFocus ? 'web-sandbox' : 'input', facts.keystrokesReachGuest ? 'PD5-KEY abc' : null, facts.guestTakesFocus ? '' : 'abc'];
         expect([active, guestKeys, hostValue]).toEqual(measured);
     });
 
@@ -348,12 +350,13 @@ test.describe('PD5: focus and the clipboard (residuals, measured)', () => {
         await page.frameLocator('web-sandbox >>> iframe').frameLocator('iframe').locator('#t').click();
         const inHandler = (await sandbox.waitForLog('PD5-HANDLER')).slice('PD5-HANDLER '.length);
         console.log('PD5 clipboard', browserName, JSON.stringify({ without, withClick, inHandler }));
+        // ledger: focus-and-clipboard
+        const facts = FOCUS_AND_CLIPBOARD_FACTS[browserName as 'chromium'];
         const measured = {
-            // ledger: focus-and-clipboard
-            chromium: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'NotAllowedError', copied: true }, inHandler: 'NotAllowedError' },
-            firefox: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'written', copied: true }, inHandler: 'written' },
-            webkit: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'NotAllowedError', copied: false }, inHandler: 'written' },
-        }[browserName as 'chromium'];
+            without: { written: 'NotAllowedError', copied: false },
+            withClick: { written: facts.writeTextAfterClick ? 'written' : 'NotAllowedError', copied: facts.copyAfterClick },
+            inHandler: facts.writeTextInClickHandler ? 'written' : 'NotAllowedError',
+        };
         expect({ without, withClick, inHandler }).toEqual(measured);
     });
 });
