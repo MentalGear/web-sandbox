@@ -19,7 +19,7 @@ import type { Page } from '@playwright/test';
  */
 
 const STARTUP_BLOCKED = "the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)";
-const WORKER_REFUSED = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)";
+const WORKER_REFUSED = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src, or a Cross-Origin-Embedder-Policy the engine applies to it; see docs/API.md#host-page-policy)";
 const TRUSTED_TYPES = "the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)";
 const WRAPPER_STYLE_HASH = "'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='";
 

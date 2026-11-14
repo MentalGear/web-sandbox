@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
  * Firefox and WebKit: through page.frames(). Chromium: always through CDP, from ground truth, never through
  * Playwright's frame model. The sandboxed wrapper can be an out-of-process iframe (idle
  * or under CPU load; in other runs it shares the page's process: no iframe target, both frames local; BR:ST2),
- * and Playwright 1.58 maps such an OOPIF target to its Frame asynchronously and not reliably:
+ * and Playwright's frame model may map such an OOPIF target to its Frame asynchronously and not reliably (seen on 1.58; not re-verified on 1.65, which this code does not depend on):
  * right after 'ready' it may already list the wrapper's children, may list none yet, or (under CPU load, about
  * 1 run in 10) never attach the target at all, so that newCDPSession(wrapper) keeps failing with "part of the
  * parent frame's session" although the wrapper has its own target. So Chromium is read through one CDP session
