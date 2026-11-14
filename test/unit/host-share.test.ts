@@ -26,6 +26,9 @@ const OUTSIDE: Record<string, string> = {
     // research 20 is a standalone script, not a spec: it reports the host timer's longest gap per run (median and range of 5,
     // an idle case beside every loop case, a load guard before each) and asserts nothing, so no bound can fail on a loaded machine
     'docs/research/20_served_document_mode/q4-processes.mjs': 'a standalone probe script that reports a gap per run against an idle case and bounds nothing',
+    // research 27 is a standalone script as research 20's: it reports the host timer's longest gap while a served frame, its
+    // child or its worker loops, and asserts nothing
+    'docs/research/27_served_document_headerless/q6-thread.mjs': 'a standalone probe script that reports a gap per run and bounds nothing',
 };
 
 function sources(dir: string): string[] {
