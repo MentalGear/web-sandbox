@@ -299,8 +299,8 @@ refused if it contains any, or anything that would end or re-enter the script el
   (a probe worker tells it from Firefox's message-less syntax error). The view's two HTML and script sinks go through one
   Trusted Types policy (`web-sandbox`) where the host page requires them (API.md, "Host page policy").
 - **Focus never leaves the host page for the sandbox on the guest's say.** A sandboxed frame's `focus()` without user
-  activation takes focus from the host page's focused element in Chromium and Firefox (Chromium also its keystrokes);
-  WebKit keeps it. So `set({ focus: true })` focuses only while the view's `document.hasFocus()`: the user last clicked or
+  activation takes focus from the host page's focused element in Firefox (not its keystrokes); Chromium (159) and WebKit
+  keep it. So `set({ focus: true })` focuses only while the view's `document.hasFocus()`: the user last clicked or
   tabbed into the sandbox and the window is focused. Otherwise the view refuses it (`VIEW_FOCUS` in the ack, a line in the
   guest's log) and applies the rest of the call.
 

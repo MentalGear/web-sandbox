@@ -1,5 +1,5 @@
 import { test, expect, type SandboxDriver, type MountConfig, buildOfMode } from './fixture';
-import { clickInSandbox, inView, waitInView } from './strict-view';
+import { clickInSandbox, inView, inViewWithGesture, waitInView } from './strict-view';
 import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import { VIEW_MODES, type ViewMode } from './view-modes';
 
@@ -197,6 +197,9 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         test("the view, read from outside: every link's href is the constant, the guest's URL is nowhere in the document; the link matches :link and :any-link, is focusable and has the role link; a drag carries only the constant", async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount(inMode(mode))).toBe('ready');
             await render(sandbox, browserName, LINKS);
+            // Chromium 159 ignores a frame's focus() without a user's gesture, so the link takes it with one
+            // ledger: focus-and-clipboard
+            if (browserName === 'chromium') await inViewWithGesture(page, "document.getElementById('l').focus()");
             const r = await inView<any>(page, browserName, `(() => {
                 const a = document.getElementById('l');
                 const s = document.getElementById('s');

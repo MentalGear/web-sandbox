@@ -50,7 +50,7 @@ class RejectionEventLike extends TrustedEvent {
 
 // The bootstrap of `mode`, as the host builds it (its listeners from the table), on a stand-in global: what it registers
 // on it, and what it posts on its port.
-function bootstrap(mode: Exclude<EgressMode, 'sealed'>) {
+function bootstrap(mode: EgressMode) {
     const registered: { type: string; listener: (event: unknown) => void; capture: unknown }[] = [];
     vi.stubGlobal('addEventListener', (type: string, listener: (event: unknown) => void, capture: unknown) => { registered.push({ type, listener, capture }); });
     vi.stubGlobal('Event', TrustedEvent);
@@ -67,8 +67,9 @@ function bootstrap(mode: Exclude<EgressMode, 'sealed'>) {
     vi.stubGlobal('MessagePort', KeptPort);
     const port = new KeptPort();
     const sent = port.frames;
-    const features = { externalPort: mode === 'strict', callBudget: { calls: 1000, bytes: 67108864 }, listeners: bootstrapListeners(mode), uncaught: { count: UNCAUGHT_PER_SECOND, characters: UNCAUGHT_CHARACTERS_PER_SECOND } };
-    const comms = inSandboxScript(false, mode, new Proxy({}, { get: () => () => {} }) as Console, createBroker, features as any, createSizeOf);
+    const viewMode = mode === 'strict' || mode === 'sealed'; // sealed mode's worker runs strict mode's bootstrap, with its own rows
+    const features = { externalPort: viewMode, callBudget: { calls: 1000, bytes: 67108864 }, listeners: bootstrapListeners(mode), uncaught: { count: UNCAUGHT_PER_SECOND, characters: UNCAUGHT_CHARACTERS_PER_SECOND } };
+    const comms = inSandboxScript(false, viewMode ? 'strict' : mode, new Proxy({}, { get: () => () => {} }) as Console, createBroker, features as any, createSizeOf);
     if (mode !== 'cooperative') comms.attach(port as unknown as MessagePort);
     const on = (type: string) => registered.filter(entry => entry.type === type).map(entry => entry.listener);
     return { registered, sent, on, closed };
@@ -124,7 +125,7 @@ describe('the table', () => {
 });
 
 describe('the bootstrap installs the listeners of its rows, and no other', () => {
-    for (const mode of ['worker', 'strict', 'cooperative'] as const) {
+    for (const mode of ['worker', 'strict', 'sealed', 'cooperative'] as const) {
         it(`${mode} mode: one capture listener per row, plus its own channel (worker mode's INIT_PORT)`, () => {
             if (mode === 'cooperative') vi.spyOn(window.parent, 'postMessage').mockImplementation(() => {});
             const { registered } = bootstrap(mode);
@@ -293,5 +294,68 @@ describe('what each listener does (5:N-1)', () => {
         expect(reasons).toEqual(['the guest raised more uncaught errors or unhandled rejections in one second than their budget allows']);
         expect(read('docs/API.md')).toContain('the guest raised more uncaught errors or unhandled rejections in one second than their budget allows');
         port1.close();
+    });
+});
+
+// BD1:TST-1 (class G): the fields of an event the platform hands a listener are accessors of a prototype the guest can
+// replace, so a listener reads them through the getters captured before guest code runs (readEvent), and a replaced
+// accessor changes nothing it counts or relays. The same listeners run in every mode below (sealed mode's worker runs
+// strict mode's bootstrap with its own rows); test/unit/event-reads.test.ts scans that none reads an event's member.
+describe('a guest that replaces the accessors of the events the listeners read changes nothing they count or relay (BD1:TST-1)', () => {
+    const spoofed = (prototype: object, fields: Record<string, unknown>) => {
+        const saved = Object.fromEntries(Object.keys(fields).map(name => [name, Object.getOwnPropertyDescriptor(prototype, name)!]));
+        for (const [name, value] of Object.entries(fields)) Object.defineProperty(prototype, name, { configurable: true, get: () => value });
+        return () => { for (const [name, descriptor] of Object.entries(saved)) Object.defineProperty(prototype, name, descriptor); };
+    };
+    const big = () => new Error('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND));
+    const lines = (sent: any[]) => sent.filter(frame => frame.type === 'LOG').map(frame => String(frame.args[0]));
+
+    for (const mode of ['worker', 'strict', 'sealed'] as const) {
+        it(`${mode} mode: three rejections of more than the characters budget, with PromiseRejectionEvent.prototype.reason replaced to answer 'x', end the sandbox, and are relayed as they are`, async () => {
+            const { on, sent } = bootstrap(mode);
+            const restore = spoofed(RejectionEventLike.prototype, { reason: 'x' });
+            try {
+                for (let i = 0; i < 3; i++) for (const listener of on('unhandledrejection')) listener(new RejectionEventLike({ reason: big() }));
+            } finally {
+                restore();
+            }
+            await new Promise(resolve => setTimeout(resolve, 5));
+            expect(sent.filter(frame => frame.type === 'UNCAUGHT_PAST_BUDGET')).toEqual([{ type: 'UNCAUGHT_PAST_BUDGET' }]);
+            expect(lines(sent).filter(line => line.startsWith('Uncaught (in promise) Error: xxx'))).toHaveLength(3);
+            expect(lines(sent)).not.toContain('Uncaught (in promise) x');
+        });
+
+        it(`${mode} mode: three uncaught errors of more than the characters budget, with ErrorEvent.prototype's message and error replaced, end the sandbox`, async () => {
+            const { on, sent } = bootstrap(mode);
+            const restore = spoofed(ErrorEventLike.prototype, { message: 'x', error: undefined });
+            try {
+                for (let i = 0; i < 3; i++) for (const listener of on('error')) listener(new ErrorEventLike({ message: 'Uncaught Error: ' + 'x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND), error: big() }));
+            } finally {
+                restore();
+            }
+            await new Promise(resolve => setTimeout(resolve, 5));
+            expect(sent.filter(frame => frame.type === 'UNCAUGHT_PAST_BUDGET')).toEqual([{ type: 'UNCAUGHT_PAST_BUDGET' }]);
+            if (mode !== 'worker') return; // strict and sealed mode relay an error from the prelude, which has its own test (strict-view-budget.test.ts)
+            expect(lines(sent).filter(line => line.startsWith('Uncaught Error: xxx'))).toHaveLength(3);
+            expect(lines(sent)).not.toContain('Uncaught x');
+        });
+    }
+
+    it('cooperative mode: the relayed line of a rejection and of an error is the real one, not what the replaced accessors answer', () => {
+        vi.spyOn(window.parent, 'postMessage').mockImplementation(() => {});
+        // the bootstrap's own end of the channel it announces: its postMessage (the captured one, KeptPort's) keeps frames on it
+        const ends: { frames: unknown[] }[] = [];
+        vi.stubGlobal('MessageChannel', class { port1 = { frames: [] as unknown[] }; port2 = {}; constructor() { ends.push(this.port1); } });
+        const { on } = bootstrap('cooperative');
+        const restoreReason = spoofed(RejectionEventLike.prototype, { reason: 'x' });
+        const restoreError = spoofed(ErrorEventLike.prototype, { message: 'x', error: undefined });
+        try {
+            for (const listener of on('unhandledrejection')) listener(new RejectionEventLike({ reason: new Error('the real reason') }));
+            for (const listener of on('error')) listener(new ErrorEventLike({ message: 'Uncaught Error: the real error', error: new Error('the real error') }));
+        } finally {
+            restoreReason();
+            restoreError();
+        }
+        expect(lines(ends[0]!.frames).filter(line => line.startsWith('Uncaught'))).toEqual(['Uncaught (in promise) Error: the real reason', 'Uncaught Error: the real error']);
     });
 });

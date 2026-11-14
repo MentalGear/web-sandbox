@@ -338,9 +338,9 @@ export interface SandboxConfigOptions {
      * and anything the parser does not understand admit nothing (docs/API.md#your-connect-src has the grammar).
      *
      * - A string is the enforced policy, exactly as served; several policies are separated by commas, as in a header. A
-     *   Report-Only policy is not passed. It is also what a browser without Trusted Types (Firefox, at the version
-     *   measured) reads the page's `require-trusted-types-for` and `trusted-types` from: with it, such a browser ends the
-     *   build and refuses `execute()` as the others do, and without it nothing is applied there
+     *   Report-Only policy is not passed. It is also what a browser without Trusted Types reads the page's
+     *   `require-trusted-types-for` and `trusted-types` from: with it, such a browser ends the build and refuses `execute()`
+     *   as the others do, and without it nothing is applied there
      *   (docs/API.md#trusted-types-without-the-browser).
      * - `false` says the page sends no Content-Security-Policy: the lists are kept as configured. A policy the page does
      *   send is then applied by the browser alone, and engines differ on what some of its sources admit.

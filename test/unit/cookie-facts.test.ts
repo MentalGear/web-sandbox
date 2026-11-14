@@ -46,7 +46,7 @@ describe('COOKIE_ENGINE_FACTS', () => {
     it('says where each engine takes the host page\'s site from, and whether a framed page can read its ancestors (BD4:ISO-1, BD4:ISO-3)', () => {
         for (const engine of COOKIE_ENGINES) expect(COOKIE_ENGINE_FACTS[engine].siteFrom, engine).not.toBe('');
         // test/e2e/host-site-layouts.spec.ts reads `'ancestorOrigins' in location` on every engine against these
-        expect(COOKIE_ENGINES.filter(engine => COOKIE_ENGINE_FACTS[engine].hasAncestorOrigins)).toEqual(['chromium', 'webkit']);
+        expect(COOKIE_ENGINES.filter(engine => COOKIE_ENGINE_FACTS[engine].hasAncestorOrigins)).toEqual(['chromium', 'firefox', 'webkit']);
         expect(COOKIE_ENGINE_FACTS.webkit.siteFrom).toContain("the top-level document's URL");
     });
 

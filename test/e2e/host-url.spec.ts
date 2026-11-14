@@ -166,12 +166,13 @@ test('cooperative mode: nothing the guest document or location exposes carries t
     expect(r.violations.every((v: any) => v.referrer === '')).toBe(true);
 
     // Platform limits, asserted as measured. ancestorOrigins cannot be set by a page, and a no-referrer
-    // policy on the frames does not mask it in Chromium 141 or WebKit 26: the host ORIGIN shows.
+    // policy on the frames does not mask it in Chromium and WebKit: the host ORIGIN shows. Firefox lists 'null' for the
+    // host page too.
     // ledger: ancestor-origins
-    const hasAncestorOrigins = browserName !== 'firefox';
-    expect(r.ancestorOrigins).toEqual(hasAncestorOrigins ? ['null', ORIGIN] : null);
+    const hostShown = browserName !== 'firefox';
+    expect(r.ancestorOrigins).toEqual(['null', hostShown ? ORIGIN : 'null']);
     expect(r.nested.baseURI).toBe('about:blank');
-    expect(r.nested.ancestorOrigins).toEqual(hasAncestorOrigins ? ['null', 'null', ORIGIN] : null);
+    expect(r.nested.ancestorOrigins).toEqual(['null', 'null', hostShown ? ORIGIN : 'null']);
     // WebKit takes the referrer of a frame's navigation from the first non-srcdoc document up the tree
     // (FrameLoader::outgoingReferrer), which is the host page, with no check for the opaque origin in
     // between: a frame the guest creates with referrerpolicy="unsafe-url" sees the host page URL minus

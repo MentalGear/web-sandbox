@@ -36,7 +36,7 @@ test.use({ build: 'network' });
  * with its reason; every kept entry's request arrives (the positive control of silence). The controls of each test: a
  * top-level navigation to each name carries every cookie of the jar (the jar holds Lax, Strict and host-only cookies), and
  * a plain sandboxed frame of the host page, without the library, opens a WebSocket to the top page's site, whose
- * handshake on WebKit carries that site's Lax and Strict cookies: what the guest's would carry if the entry were kept.
+ * handshake on WebKit carries that site's Lax and Strict cookies where the host page's URL is on that site, and none where it is not (nested-other-url, embedded): what the guest's would carry if the entry were kept.
  */
 
 test.use({ ignoreHTTPSErrors: true });
@@ -176,6 +176,7 @@ test.describe("the host page's site in each layout: no guest request carries the
 
                 // control: the jar holds every cookie, Lax, Strict and host-only included
                 for (const name of ['H', 'S', 'X'] as const) {
+                    await page.goto('about:blank'); // a navigation from another site's page does not carry its Strict cookies (WebKit 27.2)
                     await page.goto(`${at(name)}/plain?k=${tag}.jar.${name}`);
                     expect(seen(`${tag}.jar.${name}`)[0]?.cookies.filter(cookie => /_(lax|strict)$/.test(cookie)).length, `jar ${name}`).toBeGreaterThanOrEqual(4);
                 }
@@ -184,7 +185,8 @@ test.describe("the host page's site in each layout: no guest request carries the
                 page.on('console', message => { if (message.type() === 'warning' && message.text().includes('[Sandbox] origins.')) warnings.push(message.text()); });
                 const frame = await open(page, layout);
                 await frame.waitForFunction(() => (window as any).harnessReady === true);
-                const realm = await frame.evaluate(() => ({ selfOrigin: self.origin, framed: window !== window.top, ancestorOrigins: 'ancestorOrigins' in location }));
+                const realm = await frame.evaluate(() => ({ selfOrigin: self.origin, framed: window !== window.top, ancestorOrigins: 'ancestorOrigins' in location, list: 'ancestorOrigins' in location ? [...location.ancestorOrigins] : null }));
+                console.log(`MEASURED ${browserName} ${layout} location.ancestorOrigins of the host page: ${JSON.stringify(realm.list)}`);
                 expect(realm.ancestorOrigins, "the engine's fact: location.ancestorOrigins").toBe(facts.hasAncestorOrigins);
                 expect(realm.selfOrigin === 'null', 'the layout gives the page an opaque origin').toBe(['csp-top', 'nested-sandboxed', 'nested-other-url'].includes(layout));
                 expect(realm.framed).toBe(!['top-level', 'csp-top'].includes(layout));
@@ -199,7 +201,14 @@ test.describe("the host page's site in each layout: no guest request carries the
                 }, `${at(topSite, 'wss')}/ws?k=${tag}.control`);
                 await expect.poll(() => seen(`${tag}.control`).length, 'the control handshake').toBeGreaterThan(0);
                 const control = seen(`${tag}.control`)[0]!.cookies;
-                if (engine === 'webkit') expect(control.filter(cookie => FIRST_PARTY.test(cookie)), `the top site's Lax and Strict cookies on a frame's handshake: ${control}`).not.toEqual([]);
+                // WebKit 27.2 decides a request's site from the frame's own URL as well as the top-level one: a page whose URL is on
+                // another site than the top page's (nested-other-url, embedded) gets none of the top site's Lax and Strict cookies
+                const urlOnTopSite = !['nested-other-url', 'embedded'].includes(layout);
+                if (engine === 'webkit') {
+                    const firstParty = expect(control.filter(cookie => FIRST_PARTY.test(cookie)), `the top site's Lax and Strict cookies on a frame's handshake: ${control}`);
+                    if (urlOnTopSite) firstParty.not.toEqual([]);
+                    else firstParty.toEqual([]);
+                }
 
                 // the guest
                 const urls = Object.fromEntries(TARGETS.map(name => [name, at(name)])) as Record<Name, string>;

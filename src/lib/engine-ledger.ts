@@ -36,6 +36,27 @@ const connect = (engine: (typeof CONNECT_ENGINES)[number]) => {
     return `a \`'self'\` source ${facts.selfAdmitsOtherOrigins ? 'admits' : 'does not admit'} an origin it does not name; a host without a scheme: ${facts.bareHostAdmitted}; \`wss://h\` ${facts.wssSourceAdmitsHttps ? 'also admits' : 'does not admit'} \`https://h\``;
 };
 
+/**
+ * What each engine does when a cooperative guest takes focus and uses the clipboard (the row `focus-and-clipboard`, whose
+ * cells are rendered from these values; test/e2e/guest-realm-hardening.spec.ts expects exactly them). Values of
+ * Chromium 159, Firefox 159 and WebKit 27.2 (Playwright 1.65.1).
+ */
+export const FOCUS_AND_CLIPBOARD_FACTS = {
+    // a frame's focus() without a user's gesture is ignored
+    chromium: { guestTakesFocus: false, keystrokesReachGuest: false, writeTextAfterClick: false, writeTextInClickHandler: false, copyAfterClick: true },
+    firefox: { guestTakesFocus: true, keystrokesReachGuest: true, writeTextAfterClick: true, writeTextInClickHandler: true, copyAfterClick: true },
+    webkit: { guestTakesFocus: false, keystrokesReachGuest: false, writeTextAfterClick: true, writeTextInClickHandler: true, copyAfterClick: false },
+} as const;
+
+const focusAndClipboard = (engine: keyof typeof FOCUS_AND_CLIPBOARD_FACTS) => {
+    const facts = FOCUS_AND_CLIPBOARD_FACTS[engine];
+    const focus = facts.guestTakesFocus
+        ? `Focus moves to the guest's element and ${facts.keystrokesReachGuest ? 'the keystrokes reach the guest' : 'the keystrokes do not reach the guest'}`
+        : 'The host page keeps focus, so the keystrokes go to the host page';
+    const write = facts.writeTextAfterClick ? 'works after a click' : facts.writeTextInClickHandler ? "is refused after a click and works in the click's own handler" : 'is refused';
+    return `${focus}; \`writeText()\` ${write}; \`execCommand('copy')\` ${facts.copyAfterClick ? 'works' : 'is refused'} after a click`;
+};
+
 const E2E = 'test/e2e/';
 
 /** The ledger, by row id. */
@@ -70,14 +91,14 @@ export const ENGINE_DIFFERENCES = {
         firefox: "The error and its text, in the worker and in cooperative mode",
         webkit: "`Script error.` in cooperative mode's inline scripts and in worker mode's worker; strict mode's view relays the real text and counts its characters in the uncaught budget",
         why: "WebKit mutes errors whose script it cannot resolve to the document's origin. Worker mode has no view to count in, and cooperative mode no API; the line is the browser's",
-        tests: [`${E2E}relay-and-rpc-budgets.spec.ts`, `${E2E}error-cost-and-queued-calls.spec.ts`],
+        tests: [`${E2E}relay-and-rpc-budgets.spec.ts`, `${E2E}error-cost-and-queued-calls.spec.ts`, `${E2E}uncaught-event-reads.spec.ts`],
     },
     'worker-violation-reports': {
         what: "`securitypolicyviolation` reports raised inside a worker (`source: 'logic'`) for `importScripts` or a module `import()` in worker mode (strict and sealed mode's build refuses an entry that calls `import()`, and their worker has no `importScripts`; a refused `fetch()`, `XMLHttpRequest` or `WebSocket` is the request gate's own report on every engine)",
         chromium: "Raises the refusal in the worker (`script-src-elem`)",
         firefox: "The refusal reaches the creating document (in strict and sealed mode, the view's report)",
-        webkit: "None",
-        why: "WebKit raises no violation event in workers, and Firefox routes these refusals to the creating document. Reports from the guest's realm are claims, and the refusal itself is the same on every engine",
+        webkit: "Raises the refusal in the worker (`script-src-elem`), as Chromium",
+        why: "Each engine reports a refused worker import its own way (Chromium and WebKit in the worker, Firefox to the creating document). Reports from the guest's realm are claims, and the refusal itself is the same on every engine",
         tests: [`${E2E}violations.spec.ts`, `${E2E}worker-security.spec.ts`, `${E2E}blob-delivery.spec.ts`],
     },
     'reporting-api-delivery': {
@@ -92,15 +113,15 @@ export const ENGINE_DIFFERENCES = {
         what: "The guest line for a strict entry that does not parse (the reason, the host line and the state are the same on every engine)",
         chromium: "`Uncaught SyntaxError: <the engine's message>`",
         firefox: "`Uncaught the entry did not parse (this browser gives no detail)`: its error event carries no message, and the library tells the unparsed entry from a refused worker with a one-statement probe worker and states the placeholder",
-        webkit: "`Uncaught SyntaxError: <the engine's message>`",
-        why: "Firefox gives a worker's syntax error no message or line. The library cannot recover what the engine withholds; the message of an engine that gives one is the guest's error text, relayed as a guest line, and no line or column is part of the API on any engine",
+        webkit: "`Uncaught the entry did not parse (this browser gives no detail)`, as Firefox",
+        why: "Firefox and WebKit give a worker's syntax error no message or line. The library cannot recover what the engine withholds; the message of an engine that gives one is the guest's error text, relayed as a guest line, and no line or column is part of the API on any engine",
         tests: [`${E2E}strict.spec.ts`],
     },
     'worker-global-set': {
         what: "Which of the allowlisted globals (`WORKER_GLOBALS`) and navigator members (`WORKER_NAVIGATOR_MEMBERS`) the guest worker has: a name an engine does not offer is not there (worker and strict mode alike; `SharedArrayBuffer`, absent without cross-origin isolation, and strict mode's missing `importScripts` and secure-context-only names, `SECURE_CONTEXT_ONLY`, are the same on every engine)",
         chromium: "Lacks `InternalError`, `onoffline`, `ononline`, and, because its opaque-origin worker is not a secure context, `CryptoKey`, `SubtleCrypto`, `Lock`, `LockManager`, the WebCodecs coders and image decoder (`AudioDecoder`, `AudioEncoder`, `VideoDecoder`, `VideoEncoder`, `ImageDecoder`, `ImageTrack`, `ImageTrackList`) and the navigator's `deviceMemory`, `globalPrivacyControl`, `locks`, `gpu` (worker mode; strict mode's worker keeps no secure-context-only name on any engine)",
-        firefox: "Lacks `SecurityPolicyViolationEvent`, `QuotaExceededError`, `IDBRecord`, `WebGLObject` and the navigator's `deviceMemory`, `gpu`",
-        webkit: "Lacks `Temporal`, `SuppressedError`, `InternalError`, `DisposableStack`, `AsyncDisposableStack`, `onlanguagechange`, `scheduler`, `Scheduler`, `TaskController`, `TaskSignal`, `TaskPriorityChangeEvent`, `QuotaExceededError`, `IDBRecord`, `WebGLObject`, `ImageDecoder`, `ImageTrack`, `ImageTrackList` and the navigator's `deviceMemory`, `globalPrivacyControl`, `gpu`",
+        firefox: "Lacks `SecurityPolicyViolationEvent`, `QuotaExceededError`, `WebGLObject` and the navigator's `deviceMemory`, `gpu`",
+        webkit: "Lacks `InternalError`, `onlanguagechange`, `scheduler`, `Scheduler`, `TaskController`, `TaskSignal`, `TaskPriorityChangeEvent`, `WebGLObject` and the navigator's `deviceMemory`, `globalPrivacyControl`, `gpu`",
         why: "Which APIs an engine ships (and, for secure-context-only ones, whether it counts a `blob:` worker of an opaque origin as secure). The library only deletes names off the allowlist, so an absent name is absent and none is added; no name that can make a request or open a channel differs (the four request makers are present on every engine, `importScripts` in worker mode)",
         tests: [`${E2E}worker-globals-and-termination.spec.ts`],
     },
@@ -115,9 +136,9 @@ export const ENGINE_DIFFERENCES = {
     'worker-eventsource-fontface': {
         what: "A worker the guest makes in cooperative mode: its `EventSource` and `FontFace` against the policy",
         chromium: "Refused by the policy",
-        firefox: "Sent and loaded past the policy",
+        firefox: "Refused by the policy",
         webkit: "Refused by the policy",
-        why: "A platform gap in Firefox's worker policy checks. A worker the guest makes is a realm the library never reaches; the library's own worker allowlist leaves both out",
+        why: "A worker the guest makes is a realm the library never reaches; the library's own worker allowlist leaves both out, and every engine's worker policy checks refuse them",
         tests: [`${E2E}worker-globals-and-termination.spec.ts`],
     },
     'webassembly-unsafe-eval': {
@@ -132,8 +153,8 @@ export const ENGINE_DIFFERENCES = {
         what: "A host page with `Cross-Origin-Embedder-Policy: require-corp` (without COOP)",
         chromium: "Strict mode runs",
         firefox: "Strict mode runs",
-        webkit: "Refuses the view's `blob:` worker; the build ends with the worker-refused reason",
-        why: "WebKit applies a CORP check to a `blob:` worker made by an opaque-origin document, and a blob has no CORP header. No API reads a page's COEP, so the library cannot decide before the build",
+        webkit: "Strict mode runs",
+        why: "Whether an engine applies a CORP check to a `blob:` worker made by an opaque-origin document, which a blob (it has no CORP header) would fail. No API reads a page's COEP, so the library cannot decide before the build",
         tests: [`${E2E}host-policy.spec.ts`, `${E2E}directive-matrix.ts`],
     },
     'coop-coep-isolation': {
@@ -147,7 +168,7 @@ export const ENGINE_DIFFERENCES = {
     'ancestor-origins': {
         what: "`location.ancestorOrigins` in a cooperative guest",
         chromium: "Lists the host origin",
-        firefox: "No such property",
+        firefox: "Lists `null` for the wrapper and for the host page: the host origin is not shown",
         webkit: "Lists the host origin",
         why: "The page cannot set it, and a no-referrer policy does not mask it. A documented limit of cooperative mode, whose list is frozen (S44)",
         tests: [`${E2E}host-url.spec.ts`, `${E2E}realistic-host.spec.ts`],
@@ -179,9 +200,9 @@ export const ENGINE_DIFFERENCES = {
     'trusted-types': {
         what: "A host page's Trusted Types requirement",
         chromium: "Applied: the build ends when the page's `trusted-types` list omits `web-sandbox`, and `execute()` is refused",
-        firefox: "No Trusted Types (146): nothing is applied unless `hostContentSecurityPolicy` gives the policy, from which the library refuses as the others do",
+        firefox: "Applied, as Chromium (159). Firefox 146 had no Trusted Types: nothing is applied unless `hostContentSecurityPolicy` gives the policy, from which the library refuses as the others do",
         webkit: "Applied, as Chromium",
-        why: "A feature missing in Firefox. `hostContentSecurityPolicy` lets the library decide the same way where the browser cannot; a Firefox that ships Trusted Types is governed like the others",
+        why: "Firefox 146 had no Trusted Types and 159 has them. `hostContentSecurityPolicy` lets the library decide the same way where the browser cannot; a browser that has Trusted Types is governed by its own",
         tests: [`${E2E}host-policy.spec.ts`, `${E2E}trusted-types-uniform.spec.ts`],
     },
     'cookies': {
@@ -220,8 +241,8 @@ export const ENGINE_DIFFERENCES = {
         what: "A typed array over a `SharedArrayBuffer` (a shared `WebAssembly.Memory`'s buffer) in a call or a result, on a page that is not cross-origin isolated",
         chromium: "Structured clone refuses it: `ARGS_NOT_TRANSFERABLE` or `RESULT_NOT_TRANSFERABLE`",
         firefox: "Structured clone refuses it: `ARGS_NOT_TRANSFERABLE` or `RESULT_NOT_TRANSFERABLE`",
-        webkit: "Structured clone copies it into a plain `ArrayBuffer` of the whole memory (64 KiB a page), not shared: the broker then sends the view's own bytes, as for any view",
-        why: "Each engine's structured clone of shared memory without isolation. No engine shares the memory with the other side, and no engine sends bytes the view does not show: the broker's snapshot carries each view's own bytes only (rpc.ts, compactViews)",
+        webkit: "Structured clone refuses it: `ARGS_NOT_TRANSFERABLE` or `RESULT_NOT_TRANSFERABLE`",
+        why: "Each engine's structured clone of shared memory without isolation. No engine shares the memory with the other side, and no engine sends bytes the view does not show (an engine that copies the shared buffer into a plain `ArrayBuffer` sends the view's own bytes, as for any view): the broker's snapshot carries each view's own bytes only (rpc.ts, compactViews)",
         tests: [`${E2E}rpc-what-crosses.spec.ts`],
     },
     'unresolved-import-events': {
@@ -253,7 +274,7 @@ export const ENGINE_DIFFERENCES = {
         chromium: "Honoured",
         firefox: "Ignored: only the first map counts, and none once a module script was prepared",
         webkit: "Honoured",
-        why: "Firefox 146 honours one import map per document",
+        why: "Firefox 159 honours one import map per document",
         tests: [`${E2E}blob-delivery.spec.ts`],
     },
     'blob-module-literal-key': {
@@ -297,9 +318,9 @@ export const ENGINE_DIFFERENCES = {
         tests: [`${E2E}guest-realm-hardening.spec.ts`],
     },
     'modifier-click-links': {
-        what: "A user's modifier click or Enter on a guest link or form (cooperative, without `allow-popups`)",
-        chromium: "Opens a new tab at the guest's URL with or without a gesture; submits a form in a new tab past `form-action 'none'` with `allow-forms`",
-        firefox: "Opens a new tab after a user click; no form submission",
+        what: "A modifier click or Enter on a guest link or form (cooperative, without `allow-popups`), a user's own or one the guest's script synthesizes",
+        chromium: "A user's own: opens a new tab at the guest's URL, and submits a form in a new tab past `form-action 'none'` with `allow-forms`. A synthesized one: opens none",
+        firefox: "A user's own: opens a new tab after a user click; no form submission. A synthesized one: opens the link within a user's transient activation (after any click in the guest)",
         webkit: "Opens none",
         why: "How each browser treats a user's gesture in a sandboxed frame; no policy governs the new tab. Strict mode renders inert links",
         tests: [`${E2E}relay-and-rpc-budgets.spec.ts`, `${E2E}worker-globals-and-termination.spec.ts`],
@@ -315,9 +336,9 @@ export const ENGINE_DIFFERENCES = {
     'keepalive-fetch': {
         what: "`fetch` with `keepalive` from a frame the guest makes (cooperative) past `connect-src`",
         chromium: "Refused by `connect-src`",
-        firefox: "Sent past `connect-src`",
+        firefox: "Refused by `connect-src`",
         webkit: "Refused by `connect-src`",
-        why: "Firefox sends keepalive requests without checking `connect-src` (a platform bug). The guest realm's own `fetch` is gated and refuses `keepalive` on every engine; a frame the guest makes has the platform's `fetch`",
+        why: "The guest realm's own `fetch` is gated and refuses `keepalive` on every engine; a frame the guest makes has the platform's `fetch`, whose keepalive request every engine checks against `connect-src`",
         tests: [`${E2E}guest-realm-hardening.spec.ts`],
     },
     'preconnect': {
@@ -330,11 +351,11 @@ export const ENGINE_DIFFERENCES = {
     },
     'focus-and-clipboard': {
         what: "Guest focus and the clipboard (cooperative)",
-        chromium: "Guest keystrokes reach the guest after it takes focus; `writeText()` is refused, `execCommand('copy')` works after a click",
-        firefox: "Focus moves to the element but keystrokes do not reach the guest; `writeText()` works after a click",
-        webkit: "The host page keeps focus; `writeText()` is refused after a click and works in the click's own handler",
+        chromium: focusAndClipboard('chromium'),
+        firefox: focusAndClipboard('firefox'),
+        webkit: focusAndClipboard('webkit'),
         why: "Each browser's focus and user-activation rules for an opaque-origin frame. Residuals of cooperative mode (S36)",
-        tests: [`${E2E}guest-realm-hardening.spec.ts`],
+        tests: [`${E2E}guest-realm-hardening.spec.ts`, `${E2E}strict-entry-scope-and-links.spec.ts`],
     },
     'redirect-refusal-outcome': {
         what: "A synchronous `XMLHttpRequest` in a worker (strict and worker mode) to a listed origin that redirects to one the policy does not list",

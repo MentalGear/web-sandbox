@@ -248,19 +248,19 @@ test('P3 the worker under the hash-only view policy', async ({ page, browserName
         // ... so Worker must be deleted before guest code; deleting it leaves no way back
         deleteWorker: true, afterDelete: { typeofWorker: 'undefined', inSelf: false, onProto: false },
     });
-    // WebAssembly: refused in Chromium and Firefox; WebKit compiles it in the worker without
-    // 'unsafe-eval' or 'wasm-unsafe-eval' (measured).
-    expect([design.results.wasmCompile, design.results.wasmModuleSync]).toEqual(webkit ? ['ok', 'ok:true'] : ['rejected:CompileError', 'threw:CompileError']);
+    // WebAssembly: refused in the worker without 'unsafe-eval' or 'wasm-unsafe-eval' on every engine (Chromium 159,
+    // Firefox 159, WebKit 27.2: 2026-11-14).
+    expect([design.results.wasmCompile, design.results.wasmModuleSync]).toEqual(['rejected:CompileError', 'threw:CompileError']);
     expect(design.hits).toEqual([]); // neither importScripts nor fetch reached the listener
 
     // Where the worker's refusals are reported (measured):
     //   Chromium: all in the worker (logic port), importScripts as script-src-elem;
     //   Firefox: importScripts refusals fire in the VIEW document, the rest in the worker;
-    //   WebKit: no securitypolicyviolation event at all, in the worker or the view.
+    //   WebKit 27.2: in the worker (logic port), importScripts as script-src-elem, with one script-src.
     const expectedViolations: Record<string, string[]> = {
         chromium: ['logic:connect-src', ...Array(2).fill('logic:script-src-elem'), ...Array(5).fill('logic:script-src')],
         firefox: ['logic:connect-src', ...Array(5).fill('logic:script-src'), ...Array(2).fill('view:script-src-elem')],
-        webkit: [],
+        webkit: ['logic:connect-src', 'logic:script-src', ...Array(2).fill('logic:script-src-elem')],
     };
     expect(design.violations).toEqual(expectedViolations[browserName]!.sort());
 
@@ -429,14 +429,16 @@ test('P6 scripts in template content: moved never run; cloned SVG scripts do (Ch
     expect(results.design).toEqual({ markers: [`${VIEW}:bootstrap`], moved: 1, violations: [] });
 
     // document.importNode(template.content, true), measured per script: in Chromium and WebKit the cloned
-    // SVG <script> elements are fresh — the inline one is checked against the policy and refused, and the
-    // hash-admitted copy RUNS in the view. Cloned HTML <script> elements stay inert (no run, no check).
+    // SVG <script> elements are fresh — the inline one is refused (WebKit reports it as a script-src-elem violation,
+    // Chromium 159 raises none), and the
+    // hash-admitted copy RUNS in the view in WebKit. Cloned HTML <script> elements stay inert (no run, no check).
     // Firefox runs and checks none.
     const cloning = browserName !== 'firefox';
     expect(results['cloned-inline']).toMatchObject({ markers: [`${VIEW}:bootstrap`], violations: [] });
     expect(results['cloned-copy']).toMatchObject({ markers: [`${VIEW}:bootstrap`], violations: [] });
-    expect(results['cloned-svgInline']).toMatchObject({ markers: [`${VIEW}:bootstrap`], violations: cloning ? ['script-src-elem'] : [] });
-    expect(results['cloned-svgCopy'].markers).toEqual(cloning ? [`${VIEW}:bootstrap`, `${VIEW}:bootstrap`] : [`${VIEW}:bootstrap`]);
+    expect(results['cloned-svgInline']).toMatchObject({ markers: [`${VIEW}:bootstrap`], violations: cloning && browserName !== 'chromium' ? ['script-src-elem'] : [] });
+    // Chromium 159 does not run the hash-admitted copy
+    expect(results['cloned-svgCopy'].markers).toEqual(browserName === 'webkit' ? [`${VIEW}:bootstrap`, `${VIEW}:bootstrap`] : [`${VIEW}:bootstrap`]);
 });
 
 // ---- P7 ----------------------------------------------------------------------------------------

@@ -22,7 +22,7 @@ test.use({ build: 'network' });
  */
 
 const STARTUP_BLOCKED = "the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)";
-const WORKER_REFUSED = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)";
+const WORKER_REFUSED = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src, or a Cross-Origin-Embedder-Policy the engine applies to it; see docs/API.md#host-page-policy)";
 const TRUSTED_TYPES = "the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)";
 const WRAPPER_STYLE_HASH = "'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='";
 
@@ -113,7 +113,7 @@ test.describe('host page policy', () => {
         expect((await sandbox.logs()).filter(line => line.includes('entry failed'))).toEqual([]);
     });
 
-    test("require-trusted-types-for 'script': strict renders (Chromium and WebKit through the 'web-sandbox' policy; Firefox has no Trusted Types)", async ({ sandbox, page, browserName }) => {
+    test("require-trusted-types-for 'script': strict renders through the 'web-sandbox' policy", async ({ sandbox, page, browserName }) => {
         for (const csp of ["require-trusted-types-for 'script'", "require-trusted-types-for 'script'; trusted-types web-sandbox"]) {
             await openWithPolicy(page, { csp });
             expect(await strictEntry(sandbox), csp).toEqual([{ type: 'ready', reason: null }]);
@@ -131,10 +131,9 @@ test.describe('host page policy', () => {
     // Class B (trusted-types.ts, in-sandbox-view.ts, worker-bootstrap.ts): a page cannot be asked whether it enforces Trusted
     // Types, and a string it refuses is reported to it even when the library catches the TypeError. So the library's own
     // writes go through its policy from the first one; the host page's violation list, its console and the element's
-    // `violation` event stay empty. Chromium and WebKit: Firefox has no Trusted Types.
+    // `violation` event stay empty.
     test("require-trusted-types-for 'script': the library's own writes give the host page no violation, console error or 'violation' event, over 25 renders and in every mode", async ({ sandbox, page, browserName }) => {
         // ledger: trusted-types
-        test.skip(browserName === 'firefox', 'no Trusted Types in Firefox: nothing is enforced, nothing is reported');
         const RENDERS = 25;
         const errors: string[] = [];
         // (the harness's own first build runs no script, and Chromium says so: not a Trusted Types message; the dev
@@ -172,11 +171,11 @@ test.describe('host page policy', () => {
         }
     });
 
-    test("a trusted-types directive that does not name 'web-sandbox': the build ends with the reason naming it (Firefox has no Trusted Types: the same, from hostContentSecurityPolicy; without it, ready)", async ({ sandbox, page, browserName }) => {
+    test("a trusted-types directive that does not name 'web-sandbox': the build ends with the reason naming it (on every engine; given as hostContentSecurityPolicy too)", async ({ sandbox, page, browserName }) => {
         const csp = "require-trusted-types-for 'script'; trusted-types other";
         await openWithPolicy(page, { csp });
         // ledger: trusted-types
-        const expected = browserName === 'firefox' ? [{ type: 'ready', reason: null }] : [{ type: 'terminated', reason: TRUSTED_TYPES }];
+        const expected = [{ type: 'terminated', reason: TRUSTED_TYPES }];
         expect(await strictEntry(sandbox)).toEqual(expected);
         expect(await configure(sandbox, COOPERATIVE)).toEqual(expected);
         // given the page's policy, every engine ends alike (the rest of the table: trusted-types-uniform.spec.ts)
@@ -219,7 +218,7 @@ test.describe('host page policy', () => {
     // here a default policy that calls reset() is not called at all, and the one build stays ready past LOAD_TIMEOUT_MS.
     test.describe('with a sealed config beside a cooperative one', () => {
     test.use({ otherBuildConfigs: true }); // the default config, sealed, on the build that has cooperative mode too
-    test("LM-2: the host page's Trusted Types default policy is not asked for the library's own writes: a reset() from it never runs, and the one build is ready and stays ready past LOAD_TIMEOUT_MS (Firefox: no Trusted Types)", async ({ sandbox, page }) => {
+    test("LM-2: the host page's Trusted Types default policy is not asked for the library's own writes: a reset() from it never runs, and the one build is ready and stays ready past LOAD_TIMEOUT_MS", async ({ sandbox, page }) => {
         await openWithPolicy(page, { csp: "require-trusted-types-for 'script'; trusted-types default web-sandbox", ttDefault: true });
         test.skip(!(await page.evaluate(() => 'trustedTypes' in window)), 'no Trusted Types in this engine');
         for (const config of [COOPERATIVE, {}]) {
@@ -272,15 +271,10 @@ test.describe('host page policy', () => {
         expect(displays).toEqual(['block', 'inline-block']);
     });
 
-    test('Cross-Origin-Embedder-Policy: require-corp: strict renders in Chromium and Firefox; WebKit refuses the blob: worker, and the reason says so', async ({ sandbox, page, browserName }) => {
+    test('Cross-Origin-Embedder-Policy: require-corp: strict renders on every engine', async ({ sandbox, page, browserName }) => {
         await openWithPolicy(page, { coep: 'require-corp' });
         const events = await strictEntry(sandbox);
         // ledger: coep-require-corp
-        if (browserName === 'webkit') {
-            await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents.length)).toBe(2);
-            expect(await page.evaluate(() => (window as any).sandboxEvents)).toEqual([{ type: 'ready', reason: null }, { type: 'terminated', reason: WORKER_REFUSED }]);
-            return;
-        }
         expect(events).toEqual([{ type: 'ready', reason: null }]);
         await waitInView(page, browserName, `!!document.getElementById('hello')`);
     });

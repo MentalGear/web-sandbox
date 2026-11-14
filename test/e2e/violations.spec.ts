@@ -150,7 +150,7 @@ test.describe('3. a report is a guest claim', () => {
 // reports"; API.md, `violation`): WebKit raises no securitypolicyviolation event in a worker, and Firefox raises worker
 // mode's importScripts() refusals in the frame that made the worker, which reports nothing.
 test.describe('4. worker mode', () => {
-    test('a refused fetch is reported by the request gate on every engine; importScripts() refusals are what the engine raises (Chromium only)', async ({ sandbox, browserName }) => {
+    test('a refused fetch is reported by the request gate on every engine; importScripts() refusals are what the engine raises (Chromium and WebKit)', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');
         const outcome = await sandbox.inGuest(`
             const fetched = await fetch('${ATTACKER}/worker-fetch', { mode: 'no-cors' }).then(() => 'reached', () => 'refused');
@@ -163,9 +163,9 @@ test.describe('4. worker mode', () => {
         const reported = (await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI} ${v.sourceFile ?? ''}`.trim()).sort();
         const gate = `connect-src ${ATTACKER}/worker-fetch ${GATE_SOURCE_FILE}`;
         expect(reported.filter(line => line.startsWith('connect-src'))).toEqual([gate]);
-        // importScripts() is the engine's: Chromium raises it in the worker, Firefox in the frame, WebKit nowhere
+        // importScripts() is the engine's: Chromium and WebKit raise it in the worker, Firefox in the frame
         // ledger: worker-violation-reports
-        expect(reported.filter(line => line.startsWith('script-src')).map(line => line.split(' ').slice(0, 2).join(' '))).toEqual(browserName === 'chromium' ? [`script-src-elem ${ATTACKER}/worker-import.js`] : []);
+        expect(reported.filter(line => line.startsWith('script-src')).map(line => line.split(' ').slice(0, 2).join(' '))).toEqual(browserName === 'chromium' || browserName === 'webkit' ? [`script-src-elem ${ATTACKER}/worker-import.js`] : []);
     });
 });
 

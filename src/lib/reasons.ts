@@ -35,7 +35,7 @@ export const TERMINATION_REASONS = {
     startupBlocked: { text: `the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (${HOST_PAGE_POLICY})`, decidedBy: 'lifecycle' },
     // The host page's policies bind the library's frames, which inherit them as srcdoc documents (CSP3 copies the policy
     // list; Trusted Types; COEP; R1:R3-1): each reason of a refusal names the policy, so the embedder knows what to allow.
-    workerRefused: { text: `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; ${HOST_PAGE_POLICY})`, decidedBy: 'host' },
+    workerRefused: { text: `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src, or a Cross-Origin-Embedder-Policy the engine applies to it; ${HOST_PAGE_POLICY})`, decidedBy: 'host' },
     trustedTypes: { text: `the host page's Trusted Types policy does not allow the policy name '${TRUSTED_TYPES_POLICY}' (trusted-types; ${HOST_PAGE_POLICY})`, decidedBy: 'host' },
     // The environment check (environment-check.ts, S74): a bootstrap found its document different from the one the library
     // built, stayed inert, and said so; one reason for each row of its table (ENVIRONMENT_CHECKS).

@@ -1,15 +1,15 @@
 /**
  * The host page's Trusted Types directives, as far as the library needs them (INHERITED_CONTEXT.trustedTypesRequirement):
- * the same two outcomes on every engine, though one of them (Firefox, at the version measured) has no Trusted Types.
+ * the same two outcomes on every engine, including a browser without Trusted Types.
  *  - the build: a page that requires Trusted Types for scripts (`require-trusted-types-for 'script'`) and whose
  *    `trusted-types` list does not name the library's policy ends the build with the Trusted Types reason, because the
  *    library's writes then reach a sink as strings, which the page refuses;
  *  - `execute()`: the code of `execute()` is a string evaluated in the guest, which inherits the requirement, and which the
  *    browser refuses there; where the browser has no Trusted Types the library refuses it.
- * Where the browser has Trusted Types (Chromium and WebKit) the browser decides both, and these functions are not asked.
+ * Where the browser has Trusted Types (Chromium, Firefox and WebKit) the browser decides both, and these functions are not asked.
  * Where it has none the library asks them of the policy text the embedder gives (`hostContentSecurityPolicy`) and of nothing
  * else (the library never asks the page for its policy, host-connect.ts), so without the option nothing is applied there and
- * the sandbox builds as the browser lets it. The prediction only ever refuses what Chromium and WebKit refuse
+ * the sandbox builds as the browser lets it. The prediction only ever refuses what Chromium, Firefox and WebKit refuse
  * (test/e2e/trusted-types-uniform.spec.ts runs the same policies on all three).
  *
  * The grammar is TRUSTED_TYPES_RULES, as values: only what Chromium and WebKit do alike. Where they differ the library follows
