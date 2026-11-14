@@ -1,0 +1,27 @@
+{
+  "worker-wasm.min.js": {
+    "raw": 66491,
+    "gzip": 19889,
+    "brotli": 17814
+  },
+  "quickjs.wasm": {
+    "raw": 503134,
+    "gzip": 232036,
+    "brotli": 199016
+  },
+  "worker-asmjs.min.js": {
+    "raw": 1051903,
+    "gzip": 338594,
+    "brotli": 277708
+  },
+  "worker-wasm.js": {
+    "raw": 110571,
+    "gzip": 24431,
+    "brotli": 21441
+  },
+  "worker-asmjs.js": {
+    "raw": 4035569,
+    "gzip": 455220,
+    "brotli": 344960
+  }
+}
