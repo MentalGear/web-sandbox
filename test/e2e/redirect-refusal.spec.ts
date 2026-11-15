@@ -1,6 +1,9 @@
 import { test, expect } from './fixture';
 import { useRecorder } from './recorder';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * A redirect from a listed origin to an unlisted one (BD3:ISO-3, class E-net). The request gate checks the first URL of a
  * request (in-sandbox-script.ts) and leaves a redirect to the browser, whose policy applies to every hop: an open redirector

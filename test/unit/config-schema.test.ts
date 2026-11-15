@@ -1,10 +1,11 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { admitGuestCall, CALL_INVARIANTS, CALL_LIMIT_FIELDS, callBudgetOf, CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, DEFAULT_CALL_BUDGET, defaultConfig, heaviestCall, ignoredIn, NETWORK_MODES, NETWORK_OPTIONS, normaliseConfig, PARSED_APART, SANDBOX_MODES, type CallBudget, type NormalisedConfig, type NormaliseContext, type OptionName, type OptionRule, type SandboxMode } from '@src/lib/config-schema';
 import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
-import { FETCH_BRIDGE_FIELDS } from '@src/lib/fetch-bridge';
+import { FETCH_BRIDGE_FIELDS, type FetchPolicy } from '@src/lib/fetch-bridge';
 import { createRateLimiter } from '@src/lib/rate-limit';
 import { RPC_MAX_BYTES } from '@src/lib/rpc';
 
@@ -177,7 +178,7 @@ function argumentOf(value: NormalisedConfig): Record<string, unknown> {
     // sealed mode takes no network option at all: naming one, even empty, refuses the config
     if (!ignoredIn('origins', value.config.mode)) argument.origins = Object.fromEntries(Object.entries(value.origins).map(([kind, list]) => [kind, [...list]]));
     if (value.fetchPolicy) {
-        const { allow, maxBytes, timeoutMs, methods, headers, maxConcurrent } = value.fetchPolicy;
+        const { allow, maxBytes, timeoutMs, methods, headers, maxConcurrent } = value.fetchPolicy as FetchPolicy;
         argument.fetchBridge = { allow: [...allow], maxBytes, timeoutMs, methods: [...methods], headers: [...headers], maxConcurrent };
     }
     return argument;
@@ -497,13 +498,13 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
     it('fetchBridge.allow: a loopback, private or link-local host is dropped with one warning from a host page that is not on one, kept with a warning from one that is; the host page\'s own origin is still honoured', () => {
         const allow = ['https://api.example', 'http://127.0.0.1:8080', 'https://10.0.0.5'];
         const publicPage = normaliseConfig({ mode: 'strict', fetchBridge: { allow } }, { hostOrigin: PAGE, hostSites: [PAGE] });
-        expect(publicPage.value!.fetchPolicy!.allow).toEqual(['https://api.example']);
+        expect((publicPage.value!.fetchPolicy as FetchPolicy).allow).toEqual(['https://api.example']);
         expect(publicPage.warnings.filter(message => message.startsWith('[Sandbox] fetchBridge.allow dropped'))).toHaveLength(2);
         const localPage = normaliseConfig({ mode: 'strict', fetchBridge: { allow } }, { hostOrigin: LOCAL_PAGE, hostSites: [LOCAL_PAGE] });
-        expect(localPage.value!.fetchPolicy!.allow).toEqual(allow);
+        expect((localPage.value!.fetchPolicy as FetchPolicy).allow).toEqual(allow);
         expect(localPage.warnings.filter(message => message.startsWith('[Sandbox] fetchBridge.allow lists'))).toHaveLength(2);
         const own = normaliseConfig({ mode: 'strict', fetchBridge: { allow: [PAGE] } }, { hostOrigin: PAGE, hostSites: [PAGE] });
-        expect(own.value!.fetchPolicy!.allow).toEqual([PAGE]);
+        expect((own.value!.fetchPolicy as FetchPolicy).allow).toEqual([PAGE]);
         expect(own.warnings).toEqual([expect.stringContaining("lists the host page's own origin")]);
     });
 });

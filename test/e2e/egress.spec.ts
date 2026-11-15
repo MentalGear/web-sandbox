@@ -1,7 +1,10 @@
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, buildOfMode } from './fixture';
 import { inFrames } from './strict-view';
 import { EGRESS, REPORTED_EVENT_TYPES, type EgressMode, type EgressRealm } from '@src/lib/egress';
 import { VIEW_MODES, type ViewMode } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The egress table, enumerated on every engine (class E-cpu, R5:N-1; src/lib/egress.ts): in each realm guest
@@ -43,6 +46,8 @@ async function workerSurfaces(sandbox: SandboxDriver, mode: 'worker' | ViewMode)
 }
 
 for (const mode of ['worker', ...VIEW_MODES] as const) {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test(`${mode} mode: every surface of the guest's worker, of its parent document and of the Worker and MessagePort objects is a row of the egress table`, async ({ sandbox, page, browserName }) => {
         const worker = await workerSurfaces(sandbox, mode);
         // the worker's parent document: worker mode's frame, the view of strict and sealed mode (main/wrapper/view either way)
@@ -58,5 +63,6 @@ for (const mode of ['worker', ...VIEW_MODES] as const) {
         ];
         console.log(`MEASURED ${browserName} ${mode} mode surfaces: worker ${worker.global.length}, its parent document ${document.global.length}, Worker ${JSON.stringify(document.Worker)}, MessagePort ${JSON.stringify(document.MessagePort)}`);
         expect(missing).toEqual([]);
+    });
     });
 }

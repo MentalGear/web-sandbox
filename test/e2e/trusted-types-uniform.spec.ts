@@ -2,6 +2,9 @@ import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import type { Page } from '@playwright/test';
 import { TRUSTED_TYPES_RULES } from '@src/lib/csp/host-trusted-types';
 
+// The build with the network modes (ADR-009), and every mode in one test, sealed mode among them, on the build that has them all.
+test.use({ build: 'network', otherBuildConfigs: true });
+
 /**
  * Trusted Types answer the same on every engine (INHERITED_CONTEXT.trustedTypesRequirement; src/lib/csp/host-trusted-types.ts).
  * All three engines have them (Firefox since 159; 146 had none), and the browser refuses: a `trusted-types` list that does not

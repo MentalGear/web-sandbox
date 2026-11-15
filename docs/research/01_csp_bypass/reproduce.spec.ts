@@ -2,6 +2,9 @@ import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 // Evidence (backlog T5): the nested frame's own outcome (PWN_FAILURE) and its own violation, which it relays
 // (a frame the guest creates reports to itself, not to the host), plus a listener outside the browser that
 // the fetch targets. The positive control runs the same payload against an allowlisted origin.

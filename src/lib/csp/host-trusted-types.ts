@@ -20,7 +20,7 @@
  *
  * Host-side only, never stringified into a guest.
  */
-import { splitPolicies } from './host-connect';
+import { splitPolicies } from './policy-text';
 
 export type TrustedTypesMode = 'strict' | 'sealed' | 'cooperative' | 'worker';
 

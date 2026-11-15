@@ -1,8 +1,11 @@
-import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
+import { test, expect, ORIGIN, type SandboxDriver, buildOfMode } from './fixture';
 import { inView, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { idleBaseline, loadedShare, MARGIN } from './host-share';
 import { VIEW_MODES, type ViewMode } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 // The host page's busy share with the view's animations running, against its idle baseline before the sandbox
 // (./host-share.ts): the best of 2 windows of 1.5 s, 3 s in all.
@@ -85,6 +88,7 @@ const animationsInView = (page: Page, browserName: string) =>
     inView<string[]>(page, browserName, `document.getAnimations().map(a => (a.constructor.name) + ' ' + (a.animationName || a.transitionProperty || '') + ' ' + ((a.effect && a.effect.target && (a.effect.target.className && a.effect.target.className.baseVal !== undefined ? a.effect.target.localName : a.effect.target.className || a.effect.target.localName)) || '') + (a.effect && a.effect.pseudoElement ? a.effect.pseudoElement : ''))`);
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe('allowAnimations', () => {
         test('the default (false): no animation and no transition runs in the view', async ({ sandbox, page, browserName }) => {
             await mountVectors(mode, sandbox, {});

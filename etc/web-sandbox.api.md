@@ -17,66 +17,10 @@ export interface CallLimits {
 }
 
 // @public
-export interface CooperativeSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    allowAnimations?: never;
-    allowAutoplay?: never;
-    entry?: never;
-    mode: 'cooperative';
-    workerExecutionTimeout?: never;
-}
-
-// @public
 export function defineWebSandbox(tagName?: string): typeof WebSandbox;
 
 // @public
 export const EXECUTION_TIMEOUT_GRACE_MS = 1000;
-
-// @public
-export const FETCH_ERROR_CODES: readonly FetchErrorCode[];
-
-// @public
-export interface FetchBridgeConfig {
-    allow: string[];
-    headers?: string[];
-    maxBytes?: number;
-    maxConcurrent?: number;
-    methods?: string[];
-    timeoutMs?: number;
-}
-
-// @public
-export type FetchErrorCode = Extract<RpcLibraryCode, `FETCH_${string}`>;
-
-// @public
-export type FetchRecord = {
-    method: string;
-    url: string;
-    durationMs: number;
-} & ({
-    outcome: 'ok';
-    status: number;
-    bytes: number;
-    code?: never;
-    reason?: never;
-} | {
-    outcome: 'refused';
-    code: FetchErrorCode;
-    reason?: string;
-    bytes: 0;
-    status?: never;
-} | {
-    outcome: 'failed';
-    code: FetchErrorCode;
-    status?: number;
-    bytes: number;
-    reason?: never;
-} | {
-    outcome: 'aborted';
-    code: 'FETCH_FAILED';
-    status?: number;
-    bytes: number;
-    reason?: never;
-});
 
 // @public
 export type FileContent = string | Uint8Array;
@@ -136,12 +80,6 @@ export const LOG_MAX_STRING = 65536;
 export const MAX_INBOUND_IN_FLIGHT = 256;
 
 // @public
-export interface NetworkSandboxOptions {
-    fetchBridge?: FetchBridgeConfig;
-    origins?: SandboxOrigins;
-}
-
-// @public
 export interface RpcError extends Error {
     code: RpcErrorCode;
 }
@@ -159,10 +97,12 @@ export const SAFE_CAPABILITIES: readonly ["allow-orientation-lock", "allow-scrip
 export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
 
 // @public
-export type SandboxCapability = SafeCapability | (typeof UNSAFE_SANDBOX_FLAGS)[number];
+export type SandboxConfig = SandboxConfigByMode[keyof SandboxConfigByMode];
 
 // @public
-export type SandboxConfig = StrictSandboxConfig | SealedSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
+export interface SandboxConfigByMode {
+    sealed: SealedSandboxConfig;
+}
 
 // @public
 export interface SandboxConfigOptions {
@@ -176,7 +116,6 @@ export interface SandboxConfigOptions {
     hostContentSecurityPolicy?: string | false;
     html?: string;
     scriptUnsafe?: boolean;
-    unsafeCapabilities?: UnsafeCapability[];
     watchdogTimeout?: number;
     workerExecutionTimeout?: number;
 }
@@ -211,16 +150,6 @@ export interface SandboxLog {
 export type SandboxLogLevel = 'log' | 'info' | 'warn' | 'error';
 
 // @public
-export interface SandboxOrigins {
-    connect?: readonly string[];
-    fonts?: readonly string[];
-    images?: readonly string[];
-    media?: readonly string[];
-    scripts?: readonly string[];
-    styles?: readonly string[];
-}
-
-// @public
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 
 // @public
@@ -241,33 +170,6 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
     scriptUnsafe?: false;
     unsafeCapabilities?: never;
 }
-
-// @public
-export interface StrictSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    mode: 'strict';
-    origins?: StrictSandboxOrigins;
-    unsafeCapabilities?: never;
-}
-
-// @public
-export type StrictSandboxOrigins = Omit<SandboxOrigins, 'scripts'> & {
-    readonly scripts?: never;
-};
-
-// @public
-export const UNSAFE_CAPABILITIES: readonly ["allow-downloads", "allow-forms", "allow-modals", "allow-pointer-lock", "allow-popups", "allow-presentation", "fullscreen"];
-
-// @public
-export const UNSAFE_PERMISSIONS: readonly ["fullscreen"];
-
-// @public
-export const UNSAFE_SANDBOX_FLAGS: readonly ["allow-downloads", "allow-forms", "allow-modals", "allow-pointer-lock", "allow-popups", "allow-presentation"];
-
-// @public
-export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
-
-// @public
-export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
 
 // @public
 export const VIEW_INPUT_IN_FLIGHT = 1;
@@ -329,7 +231,6 @@ export class WebSandbox extends HTMLElement {
 // @public
 export interface WebSandboxEventMap extends HTMLElementEventMap {
     'sandbox-log': CustomEvent<SandboxLog>;
-    fetch: CustomEvent<FetchRecord>;
     fileschanged: CustomEvent<{
         readonly paths: readonly string[];
     }>;
@@ -341,16 +242,6 @@ export interface WebSandboxEventMap extends HTMLElementEventMap {
         readonly reason: string;
     }>;
     violation: CustomEvent<SandboxViolation>;
-}
-
-// @public
-export interface WorkerSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    allowAnimations?: never;
-    allowAutoplay?: never;
-    autoResize?: never;
-    entry?: never;
-    html?: never;
-    mode: 'worker';
 }
 
 // (No @packageDocumentation comment for this package)

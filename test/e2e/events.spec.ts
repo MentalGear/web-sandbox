@@ -1,5 +1,8 @@
-import { test, expect, SEALED_HAS_NO_EXECUTE } from './fixture';
+import { test, expect, SEALED_HAS_NO_EXECUTE, buildOfMode } from './fixture';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Per-instance events (backlog B3, ADR-003). 'sandbox-log' is dispatched on the sandbox element and
@@ -11,6 +14,8 @@ import { VIEW_MODES } from './view-modes';
 const MODES = ['cooperative', 'worker', ...VIEW_MODES] as const;
 
 for (const mode of MODES) {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test(`each sandbox element receives only its own logs; a window listener receives both, targeted at their element (${mode})`, async ({ sandbox, page }) => {
         test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
         expect(await sandbox.mount({ mode })).toBe('ready');
@@ -41,6 +46,7 @@ for (const mode of MODES) {
         expect(seen.window).toContainEqual({ target: 'first', text: 'FROM_FIRST' });
         expect(seen.window).toContainEqual({ target: 'second', text: 'FROM_SECOND' });
         expect(seen.window.filter((entry: { target: string }) => entry.target === 'other')).toEqual([]);
+    });
     });
 }
 

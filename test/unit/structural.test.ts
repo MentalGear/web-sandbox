@@ -448,7 +448,7 @@ describe("the fetch bridge's requests are made by its frame, and only there (BD1
     it("and that scan flags each way a host request to the target could be spelled, in the bridge's host-side modules", () => {
         const file = 'src/lib/fetch-bridge.ts';
         const source = read(file);
-        const anchor = "export const FETCH_METHOD = 'sandbox:fetch';";
+        const anchor = 'export const DEFAULT_MAX_BYTES = 1024 * 1024;';
         expect(source.split(anchor)).toHaveLength(2);
         const none: [number, number][] = [];
         expect(platformRequestUses(file, source, none).found).toEqual([]);
@@ -484,9 +484,10 @@ describe("the fetch bridge's requests are made by its frame, and only there (BD1
         const callers = (name: string) => sourceFiles('src')
             .filter(file => read(file).replace(`function ${name}(`, '').includes(`${name}(`))
             .map(unixOf);
-        expect(callers('createFetchBridge')).toEqual(['src/host.ts']);
-        expect(read('src/host.ts')).toMatch(/const frame = createBridgeFrame\(\{[^]*?\}\);\s*this\._bridgeFrame = frame;\s*this\._fetchBridge = createFetchBridge\(\{[^}]*transport: frame\.transport,/);
-        expect(callers('createBridgeFrame')).toEqual(['src/host.ts']);
+        // the element's bridge is started by the network modes' method (network-host.ts, _startFetchBridge)
+        expect(callers('createFetchBridge')).toEqual(['src/lib/network-host.ts']);
+        expect(read('src/lib/network-host.ts')).toMatch(/const frame = createBridgeFrame\(\{[^]*?\}\);\s*this\._bridgeFrame = frame;\s*this\._fetchBridge = createFetchBridge\(\{[^}]*transport: frame\.transport,/);
+        expect(callers('createBridgeFrame')).toEqual(['src/lib/network-host.ts']);
         expect(callers('buildBridgeDocument')).toEqual(['src/lib/bridge-frame.ts']);
         expect(BRIDGE_FRAME_SANDBOX).toBe('allow-scripts');
         expect(read('src/lib/bridge-frame.ts')).toContain("iframe.setAttribute('sandbox', BRIDGE_FRAME_SANDBOX);");

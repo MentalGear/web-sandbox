@@ -8,7 +8,7 @@
  * research folder whose reproduction does not run it.
  */
 
-import type { SafeCapability } from "../csp-directives";
+import type { SafeCapability, UnsafeCapability } from "../csp-directives";
 import type { SandboxConfigOptions } from "../host";
 import type { StrictSandboxOrigins } from "./csp/origins";
 
@@ -17,7 +17,7 @@ import type { StrictSandboxOrigins } from "./csp/origins";
  * is. A spec may still run a preset in another mode (`{ ...preset.rules, mode }`), so its origins are ones every mode
  * can take: no `scripts`, which strict mode does not take.
  */
-export type PresetRules = SandboxConfigOptions & { mode: 'sealed' | 'strict' | 'cooperative' | 'worker'; origins?: StrictSandboxOrigins };
+export type PresetRules = SandboxConfigOptions & { mode: 'sealed' | 'strict' | 'cooperative' | 'worker'; origins?: StrictSandboxOrigins; unsafeCapabilities?: UnsafeCapability[] };
 
 export interface Preset {
     id: string;

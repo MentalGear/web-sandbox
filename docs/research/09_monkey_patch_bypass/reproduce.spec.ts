@@ -2,6 +2,9 @@ import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 // Evidence (backlog T5): the guest's outcome, the violation reported on the host, and a listener outside
 // the browser. Positive control: an allowlisted origin.
 const recorder = useRecorder();

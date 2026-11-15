@@ -43,6 +43,9 @@ Each ADR states its decision as it stands; how it changed is in [the archive](ar
 - [**ADR-008 — Sealed mode**](ADR-008-sealed-mode.md) — the default has no network: strict mode's view and worker with
   no network code on its path, a config with no mode that names `origins` or `fetchBridge` refused with a reason that
   names `mode: 'strict'`, and the review board's scope.
+- [**ADR-009 — The network modes behind a build flag**](ADR-009-network-modes-build-flag.md) — the package is sealed mode
+  alone: strict, cooperative and worker mode, `origins` and `fetchBridge` are in the build only with
+  `WEB_SANDBOX_NETWORK_MODES=1`, by two entries and a classified module graph, never a run-time switch.
 
 ## Planning
 

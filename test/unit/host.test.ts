@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi } from 'vitest';
 import { ALLOWED_CAPABILITIES } from '@src/csp-directives';
 import { policyNotGiven } from '@src/lib/csp/host-connect';

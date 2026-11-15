@@ -2,6 +2,9 @@ import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder, wss } from '../../../test/e2e/recorder';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 // Evidence (backlog T5): the socket's own outcome, the violation reported on the host (S5) and a listener
 // outside the browser that answers WebSocket handshakes. The positive control opens the same socket to an
 // allowlisted origin.

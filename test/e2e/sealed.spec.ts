@@ -5,6 +5,7 @@ import { GATE_SOURCE_FILE } from '@src/lib/violation';
 import { CROSSING_TEXTS } from '@src/lib/minted-errors';
 import { useRecorder } from './recorder';
 import { inFrames, inView, waitInView } from './strict-view';
+import { reasonText } from '@src/lib/reasons';
 
 /**
  * Sealed mode (docs/research/24_sealed_mode, ADR-008), the default: strict mode's view and worker with no network. A smoke test on every engine: a sealed sandbox renders and runs an app from its files, as an embedder
@@ -20,6 +21,7 @@ const recorder = useRecorder();
 const REASON = "origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'`";
 
 /** Applies `config` exactly as given (no baseline) and resolves with 'ready' or 'terminated'. */
+const NETWORK_MODES_OFF = reasonText('networkModesOff');
 const apply = (page: Page, config: SandboxConfig) => page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
 
 const APP = `
@@ -49,6 +51,47 @@ test.describe('sealed mode', () => {
         });
         expect(await sandbox.state()).toBe('ready');
     });
+
+    test.describe('the default build has no other mode', () => {
+        test('a sealed config that names a network option is refused with the reason that names the build flag, and a sealed config without it builds again', async ({ sandbox, page }) => {
+            for (const network of [{ origins: { images: ['https://cdn.example'] } }, { fetchBridge: { allow: ['https://api.example'] } }, { origins: {} }]) {
+                for (const mode of [{}, { mode: 'sealed' }]) {
+                    expect(await apply(page, { ...mode, html: '<p>x</p>', ...network } as SandboxConfig), JSON.stringify({ ...mode, ...network })).toBe('terminated');
+                    expect((await sandbox.terminations()).at(-1)!.reason).toBe(NETWORK_MODES_OFF);
+                    expect(await page.evaluate(() => document.querySelector('web-sandbox')!.shadowRoot!.querySelectorAll('iframe').length)).toBe(0);
+                }
+            }
+            expect(await apply(page, { html: '<p>x</p>' })).toBe('ready');
+        });
+
+        test.describe('a config of a network mode', () => {
+            test.use({ otherBuildConfigs: true }); // the subject: what the default build does with a config it does not have the mode of
+
+            test('is refused whole with the same reason, in strict, cooperative and worker mode; nothing of it is applied and no frame is built', async ({ sandbox, page }) => {
+                expect(await apply(page, { html: '<p id="kept">kept</p>' })).toBe('ready');
+                for (const config of [{ mode: 'strict', html: '<p>x</p>' }, { mode: 'cooperative', capabilities: ['allow-scripts'], html: '<script>top.postMessage("ran", "*")</script>' }, { mode: 'worker' }]) {
+                    expect(await apply(page, config as unknown as SandboxConfig), config.mode).toBe('terminated');
+                    expect((await sandbox.terminations()).at(-1)!.reason).toBe(NETWORK_MODES_OFF);
+                    expect(await page.evaluate(() => {
+                        const element = document.querySelector('web-sandbox') as any;
+                        return [element.state, element.shadowRoot.querySelectorAll('iframe').length, element._config.mode, element._config.html];
+                    }), config.mode).toEqual(['terminated', 0, 'sealed', '<p id="kept">kept</p>']);
+                }
+                // the refusal stands until a usable config is set: reset() builds nothing, and the next sealed config builds
+                expect(await sandbox.reset()).toBe('terminated');
+                expect((await sandbox.terminations()).at(-1)!.reason).toBe(NETWORK_MODES_OFF);
+                expect(await apply(page, { html: '<p id="again">again</p>' })).toBe('ready');
+                // execute() runs nothing in this build: it needs scriptUnsafe, which sealed mode refuses
+                await page.evaluate(() => (document.querySelector('web-sandbox') as any).execute('console.log("EXECUTED")'));
+                await page.waitForTimeout(300);
+                expect(await sandbox.logs()).not.toContain('EXECUTED');
+            });
+        });
+    });
+
+    test.describe('beside strict mode, in the build with the network modes', () => {
+    // these tests give that build sealed configs on purpose: its own sealed mode, and its refusals of a network option
+    test.use({ build: 'network', otherBuildConfigs: true });
 
     test('no network: a guest fetch is refused and reported by the request gate, sandboxFetch() is FETCH_NOT_ALLOWED from the guest itself (nothing reaches the host), a raw bridge.call of sandbox:fetch reaches the host and is refused, and the listener sees nothing; strict mode with the listener in origins reaches it, and its sandboxFetch() asks the host (positive control)', async ({ sandbox, page }) => {
         const probe = (path: string) => `
@@ -110,7 +153,7 @@ test.describe('sealed mode', () => {
         void sandbox;
         for (const config of [{ scriptUnsafe: true }, { mode: 'sealed', scriptUnsafe: true, html: '<p>x</p>' }]) {
             expect(await apply(page, config as SandboxConfig), JSON.stringify(config)).toBe('terminated');
-            expect((await sandbox.terminations()).at(-1)!.reason).toBe("scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`");
+            expect((await sandbox.terminations()).at(-1)!.reason).toBe("scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1)");
         }
         expect(await apply(page, { mode: 'strict', scriptUnsafe: true, html: '<p>x</p>', hostContentSecurityPolicy: false })).toBe('ready');
     });
@@ -130,5 +173,6 @@ test.describe('sealed mode', () => {
             expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).shadowRoot.querySelectorAll('iframe').length)).toBe(0);
             expect(await apply(page, { mode: 'strict', html: '<p>x</p>', hostContentSecurityPolicy: false, ...network } as SandboxConfig), JSON.stringify(network)).toBe('ready');
         }
+    });
     });
 });

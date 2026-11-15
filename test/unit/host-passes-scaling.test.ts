@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOST_PASSES, type HostPassId } from '@src/lib/host-passes';
 import { dynamicImportAt } from '@src/lib/entry-imports';

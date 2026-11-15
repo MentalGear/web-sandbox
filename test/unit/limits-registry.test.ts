@@ -33,9 +33,9 @@ function numericConstants(): Array<{ file: string; name: string; typed: boolean 
 
 /** Numeric constants that are not limits of the library, with why. A constant not here and not a row fails the test below. */
 const INTERNAL: Readonly<Record<string, string>> = {
-    'src/lib/config-schema.ts:FETCH_REQUEST_OVERHEAD': 'a term of the config invariant that the call budget holds the largest message of the bridge path (config-schema.ts)',
-    'src/lib/config-schema.ts:FETCH_RESULT_OVERHEAD': 'a term of the same invariant: what a fetch result adds to its body (the head is capped by MAX_RESPONSE_HEAD)',
-    'src/lib/config-schema.ts:WRITE_OVERHEAD': 'a term of the same invariant for a guest write',
+    'src/lib/network-config.ts:FETCH_REQUEST_OVERHEAD': 'a term of the config invariant that the call budget holds the largest message of the bridge path (network-config.ts)',
+    'src/lib/network-config.ts:FETCH_RESULT_OVERHEAD': 'a term of the same invariant: what a fetch result adds to its body (the head is capped by MAX_RESPONSE_HEAD)',
+    'src/lib/config-schema.ts:WRITE_OVERHEAD': 'a term of the config invariant that the call budget holds a guest write of the whole file quota (config-schema.ts)',
     'src/lib/css-references.ts:BACKSLASH': 'the character code of a backslash, a constant of the CSS scanner',
     'src/lib/host-site.ts:MAX_ANCESTORS': "how far up the parent chain the host page's site is read: past it the rest counts as unreadable, so the site is undecided (refused), never wider; a browser nests frames far less deep",
     'src/lib/files.ts:EDIT_OVERHEAD': "a term of the quota's cost model for a rewritten file, not a bound",

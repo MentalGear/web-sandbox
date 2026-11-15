@@ -1,9 +1,11 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { hostPageOrigin, hostSiteOrigins, hostSiteUndecided, isAddress, onHostSite, OPAQUE_ORIGIN, type HostRealm } from '@src/lib/host-site';
-import { normaliseConfig, UNDECIDED_SITE_RULE, type SandboxMode } from '@src/lib/config-schema';
+import { normaliseConfig, type SandboxMode } from '@src/lib/config-schema';
+import { UNDECIDED_SITE_RULE } from '@src/lib/network-config';
 import { COOKIE_CARRIERS, cookieCarriersIn } from '@src/lib/cookie-facts';
 import { ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { STRINGIFIED } from '@src/lib/realms';
@@ -390,9 +392,10 @@ describe('host-side code reads the host page only through host-site.ts', () => {
     it('the element hands the config the host page from host-site.ts, read when a rule of the config asks, and from nowhere else', () => {
         const host = readFileSync(path.join(ROOT, 'src/host.ts'), 'utf8');
         expect(host.match(/normaliseConfig\(/g)).toHaveLength(1);
-        expect(host).toContain('normaliseConfig(copy, readHostPage)');
-        expect(host).toContain('const readHostPage = (): NormaliseContext => ({ hostOrigin: hostPageOrigin(), hostSites: hostSiteOrigins() });');
+        // the reader is the network modes' (network-config.ts), handed over through the seam; a build without them reads nothing
+        expect(host).toContain('normaliseConfig(copy, networkModes()?.readHostPage ?? NO_HOST_PAGE)');
+        expect(readFileSync(path.join(ROOT, 'src/lib/network-config.ts'), 'utf8')).toContain('export const readHostPage = (): NormaliseContext => ({ hostOrigin: hostPageOrigin(), hostSites: hostSiteOrigins() });');
         const callers = hostSide().filter(file => file !== 'src/lib/host-site.ts' && /\bhostSiteOrigins\(/.test(readFileSync(path.join(ROOT, file), 'utf8')));
-        expect(callers).toEqual(['src/host.ts']);
+        expect(callers).toEqual(['src/lib/network-config.ts']);
     });
 });

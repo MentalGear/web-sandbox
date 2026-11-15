@@ -1,0 +1,6 @@
+{
+  // Emits the .d.ts files of the build with the network modes (WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib; ADR-009):
+  // the same options as the default build's, from the network build's entry. scripts/emit-declarations.ts runs it.
+  "extends": "./tsconfig.build.json",
+  "include": ["src/network.ts"]
+}

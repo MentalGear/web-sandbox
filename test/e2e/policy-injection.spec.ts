@@ -1,8 +1,11 @@
 import type { Page } from '@playwright/test';
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { inView, waitInView } from './strict-view';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * A configured value or key cannot add a directive to a guest policy (AR:A1): only exact origins reach it, each in its kind's directive of a fixed
@@ -101,6 +104,7 @@ test.describe('A3 class: registered files load under the directive of their kind
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test("a registered stylesheet applies in the view, with blob: in the view's style-src and no -elem directive", async ({ sandbox, page, browserName }) => {
             await sandbox.registerFiles({ 'app.css': '#probe { width: 123px; }' });
             expect(await sandbox.mount({ mode })).toBe('ready');

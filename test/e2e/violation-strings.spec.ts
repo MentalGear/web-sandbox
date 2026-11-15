@@ -1,4 +1,7 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * A violation report's strings are cut before they are posted (class E-cpu, "cut before posting"; backlog S61.3's scan,
@@ -48,6 +51,8 @@ const CASES = [
 ];
 
 for (const { name, mode, prefix, run } of CASES) {
+    test.describe(name, () => {
+    test.use({ build: buildOfMode(mode) });
     test(`${name}: the report crosses cut at ${MAX} characters, and the event says the same`, async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ mode })).toBe('ready');
         await sandbox.run(run);
@@ -66,5 +71,6 @@ for (const { name, mode, prefix, run } of CASES) {
         for (const event of events) expect(event.blockedURI).toBeLessThanOrEqual(MAX);
         // a report of the long URL itself is cut to exactly the limit, its start kept
         for (const frame of raw) if (frame.start.startsWith(prefix) && prefix.startsWith('https')) expect(frame.blockedURI).toBe(MAX);
+    });
     });
 }

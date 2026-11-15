@@ -183,7 +183,7 @@ export const RPC_MAX_INBOUND_BYTES = 67108864;
 
 /**
  * The codes a library method (a `sandbox:` name) reports, from one closed set disjoint from {@link RpcErrorCode}: the
- * fetch bridge's {@link FetchErrorCode} values (BL:B5) and the guest writes' {@link FileErrorCode} values (BL:C5). The
+ * fetch bridge's `FETCH_…` codes (BL:B5) and the guest writes' {@link FileErrorCode} values (BL:C5). The
  * strings are wire protocol. Only the guest's calls to library methods (`sandboxFetch()`, `sandboxFiles.write()` and
  * `remove()`) can be refused with them. `NOT_FOUND` is not one: the guest mints it from the host's answer.
  */

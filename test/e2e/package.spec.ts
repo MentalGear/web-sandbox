@@ -1,7 +1,93 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, ORIGIN } from './fixture';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ORIGIN } from './fixture';
+import { reasonText } from '@src/lib/reasons';
+
+// Two bundles (ADR-009): dist/, the package as `bun run build:lib` writes it, which is the default build and has sealed
+// mode alone, and dist-network/, the bundle of the build with the network modes, which the e2e server builds beside it
+// (playwright.config.ts). The harness page loads the one the test's build names (package-harness.html).
+const BUNDLES = { default: 'dist', network: 'dist-network' } as const;
+
+test.describe('the package as published: the default build', () => {
+    // (the fixture's default build)
+    const reason = reasonText('networkModesOff');
+
+    test('the built package mounts a sealed sandbox under a custom tag: the entry runs in the worker and renders into the view', async ({ page }) => {
+        await page.goto(`${ORIGIN}/test/e2e/package-harness.html`);
+        await page.waitForFunction(() => (window as any).harnessReady === true);
+        const violations: string[] = [];
+        page.on('console', m => { if (/Content.Security.Policy|Refused to execute/i.test(m.text())) violations.push(m.text()); });
+        const outcome = await page.evaluate(() => new Promise<string>(resolve => {
+            const sandbox = document.querySelector('packaged-sandbox') as any;
+            sandbox.registerFiles({ 'main.js': `sandboxView.render('<div style="height: 333px"></div>'); console.log('from the package ' + typeof fetch + ' ' + typeof WebAssembly);` });
+            sandbox.addEventListener('ready', () => resolve('ready'), { once: true });
+            sandbox.addEventListener('terminated', (event: CustomEvent) => resolve(`terminated: ${event.detail.reason}`), { once: true });
+            sandbox.setConfig({ entry: 'main.js', autoResize: true });
+        }));
+        expect(outcome).toBe('ready');
+        await page.waitForFunction(() => (window as any).sandboxLogs.includes('from the package function undefined'));
+        // auto-sizing is the view's own report back to the host, so the element's height is the evidence that the render reached it
+        await expect.poll(() => page.evaluate(() => (document.querySelector('packaged-sandbox') as HTMLElement).style.height)).toMatch(/^3[45]\d?px$/);
+        expect(violations).toEqual([]);
+    });
+
+    test('its viewScriptHash(), in Node without a DOM and in the page, is the hash in the view policy the browser runs, and its bootstrap has no fetch bridge frame', async ({ page }) => {
+        const built = await import(pathToFileURL(join(process.cwd(), BUNDLES.default, 'index.js')).href);
+        const fromNode = built.viewScriptHash();
+        expect(fromNode).toMatch(/^'sha256-[A-Za-z0-9+/]{43}='$/);
+        await page.goto(`${ORIGIN}/test/e2e/package-harness.html`);
+        await page.waitForFunction(() => (window as any).harnessReady === true);
+        const outcome = await page.evaluate(() => new Promise<string>(resolve => {
+            const sandbox = document.querySelector('packaged-sandbox') as any;
+            sandbox.addEventListener('ready', () => resolve('ready'), { once: true });
+            sandbox.addEventListener('terminated', () => resolve('terminated'), { once: true });
+            sandbox.setConfig({});
+        }));
+        expect(outcome).toBe('ready');
+        const [exported, inPolicy, frames, bootstrap] = await page.evaluate(() => {
+            const root = (document.querySelector('packaged-sandbox') as HTMLElement).shadowRoot!;
+            const srcdoc = root.querySelector('iframe')!.srcdoc;
+            return [(window as any).viewScriptHash(), `'${/script-src '(sha256-[A-Za-z0-9+/=]+)'/.exec(srcdoc)![1]}'`, root.querySelectorAll('iframe').length, srcdoc];
+        });
+        expect([exported, inPolicy]).toEqual([fromNode, fromNode]);
+        expect(frames).toBe(1);
+        expect(bootstrap).not.toContain('fetch-bridge');
+        // the network build's bundle has another bootstrap, with the bridge frame's part, and so another hash
+        const network = await import(pathToFileURL(join(process.cwd(), BUNDLES.network, 'index.js')).href);
+        expect(network.viewScriptHash()).not.toBe(fromNode);
+    });
+
+    test.describe('a config of a network mode or option', () => {
+        test.use({ otherBuildConfigs: true }); // the subject: the default build's refusal of what it does not have
+
+        test('is refused whole, with the reason that names the build flag, and the next sealed config builds', async ({ page }) => {
+            await page.goto(`${ORIGIN}/test/e2e/package-harness.html`);
+            await page.waitForFunction(() => (window as any).harnessReady === true);
+            const settled = await page.evaluate(async () => {
+                const sandbox = document.querySelector('packaged-sandbox') as any;
+                const settle = (config: object) => new Promise<string>(resolve => {
+                    const done = (event: Event) => {
+                        sandbox.removeEventListener('ready', done);
+                        sandbox.removeEventListener('terminated', done);
+                        resolve(event.type === 'ready' ? 'ready' : `${sandbox.shadowRoot.querySelectorAll('iframe').length} frames, terminated: ${(event as CustomEvent).detail.reason}`);
+                    };
+                    sandbox.addEventListener('ready', done);
+                    sandbox.addEventListener('terminated', done);
+                    sandbox.setConfig(config);
+                });
+                const outcomes: string[] = [];
+                for (const config of [{ mode: 'strict' }, { mode: 'cooperative', capabilities: ['allow-scripts'] }, { mode: 'worker' }, { origins: { images: ['https://cdn.example'] } }, { mode: 'sealed', fetchBridge: { allow: [] } }]) outcomes.push(await settle(config));
+                outcomes.push(await settle({ html: '<p>sealed</p>' }));
+                return outcomes;
+            });
+            expect(settled).toEqual([...Array(5).fill(`0 frames, terminated: ${reason}`), 'ready']);
+            expect(reason).toContain('WEB_SANDBOX_NETWORK_MODES=1');
+        });
+    });
+});
+
+test.describe('the bundle of the build with the network modes', () => {
+test.use({ build: 'network' });
 
 // The built bundle stringifies the in-sandbox scripts like the sources do; a bundler transform that
 // broke them would only show up here.
@@ -55,7 +141,7 @@ test('the built package runs strict mode: the view bootstrap is admitted by its 
 // the browser finds in the view's policy: the bootstrap is one literal of the bundle, so nothing about where the bundle
 // runs, or how a consumer's build minifies it, changes the text that is hashed.
 test('the built package imports in Node without a DOM, and its viewScriptHash() is the hash in the view policy the browser runs', async ({ page }) => {
-    const built = await import(pathToFileURL(join(process.cwd(), 'dist', 'index.js')).href);
+    const built = await import(pathToFileURL(join(process.cwd(), BUNDLES.network, 'index.js')).href);
     const fromNode = built.viewScriptHash();
     expect(fromNode).toMatch(/^'sha256-[A-Za-z0-9+/]{43}='$/);
     await page.goto(`${ORIGIN}/test/e2e/package-harness.html`);
@@ -98,4 +184,5 @@ test('the built package passes the parser-safety assertion for every default boo
         ];
     });
     expect(outcomes).toEqual(['ready', 'ready']);
+});
 });

@@ -1,5 +1,8 @@
 import { test, expect } from './fixture';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 // allow-pointer-lock lets a guest hide the cursor and capture relative input: an unsafe capability, like fullscreen.
 
 const flagsOf = (page: import('@playwright/test').Page) => page.evaluate(() => {

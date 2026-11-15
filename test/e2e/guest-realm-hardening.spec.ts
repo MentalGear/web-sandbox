@@ -3,6 +3,9 @@ import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder, wss } from './recorder';
 import { FOCUS_AND_CLIPBOARD_FACTS } from '@src/lib/engine-ledger';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The guest realm's hardening (each label below is cited as BR:<label>), where browser behaviour decides:
  *   CB1  the guest's port is announced by the bootstrap, never handed into the guest: document.open() before the

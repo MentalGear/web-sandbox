@@ -1,6 +1,9 @@
 import { test, expect } from '../../../test/e2e/fixture';
 import { startSiblingApi } from '../../../test/e2e/realistic-host-sibling';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 test.use({ ignoreHTTPSErrors: true }); // the test listener's certificate is self-signed
 
 test('Basic Sandbox Interaction & Logging', async ({ sandbox }) => {

@@ -65,6 +65,7 @@ export const ADRS = {
     'ADR-006': 'docs/ADR-006-fetch-bridge.md',
     'ADR-007': 'docs/ADR-007-typed-origins.md',
     'ADR-008': 'docs/ADR-008-sealed-mode.md',
+    'ADR-009': 'docs/ADR-009-network-modes-build-flag.md',
 } as const satisfies Record<`ADR-${number}`, string>;
 
 /** The lifecycle model's findings (research 17), cited bare: `LM-2`. */

@@ -1,8 +1,11 @@
 import dgram from 'node:dgram';
 import type { AddressInfo } from 'node:net';
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, buildOfMode } from './fixture';
 import { inFrames, waitInView } from './strict-view';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Backlog S13: WebRTC. ICE gathering sends UDP to STUN/TURN servers that no CSP directive governs
@@ -125,6 +128,7 @@ test('residual: a frame the guest creates keeps RTCPeerConnection, and its ICE t
 // ---- 4. strict mode -----------------------------------------------------------------------------------
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('no peer connection in the worker; a rendered frame carrying the ICE probe is absent, nothing runs, no UDP leaves (control: the same probe in a frame a cooperative guest creates)', async ({ sandbox, page, browserName }) => {
         test.setTimeout(60000);
         const udp = dgram.createSocket('udp4');

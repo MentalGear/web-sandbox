@@ -1,5 +1,8 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The build's failures and the console (BL:B8 and the follow-up of AR), in real browsers:
@@ -27,6 +30,8 @@ test('an origins kind given a string instead of a list: setConfig() does not thr
 });
 
 for (const mode of ['cooperative', 'worker', ...VIEW_MODES] as const) {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test(`${mode} mode: console.info is relayed as level 'info' with source 'guest', like log, warn and error`, async ({ sandbox, page }) => {
         expect(await sandbox.mount({ mode })).toBe('ready');
         await page.evaluate(() => {
@@ -41,6 +46,7 @@ for (const mode of ['cooperative', 'worker', ...VIEW_MODES] as const) {
         expect(await page.evaluate(() => (window as any).levels)).toEqual([
             ['log', 'guest', 'relay-log'], ['info', 'guest', 'relay-info'], ['warn', 'guest', 'relay-warn'], ['error', 'guest', 'relay-error'],
         ]);
+    });
     });
 }
 

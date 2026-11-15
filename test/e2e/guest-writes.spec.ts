@@ -1,5 +1,5 @@
 import { deflateSync } from 'node:zlib';
-import { test, expect, type MountConfig, type SandboxDriver, SEALED_HAS_NO_EXECUTE } from './fixture';
+import { test, expect, type MountConfig, type SandboxDriver, SEALED_HAS_NO_EXECUTE, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { waitInView, inView } from './strict-view';
 import { MAX_FILES, MAX_TOTAL_BYTES } from '@src/lib/files';
@@ -7,6 +7,9 @@ import { GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND } from '@src/lib/
 import type { SandboxConfig, SandboxConfigOptions } from '@src/host';
 import type { StrictSandboxOrigins } from '@src/lib/csp/origins';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Guest writes (backlog C5, src/lib/guest-writes.ts, ADR-004 amendment "guest writes"), in cooperative, worker and
@@ -103,6 +106,8 @@ function png(width: number, height: number): Buffer {
 const PNG_3x5 = Array.from(png(3, 5));
 
 for (const mode of MODES) {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe(`${mode} mode`, () => {
         test('1. off: both routes refused with FILES_NOT_ALLOWED and nothing recorded; on, the same calls are recorded (positive control)', async ({ sandbox }) => {
             await sandbox.registerFiles({ 'kept.txt': 'kept' });
@@ -419,10 +424,12 @@ for (const mode of MODES) {
             expect((await hostView(sandbox)).writes.map((w: any) => w.path)).toEqual(['main.txt']);
         });
     });
+    });
 }
 
 test.describe('the view and the overlay', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('8. C1, as the owner widened it (R4-4): the view renders no blob: content but registered files and raster-image guest writes, decoded only. The worker mints no URL for a written file; the view shows a written PNG from its own URL and never a written SVG; a registered file renders (positive control)', async ({ sandbox, page, browserName }) => {
             await sandbox.registerFiles({ 'registered.png': { base64: Buffer.from(PNG_3x5).toString('base64') } });
             expect(await sandbox.mount(writesOn(mode))).toBe('ready');

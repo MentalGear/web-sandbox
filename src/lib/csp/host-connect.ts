@@ -27,6 +27,10 @@
 import type { FetchPolicy } from '../fetch-bridge';
 import type { Origin } from '../origin';
 import { withHttpsTwins, type OriginPolicy } from './origins';
+import { splitPolicies } from './policy-text';
+
+// How a policy list is split is every build's (policy-text.ts): the Trusted Types reading uses it too.
+export { splitPolicies };
 
 /** What one policy says about `connect-src`: no restriction, or the sources that admit (an empty list admits nothing). */
 export type ConnectSources = { readonly restricts: false } | { readonly restricts: true; readonly sources: readonly string[] };
@@ -53,15 +57,6 @@ export function connectSources(policy: string): ConnectSources {
     return Object.freeze({ restricts: true, sources: Object.freeze(sources) });
 }
 
-/**
- * A policy list as separate policies. A string is a serialized policy list as a header or a `<meta>` carries it:
- * policies separated by commas (`Content-Security-Policy: a, b` is two policies); a list is taken as it is, one policy
- * per entry.
- */
-export function splitPolicies(text: string | readonly string[]): string[] {
-    const policies = typeof text === 'string' ? text.split(',') : text;
-    return policies.map(policy => policy.trim()).filter(policy => policy !== '');
-}
 
 const DEFAULT_PORTS: Readonly<Record<string, number>> = Object.freeze({ 'http:': 80, 'https:': 443, 'ws:': 80, 'wss:': 443 });
 // The schemes `*` admits: the network schemes (CSP3), of which an entry can have http, https and wss.

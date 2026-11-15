@@ -4,6 +4,9 @@ import { cooperativePolicy, strictViewPolicy } from '@src/lib/csp/csp-generator'
 import { parseOrigins } from '@src/lib/csp/origins';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Research 12: directives dropped by the empty-array rule do not all fall back to default-src.
  * Runs on the shared e2e harness (test/e2e/fixture.ts).

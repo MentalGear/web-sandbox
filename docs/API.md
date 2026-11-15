@@ -7,6 +7,7 @@ leaves to you, read the [threat model](THREAT-MODEL.md).
 
 - [Registering the element](#registering-the-element)
 - [The element](#the-element)
+- [Builds](#builds)
 - [Configuration](#configuration)
 - [Methods](#methods)
 - [Events](#events)
@@ -91,13 +92,59 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 ---
 
+## Builds
+
+<!-- describes: build-flag, reason:networkModesOff, api:SandboxConfig, api:SandboxConfigByMode sig:3eae26fa6739ac71 -->
+The package has two builds, chosen by one build flag that is off by default
+([ADR-009](ADR-009-network-modes-build-flag.md)):
+
+<!-- generated:begin builds -->
+| Build | How it is built | Entry | Modes | What it has |
+| :--- | :--- | :--- | :--- | :--- |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 47 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 64 modules of `src/` |
+<!-- generated:end -->
+
+- **The default build is sealed mode alone.** It is what `bun run build:lib` writes and what the package is as
+  published. Its bundle holds no code of strict, cooperative or worker mode, of `origins` or of `fetchBridge` (the
+  **network modes**): no origin parsing, no host-site or host-policy rule, no fetch bridge and no frame for it, no guest
+  document, no `execute()` path. Its declarations hold none of their types, so `SandboxConfig` is `SealedSandboxConfig`
+  there and `{ mode: 'strict' }` does not type-check.
+- **It refuses what it does not have.** A config that names `mode: 'strict'`, `'cooperative'` or `'worker'`, or names
+  `origins` or `fetchBridge` (with any value but `undefined`, with or without a mode), is refused whole: nothing of it is
+  applied, the previous configuration stays, and the sandbox terminates with the reason
+  `strict, cooperative and worker mode, origins and fetchBridge are the network modes, which this build of the package does not have: build it with WEB_SANDBOX_NETWORK_MODES=1 (WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib)`
+  ([`terminated` reasons](#terminated-reasons)). It is never read as sealed mode, and the option is never dropped. The
+  next sealed config builds as usual. `execute()` runs nothing there: it needs `scriptUnsafe`, which sealed mode refuses.
+- **The network build has every mode**, as this reference describes them. Build the package with the flag:
+
+<!-- generated:begin build-flag-command -->
+```sh
+WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib
+```
+<!-- generated:end -->
+
+  Its entry installs the network modes as the package is imported, so the same `defineWebSandbox()` gives an element
+  that takes all four modes, and its declarations add the three other modes to `SandboxConfigByMode` and export their
+  types. Only the value `1` turns the flag on.
+- **`viewScriptHash()` is each build's own.** The default build's bootstrap is the view alone; the network build's also
+  holds the fetch bridge frame's part. A host page's policy lists the hash of the build the page ships
+  ([Host page policy](#host-page-policy)).
+- **Which build an export belongs to** is the Build column of [Exports](#exports), and which a mode or an option
+  belongs to the Modes column below: an option of the network modes only is one whose modes do not include `sealed`.
+
+---
+
 ## Configuration
 
-<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig, api:SealedSandboxConfig, api:NetworkSandboxOptions sig:bf365a254f4fbd6cdaecf42e3088f2f1cb46 -->
-[`setConfig(config)`](#setconfigconfig) takes a `SandboxConfig`, a union keyed by `mode` (`StrictSandboxConfig`,
-`SealedSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the
-options every mode takes; all but `SealedSandboxConfig` also extend `NetworkSandboxOptions`, the options that open the
-network: `origins` and `fetchBridge`): strict mode's `origins` has no `scripts`, a sealed config has no `origins` and no
+<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig, api:SealedSandboxConfig, api:NetworkSandboxOptions sig:bf365a2567392117daecdf0556d2f2f1cb46 -->
+[`setConfig(config)`](#setconfigconfig) takes a `SandboxConfig`: the configuration of one of the modes the
+[build](#builds) has (`SandboxConfigByMode`), a union keyed by `mode`. The default build has `SealedSandboxConfig`
+alone; the network build adds `StrictSandboxConfig`, `CooperativeSandboxConfig` and `WorkerSandboxConfig`. Each extends
+`SandboxConfigOptions`, the options every mode takes, and all but `SealedSandboxConfig` also extend
+`NetworkSandboxOptions`, the options that open the network (`origins` and `fetchBridge`). What follows describes the
+network build, which has every option; in the default build a config of another mode than sealed, or with either
+network option, is [refused](#builds). Strict mode's `origins` has no `scripts`, a sealed config has no `origins` and no
 `fetchBridge`, and its `scriptUnsafe` is `false` or left out, and a config without `mode` is a sealed config (sealed mode is the default; strict mode is named with
 `mode: 'strict'`, so `{ origins }` without it does not type-check). How a call is applied (over the defaults, copied,
 validated, and what a config that cannot be used does) is under [`setConfig()`](#setconfigconfig) below.
@@ -114,7 +161,7 @@ validated, and what a config that cannot be used does) is under [`setConfig()`](
   ([`terminated` reasons](#terminated-reasons)), as it does for a `mode` that is not one. It is never read as strict mode
   and never stripped: one key would otherwise change the mode, or lose the network an app relies on, silently. So is a
   sealed config with `scriptUnsafe: true`, with the reason
-  `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'` ``: a string run as
+  `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1) ``: a string run as
   code is checked against your page's policy, which reports it ([Host page policy](#host-page-policy)).
 - Each option's default, accepted values, bounds, warnings and modes are declared once (`src/lib/config-schema.ts`), and
   so are the checks across options, which hold for every config: every call that `callLimits` can carry fits an empty
@@ -840,7 +887,7 @@ The browser calls these when the element is inserted, removed or moved; you do n
 
 ## Events
 
-<!-- describes: events, api:WebSandboxEventMap sig:b3e559d4 -->
+<!-- describes: events, api:WebSandboxEventMap, api:NetworkModeEvents sig:b3e52b64585b -->
 <!-- generated:begin api-events -->
 The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.
 
@@ -863,7 +910,7 @@ library's text, which never quotes a value of your configuration, or the text yo
 | `terminated` | `{ reason: string }` | no | The sandbox was terminated: `state` is `'terminated'` and `detail.reason` says why. Once per termination, for a call to `terminate()`, a budget or liveness check that ended the guest, a failed frame check, or a configuration or build that was refused (that one in a task of its own, and not at all if another build started meanwhile). Removing the element ends its environment without this event. Branch on `state` and the event, not on the reason's text. |
 | `sandbox-log` | `SandboxLog` | yes | A log line from the guest's console or written by the element; see `SandboxLog`. Guest lines are limited to `LOG_EVENTS_PER_SECOND` per environment per second. |
 | `violation` | `SandboxViolation` | yes | The guest's policy refused a load; see `SandboxViolation`. At most `VIOLATION_EVENT_LIMIT` per environment. A report is a claim by the guest, not a host fact. |
-| `fetch` | `FetchRecord` | yes | A `sandboxFetch()` request settled, refusals included; see `FetchRecord`. Dispatched only with `fetchBridge` configured. Without it `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
+| `fetch` | `FetchRecord` | yes | A `sandboxFetch()` request settled, refusals included; see `FetchRecord`. Dispatched only with `fetchBridge` configured, so only in a build with the network modes. Without it `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
 | `fileschanged` | `{ paths: string[] }` | no | `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; `detail.paths` lists the paths that changed. Dispatched synchronously, once per call that changed something. |
 | `fileswritten` | `{ paths: string[] }` | yes | The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths` holds that one path. At most `GUEST_WRITES_PER_SECOND` per environment per second. The path is guest-controlled text: show it with `textContent` (a valid path can end a single-quoted attribute). |
 <!-- generated:end -->
@@ -1053,9 +1100,10 @@ type FetchRecord = {
 | `the guest entry calls import() or a phase of it (import.source()), which loads nothing in strict and sealed mode: bundle its modules into the entry` | Strict and sealed mode: the entry's text holds `import` followed by `(` or `.` (after any whitespace and comments), in code, a string or a comment: an `import()`, or a phase of one (`import.source()`, `import.defer()`); a static import and `import.meta` do not compile in the worker's classic script. The worker's policy admits no module script, so an import could load nothing, and the host page's policy, which the worker inherits, would report the URL it named to the page's report endpoint; the build refuses the entry instead, and nothing of the guest's runs. Bundle the modules into the entry, and keep `import(` and `import.` out of its strings and comments. |
 | `the sandbox view stopped responding` | Strict and sealed mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
 | `the view spent more than 2000 ms on one operation twice within 5 minutes` | Strict and sealed mode: an operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it, and another one had, at most 5 minutes before it. The first such operation only logs a `warn` line (see [`sandbox-log`](#sandbox-log--sandboxlog)); see [`sandboxView`](#sandboxview-strict-mode). |
-| `unknown mode: not strict, sealed, cooperative or worker…` | `mode` is not `strict`, `sealed`, `cooperative` or `worker`. For `'iframe'` the reason ends ` ('iframe' was renamed 'cooperative')`; otherwise nothing follows. |
-| `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` `` | `mode` is `'sealed'` or left out (sealed mode is the default), and the config names `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set. |
-| `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'` `` | `mode` is `'sealed'` or left out, and `scriptUnsafe` is `true`. A string run as code is checked against the host page's policy, which the guest's worker inherits, and a refusal reports the page's policy text to the guest and the string to the page's report endpoint; sealed mode runs none. Nothing of the config is applied, as for `sealedNetwork`. |
+| `unknown mode: not strict, sealed, cooperative or worker…` | `mode` is not `strict`, `sealed`, `cooperative` or `worker`. For `'iframe'` the reason goes on ` ('iframe' was renamed 'cooperative')`, and in a build without the network modes ([Builds](#builds)) it ends `; this build has sealed mode alone (WEB_SANDBOX_NETWORK_MODES=1 builds the others)`; otherwise nothing follows. |
+| `strict, cooperative and worker mode, origins and fetchBridge are the network modes, which this build of the package does not have: build it with WEB_SANDBOX_NETWORK_MODES=1 (WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib)` | The package was built without the network modes (the default: [Builds](#builds)), and the config names `mode: 'strict'`, `'cooperative'` or `'worker'`, or `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set. Such a build has sealed mode alone; build the package with `WEB_SANDBOX_NETWORK_MODES=1` for the others. |
+| `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` `` | In a build with the network modes: `mode` is `'sealed'` or left out (sealed mode is the default), and the config names `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set. |
+| `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1) `` | `mode` is `'sealed'` or left out, and `scriptUnsafe` is `true`. A string run as code is checked against the host page's policy, which the guest's worker inherits, and a refusal reports the page's policy text to the guest and the string to the page's report endpoint; sealed mode runs none, and strict mode, which runs them, is one of the network modes ([Builds](#builds)). Nothing of the config is applied, as for `sealedNetwork`. |
 | `html is longer than 262144 characters, the most the view renders at once: render the rest from the entry` | Strict and sealed mode: `html`, given to `setConfig()` or `load()`, is longer than `VIEW_RENDER_MAX_LENGTH` (262144) characters, the most one render takes (the initial view is one). It is refused before anything reads it: nothing of the config is applied, as for `sealedNetwork`, and `load()` keeps the html the element had. Render the rest from the entry, in renders of that size. |
 | `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned (the error's name follows, as in `(DataCloneError)`), an `origins` that is not an object (`(TypeError: origins is not an object)`), or a kind of it that is not a list (`(TypeError: origins.connect is not a list)`, naming the kind). |
 | `the environment could not be built (…)` | Building the frame failed. |
@@ -1622,6 +1670,9 @@ page in Chromium and Firefox, with no user activation (measured; cooperative mod
 
 ## Modes
 
+Sealed mode is in every build of the package; strict, cooperative and worker mode are the network modes, in the package
+only when it is built with its flag ([Builds](#builds)).
+
 | | `sealed` (default) | `strict` | `cooperative` | `worker` |
 | :--- | :--- | :--- | :--- | :--- |
 | For | content you do not trust | content you do not trust that needs the network | cooperative content | headless code (frozen) |
@@ -1644,7 +1695,7 @@ network source, and `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. A config 
 `fetchBridge` is refused with the reason
 `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``,
 and one that sets `scriptUnsafe: true` with
-`` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'` ``.
+`` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1) ``.
 The guest's worker inherits your page's Content-Security-Policy, its text and its report endpoints with it, and the
 browser reports every refusal of it to the realm that tried and to your endpoint; so in sealed mode guest code never
 asks the browser for anything your page's policy decides (see [Host page policy](#host-page-policy)).
@@ -1658,10 +1709,11 @@ What changes for an embed written when strict mode was the default:
 | You have | Now | What to do |
 | :--- | :--- | :--- |
 | no `mode`, and no `origins`, `fetchBridge`, `scriptUnsafe: true`, no `execute()` and `html` of at most 262144 characters | sealed mode: the same view, worker and API, nothing visible changes. A `<script>` or `on…` handler in `html` behaves as in strict mode: it never runs, and the one warning says `sealed mode (the default) runs no script in html; …`. `connect-src` has no `blob:`, so a guest `fetch()` of its own file's URL is refused: read the file with `sandboxFiles.read()` or `text()` | nothing |
-| no `mode`, with `origins` or `fetchBridge` | refused: nothing is built, and the sandbox terminates with the reason `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``; in TypeScript, a type error | add `mode: 'strict'` |
-| no `mode`, with `scriptUnsafe: true` (which `execute()` needs) | refused: nothing is built, and the sandbox terminates with the reason `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'` ``; in TypeScript, a type error. Sealed mode runs only the registered `entry`: without `scriptUnsafe`, `execute()` does nothing | add `mode: 'strict'` |
+| no `mode`, with `origins` or `fetchBridge`, in a build with the network modes | refused: nothing is built, and the sandbox terminates with the reason `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``; in TypeScript, a type error | add `mode: 'strict'` |
+| no `mode`, with `origins` or `fetchBridge`, or any config with `mode: 'strict'`, `'cooperative'` or `'worker'`, in the default build (the package as published: [Builds](#builds)) | refused: nothing is built, and the sandbox terminates with the reason `strict, cooperative and worker mode, origins and fetchBridge are the network modes, which this build of the package does not have: build it with WEB_SANDBOX_NETWORK_MODES=1 (WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib)`; in TypeScript, a type error | build the package with the flag, or drop the network options and stay in sealed mode |
+| no `mode`, with `scriptUnsafe: true` (which `execute()` needs) | refused: nothing is built, and the sandbox terminates with the reason `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1) ``; in TypeScript, a type error. Sealed mode runs only the registered `entry`: without `scriptUnsafe`, `execute()` does nothing | add `mode: 'strict'`, in a build with the network modes |
 | no `mode` (or `mode: 'strict'`), with `html` longer than 262144 characters (`VIEW_RENDER_MAX_LENGTH`) | refused in both modes: nothing of the config is applied, and the sandbox terminates with the reason `html is longer than 262144 characters, the most the view renders at once: render the rest from the entry`; `load()` keeps the html the element had | render the rest from the entry, in renders of at most that size |
-| `mode: 'strict'`, `'cooperative'` or `'worker'` | unchanged | nothing |
+| `mode: 'strict'`, `'cooperative'` or `'worker'`, in a build with the network modes | unchanged | nothing |
 | TypeScript that types a config with no mode as `StrictSandboxConfig` | `mode` is required there | add `mode: 'strict'`, or type it `SealedSandboxConfig` |
 | a host page policy that lists origins for the sandbox in `img-src`, `connect-src` and so on | sealed mode needs none of them | keep `blob:`; drop the origins if nothing else of the page needs them |
 
@@ -2542,36 +2594,38 @@ specification and the table has no row:
 
 ## Exports
 
+The Build column says which [build](#builds) has an export: every build, or only the one with the network modes.
+
 Values:
 
 <!-- generated:begin api-exports-values -->
-| Export | What it is |
-| :--- | :--- |
-| `defineWebSandbox` | Registers `WebSandbox` as a custom element under `tagName` and returns the class. |
-| `viewScriptHash` | The CSP hash source of the library's bootstrap for this release of the package, to allow in the host page's own Content-Security-Policy: strict mode's view runs it, and so does the fetch bridge's frame. |
-| `SandboxDevTools` | Logs one sandbox's `sandbox-log` lines to the host page's console, safely: the values go after a fixed first argument, so a guest string is never read as a console format string. |
-| `WebSandbox` | The `<web-sandbox>` custom element: one sandboxed environment for untrusted web content, rebuilt by `setConfig()`, `load()` and `reset()`. |
-| `AUTO_RESIZE_MAX_HEIGHT` | The tallest height, in CSS pixels, a guest can give the element; larger reports are clamped to it. |
-| `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` | At most this many height changes per second (and never more than one per animation frame). |
-| `EXECUTION_TIMEOUT_GRACE_MS` | How long, in ms, the guest's event loop may still be busy at an `execute()` deadline (`workerExecutionTimeout`): the element pings the guest there, and a guest that has not answered within this time ends the sandbox. |
-| `FETCH_ERROR_CODES` | Every `FetchErrorCode`, as a value. |
-| `GUEST_WRITE_BYTES_PER_SECOND` | Most bytes of written content recorded per environment in any one-second window (`guestWrites`); later writes are refused with `FILES_BUSY`. |
-| `GUEST_WRITES_PER_SECOND` | Most guest write and remove requests handled per environment in any one-second window (`guestWrites`); later ones are refused with `FILES_BUSY`. |
-| `LOAD_TIMEOUT_MS` | How long, in ms, a build may stay `loading` before the sandbox terminates; the reason names the host page's policy when the frame loaded and its startup script never checked in. |
-| `LOG_EVENTS_PER_SECOND` | Most guest lines dispatched as `sandbox-log` per environment in any one-second window (a sliding window). |
-| `LOG_MAX_ARGS` | Most arguments one `SandboxLog` line keeps; later ones are dropped. |
-| `LOG_MAX_STRING` | Longest string argument of a `SandboxLog` line, in UTF-16 code units; a longer one is cut. |
-| `MAX_INBOUND_IN_FLIGHT` | Most calls from the other side that run at once on one channel: a further request is answered `BUSY` at once and its method is not called. |
-| `SAFE_CAPABILITIES` | The values the `capabilities` option accepts: sandbox flags that keep the guest inside the frame. |
-| `UNSAFE_CAPABILITIES` | The values the `unsafeCapabilities` option accepts: each reaches outside the frame and warns once when enabled. |
-| `UNSAFE_PERMISSIONS` | The Permissions Policy features among `UNSAFE_CAPABILITIES`, granted through the frames' `allow` attribute. |
-| `UNSAFE_SANDBOX_FLAGS` | The sandbox flags among `UNSAFE_CAPABILITIES`: each reaches outside the frame and needs an explicit opt-in. |
-| `VIEW_INPUT_IN_FLIGHT` | The most batches of the view's events the worker has not acknowledged yet (research 23). |
-| `VIEW_LIVENESS_TIMEOUT_MS` | How long, in ms, strict mode's view may go without answering before the sandbox terminates ([ADR-005](ADR-005-strict-mode.md)). |
-| `VIEW_RENDER_MAX_LENGTH` | The most characters (UTF-16 code units, 256 Ki) one strict-mode view operation may carry: the `html` of `sandboxView.render()`, the string of `text()` and the value of `set()`. |
-| `VIEW_SET_STYLE_LIMITS` | Limits of one `sandboxView.set(id, { css })` (research 23): the properties it names, and the characters of each value (and of a custom property's name). |
-| `VIEW_STYLE_PROPERTIES` | The inline style properties `sandboxView.set(id, { css })` may set on an element (research 23): what a drag, a gesture, a slider or a virtual list moves, and nothing else. |
-| `VIOLATION_EVENT_LIMIT` | Most `violation` events one environment can produce; later reports are dropped, with one warning. |
+| Export | Build | What it is |
+| :--- | :--- | :--- |
+| `defineWebSandbox` | every build | Registers `WebSandbox` as a custom element under `tagName` and returns the class. |
+| `viewScriptHash` | every build | The CSP hash source of the library's bootstrap for this build of the package, to allow in the host page's own Content-Security-Policy: the view of sealed and strict mode runs it and, in a build with the network modes, so does the fetch bridge's frame. |
+| `SandboxDevTools` | every build | Logs one sandbox's `sandbox-log` lines to the host page's console, safely: the values go after a fixed first argument, so a guest string is never read as a console format string. |
+| `WebSandbox` | every build | The `<web-sandbox>` custom element: one sandboxed environment for untrusted web content, rebuilt by `setConfig()`, `load()` and `reset()`. |
+| `AUTO_RESIZE_MAX_HEIGHT` | every build | The tallest height, in CSS pixels, a guest can give the element; larger reports are clamped to it. |
+| `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` | every build | At most this many height changes per second (and never more than one per animation frame). |
+| `EXECUTION_TIMEOUT_GRACE_MS` | every build | How long, in ms, the guest's event loop may still be busy at an `execute()` deadline (`workerExecutionTimeout`): the element pings the guest there, and a guest that has not answered within this time ends the sandbox. |
+| `FETCH_ERROR_CODES` | network | Every `FetchErrorCode`, as a value. |
+| `GUEST_WRITE_BYTES_PER_SECOND` | every build | Most bytes of written content recorded per environment in any one-second window (`guestWrites`); later writes are refused with `FILES_BUSY`. |
+| `GUEST_WRITES_PER_SECOND` | every build | Most guest write and remove requests handled per environment in any one-second window (`guestWrites`); later ones are refused with `FILES_BUSY`. |
+| `LOAD_TIMEOUT_MS` | every build | How long, in ms, a build may stay `loading` before the sandbox terminates; the reason names the host page's policy when the frame loaded and its startup script never checked in. |
+| `LOG_EVENTS_PER_SECOND` | every build | Most guest lines dispatched as `sandbox-log` per environment in any one-second window (a sliding window). |
+| `LOG_MAX_ARGS` | every build | Most arguments one `SandboxLog` line keeps; later ones are dropped. |
+| `LOG_MAX_STRING` | every build | Longest string argument of a `SandboxLog` line, in UTF-16 code units; a longer one is cut. |
+| `MAX_INBOUND_IN_FLIGHT` | every build | Most calls from the other side that run at once on one channel: a further request is answered `BUSY` at once and its method is not called. |
+| `SAFE_CAPABILITIES` | every build | The values the `capabilities` option accepts: sandbox flags that keep the guest inside the frame. |
+| `UNSAFE_CAPABILITIES` | network | The values the `unsafeCapabilities` option accepts: each reaches outside the frame and warns once when enabled. |
+| `UNSAFE_PERMISSIONS` | network | The Permissions Policy features among `UNSAFE_CAPABILITIES`, granted through the frames' `allow` attribute. |
+| `UNSAFE_SANDBOX_FLAGS` | network | The sandbox flags among `UNSAFE_CAPABILITIES`: each reaches outside the frame and needs an explicit opt-in. |
+| `VIEW_INPUT_IN_FLIGHT` | every build | The most batches of the view's events the worker has not acknowledged yet (research 23). |
+| `VIEW_LIVENESS_TIMEOUT_MS` | every build | How long, in ms, strict mode's view may go without answering before the sandbox terminates ([ADR-005](ADR-005-strict-mode.md)). |
+| `VIEW_RENDER_MAX_LENGTH` | every build | The most characters (UTF-16 code units, 256 Ki) one strict-mode view operation may carry: the `html` of `sandboxView.render()`, the string of `text()` and the value of `set()`. |
+| `VIEW_SET_STYLE_LIMITS` | every build | Limits of one `sandboxView.set(id, { css })` (research 23): the properties it names, and the characters of each value (and of a custom property's name). |
+| `VIEW_STYLE_PROPERTIES` | every build | The inline style properties `sandboxView.set(id, { css })` may set on an element (research 23): what a drag, a gesture, a slider or a virtual list moves, and nothing else. |
+| `VIOLATION_EVENT_LIMIT` | every build | Most `violation` events one environment can produce; later reports are dropped, with one warning. |
 <!-- generated:end -->
 
 `document.createElement('web-sandbox')` is typed as a `WebSandbox` (`HTMLElementTagNameMap`), and its
@@ -2580,40 +2634,42 @@ Values:
 Types:
 
 <!-- generated:begin api-exports-types -->
-| Type | What it is |
-| :--- | :--- |
-| `CallLimits` | The per-second budget of the calls the guest makes (`SandboxConfigOptions.callLimits`). |
-| `CooperativeSandboxConfig` | The configuration of cooperative mode, for content that cooperates: guest code runs in the guest document, within the documented limits of the mode (README, "Cooperative-mode limits"). |
-| `FetchBridgeConfig` | The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. |
-| `FetchErrorCode` | Why `sandboxFetch()` rejected: the rejection's `code`, and the `code` of a `FetchRecord`. |
-| `FetchRecord` | The `detail` of a `fetch` event: one request through the bridge, reported once when it settled. |
-| `FileContent` | A file's content for `registerFiles()`: a string is stored as UTF-8, a `Uint8Array` is copied. |
-| `FileEntry` | One `registerFiles()` entry: the content, typed by its path's extension, or `{ content, type }` with an explicit MIME type. |
-| `FileError` | The shape of every refusal of the file methods: a plain `Error` with an own `code`. |
-| `FileErrorCode` | Why a change to the files was refused: the `code` of a `FileError`. |
-| `FileInfo` | One registered file, as `listFiles()` reports it. |
-| `GuestWrite` | One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size` and a copy of the written bytes in `content`) or a removal. |
-| `NetworkSandboxOptions` | The options that open the network: `origins` and `fetchBridge`. |
-| `RpcError` | The shape of every rejection of `call()` and `callWithTimeout()`: a plain `Error` with an own `code`. |
-| `RpcErrorCode` | Why a call was refused: the `code` of an `RpcError`. |
-| `RpcLibraryCode` | The codes a library method (a `sandbox:` name) reports, from one closed set disjoint from `RpcErrorCode`: the fetch bridge's `FetchErrorCode` values and the guest writes' `FileErrorCode` values. |
-| `SafeCapability` | A member of `SAFE_CAPABILITIES`: an entry of the `capabilities` option. |
-| `SandboxCapability` | A value that may end up in a frame's `sandbox` attribute: a `SafeCapability` or a member of `UNSAFE_SANDBOX_FLAGS`. |
-| `SandboxConfig` | The configuration `setConfig()` takes: a union keyed by `mode`. |
-| `SandboxConfigOptions` | The options every mode takes, and the ones a mode's config narrows (`SealedSandboxConfig`, `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`). |
-| `SandboxFiles` | The guest's view of the registered files: the global `sandboxFiles`, present in every environment (empty when no file is registered). |
-| `SandboxLog` | The `detail` of a `sandbox-log` event: one log line, frozen. |
-| `SandboxLogLevel` | The level of a `SandboxLog` line. |
-| `SandboxOrigins` | The `origins` option: the exact origins the guest may load each kind of resource from, one list per kind. |
-| `SandboxState` | Where the element is in its lifecycle; read it from `state`. |
-| `SandboxViolation` | The `detail` of a `violation` event: the guest's policy refused a load. |
-| `SealedSandboxConfig` | The configuration of sealed mode, the default ([ADR-008](ADR-008-sealed-mode.md)): strict mode with no network. |
-| `StrictSandboxConfig` | The configuration of strict mode ([ADR-005](ADR-005-strict-mode.md)): sealed mode's view and worker, with the network options. |
-| `StrictSandboxOrigins` | `SandboxOrigins` in strict mode: no `scripts`, since the view runs only the library's bootstrap ([ADR-005](ADR-005-strict-mode.md)). |
-| `UnsafeCapability` | A member of `UNSAFE_CAPABILITIES`: an entry of the `unsafeCapabilities` option. |
-| `UnsafePermission` | A member of `UNSAFE_PERMISSIONS`: a capability granted through the frames' `allow` attribute, not a sandbox flag. |
-| `WebSandboxEventMap` | The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`. |
-| `WorkerSandboxConfig` | The configuration of worker mode: guest code runs in a worker inside the frame. |
+| Type | Build | What it is |
+| :--- | :--- | :--- |
+| `CallLimits` | every build | The per-second budget of the calls the guest makes (`SandboxConfigOptions.callLimits`). |
+| `CooperativeSandboxConfig` | network | The configuration of cooperative mode, for content that cooperates: guest code runs in the guest document, within the documented limits of the mode (README, "Cooperative-mode limits"). |
+| `FetchBridgeConfig` | network | The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. |
+| `FetchErrorCode` | network | Why `sandboxFetch()` rejected: the rejection's `code`, and the `code` of a `FetchRecord`. |
+| `FetchRecord` | network | The `detail` of a `fetch` event: one request through the bridge, reported once when it settled. |
+| `FileContent` | every build | A file's content for `registerFiles()`: a string is stored as UTF-8, a `Uint8Array` is copied. |
+| `FileEntry` | every build | One `registerFiles()` entry: the content, typed by its path's extension, or `{ content, type }` with an explicit MIME type. |
+| `FileError` | every build | The shape of every refusal of the file methods: a plain `Error` with an own `code`. |
+| `FileErrorCode` | every build | Why a change to the files was refused: the `code` of a `FileError`. |
+| `FileInfo` | every build | One registered file, as `listFiles()` reports it. |
+| `GuestWrite` | every build | One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size` and a copy of the written bytes in `content`) or a removal. |
+| `NetworkModeEvents` | network | The events the network modes add to the element's (`WebSandboxEventMap`): in a build that has them, the element's event map holds these too. |
+| `NetworkSandboxOptions` | network | The options that open the network: `origins` and `fetchBridge`. |
+| `RpcError` | every build | The shape of every rejection of `call()` and `callWithTimeout()`: a plain `Error` with an own `code`. |
+| `RpcErrorCode` | every build | Why a call was refused: the `code` of an `RpcError`. |
+| `RpcLibraryCode` | every build | The codes a library method (a `sandbox:` name) reports, from one closed set disjoint from `RpcErrorCode`: the fetch bridge's `FETCH_…` codes and the guest writes' `FileErrorCode` values. |
+| `SafeCapability` | every build | A member of `SAFE_CAPABILITIES`: an entry of the `capabilities` option. |
+| `SandboxCapability` | network | A value that may end up in a frame's `sandbox` attribute: a `SafeCapability` or a member of `UNSAFE_SANDBOX_FLAGS`. |
+| `SandboxConfig` | every build | The configuration `setConfig()` takes: the config of one of the modes the build has (`SandboxConfigByMode`), a union keyed by `mode`. |
+| `SandboxConfigByMode` | every build | The configuration of each mode this build of the package has, by the mode's name. |
+| `SandboxConfigOptions` | every build | The options every mode takes, and the ones a mode's config narrows (`SealedSandboxConfig`, and in a build with the network modes the configurations of strict, cooperative and worker mode). |
+| `SandboxFiles` | every build | The guest's view of the registered files: the global `sandboxFiles`, present in every environment (empty when no file is registered). |
+| `SandboxLog` | every build | The `detail` of a `sandbox-log` event: one log line, frozen. |
+| `SandboxLogLevel` | every build | The level of a `SandboxLog` line. |
+| `SandboxOrigins` | network | The `origins` option: the exact origins the guest may load each kind of resource from, one list per kind. |
+| `SandboxState` | every build | Where the element is in its lifecycle; read it from `state`. |
+| `SandboxViolation` | every build | The `detail` of a `violation` event: the guest's policy refused a load. |
+| `SealedSandboxConfig` | every build | The configuration of sealed mode, the default ([ADR-008](ADR-008-sealed-mode.md)): strict mode with no network. |
+| `StrictSandboxConfig` | network | The configuration of strict mode ([ADR-005](ADR-005-strict-mode.md)): sealed mode's view and worker, with the network options. |
+| `StrictSandboxOrigins` | network | `SandboxOrigins` in strict mode: no `scripts`, since the view runs only the library's bootstrap ([ADR-005](ADR-005-strict-mode.md)). |
+| `UnsafeCapability` | network | A member of `UNSAFE_CAPABILITIES`: an entry of the `unsafeCapabilities` option. |
+| `UnsafePermission` | network | A member of `UNSAFE_PERMISSIONS`: a capability granted through the frames' `allow` attribute, not a sandbox flag. |
+| `WebSandboxEventMap` | every build | The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`. |
+| `WorkerSandboxConfig` | network | The configuration of worker mode: guest code runs in a worker inside the frame. |
 <!-- generated:end -->
 
 The playground's scenarios (`src/lib/presets.ts`) are not part of the package: each preset is a `code` payload

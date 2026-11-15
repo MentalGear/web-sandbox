@@ -20,8 +20,7 @@
  * entry of the list.
  */
 import type { AutoResizer } from './auto-resize';
-import type { BridgeFrame } from './bridge-frame';
-import type { FetchBridge } from './fetch-bridge';
+import type { FetchHandler } from './network-modes';
 import type { LongTimeout } from './long-timer';
 import type { Watchdog } from './watchdog';
 import { mintError } from './minted-errors';
@@ -48,9 +47,9 @@ export interface EnvironmentFields {
     /** The auto-sizing, when on. */
     _resizer: AutoResizer | null;
     /** The fetch bridge, when on. */
-    _fetchBridge: FetchBridge | null;
+    _fetchBridge: FetchHandler | null;
     /** The frame that makes the bridge's requests. */
-    _bridgeFrame: BridgeFrame | null;
+    _bridgeFrame: { close(): void } | null;
     /** Strict mode: guest writes posted to the view and not yet confirmed, by id. */
     _viewWrites: Map<number, { shown: () => void; lost: (error: Error) => void }>;
     /** The workerExecutionTimeout deadlines. */

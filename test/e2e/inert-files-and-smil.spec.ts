@@ -1,9 +1,12 @@
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { chromiumViewLinkUrls, inView, waitInView } from './strict-view';
 import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import type { SandboxConfig } from '@src/host';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Inert files and SMIL (each label below is cited as FR:<label>), where browser behaviour decides:
@@ -71,6 +74,7 @@ test.describe('W1: a committed inert file is never a script of the next build', 
     }
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('an entry committed as text/plain is not a JavaScript file and does not start; the same content committed as JavaScript starts (positive control)', async ({ sandbox }) => {
             await exposeMark(sandbox);
             expect(await sandbox.mount({ mode, guestWrites: true })).toBe('ready');
@@ -130,6 +134,7 @@ test.describe('F1: rendered markup cannot re-animate an attribute the renderer c
     const XLINK = 'http://www.w3.org/1999/xlink';
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test("a link's href animated by <set>, <animate> and on xlink:href: getAttribute, baseVal and animVal all stay the inert constant, no animation element is left, and Chromium's accessibility tree exposes no guest URL", async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             const html = `<svg xmlns:xlink="${XLINK}" width="300" height="80">`
@@ -202,6 +207,8 @@ test.describe('F2: workerExecutionTimeout cannot be evaded: at the deadline the 
 
     for (const mode of ['worker', ...VIEW_MODES] as const) {
         test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
+        test.describe(`${mode} mode`, () => {
             test('control: code still looping at the deadline terminates', async ({ sandbox }) => {
                 expect(await sandbox.mount({ mode, workerExecutionTimeout: BUDGET })).toBe('ready');
                 await watch(sandbox);
@@ -257,6 +264,7 @@ test.describe('F2: workerExecutionTimeout cannot be evaded: at the deadline the 
                 // c's deadline caught it: within its budget plus the grace, well before the later call's own deadline would add one
                 expect(first!.at).toBeLessThan(2000 + BUDGET + 1250 + 1000);
             });
+        });
         });
     }
 });

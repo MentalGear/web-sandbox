@@ -2,6 +2,9 @@ import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Research 13: popup exfiltration (backlog S12, issue #6 N3).
  * A popup is a new top-level window: neither the guest's CSP nor the wrapper's frame-src applies to it.

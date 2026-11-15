@@ -2,6 +2,9 @@ import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 // Evidence (backlog T5): the base-uri violation reported on the host, the fetch's own outcome (its relative
 // URL cannot be resolved against the inherited about:blank base, S15), and a listener outside the browser
 // that the injected base points at. Positive control: the same payload without the sandbox's policy.

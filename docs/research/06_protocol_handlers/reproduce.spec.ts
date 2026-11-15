@@ -1,6 +1,9 @@
 import { test, expect } from '../../../test/e2e/fixture';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 const preset = fromPreset('protocol-handler');
 
 test('Protocol Handler Registration - Mitigated', async ({ sandbox }) => {

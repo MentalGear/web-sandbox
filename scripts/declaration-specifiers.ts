@@ -6,7 +6,8 @@
  * Run by `bun run build:lib` after tsc; scripts/smoke-package.sh type-checks a NodeNext consumer against the result.
  *
  * Only the specifiers of real import and export declarations and import types are rewritten (R2:C-11), found
- * among the text's tokens (js-tokens.ts: TypeScript's own scanner): `from "./x"`, `import "./x"` and `import("./x")`. A
+ * among the text's tokens (js-tokens.ts: TypeScript's own scanner): `from "./x"`, `import "./x"`, `import("./x")` and
+ * `declare module "./x"` (a module augmentation: the network build's types extend the element's that way). A
  * regular expression over the text also rewrote such a phrase inside a comment (a doc comment that quotes an import) or
  * a string, where it is not a specifier; the scanner never yields a token from either.
  */
@@ -38,6 +39,8 @@ function isSpecifierPosition(tokens: { kind: SyntaxKind }[], index: number): boo
     const notMember = (at: number) => tokens[at - 1]?.kind !== SyntaxKind.DotToken;
     if (before === SyntaxKind.FromKeyword) return notMember(index - 1);
     if (before === SyntaxKind.ImportKeyword) return notMember(index - 1);
+    // `declare module "./x" { … }`: a module augmentation names the module it extends as an import does
+    if (before === SyntaxKind.ModuleKeyword) return tokens[index - 2]?.kind === SyntaxKind.DeclareKeyword;
     return before === SyntaxKind.OpenParenToken && tokens[index - 2]?.kind === SyntaxKind.ImportKeyword && notMember(index - 2)
         && tokens[index + 1]?.kind === SyntaxKind.CloseParenToken;
 }

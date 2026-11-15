@@ -2,6 +2,9 @@ import { test, expect, type SandboxDriver } from './fixture';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * A guest's request to the http: or ws: form of a listed https: or wss: origin is refused by every engine, and nothing
  * reaches the server in cleartext (docs/API.md#origins; INHERITED_CONTEXT.cspFetch). No guest policy carries

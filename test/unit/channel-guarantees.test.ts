@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { EXECUTION_TIMEOUT_GRACE_MS } from '@src/host';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_STRING, LOG_OWN_LINES, toLogDetail } from '@src/lib/sandbox-log';
@@ -7,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkIn } from './check-in';
+import { elementSource } from './element-source';
 
 /**
  * Channels and lifecycle, host side:
@@ -236,7 +238,7 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
 
     // The generation is compared only by the reducer and its executor (and, for a call, _postRpc): the source scan of
     // class L is in test/unit/lifecycle-reducer.test.ts ("class L in host.ts, by its source").
-    const source = () => readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/host.ts'), 'utf8');
+    const source = () => elementSource();
     // The method each `notices` list is in, and the list itself (up to its closing bracket at the same depth).
     const noticeLists = (text: string) => [...text.matchAll(/notices: \[/g)].map(match => {
         let depth = 0;
@@ -255,7 +257,7 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
         expect(text).not.toContain('_notifyThenAct(');
         // the execution timeout; the host page's refusals (the view's TRUSTED_TYPES_REFUSED and WORKER_REFUSED, worker
         // mode's announced refusal) through one method; the entry failure
-        expect(noticeLists(text).map(({ method }) => method)).toEqual(['_onExecutionTimeout', '_refusedByHostPage', '_onViewMessage']);
+        expect(noticeLists(text).map(({ method }) => method).sort()).toEqual(['_onExecutionTimeout', '_onViewMessage', '_refusedByHostPage']);
         expect(noticeLists(text)).toHaveLength(PATHS.length);
         // Paths whose action is not a termination are forced where their feature is tested: the guest-write announcement
         // ('fileswritten', then the acknowledgement; test/unit/guest-writes.test.ts, AR:B5).

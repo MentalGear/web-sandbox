@@ -1,10 +1,13 @@
-import { test, expect, type SandboxDriver, type MountConfig } from './fixture';
+import { test, expect, type SandboxDriver, type MountConfig, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { lag, quietStall, startLag } from './host-share';
 import { VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS } from '@src/lib/in-sandbox-view';
-import type { StrictSandboxConfig } from '@src/host';
+import type { StrictSandboxConfig } from '@src/lib/network-types';
 import { VIEW_MODES, type ViewMode } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The strict renderer and view (each label below is cited as BR:<label>), where browser
@@ -111,6 +114,7 @@ test.describe('the renderer is an allowlist', () => {
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('positive control: an everyday UI keeps its elements and attributes: forms and controls, tables, lists, details, media, an inline SVG icon with a gradient, a MathML formula, a custom element', async ({ sandbox, page, browserName }) => {
             await sandbox.registerFiles({ 'logo.png': { base64: PNG_1X1 } });
             expect(await sandbox.mount(inMode(mode))).toBe('ready');
@@ -169,6 +173,7 @@ async function openInNewTab(page: import('@playwright/test').Page, url: string):
 
 test.describe('ST1: nothing the strict view shows opens in a new tab as a document that runs script', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('every URL the view mints is of a type that is not a document: registered SVG and XML-typed files get none, and opening every minted URL runs nothing; a PNG renders (positive control)', async ({ sandbox, page, browserName }) => {
             test.setTimeout(90000);
             const doc = b64(DOCUMENT(recorder.blocked));
@@ -257,6 +262,7 @@ const MARKER_FANOUT = (() => {
 })();
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe('ST2: one render cannot stall the host by fan-out, and the view holds a bounded document', () => {
         for (const [name, markup] of [['SVG <use>', USE_FANOUT], ['SVG markers', MARKER_FANOUT]] as const) {
             test(`a ${markup.length}-character render that instances its content 10^5 times (${name}) does nothing: nothing instancing is left, and the host's longest stall stays under 500 ms`, async ({ sandbox, page, browserName }) => {

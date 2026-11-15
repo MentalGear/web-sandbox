@@ -2,6 +2,9 @@ import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
 import type { Page } from '@playwright/test';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Where a bridge request runs (BD1:ISO-1, class E-net; ADR-006; src/lib/bridge-frame.ts): the host decides it and the
  * bridge's own frame, an opaque origin of the library's, makes it. So nothing of the host page's fetch environment

@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineWebSandbox, LOAD_TIMEOUT_MS } from '@src/host';
 import { checkIn } from './check-in';

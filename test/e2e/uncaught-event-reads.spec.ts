@@ -1,4 +1,4 @@
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, buildOfMode } from './fixture';
 import { VIEW_MODES } from './view-modes';
 
 /**
@@ -37,6 +37,7 @@ async function raise(sandbox: SandboxDriver, mode: 'worker' | (typeof VIEW_MODES
 
 for (const mode of ['worker', ...VIEW_MODES] as const) {
     test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         for (const [name, flood] of Object.entries(FLOODS)) {
             for (const replaced of [false, true]) {
                 test(`three ${name} of 2 Mi characters ${replaced ? 'with the event accessors the listener reads replaced by the guest' : '(control: nothing replaced)'} end the sandbox with the uncaught-budget reason`, async ({ sandbox, browserName }) => {

@@ -1,4 +1,4 @@
-import { test, expect, ORIGIN } from './fixture';
+import { test, expect, ORIGIN, buildOfMode } from './fixture';
 import { BRIDGE_FRAME_REFUSED } from '@src/lib/bridge-frame';
 import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { inFrames, recordFrameEvents, waitInView } from './strict-view';
@@ -6,6 +6,9 @@ import { RealisticHost, covering, guestBattery, hitsNamed, type Directives, type
 import { DIRECTIVE_CASES, HEADER_CASES, outcomeOn, type MatrixCase, type MatrixWarning, type Outcome } from './directive-matrix';
 import { VIEW_MODES, type ViewMode } from './view-modes';
 import type { Page } from '@playwright/test';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The directive matrix (S74, class A; directive-matrix.ts is its table): for each Content-Security-Policy directive a host
@@ -120,6 +123,7 @@ test.beforeEach(({ browserName }) => { stopRecording = recordFrameEvents(browser
 test.afterEach(() => stopRecording());
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe('directive matrix: CSP directives', () => {
         for (const [directive, cases] of Object.entries(DIRECTIVE_CASES)) {
             for (const matrixCase of cases as readonly MatrixCase[]) {

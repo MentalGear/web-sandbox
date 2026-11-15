@@ -1,6 +1,9 @@
 import { test, expect, ORIGIN } from './fixture';
 import { startSiblingApi } from './realistic-host-sibling';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 test.use({ ignoreHTTPSErrors: true }); // the test listener's certificate is self-signed
 
 // The listener's .svg answer (realistic-host-sibling.ts).

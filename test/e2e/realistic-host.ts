@@ -4,7 +4,7 @@ import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 import { VIEW_STILL_STYLE } from '@src/lib/in-sandbox-view';
 import type { InheritedContextId } from '@src/lib/inherited-context';
-import { expect, ORIGIN, type SandboxDriver } from './fixture';
+import { buildOfPage, expect, ORIGIN, type Build, type SandboxDriver } from './fixture';
 import { HOST_COOKIES, REALISTIC_HOST_PATH, type ApiHit, type PageHeader, type SessionRecord } from './realistic-host-server';
 import { isDevServerNoise } from './dev-server-noise';
 
@@ -226,14 +226,18 @@ export class RealisticHost {
         }
     }
 
-    /** The view bootstrap's hash as the page serves it (read once per worker, from a page with no policy). */
+    /**
+     * The view bootstrap's hash as the page serves it, read from a page with no policy: once per worker for each build of
+     * the library a test's pages run (ADR-009: the default build's bootstrap is the view alone, so its hash is its own).
+     */
     private async viewHash(): Promise<string> {
-        if (viewHashOfThisRun === undefined) {
+        const build = buildOfPage(this.page);
+        if (viewHashOfThisRun[build] === undefined) {
             await this.page.goto(`${HOST_BASE}/page?session=hash&sw=0&cookies=0`);
             await this.page.waitForFunction(() => (window as any).harnessReady === true);
-            viewHashOfThisRun = await this.page.evaluate(() => (window as any).viewScriptHash() as string);
+            viewHashOfThisRun[build] = await this.page.evaluate(() => (window as any).viewScriptHash() as string);
         }
-        return viewHashOfThisRun;
+        return viewHashOfThisRun[build];
     }
 
     /** What the backend recorded; `clear` empties it. */
@@ -327,7 +331,7 @@ export class RealisticHost {
 }
 
 const GUEST_TAG = 'HOSTGUEST';
-let viewHashOfThisRun: string | undefined;
+const viewHashOfThisRun: Partial<Record<Build, string>> = {};
 
 /** Wraps a guest body: it runs once and logs what it returned (or its throw) under a tag the host reads. */
 function guestProgram(body: string, count: number): string {

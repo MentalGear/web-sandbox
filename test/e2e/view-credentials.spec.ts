@@ -9,6 +9,9 @@ import { test, expect, ORIGIN } from './fixture';
 import { inView, waitInView } from './strict-view';
 import { startNameProxy } from './name-proxy';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * No request of strict mode carries a cookie, on any engine (S74, class A: STRICT_COOKIE_CARRIERS is empty). Its two
  * would-be carriers are the view's loads and a WebSocket handshake of its worker.

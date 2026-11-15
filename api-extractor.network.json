@@ -1,0 +1,10 @@
+// The public-API gate of the build with the network modes (WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib; ADR-009):
+// the same gate as api-extractor.json, over that build's declarations, with a report and a doc model of its own
+// (etc/web-sandbox.network.api.md, etc/web-sandbox.network.api.json). `bun run api:check` runs both.
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
+  "extends": "./api-extractor.json",
+  "compiler": { "tsconfigFilePath": "<projectFolder>/tsconfig.build.network.json" },
+  "apiReport": { "reportFileName": "<unscopedPackageName>.network" },
+  "docModel": { "apiJsonFilePath": "<projectFolder>/temp/<unscopedPackageName>.network.api.json" }
+}

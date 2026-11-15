@@ -1,7 +1,10 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { inView, waitInView } from './strict-view';
 import { lag, oneApplyStall, startLag } from './host-share';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode's render flow control (ADR-005, amendment A4; research 15 P7). Firefox and WebKit run the
@@ -29,6 +32,7 @@ import { VIEW_MODES } from './view-modes';
 const COUNT_APPLIES = `(() => { globalThis.__applies = 0; new MutationObserver((records) => { globalThis.__applies += records.length; }).observe(document.body, { childList: true }); return true; })()`;
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('10 000 synchronous render() calls reach the view as exactly two applies, the first and the last', async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ mode })).toBe('ready');
         expect(await inView(page, browserName, COUNT_APPLIES)).toBe(true);

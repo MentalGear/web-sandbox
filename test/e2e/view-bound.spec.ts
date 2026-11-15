@@ -5,6 +5,9 @@ import { readFileSync } from 'node:fs';
 import { VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_MAX_URLS, VIEW_OVERRUN_WINDOW_MS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 import { busyOf, idleBaseline, interleavedShare, IDLE_MS, LOAD_SHARE, LOADED_MS, MARGIN, operationCost, SOAK, stalls, startLag, ticks, TIME_SHARE, WARMUP_MS } from './host-share';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The view's cost bound, executable (backlog S68; docs/API.md, "The view's cost to the host page"). On every engine the
  * suite runs (Playwright's Chromium is the headless shell, so all three share the host page's thread with the view):

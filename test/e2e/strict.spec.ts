@@ -1,8 +1,12 @@
-import { test, expect, type SandboxDriver, type MountConfig } from './fixture';
+import { test, expect, type SandboxDriver, type MountConfig, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inFrames, inView, waitInView } from './strict-view';
-import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
+import type { SandboxConfig } from '@src/host';
+import type { StrictSandboxConfig } from '@src/lib/network-types';
 import { VIEW_MODES, type ViewMode } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode (ADR-005; backlog S6, S13, S17). Guest code runs only in a worker; the view document runs only
@@ -129,6 +133,7 @@ test.describe('G1 rendered markup', () => {
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('DOM clobbering by rendered markup changes nothing the view does: forms and named elements shadowing the methods it uses are still cleaned, links inside them still cancelled, later renders still applied', async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount(inMode(mode))).toBe('ready');
             // Document and HTMLFormElement let named elements override built-ins: document.body, form.hasAttribute …
@@ -151,7 +156,9 @@ test.describe('G1 rendered markup', () => {
 
     // BD5:NEW-3: a render that dropped a <script>, or a reference to a file the view does not show, says so in the
     // guest's log, once per render; a render with neither says nothing.
-    for (const mode of VIEW_MODES) test(`${mode} mode: a render's dropped script and its reference to an SVG file each get one warn line, once per render`, async ({ sandbox, page, browserName }) => {
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
+    test(`a render's dropped script and its reference to an SVG file each get one warn line, once per render`, async ({ sandbox, page, browserName }) => {
         await sandbox.registerFiles({ 'pic.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>' });
         expect(await sandbox.mount(inMode(mode))).toBe('ready');
         await render(sandbox, browserName, '<script>void 0</script><img src="pic.svg" alt="">', 'one');
@@ -165,6 +172,7 @@ test.describe('G1 rendered markup', () => {
         ]);
         expect(await inView(page, browserName, `document.querySelectorAll('script').length + ' ' + document.querySelector('img').getAttribute('src')`)).toBe('1 null'); // the bootstrap's own script; the reference went (keepsUrl)
     });
+    });
 
     test('positive control for the marker channel: the same inline script in a cooperative-mode sandbox runs and is read from outside', async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ html: `<script>${M('control')}</script>` })).toBe('ready');
@@ -172,6 +180,7 @@ test.describe('G1 rendered markup', () => {
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('renders replace the body or the element named by `into`; a target outside the body or missing is ignored; the initial html is the first view', async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount(inMode(mode, { html: '<main id="app"><p id="initial">initial</p></main>' }))).toBe('ready');
             await waitInView(page, browserName, `!!document.getElementById('initial')`);
@@ -204,6 +213,7 @@ test.describe('G1 rendered markup', () => {
 
 test.describe('G4 navigation', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('link, area, SVG and MathML links, fragment links and form submits are cancelled: the view stays, nothing reaches the listener', async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount(inMode(mode))).toBe('ready');
             const B = recorder.blocked;
@@ -257,6 +267,7 @@ test.describe('G4 navigation', () => {
 
 test.describe('G2 the worker', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('guest code runs in a worker with no Worker, SharedWorker, URL.createObjectURL, RTCPeerConnection or document; its location is its own blob: URL', async ({ sandbox }) => {
             expect(await sandbox.mount(inMode(mode))).toBe('ready');
             const r = await sandbox.inGuest(`return {
@@ -346,6 +357,7 @@ test.describe('G2 the worker', () => {
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('the render port is out of guest reach: patching MessagePort, MessageEvent, EventTarget and Function prototypes, and listening for messages, yields no port that reaches the view', async ({ sandbox, page, browserName }) => {
             await sandbox.registerFiles({ 'main.js': `
                 const seen = new Set();
@@ -384,6 +396,7 @@ test.describe('G2 the worker', () => {
 // ---- the entry ----------------------------------------------------------------------------------------------
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe('the entry', () => {
         test('the entry runs first, as a classic script in a function scope of its own: its top-level declarations are local (review C2), `this` is the global object', async ({ sandbox, page, browserName }) => {
             await sandbox.registerFiles({ 'app.js': `var declared = 'local'; function greet() { return 'hi'; } globalThis.shared = 'global';
@@ -489,6 +502,7 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
 // ---- A5: a view that stops answering ----------------------------------------------------------------------
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('A5: a view that is gone (reloaded, so it never gets its ports back) ends the sandbox with "the sandbox view stopped responding"', async ({ sandbox, page, browserName }) => {
         test.setTimeout(30000);
         expect(await sandbox.mount(inMode(mode))).toBe('ready');
@@ -513,6 +527,7 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
 const PNG_3X5 = { base64: 'iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAYAAACAcVaiAAAAEklEQVR4nGP4z8DwH4YZyOAAAMufHeOcQ//1AAAAAElFTkSuQmCC' };
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe('files', () => {
         test('rendered markup names registered files by path: the view mints its own blob: URLs for images and stylesheets (with their url() references); the worker gets every file through sandboxFiles', async ({ sandbox, page, browserName }) => {
             await sandbox.registerFiles({
@@ -598,6 +613,7 @@ test.describe('configuration', () => {
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('autoResize: the view reports its height (B6); the worker cannot post a RESIZE on the logic port', async ({ sandbox, page, browserName }) => {
             await page.addStyleTag({ content: 'web-sandbox { height: 50px }' });
             expect(await sandbox.mount(inMode(mode, { autoResize: true }))).toBe('ready');

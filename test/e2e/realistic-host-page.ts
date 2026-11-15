@@ -8,8 +8,10 @@
 //   - the element, which the specs configure.
 // A script of the page, not the harness's: it has no inline script and no inline style, so the strict policy of the
 // fixture runs it. The element's size is set through the CSSOM, which no style-src governs.
-import { defineWebSandbox } from '@src/host';
-import { viewScriptHash } from '@src/index';
+import { buildSettled, insertInert, loadLibrary } from './library';
+
+// the build the test asked for (library.ts): the default build, or the one with the network modes
+const { defineWebSandbox, viewScriptHash } = await loadLibrary();
 
 const w = window as any;
 const params = new URLSearchParams(location.search);
@@ -92,11 +94,10 @@ window.addEventListener('violation', (event: any) => { w.sandboxViolations.push(
 w.sandboxFetches = [];
 window.addEventListener('fetch', (event: any) => { w.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail }); });
 w.sandboxWrites = [];
-// Inserted with a cooperative config without allow-scripts, which runs no script of the library's: the build on insertion
-// has nothing a host policy could refuse, and a spec's own setConfig() is the first build that matters.
-const element = document.createElement('web-sandbox') as HTMLElement & { setConfig(config: object): void };
-element.setConfig({ mode: 'cooperative' });
-document.body.appendChild(element);
+// Inserted so that the build on insertion has nothing a host policy could refuse, and a spec's own setConfig() is the
+// first build that matters (library.ts, insertInert: each build's way).
+const element = document.createElement('web-sandbox') as HTMLElement & { setConfig(config: object): void; terminate(): void };
+insertInert(element);
 element.style.display = 'block';
 element.style.width = '400px';
 element.style.height = '300px';
@@ -104,4 +105,5 @@ for (const type of ['ready', 'terminated']) {
     element.addEventListener(type, (event: any) => w.sandboxEvents.push({ type, reason: event.detail?.reason ?? null }));
 }
 w.viewScriptHash = viewScriptHash;
+await buildSettled(element); // a spec's own build is the next one
 w.harnessReady = true;

@@ -4,8 +4,8 @@ How `web-sandbox` is put together, on one page. It is the map; the [API referenc
 decision records say why each part is built the way it is: [ADR-002](docs/ADR-002-host-guest-broker.md) (the broker),
 [ADR-003](docs/ADR-003-lifecycle-and-liveness.md) (lifecycle and liveness), [ADR-004](docs/ADR-004-files-as-blob-urls.md)
 (files), [ADR-005](docs/ADR-005-strict-mode.md) (strict mode), [ADR-006](docs/ADR-006-fetch-bridge.md) (the fetch bridge),
-[ADR-007](docs/ADR-007-typed-origins.md) (typed origins) and [ADR-008](docs/ADR-008-sealed-mode.md) (sealed mode, the
-default). What the design defends, and what it leaves to the
+[ADR-007](docs/ADR-007-typed-origins.md) (typed origins), [ADR-008](docs/ADR-008-sealed-mode.md) (sealed mode, the
+default) and [ADR-009](docs/ADR-009-network-modes-build-flag.md) (the other modes behind a build flag). What the design defends, and what it leaves to the
 embedder and the browser, is the [threat model](docs/THREAT-MODEL.md).
 
 The tables below are generated from the values the code declares (`bun run docs:gen`), so they cannot drift from it.
@@ -14,7 +14,7 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 
 ## Modes and realms
 
-<!-- describes: realms sig:8bc7 -->
+<!-- describes: realms sig:70d0 -->
 
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
@@ -23,6 +23,9 @@ What differs between the modes is which realm the guest's code runs in, and whet
 
 - **sealed** (the default): strict mode's view and worker, with no network
   ([below](#sealed-mode-strict-mode-with-no-network), [ADR-008](docs/ADR-008-sealed-mode.md)).
+The package as built by default holds sealed mode alone; the three modes below are the **network modes**, which are
+in the build only with its flag on ([Two builds](#two-builds-the-network-modes-behind-a-flag)):
+
 - **strict**: in a worker. The frame around it, the view, runs one script, the library's own, admitted by its hash, and
   draws what the worker renders. No guest script ever runs in a document, and the worker runs no string as code. Named
   with `mode: 'strict'`; it adds the network options, `origins` and `fetchBridge`, and keeps `scriptUnsafe` for testing.
@@ -85,7 +88,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:8bc7b45f42cb49d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:70d0b45f42cb49d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
@@ -148,6 +151,52 @@ img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-sr
 object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 ```
 <!-- generated:end -->
+
+## Two builds: the network modes behind a flag
+
+<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eae3dfb26fa -->
+
+The package is built two ways, chosen by one flag that is off by default ([ADR-009](docs/ADR-009-network-modes-build-flag.md);
+`NETWORK_MODES_FLAG`, `src/lib/build-flag.ts`):
+
+<!-- generated:begin builds -->
+| Build | How it is built | Entry | Modes | What it has |
+| :--- | :--- | :--- | :--- | :--- |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 47 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 64 modules of `src/` |
+<!-- generated:end -->
+
+- **Two entries.** `src/index.ts` is the default build's and `src/network.ts` the network build's; both export
+  `src/sealed.ts`, the API every build has. What a build holds is what its entry reaches: every module of `src/` is
+  classified once (`BUILD_MODULES`, `src/lib/build-modules.ts`, the Build column of the [module map](#module-map)) as
+  sealed mode's, the network modes', or a registry that no build imports, and the default entry reaches sealed mode's
+  modules only. No constant is folded and nothing is removed after the fact: the default entry has no import that leads
+  to a module of the network modes, so the default bundle cannot hold one. `scripts/build-lib.ts` writes a bundle only if
+  the bundler kept code of the build's own modules and no other.
+- **One element, and a seam.** The element's class (`src/host.ts`) has sealed mode's build path and everything every
+  mode shares. What the network modes add are methods of the element (`NetworkMethods`, `src/lib/network-host.ts`: the
+  builds of cooperative and worker mode and of strict mode's network, the fetch bridge's start, the guest frame's
+  announcement, `execute()`'s frame and deadline) and four values (`src/lib/network-modes.ts`: the config rules of
+  `origins` and `fetchBridge`, the reader of the host page, the detail of an `origins` refusal, the bridge frame's part
+  of the hashed bootstrap). The network build's entry installs the methods on the element's prototype and fills the
+  slot as it is imported (`src/lib/network-install.ts`); the class calls seven of the methods, each only where the build
+  has it (one accessor, null while the slot is empty; the lifecycle's effect looks the method up on the class's
+  prototype). In the default build nothing fills the slot and the element has none of the methods.
+- **The config.** The schema declares every option, the network ones too (their defaults and modes). In the default
+  build a config that names a network mode or option is refused before any option is read
+  (`networkModesOffRefusal`, `src/lib/config-schema.ts`), with a reason that names the flag, and no rule of a network
+  option exists to run in any mode.
+- **The bootstrap.** The hashed script is the view's and, in the network build, the fetch bridge frame's too; the
+  default build's has the view alone, so each build has its own `viewScriptHash()`.
+- **What is shared stays shared.** The functions stringified into the guest's worker and the view, the broker, the
+  lifecycle reducer and the environment's teardown are the same text in both builds. They keep their branches for
+  cooperative and worker mode and for strict mode's network, which the default build cannot reach: it stringifies the
+  guest's bootstrap for strict mode's worker with `sealed` alone, and hands the view no network.
+
+`test/unit/default-build.test.ts` holds this: every module is classified, the default entry reaches sealed mode's alone
+(at run time, and for a type), no function of a network module is in the default bundle, and the refusal applies nothing.
+Each test runs against its build: a unit test of a network mode imports `@src/network`, and an e2e test names its build
+(`test.use({ build })`, `test/e2e/fixture.ts`), on a page where a config of the other build's modes throws.
 
 ## Channels and frames
 
@@ -347,71 +396,85 @@ tables are in the API reference: [Limits](docs/API.md#limits) and
 
 ## Module map
 
-Each file of `src/` with the role its header comment gives.
+Each file of `src/` with the build it is part of (every build, the network build only, or none: a registry the tests and
+the docs read) and the role its header comment gives.
 
 <!-- generated:begin module-map -->
-| Module | Role |
-| :--- | :--- |
-| `src/csp-directives.ts` | The capabilities (sandbox flags and Permissions Policy features) an embedder can grant the guest |
-| `src/devtools.ts` | Logs one sandbox's `sandbox-log` lines to the host page's console, safely |
-| `src/host.ts` | The `<web-sandbox>` custom element |
-| `src/index.ts` | Public entry point of the package |
-| `src/lib/auto-resize.ts` | Content auto-sizing, host side |
-| `src/lib/bridge-frame.ts` | The fetch bridge's frame, host side |
-| `src/lib/capabilities.ts` | Filtering of the capabilities an embedder lists: the allowed ones are kept, every other one dropped with a warning |
-| `src/lib/code-from-strings.ts` | Code from strings in the guest's worker |
-| `src/lib/config-schema.ts` | The config schema |
-| `src/lib/connect-facts.ts` | What each engine does with a `connect-src` source, as one table |
-| `src/lib/cookie-facts.ts` | Which cookies each engine sends with a request of the sandbox, as one table |
-| `src/lib/css-references.ts` | URL references in CSS |
-| `src/lib/egress.ts` | The egress table |
-| `src/lib/element-events.ts` | The element's events |
-| `src/lib/engine-ledger.ts` | The engine-difference ledger |
-| `src/lib/entry-imports.ts` | The import expressions of a strict or sealed entry |
-| `src/lib/environment-check.ts` | The environment check |
-| `src/lib/environment.ts` | The resources of one environment, declared once |
-| `src/lib/fetch-bridge.ts` | The host-mediated fetch bridge, host side |
-| `src/lib/files.ts` | The host side of file delivery: path validation, the MIME table and the store that lives on the element |
-| `src/lib/frame-documents.ts` | Builds the documents the sandbox is made of |
-| `src/lib/frames.ts` | The frame table |
-| `src/lib/guest-writes.ts` | Guest writes, host side: the overlay of one environment |
-| `src/lib/host-passes.ts` | The host realm's passes over guest content, as data |
-| `src/lib/host-site.ts` | The host page's origin and its site for cookies |
-| `src/lib/import-map.ts` | The guest's own import maps |
-| `src/lib/in-bridge-frame.ts` | The fetch bridge's frame, frame side: the only code that performs a request of the bridge |
-| `src/lib/in-sandbox-files.ts` | The guest side of the registered files, `sandboxFiles`, and of the guest writes |
-| `src/lib/in-sandbox-script.ts` | The guest bootstrap of every mode |
-| `src/lib/in-sandbox-view.ts` | Strict mode's view and worker prelude |
-| `src/lib/inherited-context.ts` | The host page's context, as data |
-| `src/lib/lifecycle-transitions.ts` | The transitions the lifecycle reducer can make |
-| `src/lib/lifecycle.ts` | The lifecycle of `<web-sandbox>` as one pure reducer, and the executor that applies its effects |
-| `src/lib/limits.ts` | The limits registry: every numeric bound the docs state, once, with its value, what it bounds and where it is enforced |
-| `src/lib/load-kinds.ts` | Which file types each kind of load admits: the one table that both the policy and reference resolution read |
-| `src/lib/long-timer.ts` | The one timer for a delay that a config or a caller chooses |
-| `src/lib/markup-references.ts` | Markup references to registered files |
-| `src/lib/markup-scripts.ts` | Finds whether guest markup asks to run script |
-| `src/lib/minted-errors.ts` | The errors the library makes in the host's realm, and what a guest receives for each |
-| `src/lib/module-specifiers.ts` | The module graph |
-| `src/lib/origin.ts` | The one parser for an origin an embedder lists |
-| `src/lib/presets.ts` | Presets: the scenarios the playground offers for manual testing, and the payloads and rules the regression specs run |
-| `src/lib/rate-limit.ts` | The one rate limiter of the library's per-second limits that refuse |
-| `src/lib/realms.ts` | The realms registry |
-| `src/lib/reasons.ts` | The texts the element gives |
-| `src/lib/rpc.ts` | β — a typed, bidirectional RPC broker that rides the MessageChannel already connecting host and guest |
-| `src/lib/sandbox-log.ts` | The detail of the element's 'sandbox-log' event |
-| `src/lib/sealed-reach.ts` | Everything a sealed guest can reach, classified against every row of INHERITED_CONTEXT |
-| `src/lib/srcset.ts` | The URLs of a `srcset` attribute |
-| `src/lib/structured-size.ts` | The one measure of the byte budgets on log lines and RPC messages: how many bytes structured clone copies for a value |
-| `src/lib/style-markup.ts` | Guest markup the view's parser reads with no `style` attribute and no `<style>` element in it |
-| `src/lib/trusted-types.ts` | The element's HTML sinks on a host page that enforces Trusted Types |
-| `src/lib/utils.ts` | Small helpers shared across the library |
-| `src/lib/violation.ts` | CSP violation reports from the guest |
-| `src/lib/watchdog.ts` | Liveness watchdog for one frame generation |
-| `src/lib/worker-bootstrap.ts` | Worker mode's frame bootstrap: stringified and injected into the sandbox frame |
-| `src/lib/worker-globals.ts` | What guest code may find on a worker's global object, in worker mode and in strict mode |
-| `src/lib/csp/csp-generator.ts` | The guest policy: one template per mode, filled with the parsed origins (origins.ts) and the library's own sources |
-| `src/lib/csp/host-connect.ts` | The host page's `connect-src`, as far as the library needs it |
-| `src/lib/csp/host-trusted-types.ts` | The host page's Trusted Types directives, as far as the library needs them (INHERITED_CONTEXT.trustedTypesRequirement) |
-| `src/lib/csp/origins.ts` | `origins`: what the embedder may open in the guest policy |
-| `src/lib/csp/script-hash.ts` | The CSP hash-source of a script, computed synchronously on the host |
+| Module | Build | Role |
+| :--- | :--- | :--- |
+| `src/csp-directives.ts` | every build | The capabilities (sandbox flags and Permissions Policy features) an embedder can grant the guest |
+| `src/devtools.ts` | every build | Logs one sandbox's `sandbox-log` lines to the host page's console, safely |
+| `src/host.ts` | every build | The `<web-sandbox>` custom element |
+| `src/index.ts` | every build | Public entry point of the package, as published: the default build, which has sealed mode alone |
+| `src/network.ts` | network | Public entry point of the package built with the network modes |
+| `src/sealed.ts` | every build | The public API of sealed mode: what every build of the package exports |
+| `src/lib/auto-resize.ts` | every build | Content auto-sizing, host side |
+| `src/lib/bridge-frame.ts` | network | The fetch bridge's frame, host side |
+| `src/lib/build-flag.ts` | every build | The build flag of the network modes |
+| `src/lib/build-modules.ts` | none (a registry) | Which build each module of src/ belongs to: the allowlist of the default build, with its domain enumerated |
+| `src/lib/capabilities.ts` | every build | Filtering of the capabilities an embedder lists: the allowed ones are kept, every other one dropped with a warning |
+| `src/lib/code-from-strings.ts` | every build | Code from strings in the guest's worker |
+| `src/lib/config-schema.ts` | every build | The config schema |
+| `src/lib/connect-facts.ts` | none (a registry) | What each engine does with a `connect-src` source, as one table |
+| `src/lib/cookie-facts.ts` | network | Which cookies each engine sends with a request of the sandbox, as one table |
+| `src/lib/css-references.ts` | every build | URL references in CSS |
+| `src/lib/egress.ts` | every build | The egress table |
+| `src/lib/element-events.ts` | every build | The element's events |
+| `src/lib/engine-ledger.ts` | none (a registry) | The engine-difference ledger |
+| `src/lib/entry-imports.ts` | every build | The import expressions of a strict or sealed entry |
+| `src/lib/environment-check.ts` | every build | The environment check |
+| `src/lib/environment.ts` | every build | The resources of one environment, declared once |
+| `src/lib/fetch-bridge.ts` | network | The host-mediated fetch bridge, host side |
+| `src/lib/fetch-method.ts` | every build | The reserved method `sandboxFetch()` calls, and the refusal it answers with: every build has them |
+| `src/lib/files.ts` | every build | The host side of file delivery: path validation, the MIME table and the store that lives on the element |
+| `src/lib/frame-documents.ts` | every build | Builds the documents the sandbox is made of |
+| `src/lib/frames.ts` | none (a registry) | The frame table |
+| `src/lib/guest-writes.ts` | every build | Guest writes, host side: the overlay of one environment |
+| `src/lib/host-passes.ts` | none (a registry) | The host realm's passes over guest content, as data |
+| `src/lib/host-site.ts` | network | The host page's origin and its site for cookies |
+| `src/lib/import-map.ts` | network | The guest's own import maps |
+| `src/lib/in-bridge-frame.ts` | network | The fetch bridge's frame, frame side: the only code that performs a request of the bridge |
+| `src/lib/in-sandbox-files.ts` | every build | The guest side of the registered files, `sandboxFiles`, and of the guest writes |
+| `src/lib/in-sandbox-script.ts` | every build | The guest bootstrap of every mode |
+| `src/lib/in-sandbox-view.ts` | every build | Strict mode's view and worker prelude |
+| `src/lib/inherited-context.ts` | none (a registry) | The host page's context, as data |
+| `src/lib/lifecycle-transitions.ts` | none (a registry) | The transitions the lifecycle reducer can make |
+| `src/lib/lifecycle.ts` | every build | The lifecycle of `<web-sandbox>` as one pure reducer, and the executor that applies its effects |
+| `src/lib/limits.ts` | none (a registry) | The limits registry: every numeric bound the docs state, once, with its value, what it bounds and where it is enforced |
+| `src/lib/load-kinds.ts` | every build | Which file types each kind of load admits: the one table that both the policy and reference resolution read |
+| `src/lib/long-timer.ts` | every build | The one timer for a delay that a config or a caller chooses |
+| `src/lib/markup-references.ts` | network | Markup references to registered files |
+| `src/lib/markup-scripts.ts` | network | Finds whether guest markup asks to run script |
+| `src/lib/minted-errors.ts` | every build | The errors the library makes in the host's realm, and what a guest receives for each |
+| `src/lib/module-specifiers.ts` | every build | The module graph |
+| `src/lib/network-config.ts` | network | The network modes' part of the config schema |
+| `src/lib/network-host.ts` | network | The element's part of the network modes |
+| `src/lib/network-install.ts` | network | Installs the network modes |
+| `src/lib/network-modes.ts` | every build | The seam between the element and the network modes |
+| `src/lib/network-types.ts` | network | The types of the network modes |
+| `src/lib/origin.ts` | every build | The one parser for an origin an embedder lists |
+| `src/lib/presets.ts` | none (a registry) | Presets: the scenarios the playground offers for manual testing, and the payloads and rules the regression specs run |
+| `src/lib/rate-limit.ts` | every build | The one rate limiter of the library's per-second limits that refuse |
+| `src/lib/realms.ts` | none (a registry) | The realms registry |
+| `src/lib/reasons.ts` | every build | The texts the element gives |
+| `src/lib/references.ts` | every build | What names a registered file in markup and in CSS |
+| `src/lib/rpc.ts` | every build | β — a typed, bidirectional RPC broker that rides the MessageChannel already connecting host and guest |
+| `src/lib/sandbox-log.ts` | every build | The detail of the element's 'sandbox-log' event |
+| `src/lib/sealed-reach.ts` | none (a registry) | Everything a sealed guest can reach, classified against every row of INHERITED_CONTEXT |
+| `src/lib/srcset.ts` | network | The URLs of a `srcset` attribute |
+| `src/lib/structured-size.ts` | every build | The one measure of the byte budgets on log lines and RPC messages: how many bytes structured clone copies for a value |
+| `src/lib/style-markup.ts` | every build | Guest markup the view's parser reads with no `style` attribute and no `<style>` element in it |
+| `src/lib/trusted-types.ts` | every build | The element's HTML sinks on a host page that enforces Trusted Types |
+| `src/lib/utils.ts` | every build | Small helpers shared across the library |
+| `src/lib/violation.ts` | every build | CSP violation reports from the guest |
+| `src/lib/watchdog.ts` | every build | Liveness watchdog for one frame generation |
+| `src/lib/worker-bootstrap.ts` | network | Worker mode's frame bootstrap: stringified and injected into the sandbox frame |
+| `src/lib/worker-globals.ts` | every build | What guest code may find on a worker's global object, in worker mode and in strict mode |
+| `src/lib/csp/csp-generator.ts` | every build | The guest policy: one template per mode, filled with the parsed origins (origins.ts) and the library's own sources |
+| `src/lib/csp/host-connect.ts` | network | The host page's `connect-src`, as far as the library needs it |
+| `src/lib/csp/host-trusted-types.ts` | every build | The host page's Trusted Types directives, as far as the library needs them (INHERITED_CONTEXT.trustedTypesRequirement) |
+| `src/lib/csp/origin-kinds.ts` | every build | The kinds of load a policy has a directive for, and the empty policy |
+| `src/lib/csp/origins.ts` | network | `origins`: what the embedder may open in the guest policy |
+| `src/lib/csp/policy-text.ts` | every build | The host page's Content-Security-Policy as text (`hostContentSecurityPolicy`), split into its policies |
+| `src/lib/csp/script-hash.ts` | every build | The CSP hash-source of a script, computed synchronously on the host |
 <!-- generated:end -->

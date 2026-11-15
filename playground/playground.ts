@@ -1,6 +1,7 @@
 import "./playground-state.ts"
 
-import { WebSandbox, defineWebSandbox } from '@src/host.ts';
+// the build with the network modes: the presets show every mode (ADR-009)
+import { WebSandbox, defineWebSandbox } from '@src/network.ts';
 defineWebSandbox();
 
 import { SandboxDevTools } from '@src/devtools.ts';

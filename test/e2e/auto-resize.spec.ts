@@ -2,6 +2,9 @@ import type { Page } from '@playwright/test';
 import { test, expect, type SandboxDriver } from './fixture';
 import { quietStall, ticks } from './host-share';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Content auto-sizing (backlog B6): with `autoResize: true` the element's height follows the guest's content
  * height; reports are validated, clamped and rate-limited on the host (src/lib/auto-resize.ts).

@@ -1,6 +1,9 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import type { Page } from '@playwright/test';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * A loopback, private or link-local origin in `origins.*` (or `fetchBridge.allow`) is kept only when the host page is itself
  * on such a host (a developer's machine); on any other page it is dropped with a warning, in every mode, on every engine

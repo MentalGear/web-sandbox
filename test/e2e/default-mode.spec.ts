@@ -3,6 +3,9 @@ import type { Page } from '@playwright/test';
 import type { SandboxConfig } from '@src/host';
 import { inFrames, inView, waitInView } from './strict-view';
 
+// The build with the network modes (ADR-009), and the default mode beside the named ones: these tests give the build with the network modes sealed configs too.
+test.use({ build: 'network', otherBuildConfigs: true });
+
 /**
  * Sealed mode is the default (ADR-008; T8 of docs/research/24_sealed_mode); strict mode is named. These specs apply
  * configs as an embedder writes them, through setConfig() itself, never over BASELINE_CONFIG (which names cooperative

@@ -6,6 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { COOKIES, HOSTS_LINE, browserEnv, PNG, hostsResolve, listener, wav, type Acao } from './server';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Research 21, the real strict view: the library's own renderer and policy, with the one change the research is about.
  * `forced` rewrites the view's source in flight (page.route, as research 16's measure.spec.ts does; src/ is not touched) so

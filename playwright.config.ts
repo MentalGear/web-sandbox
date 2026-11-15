@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test"
 import { join } from "node:path"
 import { E2E_ORIGIN, E2E_PORT, E2E_PROBE, E2E_ROOT } from "./test/e2e/server"
+import { NETWORK_MODES_FLAG } from "./src/lib/build-flag"
 
 // A run tests its own checkout, by construction (backlog T8; CONTRIBUTING.md, "End-to-end tests"):
 // - the server: on E2E_PORT (4444 in CI; locally a port derived from this checkout's path, or WEB_SANDBOX_E2E_PORT), and
@@ -44,8 +45,9 @@ export default defineConfig({
         headless: true,
     },
     webServer: {
-        // build the package first: test/e2e/package.spec.ts mounts the sandbox from dist/
-        command: "bun run build:lib && bun x vite",
+        // build the package first: test/e2e/package.spec.ts mounts the sandbox from dist/ (the default build), and its
+        // tests of the network modes from dist-network/, the bundle of the build with them (ADR-009)
+        command: `bun run build:lib && ${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on} bun scripts/build-lib.ts --out dist-network && bun x vite`,
         // no HMR socket (vite.config.ts): a file written during a run never reloads a page under test.
         // /__e2e-root answers only on such a server, and 200 only for the root it serves (above), so neither a running
         // `bun run dev` nor another checkout's e2e server is reused.

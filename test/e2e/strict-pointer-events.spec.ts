@@ -1,7 +1,10 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { inView } from './strict-view';
 import { boxOf, mountInput, sleep, take, type Kept } from './view-input';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode's pointer input (research 23), on every engine. The worker subscribes with sandboxView.on() and the view
@@ -23,6 +26,7 @@ import { VIEW_MODES } from './view-modes';
 
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('the schema: a press, a drag and a release, in order, with numbers and constants only', async ({ sandbox, page, browserName }) => {
         await mountInput(mode, sandbox, browserName, `for (const type of ['pointerdown', 'pointermove', 'pointerup']) sandboxView.on(type, 'thumb', keep(type));`);
         const box = await boxOf(page);

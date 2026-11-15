@@ -2,6 +2,9 @@ import { test, expect } from './fixture';
 import { useRecorder } from './recorder';
 import { fromPreset } from './presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 // The nested-frame test targets a listener outside the browser (recorder.ts), backed by the reported
 // violation; its positive control is the last test. The other tests here are not egress: each asserts the
 // refused outcome itself (an exception, a null origin), never the absence of a success. Their payloads are

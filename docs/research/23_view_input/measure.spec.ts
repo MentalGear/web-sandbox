@@ -3,6 +3,9 @@ import { test, expect, type SandboxDriver } from '../../../test/e2e/fixture';
 import { inView, waitInView } from '../../../test/e2e/strict-view';
 import { busyOf, idleBaseline, ticks } from '../../../test/e2e/host-share';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /*
  * Research 23: what strict mode's pointer input costs, measured on the shipped code (no rewriting). On demand:
  *   WEB_SANDBOX_MEASURE=1 bunx playwright test docs/research/23_view_input/measure.spec.ts --project=chromium --workers=1
