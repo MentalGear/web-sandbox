@@ -634,7 +634,6 @@ The open items of the [backlog](BACKLOG.md) that bear on this model:
 | [S70](BACKLOG.md#s70) | For the owner: with `fetchBridge.maxBytes` above about 16.5 MiB, a long string request body is refused by the guest's broker before the bridge; a tiny `watchdogTimeout` may end a healthy guest | every mode |
 | [S49](BACKLOG.md#s49) | Worker mode, frozen until folded into strict mode | worker |
 | [S79](BACKLOG.md#s79) | Medium: on desktop Chromium the view's liveness ping ends a healthy sandbox on one documented stall (fails closed) | strict |
-| [S80](BACKLOG.md#s80) | Medium: no test guards the event reads of the bootstrap's `error` and `unhandledrejection` listeners | strict, worker |
 | [S81](BACKLOG.md#s81), [S82](BACKLOG.md#s82) | Low: tests that fail under machine load; the other lows of the board's pass 1 | — |
 | [S74](BACKLOG.md#s74) | The final adversarial review board of the current state; a pass is clean when none of its findings leaks or can manipulate data (owner, 2026-10-21); passes 1 and 2 (2026-10-21) were not; its scope is sealed mode, the default (owner, 2026-10-24) | sealed |
 

@@ -22,14 +22,13 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S74](#s74) | ⏸️ after every phase | The final independent adversarial review board |
 | [S76](#s76) | ⏸️ in progress | Self-explaining code and generated docs: steps 0 to 6 done; the owner reviews the outcome |
 | [S79](#s79) | ⏳ open (P2 · M) · medium | Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall (S74 board BD1:LIM-2) |
-| [S80](#s80) | ⏳ open (P2 · S) · medium | The event-read scan was never built; reverting R5:N-2 and R5:N-6 passes the suite (S74 board BD1:TST-1) |
 | [S81](#s81) | ⏳ open (P3 · S) · low | Tests that fail under heavy machine load (S74 board BD1:CO-1, BD1:NEW-13) |
 | [S82](#s82) | ⏳ open (P3 · M) · low | The S74 pass 1 lows, as one checklist; the docs-only ones are marked |
 | [S83](#s83) | ⏳ open (P2 · S) · high (reviewer; medium by the availability rule) | A rejected `Symbol` or `BigInt` is counted as 0 characters by the uncaught budget; on Firefox the host page stalls (S74 board BD3:LIM-1, an incomplete part of the fix of BD1:LIM-1) |
 | [S84](#s84) | ⏳ open (P2 · S) · medium | The strict view's `VIEW_LISTEN` has no flow control: an `on()`/`off()` loop is uncounted (S74 board BD4:LIM-3; availability only) |
 | [S85](#s85) | ⏳ open (P3 · S) · low | The strict view's input outbox scans every slot on each event (S74 board BD4:LIM-5; availability only) |
 | [S87](#s87) | ⏳ open (P3 · S) · low | A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time (S74 board BD5:LIM-3; availability only) |
-| [S88](#s88) | ⏳ open (P2 · S) · low (test tooling) | Upgrade Playwright (1.64.0 or later) for Ubuntu 26.04 runners, drop the S86 Juggler setup, then unpin CI from `ubuntu-24.04` |
+| [S88](#s88) | 🟡 done except CI's first run | Playwright 1.65.1 (Chromium 159, Firefox 159, WebKit 27.2); the workflows name `ubuntu-26.04`, which no CI run has confirmed yet |
 | [D1](#bl-d1) | 🟡 ready except the licence | An installable package; waits for H5's `LICENSE` |
 | [H5](#bl-h5) | 🟡 partly done | Missing repo basics: the `LICENSE` is the owner's choice |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
@@ -73,8 +72,10 @@ config schema, which stores own data keys only (S20; `deepMerge` in `src/lib/uti
 
 *From the broad review, PD5 (medium) and PD7 (low).*
 
-Guest code can take focus from the host page (Chromium, Firefox) and, after a user's click in the guest, write the
-clipboard (Firefox `writeText()`, Chromium and Firefox `execCommand('copy')`): measured and asserted per engine. The
+Guest code takes focus from the host page and receives the user's keystrokes in Firefox (in Chromium and WebKit the
+host page keeps focus) and, after a user's click in the guest, writes the clipboard (`writeText()` in Firefox and
+WebKit, `execCommand('copy')` in Chromium and Firefox): measured and asserted per engine
+(`FOCUS_AND_CLIPBOARD_FACTS`, `src/lib/engine-ledger.ts`). The
 guest can post messages to the host window; the playground now checks `event.source`, and README and API.md say so.
 
 ### <a id="s44"></a>S44 · Cooperative-mode limits, one frozen list — **documented** (limits)
@@ -98,8 +99,9 @@ applies in strict mode, the default; worker mode shares only the reports item.
 - requests the gate does not cover carry the browser's cookies where the engine sends them: `sendBeacon()`, `EventSource`
   with `withCredentials`, an `<a ping>` click (Firefox sends none) and the requests of a frame the guest creates
   (BD3:DOC-1; the table is `COOKIE_CARRIERS`, `src/lib/cookie-facts.ts`);
-- focus (Chromium, Firefox) and, in a user's click, the clipboard (`writeText()` in Firefox and, in the click's own
-  handler, WebKit; `execCommand('copy')` in Chromium and Firefox) (S36);
+- focus and the user's keystrokes in Firefox (in Chromium and WebKit the host page keeps focus) and, after a user's
+  click in the guest, the clipboard (`writeText()` in Firefox and WebKit, `execCommand('copy')` in Chromium and
+  Firefox) (S36);
 - messages to the host window; embedders check `event.source` (S36);
 - the user's Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens a new tab at the guest's URL
   in Chromium and Firefox, without `allow-popups`, as for any sandboxed frame (Playwright's WebKit opens none, a
@@ -484,11 +486,14 @@ item cites its findings by ID (`BD7:`). The coordinator's evaluation is in
 [research 22](research/22_review_trajectory/README.md#evaluations): the architecture has held since sealed mode while
 `src/` grew by 38%. The owner's answers (2026-11-07, [research 24](research/24_sealed_mode/README.md) D8 and D9): sealed
 mode switches to served documents now; cooperative mode, worker mode and strict mode's network options stay, behind a
-build flag that is off by default. Neither is built yet.
+build flag that is off by default. D9 is built ([ADR-009](ADR-009-network-modes-build-flag.md)): the default build is
+sealed mode alone. D8 is not built.
 
-**Pass 8 reviews sealed mode again** (same scope), after the four fixes of pass 7 and a subtraction pass (the coordinator's
-plan: remove what the fixes made redundant before the board looks again): the two consecutive clean passes that clear the
-board start there.
+**Pass 8 reviews sealed mode again** (same scope), in the default build, after D8: two of pass 7's three data findings
+came from the host page's policy reaching a `srcdoc` document, which a served document does not inherit
+([research 27](research/27_served_document_headerless/README.md) measured it with no response headers), so a pass
+before D8 would review code D8 removes. The suite runs on Chromium 159, Firefox 159 and WebKit 27.2 ([S88](#s88)). The
+two consecutive clean passes that clear the board start there.
 
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 
@@ -531,26 +536,6 @@ only what the host knows itself: while the host has a render in flight to its vi
 instead of the ping; one registry on the host page, shared by every sandbox, records a render in flight anywhere on
 the page, so another sandbox's stall is told apart; and the host's own hard cap always holds. Availability-only and
 failing closed, so it stays here until the owner picks it up.
-
-### <a id="s80"></a>S80 · The event-read scan was never built; the guest's event getters are unguarded by any test — ⏳ **open** (P2 · S · medium)
-
-*S74 board BD1:TST-1, medium; class G with E-cpu.* Reverting R5:N-2 and R5:N-6 (the bootstrap's `error` and
-`unhandledrejection` listeners read the event through `readEvent`'s getters captured before guest code) passes the whole
-suite: 147 unit tests and 107 e2e tests on Chromium with each mutant (the `reason` read, then the `message` and `error`
-reads, taken directly). Under the mutant a strict guest that redefines `PromiseRejectionEvent.prototype.reason` (the
-class is on `WORKER_GLOBALS`) makes the library count a small string for a rejection whose real, large reason Firefox
-reports to the host page's thread, and R5:N-1 is open again. Research 18 promised the scan rule ("after the capture
-point, a property read on a listener's parameter or on a value received from the guest is an error, except as an
-argument to the helpers"); it does not exist: `read-once.test.ts` allows a single direct read and
-`bootstrap-capture-and-measure.test.ts` has a fixed accessor list (`size`, `byteLength`, `byteOffset`, `buffer`,
-`data`, `ports`, `source`) without `reason`, `message` or `error`.
-
-**Fix, by construction.** Chokepoint: `readEvent` (exists). Add the promised rule to `usesAfterCapture`: inside a function
-passed to `addGlobalListener` or `listen`, or any function whose parameter is named `event`, a member read
-`<param>.<name>` other than `isTrusted`, `type` and `defaultPrevented` is an error. The reviewer's two probes become the
-positive controls: a unit test and an e2e (a strict entry redefines `PromiseRejectionEvent.prototype.reason` to return
-`'x'`, then raises three rejections of 2 Mi characters; the sandbox must end with the uncaught-budget reason), for the
-`error` and `unhandledrejection` rows of `bootstrapListeners`. Check that the new test fails with the mutant.
 
 ### <a id="s81"></a>S81 · Tests that fail under heavy machine load — ⏳ **open** (P3 · S · low)
 
@@ -763,19 +748,22 @@ second on the host thread, and leaves the garbage.
 with the write rate; state the cost in the docs of `fileswritten`. Unit test: with one 8 MiB write pending, a hundred
 `list()` calls that ask for the new path copy a bounded number of bytes.
 
-### <a id="s88"></a>S88 · Upgrade Playwright for Ubuntu 26.04 runners and unpin CI — ⏳ **open** (P2 · S · low, test tooling)
+### <a id="s88"></a>S88 · Upgrade Playwright for Ubuntu 26.04 runners — 🟡 **done except CI's first run** (P2 · S · low, test tooling)
 
-*Not a finding.* CI has been pinned to `ubuntu-24.04` since #86 (`.github/workflows/ci.yml`), because `ubuntu-latest` became
-26.04 on 2026-11-06 and Playwright 1.58.1 refuses to install its browsers there, so every e2e job failed before a test
-ran. A fixed image is what every green run used; the move to a newer one is a step of its own, with the Playwright upgrade it
-needs.
+*Not a finding.* Playwright 1.58.1 refuses to install its browsers on Ubuntu 26.04, which `ubuntu-latest` became on
+2026-11-06, so the workflows were pinned to `ubuntu-24.04`.
 
-**Do.** Upgrade `@playwright/test` and `playwright` to a release that installs on Ubuntu 26.04, 1.64.0 or later: from
-1.64.0 Firefox's Juggler names each content channel uniquely ([S86](archive/backlog/BACKLOG-done.md#s86)), so the e2e
-global setup `test/e2e/firefox-juggler.ts` finds the fixed line and does nothing; remove it, its unit test and the
-`globalSetup` entries of both Playwright configs. Then run the three engines in full, and unpin the workflows from
-`ubuntu-24.04`. Check that the e2e suite's engine-specific expectations (the ledger rows measured on Chromium 145, Firefox
-146 and WebKit 26) still hold on the new browsers, and re-measure the ones that do not.
+**Done.** `@playwright/test` and `playwright` are at 1.65.1 (Chromium 159, Firefox 159, WebKit 27.2). From 1.64.0
+Firefox's Juggler names each content channel uniquely ([S86](archive/backlog/BACKLOG-done.md#s86)), so the e2e global
+setup that rewrote it, its unit test and both `globalSetup` entries are gone. The engine ledger, the cookie facts, the
+strict-mode probes and every engine-specific expectation were measured again on the new browsers, in full on all three:
+24 behaviours had changed. Two of them widen cooperative mode's limits ([S44](#s44): Firefox's keystrokes after the
+guest takes focus, WebKit's `writeText()` after any click in the guest); `test/e2e/view-focus-capture.spec.ts` asserts
+that a strict or sealed guest takes no focus without a user's gesture on any engine.
+
+**Open.** The workflows name `ubuntu-26.04` (`.github/workflows/ci.yml`), and CI runs on pull requests and pushes to
+`main` only, so no run has confirmed that image yet. The first one does; the item closes with it. A scheduled run on
+the latest Playwright would show the next engine change when it ships, not at the next upgrade.
 
 ---
 

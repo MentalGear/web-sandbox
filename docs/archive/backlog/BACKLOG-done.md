@@ -2005,6 +2005,38 @@ On Firefox the directive matrix records the driver's frame events (`recordFrameE
 page's frames and those events when it fails (test/e2e/strict-view.ts). [S88](../../BACKLOG.md#s88)'s upgrade brings the
 fix from upstream and removes the setup. The case was neither retried nor skipped.
 
+### <a id="s80"></a>S80 · The event-read scan was never built; the guest's event getters are unguarded by any test — ✅ **done** (P2 · S · medium)
+
+*S74 board BD1:TST-1, medium; class G with E-cpu.* Reverting R5:N-2 and R5:N-6 (the bootstrap's `error` and
+`unhandledrejection` listeners read the event through `readEvent`'s getters captured before guest code) passes the whole
+suite: 147 unit tests and 107 e2e tests on Chromium with each mutant (the `reason` read, then the `message` and `error`
+reads, taken directly). Under the mutant a strict guest that redefines `PromiseRejectionEvent.prototype.reason` (the
+class is on `WORKER_GLOBALS`) makes the library count a small string for a rejection whose real, large reason Firefox
+reports to the host page's thread, and R5:N-1 is open again. Research 18 promised the scan rule ("after the capture
+point, a property read on a listener's parameter or on a value received from the guest is an error, except as an
+argument to the helpers"); it does not exist: `read-once.test.ts` allows a single direct read and
+`bootstrap-capture-and-measure.test.ts` has a fixed accessor list (`size`, `byteLength`, `byteOffset`, `buffer`,
+`data`, `ports`, `source`) without `reason`, `message` or `error`.
+
+**Fix, by construction.** Chokepoint: `readEvent` (exists). Add the promised rule to `usesAfterCapture`: inside a function
+passed to `addGlobalListener` or `listen`, or any function whose parameter is named `event`, a member read
+`<param>.<name>` other than `isTrusted`, `type` and `defaultPrevented` is an error. The reviewer's two probes become the
+positive controls: a unit test and an e2e (a strict entry redefines `PromiseRejectionEvent.prototype.reason` to return
+`'x'`, then raises three rejections of 2 Mi characters; the sandbox must end with the uncaught-budget reason), for the
+`error` and `unhandledrejection` rows of `bootstrapListeners`. Check that the new test fails with the mutant.
+
+**Done.** The scan goes by registrations, never by a parameter's name: `test/unit/event-read-scan.ts` enumerates every
+place where the code of a guest realm hands a function to the platform as a listener (a captured `addEventListener` or
+`on…` setter, a direct call, an `on…` assignment), follows each to the functions it can be, and fails on a registration
+it cannot follow. A listener's first parameter is the event; a member read of it other than `isTrusted` (the one
+property a guest cannot redefine), a destructuring, a spread or a literal that holds it is an error, and every other
+read goes through `readEvent`'s captured getters (`test/unit/event-reads.test.ts`). `type` and `defaultPrevented`, which
+this item first allowed, are accessors the guest can replace, and are not allowed. The behaviour has its tests too: a
+unit test per mode the listeners run in (`test/unit/egress.test.ts`) and `test/e2e/uncaught-event-reads.spec.ts`, where
+a guest replaces the event accessors and the uncaught-characters budget must still end the sandbox, in worker, strict
+and sealed mode (WebKit mutes the error text, so its error flood is skipped: the `webkit-muted-errors` row of the
+engine ledger).
+
 ### <a id="t6"></a>T6 · Two CPU-heavy unit tests failed once on a loaded machine — ✅ **done**
 
 `review-round-2.test.ts` (C-7: past the comparison cap the sandbox rebuilds) and `review-round-5.test.ts` (5:L-1: the
