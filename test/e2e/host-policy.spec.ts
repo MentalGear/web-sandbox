@@ -1,5 +1,4 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
-import { isDevServerNoise } from './dev-server-noise';
 import { inFrames, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 
@@ -136,9 +135,8 @@ test.describe('host page policy', () => {
         // ledger: trusted-types
         const RENDERS = 25;
         const errors: string[] = [];
-        // (the harness's own first build runs no script, and Chromium says so: not a Trusted Types message; the dev
-        // server's client is not the library's either)
-        page.on('console', (message) => { if (message.type() === 'error' && !message.text().startsWith('Blocked script execution') && !isDevServerNoise(message.text())) errors.push(message.text()); });
+        // (the harness's own first build runs no script, and Chromium says so: not a Trusted Types message)
+        page.on('console', (message) => { if (message.type() === 'error' && !message.text().startsWith('Blocked script execution')) errors.push(message.text()); });
         await page.addInitScript(() => {
             const seen: string[] = ((window as any).hostViolations = []);
             document.addEventListener('securitypolicyviolation', (event) => { seen.push(`${event.violatedDirective} ${event.blockedURI} ${event.sample}`); });

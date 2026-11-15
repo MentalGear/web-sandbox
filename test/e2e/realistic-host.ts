@@ -6,7 +6,6 @@ import { VIEW_STILL_STYLE } from '@src/lib/in-sandbox-view';
 import type { InheritedContextId } from '@src/lib/inherited-context';
 import { buildOfPage, expect, ORIGIN, type Build, type SandboxDriver } from './fixture';
 import { HOST_COOKIES, REALISTIC_HOST_PATH, type ApiHit, type PageHeader, type SessionRecord } from './realistic-host-server';
-import { isDevServerNoise } from './dev-server-noise';
 
 /**
  * A host page that looks like a production application, for every test that wants one (S74, class A; CONTRIBUTING.md,
@@ -167,8 +166,7 @@ export class RealisticHost {
         const { page } = sandbox;
         // (the Chromium line about a first build that runs no script is not a policy violation of the library's)
         page.on('console', (message) => {
-            // (the dev server's HMR client, which the e2e server runs without a socket, says so on Firefox)
-            if (message.type() === 'error' && !message.text().startsWith('Blocked script execution') && !isDevServerNoise(message.text())) this.consoleErrors.push(message.text());
+            if (message.type() === 'error' && !message.text().startsWith('Blocked script execution')) this.consoleErrors.push(message.text());
             if (message.type() === 'warning') this.consoleWarnings.push(message.text());
         });
         page.on('pageerror', (error) => { this.pageErrors.push(String(error)); });
