@@ -1489,7 +1489,34 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         return out;
     };
     // One sequence of nodes being walked into `parent`. An unwrapped element's sequence shares its parent's text run.
-    type Run = { parent: Node; input: Node[]; index: number; depth: number; text: { first: Node | null; parts: string[] }; own: boolean };
+    // `select`: its parent is an HTML select, whose options are settled when the sequence ends.
+    type Run = { parent: Node; input: Node[]; index: number; depth: number; text: { first: Node | null; parts: string[] }; own: boolean; select?: boolean };
+    // A select's options, selected as its markup says, once the walk has put them all back. Taking a select's options
+    // out and putting them back one by one changes which are selected: Chromium and Firefox select the next option as
+    // each is taken out, so the last one put back is the one shown, whatever the markup says. The select gets what HTML's
+    // reset gives it: without `multiple`, the last option that has `selected`, or none (the engine then shows the first
+    // one that is not disabled, where a select shows one); with it, every option that has `selected`. At most one option
+    // is set without `multiple`, so the pass is linear in the options, where setting each would not be.
+    const optionCount = getter(HTMLSelectElement.prototype, 'length');
+    const optionAt = HTMLSelectElement.prototype.item;
+    const optionSelected = Object.getOwnPropertyDescriptor(HTMLOptionElement.prototype, 'selected')!;
+    const settleSelect = (select: Element) => {
+        const multiple = has(select, 'multiple');
+        const count = call(optionCount, select, []) as number;
+        let marked: Element | null = null;
+        let shown: Element | null = null;
+        for (let i = 0; i < count; i++) {
+            const option = call(optionAt, select, [i]) as Element;
+            const wanted = has(option, 'selected');
+            const selected = call(optionSelected.get!, option, []) === true;
+            if (multiple && selected !== wanted) call(optionSelected.set!, option, [wanted]);
+            if (wanted) marked = option;
+            if (selected) shown = option;
+        }
+        if (multiple || marked === shown) return;
+        if (marked) call(optionSelected.set!, marked, [true]);
+        else call(optionSelected.set!, shown, [false]);
+    };
     const flushText = (run: Run) => {
         const text = run.text;
         if (!text.first) return;
@@ -1505,6 +1532,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         const run = runs[runs.length - 1]!;
         if (run.index >= run.input.length) {
             if (run.own) flushText(run);
+            if (run.select) settleSelect(run.parent as Element);
             runs.length = runs.length - 1;
             continue;
         }
@@ -1541,7 +1569,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         flushText(run);
         call(N.appendChild, run.parent, [element]);
         if (name === 'style' && context.sheets) context.sheets[context.sheets.length] = element; // the view applies its text
-        runs[runs.length] = { parent: element, input: drain(element), index: 0, depth: run.depth + 1, text: { first: null, parts: list<string>() }, own: true };
+        runs[runs.length] = { parent: element, input: drain(element), index: 0, depth: run.depth + 1, text: { first: null, parts: list<string>() }, own: true, select: namespace === HTML && name === 'select' };
     }
     return kept;
 }
@@ -2104,14 +2132,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             if (call(formOwners[call(localNameOf, element, [])]!, element, []) === form) visit(element, kind);
         }));
     };
-    // Around a flush's operations that can change a control: what differs from the accepted states is undone first, so that
-    // what the operations leave, and only that, is accepted after. `each` visits the controls they can change: every
-    // control of the view for a render or a text() (eachControl), or the targets of set()s of a value or checkedness, a
-    // radio with its group (eachTarget). Linear in what it visits: each control on its own, a radio without its group.
+    // Around a flush's operations that can change a control: what differs from the accepted states is undone first (a
+    // control the view holds nothing for, after a form's reset, gets its defaults: reconcileOne), so that what the
+    // operations leave, and only that, is accepted after. `each` visits the controls they can change: every control of the
+    // view for a render or a text() (eachControl), or the targets of set()s of a value or checkedness, a radio with its
+    // group (eachTarget). Linear in what it visits: each control on its own, a radio without its group.
     const acceptOperations = (operations: () => void, each: (visit: (element: Element, kind: number) => void) => void) => {
-        reconcileEach((visit) => each((element, kind) => {
-            if (accepted.has(element)) visit(element, kind);
-        }));
+        reconcileEach(each);
         operations();
         each((element, kind) => accepted.set(element, stateOf(element, kind)));
     };

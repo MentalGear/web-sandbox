@@ -181,7 +181,7 @@ describe("the view: names map back, and the value model forwards only what the u
         // the option the select shows as rendered, and the other one
         const shown = $('s')?.value;
         const other = shown === 'a' ? 'b' : 'a';
-        return { fire, details, $, submit, shown, other };
+        return { fire, details, $, submit, shown, other, render };
     }
     const until = async (check: () => boolean) => {
         for (let i = 0; i < 300 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 5));
@@ -296,5 +296,32 @@ describe("the view: names map back, and the value model forwards only what the u
         submit();
         await until(() => details().some(d => d.type === 'submit'));
         expect(details().find(d => d.type === 'submit').form[0]).toEqual(['email', 'guest@x']);
+    });
+
+    it("a value put into a control with no event after a reset is not accepted by the guest's next operation", async () => {
+        const { fire, details, $, submit, render } = await startView(FORM + '<p id="note"></p>');
+        fire('reset', $('f'));
+        $('other').value = 'filled with no event';
+        render.postMessage({ type: 'VIEW_TEXT', into: 'note', text: 'shown' });
+        await until(() => $('note').textContent === 'shown');
+        submit();
+        await until(() => details().some(d => d.type === 'submit'));
+        expect(details().find(d => d.type === 'submit').form[1]).toEqual(['other', '']);
+        expect($('other').value).toBe('');
+    });
+
+    it("the view reads a control's value in two places, each after it undid what it did not accept (reconcile, reconcileForm)", () => {
+        const source = inSandboxView.toString();
+        // every read of a value or checkedness that is not through an accessor the value model captured, and every FormData
+        const reads = [...source.matchAll(/\btarget\.(?:value|checked)\b|new FormData\(/g)];
+        expect(reads.map(read => read[0])).toEqual(['target.value', 'target.checked', 'new FormData(', 'new FormData(']);
+        const reconciled = source.indexOf('reconcile(target);');
+        const formReconciled = source.indexOf('reconcileForm(target);');
+        expect(reconciled).toBeGreaterThan(0);
+        expect(reconciled).toBeLessThan(reads[0]!.index!);
+        expect(formReconciled).toBeGreaterThan(reads[1]!.index!);
+        expect(formReconciled).toBeLessThan(reads[2]!.index!);
+        // and no other property of an element that holds what a control holds is read by name
+        expect(source).not.toMatch(/\.(?:valueAsNumber|valueAsDate|selectedIndex|selectedOptions|selectionStart|selectionEnd|files)\b/);
     });
 });
