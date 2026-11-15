@@ -31,7 +31,7 @@ import { CODE_FROM_STRING_SINKS } from './code-from-strings';
 import { sealedHostPasses } from './host-passes';
 import { RENDER_ATTRIBUTES, RENDER_ELEMENTS, VIEW_LOAD_KINDS } from './in-sandbox-view';
 import type { InheritedContextId } from './inherited-context';
-import { SECURE_CONTEXT_ONLY, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
+import { NETWORK_WORKER_GLOBALS, SECURE_CONTEXT_ONLY, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
 
 /** The relations of a name to a row. */
 export const REACH_RELATIONS = ['none', 'neutralised', 'remains'] as const;
@@ -46,10 +46,10 @@ export interface Chokepoint {
 
 /** The library's chokepoints a `neutralised` cell may name. */
 export const CHOKEPOINTS = {
-    requestGate: {
-        what: "the request gate: the guest's `fetch`, `XMLHttpRequest` and `WebSocket` admit only the guest policy's `connect-src` sources, which sealed mode has none of, and refuse before the platform",
-        file: 'src/lib/in-sandbox-script.ts',
-        token: 'const replaceGlobal = (name: string, original: unknown, value: unknown, enumerable: boolean) =>',
+    sealedWorkerAllowlist: {
+        what: "sealed mode has no network, so its worker has no `fetch`, `XMLHttpRequest` (with `XMLHttpRequestEventTarget` and `XMLHttpRequestUpload`) or `WebSocket`: the names are gone before the bootstrap runs (SEALED_WORKER_GLOBALS, which has none of NETWORK_WORKER_GLOBALS), and no code that could reach the network is in its source",
+        file: 'src/lib/worker-globals.ts',
+        token: 'export const SEALED_WORKER_GLOBALS',
     },
     sealedFetchRefusal: {
         what: '`sandboxFetch()` refuses in the guest with `FETCH_NOT_ALLOWED` and sends nothing to the host',
@@ -398,8 +398,8 @@ export const SURFACES = {
     console: { side: 'worker', what: "log lines, which the library relays to the element", names: ['console'] },
     requests: {
         side: 'worker',
-        what: 'make a request',
-        names: words('fetch XMLHttpRequest XMLHttpRequestEventTarget XMLHttpRequestUpload WebSocket'),
+        what: 'make a request: absent from the sealed worker (sealed mode has no network), kept by strict mode behind its request gate',
+        names: NETWORK_WORKER_GLOBALS,
     },
     importScripts: { side: 'worker', what: 'load and run a classic script by URL', names: ['importScripts'] },
     fetchValues: { side: 'worker', what: 'values of a request and its response, which make no request', names: words('Request Response Headers FormData AbortController AbortSignal') },
@@ -590,7 +590,7 @@ const STRINGS_REFUSED = neutralised(['codeFromStringRefusal'], "a string never r
 const IMPORT_REFUSED = neutralised(['entryImportRefusal'], 'no worker runs an entry that calls it, so no policy is asked');
 const NO_IMPORT_SCRIPTS = neutralised(['strictWorkerAllowlist'], 'the sealed worker does not have it');
 const NO_WEBASSEMBLY = neutralised(['webAssemblyRemoval'], "the sealed worker does not have it, so no `'wasm-unsafe-eval'` check is made");
-const REQUESTS_GATED = neutralised(['requestGate'], 'every request is refused before the platform: none is made');
+const REQUESTS_ABSENT = neutralised(['sealedWorkerAllowlist'], 'the sealed worker does not have it (sealed mode has no network), so no request is made');
 const NO_FETCH_BRIDGE = neutralised(['sealedFetchRefusal'], 'refused in the guest; nothing reaches the host');
 const NO_GUEST_URL = neutralised(['createObjectUrlRemoval'], 'the sealed worker does not have it');
 const SECURE_CONTEXT_REMOVED = neutralised(['secureContextRemoval'], 'only a secure context has it: the sealed worker does not, on any engine and whatever the host page');
@@ -610,12 +610,12 @@ const NO_NETWORK_IN_CSS = neutralised(['urlKeepRule', 'cssUrlDrop'], "CSS keeps 
 const HOST_PURE = neutralised(['hostPassRule'], "it hands nothing of the guest's to a parser, a loader or a sink of the host realm, so the browser checks none of it against the host page's policy (BD7:LIM-1)");
 const HOST_NOTHING = none("it reads and builds strings and bytes in the host page's realm, and starts, loads and reads nothing this row governs");
 // Every name that would make a request or load by URL, if the library let it: the rows a request reaches share these.
-const REQUEST_MAKERS = { requests: REQUESTS_GATED, fetchBridge: NO_FETCH_BRIDGE, importScripts: NO_IMPORT_SCRIPTS, dynamicImport: IMPORT_REFUSED } as const;
+const REQUEST_MAKERS = { requests: REQUESTS_ABSENT, fetchBridge: NO_FETCH_BRIDGE, importScripts: NO_IMPORT_SCRIPTS, dynamicImport: IMPORT_REFUSED } as const;
 
 // A feature the view allows that only script of the view's document reaches (an API of `document`, `navigator` or `window`,
 // a fetch() option): the view runs no guest code, and the worker's allowlist has none of it.
 const SCRIPT_ONLY = (what: string) => none(`${what}: only script of the view's document reaches it, and the view runs no guest code (the worker has no such name)`);
-const NO_REQUEST = (what: string) => neutralised(['urlKeepRule', 'requestGate'], `${what}: rides on a network request, which the view never makes (it loads only the \`blob:\` URLs it minted) and the worker's request gate refuses`);
+const NO_REQUEST = (what: string) => neutralised(['urlKeepRule', 'sealedWorkerAllowlist'], `${what}: rides on a network request, which the view never makes (it loads only the \`blob:\` URLs it minted) and the worker has no request maker to make`);
 
 /**
  * Every feature the view's document allows (Chromium's `document.featurePolicy.allowedFeatures()`: the features whose

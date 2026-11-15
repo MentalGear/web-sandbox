@@ -8,7 +8,6 @@ import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixture';
 import type { SandboxConfig } from '@src/host';
-import { GATE_SOURCE_FILE } from '@src/lib/violation';
 import { reasonText } from '@src/lib/reasons';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { makerCode, makerUrl, SEALED_MAKERS, type Maker, type MakerScheme } from './sealed-makers';
@@ -22,8 +21,8 @@ import { makerCode, makerUrl, SEALED_MAKERS, type Maker, type MakerScheme } from
  * markup, `set({ css })` values and a registered stylesheet, and the clicks that would follow a link, a ping or a form.
  *
  * The listener sees nothing: no request, no WebSocket handshake, no TCP connection. And each attempt is stopped and reported
- * where the library reports it (sealed-makers.ts, SealedOutcome): the request gate's refusal and its `connect-src` report;
- * `sandboxFetch()`'s FETCH_NOT_ALLOWED in the guest; a worker global the allowlist keeps out; the renderer's drop and its
+ * where the library reports it (sealed-makers.ts, SealedOutcome): `sandboxFetch()`'s FETCH_NOT_ALLOWED in the guest; a worker
+ * global the allowlist keeps out (fetch, XMLHttpRequest and WebSocket among them: sealed mode has no network, so no such names); the renderer's drop and its
  * report; the element's warning for the registered stylesheet.
  *
  * Positive controls, in this file: strict mode with the listener in every `origins` list (and `hostContentSecurityPolicy:
@@ -161,7 +160,7 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         const workerMakers = byRealm('worker').filter(builds);
         expect(seen).toEqual(Object.fromEntries(workerMakers.map(maker => [maker.id, maker.sees])));
 
-        // the reports: the gate's for its makers, the renderer's for every URL it dropped (with its directive)
+        // the reports: the renderer's for every URL it dropped (with its directive), none for the rest
         // The view posts each dropped URL's report once it has applied the operation, so the reports are awaited until every
         // dropped maker has its own, not read once after a fixed wait (a loaded WebKit applied the last set() later).
         const isReportOf = (maker: Maker) => (v: { blockedURI: string }) => v.blockedURI === makerUrl({ ...maker, scheme: maker.reportedAs ?? maker.scheme }, listener.origins);
@@ -174,8 +173,7 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         const reported = (maker: Maker) => violations.filter(isReportOf(maker));
         for (const maker of SEALED_MAKERS) {
             const reports = reported(maker);
-            if (maker.outcome === 'gate') expect(reports.map(v => `${v.directive} ${v.sourceFile}`), maker.id).toEqual([`connect-src ${GATE_SOURCE_FILE}`]);
-            else if (maker.outcome === 'dropped') expect(reports.map(v => v.directive), maker.id).toContain(maker.directive);
+            if (maker.outcome === 'dropped') expect(reports.map(v => v.directive), maker.id).toContain(maker.directive);
             // the rest is stopped before anything is checked: no report, on any engine (a string, an absent maker, an import()
             // whose entry was never built)
             else expect(reports, maker.id).toEqual([]);

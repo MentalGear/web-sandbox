@@ -3,7 +3,7 @@
  * test/e2e/sealed-no-network.spec.ts runs on every engine, each maker aimed at a listener that must see nothing. A maker is
  * code the worker runs, markup the worker renders into the view, a `set({ css })` value, or a rule of a registered
  * stylesheet, and it names what of the library's own lists it stands for (`covers`). test/unit/sealed-makers.test.ts ties the
- * enumeration to those lists: every name the request gate installs, every request maker kept off the worker's allowlist, every
+ * enumeration to those lists: every request maker kept off the worker's allowlist, every
  * row of COOKIE_CARRIERS, every [element, attribute] of the renderer that holds a URL, every `<link>` relation, and every kind
  * of URL a CSS reference makes in every place guest CSS reaches the view. A maker the library learns about without a maker
  * here fails that test, so none is missed silently.
@@ -11,7 +11,7 @@
  * The enumeration is also every way a sealed worker could make the browser check the policy list it inherits from the host
  * page (S74, class A: INHERITED_CONTEXT.cspPolicyText, cspReporting; BD6:ISO-1, BD6:ISO-2): a check that refuses reports the
  * page's policy text to the guest and the action's URL or string to the page's report endpoint. Each worker maker is stopped
- * by the library before the platform checks anything: the request gate, the allowlist, the code-from-string refusal
+ * by the library before the platform checks anything: the allowlist (which has none of fetch, XMLHttpRequest and WebSocket), the code-from-string refusal
  * (CODE_FROM_STRING_SINKS, with the compilers the worker does not have, ABSENT_COMPILERS), or the build, which refuses an
  * entry that calls `import()`. test/e2e/sealed-host-policy.spec.ts runs them on the realistic host, whose report endpoint
  * must receive nothing from the guest.
@@ -33,8 +33,7 @@ export type CssKind = 'style' | 'font' | 'image';
 
 /** What of the library's lists a maker stands for. */
 export type MakerCovers =
-    | { readonly gate: string } // a global the request gate installs (in-sandbox-script.ts, replaceGlobal)
-    | { readonly global: string } // a worker global that makes a request, off the allowlist (STRICT_WORKER_GLOBALS)
+    | { readonly global: string } // a worker global that makes a request, off the allowlist (SEALED_WORKER_GLOBALS: the network names, NETWORK_WORKER_GLOBALS, among them)
     | { readonly navigator: string } // a navigator member that makes a request, off WORKER_NAVIGATOR_MEMBERS
     | { readonly reserved: 'sandboxFetch' } // the library's own maker (the fetch bridge's guest side)
     | { readonly carrier: CookieCarrierId } // a row of COOKIE_CARRIERS
@@ -46,8 +45,6 @@ export type MakerCovers =
 
 /**
  * How sealed mode stops it and where that is reported:
- *   - `gate`: the request gate refuses it in the guest (the platform's failure) and reports a `connect-src` violation whose
- *     sourceFile is the gate's, with the URL;
  *   - `refused`: the library refuses it in the guest with its own code and sends nothing anywhere (`sandboxFetch()`:
  *     FETCH_NOT_ALLOWED, D4);
  *   - `absent`: the worker has no such global or member (the allowlist), so the attempt throws in the guest;
@@ -61,7 +58,7 @@ export type MakerCovers =
  *   - `unbuildable`: the build refuses an entry that holds it (`import()` or a phase of it, entry-imports.ts), with the reason `entryImport`:
  *     no worker runs, so nothing is checked, reported or sent. The spec builds each one on its own.
  */
-export type SealedOutcome = 'gate' | 'refused' | 'absent' | 'dropped' | 'removed' | 'warned' | 'string' | 'unbuildable';
+export type SealedOutcome = 'refused' | 'absent' | 'dropped' | 'removed' | 'warned' | 'string' | 'unbuildable';
 
 /** The scheme of the listener a maker is aimed at. */
 export type MakerScheme = 'https' | 'http' | 'wss';
@@ -77,7 +74,7 @@ export interface Maker {
      */
     readonly code: string;
     readonly outcome: SealedOutcome;
-    /** `dropped` and `gate`: the directive of its report. */
+    /** `dropped`: the directive of its report. */
     readonly directive?: string;
     /** The scheme of the URL its report names, where it is not the scheme it was given (a WebSocket's https: URL is reported as wss:). */
     readonly reportedAs?: MakerScheme;
@@ -96,10 +93,10 @@ export interface Maker {
 }
 
 const attempt = (body: string) => `(async () => { try { ${body} } catch (e) { return e.name; } })()`;
-const fetched = (call: string) => `${call}.then(() => 'sent', (e) => e.name)`;
+const fetched = (call: string) => attempt(`return await ${call}.then(() => 'sent', (e) => e.name);`);
 const xhr = (sync: boolean) => sync
     ? attempt("const x = new XMLHttpRequest(); x.open('GET', U, false); x.send(); return 'sent ' + x.status;")
-    : `new Promise((resolve) => { const x = new XMLHttpRequest(); x.onload = () => resolve('sent'); x.onerror = () => resolve('error ' + x.readyState + ' ' + x.status); x.open('GET', U); x.send(); })`;
+    : attempt("return await new Promise((resolve) => { const x = new XMLHttpRequest(); x.onload = () => resolve('sent'); x.onerror = () => resolve('error ' + x.readyState + ' ' + x.status); x.open('GET', U); x.send(); });");
 const absent = (expression: string) => attempt(`${expression}; return 'made';`);
 // The text of a dynamic import of U, spelt so that the entry itself holds no `import` followed by `(` (the build refuses
 // that, entry-imports.ts): what a sink would compile and run, if it reached the platform.
@@ -109,15 +106,15 @@ const at = (top: number) => `position:absolute;left:0;top:${top}px;width:120px;h
 
 /** The worker's makers: the platform's, the library's, and the ones the allowlist keeps out. */
 const WORKER: Maker[] = [
-    { id: 'fetch', realm: 'worker', covers: [{ gate: 'fetch' }], scheme: 'https', code: fetched('fetch(U)'), outcome: 'gate', directive: 'connect-src', sees: 'TypeError', strict: true, frame: true },
-    { id: 'fetch-http', realm: 'worker', covers: [{ gate: 'fetch' }], scheme: 'http', code: fetched('fetch(U)'), outcome: 'gate', directive: 'connect-src', sees: 'TypeError', strict: true, frame: true },
-    { id: 'fetch-request', realm: 'worker', covers: [{ gate: 'fetch' }], scheme: 'https', code: fetched("fetch(new Request(U, { method: 'POST', body: 'x' }))"), outcome: 'gate', directive: 'connect-src', sees: 'TypeError', strict: true, frame: true },
-    { id: 'fetch-no-cors', realm: 'worker', covers: [{ gate: 'fetch' }], scheme: 'https', code: fetched("fetch(U, { mode: 'no-cors', credentials: 'include' })"), outcome: 'gate', directive: 'connect-src', sees: 'TypeError', strict: true, frame: true },
-    { id: 'fetch-keepalive', realm: 'worker', covers: [{ gate: 'fetch' }], scheme: 'https', code: fetched("fetch(U, { keepalive: true, method: 'POST', body: 'x' })"), outcome: 'gate', directive: 'connect-src', sees: 'TypeError', strict: false, frame: true },
-    { id: 'xhr', realm: 'worker', covers: [{ gate: 'XMLHttpRequest' }], scheme: 'https', code: xhr(false), outcome: 'gate', directive: 'connect-src', sees: 'error 4 0', strict: true, frame: true },
-    { id: 'xhr-sync', realm: 'worker', covers: [{ gate: 'XMLHttpRequest' }], scheme: 'https', code: xhr(true), outcome: 'gate', directive: 'connect-src', sees: 'NetworkError', strict: true, frame: true },
-    { id: 'websocket', realm: 'worker', covers: [{ gate: 'WebSocket' }, { carrier: 'websocket' }], scheme: 'wss', code: absent('new WebSocket(U)'), outcome: 'gate', directive: 'connect-src', sees: 'SecurityError', strict: false, frame: false, note: "not on every engine: Chromium's handshake from a sandboxed srcdoc frame did not reach the listener (measured; Firefox's and WebKit's did); the request gate's own spec has a socket's positive control" },
-    { id: 'websocket-https', realm: 'worker', covers: [{ gate: 'WebSocket' }], scheme: 'https', code: absent('new WebSocket(U)'), outcome: 'gate', directive: 'connect-src', reportedAs: 'wss', sees: 'SecurityError', strict: false, frame: false, note: "not on every engine: Chromium's handshake from a sandboxed srcdoc frame did not reach the listener (measured; Firefox's and WebKit's did); the request gate's own spec has a socket's positive control" },
+    { id: 'fetch', realm: 'worker', covers: [{ global: 'fetch' }], scheme: 'https', code: fetched('fetch(U)'), outcome: 'absent', sees: 'ReferenceError', strict: true, frame: true },
+    { id: 'fetch-http', realm: 'worker', covers: [{ global: 'fetch' }], scheme: 'http', code: fetched('fetch(U)'), outcome: 'absent', sees: 'ReferenceError', strict: true, frame: true },
+    { id: 'fetch-request', realm: 'worker', covers: [{ global: 'fetch' }], scheme: 'https', code: fetched("fetch(new Request(U, { method: 'POST', body: 'x' }))"), outcome: 'absent', sees: 'ReferenceError', strict: true, frame: true },
+    { id: 'fetch-no-cors', realm: 'worker', covers: [{ global: 'fetch' }], scheme: 'https', code: fetched("fetch(U, { mode: 'no-cors', credentials: 'include' })"), outcome: 'absent', sees: 'ReferenceError', strict: true, frame: true },
+    { id: 'fetch-keepalive', realm: 'worker', covers: [{ global: 'fetch' }], scheme: 'https', code: fetched("fetch(U, { keepalive: true, method: 'POST', body: 'x' })"), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: true },
+    { id: 'xhr', realm: 'worker', covers: [{ global: 'XMLHttpRequest' }, { global: 'XMLHttpRequestEventTarget' }, { global: 'XMLHttpRequestUpload' }], scheme: 'https', code: xhr(false), outcome: 'absent', sees: 'ReferenceError', strict: true, frame: true },
+    { id: 'xhr-sync', realm: 'worker', covers: [{ global: 'XMLHttpRequest' }], scheme: 'https', code: xhr(true), outcome: 'absent', sees: 'ReferenceError', strict: true, frame: true },
+    { id: 'websocket', realm: 'worker', covers: [{ global: 'WebSocket' }, { carrier: 'websocket' }], scheme: 'wss', code: absent('new WebSocket(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: "not on every engine: Chromium's handshake from a sandboxed srcdoc frame did not reach the listener (measured; Firefox's and WebKit's did); the request gate's own spec has a socket's positive control" },
+    { id: 'websocket-https', realm: 'worker', covers: [{ global: 'WebSocket' }], scheme: 'https', code: absent('new WebSocket(U)'), outcome: 'absent', sees: 'ReferenceError', strict: false, frame: false, note: "not on every engine: Chromium's handshake from a sandboxed srcdoc frame did not reach the listener (measured; Firefox's and WebKit's did); the request gate's own spec has a socket's positive control" },
     { id: 'sandbox-fetch', realm: 'worker', covers: [{ reserved: 'sandboxFetch' }], scheme: 'https', code: 'sandboxFetch(U).then(() => \'sent\', (e) => e.code)', outcome: 'refused', sees: 'FETCH_NOT_ALLOWED', strict: false, frame: false, note: "the library's own maker: a document has none" },
     // import() is syntax: the build refuses the entry that holds one (each built on its own; sees: the build's reason)
     { id: 'import', realm: 'worker', covers: [], scheme: 'https', code: "import(U).then(() => 'sent', (e) => e.name)", outcome: 'unbuildable', sees: 'entryImport', strict: false, frame: true },

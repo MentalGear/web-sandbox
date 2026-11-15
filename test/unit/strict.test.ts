@@ -137,8 +137,8 @@ describe('review C2: the worker source runs the entry in its own scope, after th
     it("the allowlist the strict worker keeps is STRICT_WORKER_GLOBALS: no importScripts (S74), and WebAssembly only with scriptUnsafe (R1:R2-5)", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         for (const scriptUnsafe of [false, true]) {
-            const el = await mount({ mode: 'strict', scriptUnsafe });
-            const source: string = el._getStrictWorkerSource([], 'void 0');
+            const el = await mount({ mode: 'strict', scriptUnsafe, entry: 'main.js' }, { 'main.js': 'void 0' });
+            const source: string = el._strictInit.workerSource; // a build with a network: _getStrictWorkerSource([], …) alone is sealed mode's
             expect(source).toContain(`(g, ${JSON.stringify(STRICT_WORKER_GLOBALS.filter(name => scriptUnsafe || name !== 'WebAssembly'))}, `);
             expect(source).not.toContain(`(g, ${JSON.stringify(WORKER_GLOBALS)}, `);
             // nothing else of the source names it: the allowlist alone decides whether the worker has it

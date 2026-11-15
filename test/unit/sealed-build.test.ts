@@ -178,14 +178,15 @@ describe('T4: a sealed build wires no network source: its policy, its gate list,
         return { el, prepared: el._prepareBuild(), features: featuresOf(el._strictInit.workerSource) };
     };
 
-    it('sealed: the view policy is sealedViewPolicy over its file kinds, the gate list is [], sandboxFetch() refuses in the guest, one frame, INIT_VIEW names no origins, the build has no network', async () => {
+    it('sealed: the view policy is sealedViewPolicy over its file kinds, no gate and no gate list, sandboxFetch() refuses in the guest, one frame, INIT_VIEW names no origins, the build has no network', async () => {
         const { el, prepared, features } = await build({ mode: 'sealed' });
         const kinds = new Set<SealedFileKind>(['styles', 'images', 'fonts', 'media']);
         expect(policyOf(el)).toBe(sealedViewPolicy({ fileKinds: kinds, bootstrapHash: HASH }));
         expect(networkSources(policyOf(el))).toEqual([]);
         expect(directives(policyOf(el)).get('connect-src')).toEqual(["'none'"]);
-        expect(features.connect).toEqual([]);
+        expect(features).not.toHaveProperty('connect');
         expect(features.sealed).toBe(true);
+        expect(el._strictInit.workerSource).not.toContain('function requestGate(');
         expect(features).not.toHaveProperty('fetchBridge');
         // the prelude's text: the ready line names the build's own mode, and the prelude is built as strict mode's (BD7:NEW-1)
         expect(el._strictInit.workerSource).toMatch(/\? ?['"]sealed['"] ?: ?mode\} Ready/);
@@ -465,7 +466,7 @@ describe("T9: every row of the host page's context says what it is in sealed mod
         expect(rows).toHaveLength(Object.keys(INHERITED_CONTEXT).length);
     });
 
-    it("the rows dropped for 'no-network' and the reduced cspFetch: a sealed build makes no request path (no network source, an empty gate, no bridge frame, no origins); strict mode with a network has each (positive control)", async () => {
+    it("the rows dropped for 'no-network' and the reduced cspFetch: a sealed build makes no request path (no network source, no request gate, no bridge frame, no origins); strict mode with a network has each (positive control)", async () => {
         const noNetwork = inheritedContextRows().filter(row => row.sealed.standing === 'not-applicable' && row.sealed.because === 'no-network').map(row => row.id);
         expect(noNetwork.sort()).toEqual(['cookies', 'referrer', 'serviceWorker']);
         const paths = async (config: Record<string, unknown>) => {
@@ -476,16 +477,18 @@ describe("T9: every row of the host page's context says what it is in sealed mod
             return {
                 sources: networkSources(policyOf(el)),
                 fetchSources: ['img-src', 'font-src', 'media-src', 'style-src', 'connect-src'].flatMap(name => policy.get(name)!).filter(source => !["'none'", "'unsafe-inline'", 'blob:'].includes(source)),
-                gate: featuresOf(el._strictInit.workerSource).connect as string[],
+                gate: (el._strictInit.workerSource as string).includes('function requestGate('),
+                connect: featuresOf(el._strictInit.workerSource).connect as string[] | undefined,
                 bridge: el.shadowRoot.querySelectorAll('iframe').length > 1,
                 origins: Object.keys(el._strictInit).includes('origins'),
             };
         };
-        expect(await paths({ mode: 'sealed' })).toEqual({ sources: [], fetchSources: [], gate: [], bridge: false, origins: false });
+        expect(await paths({ mode: 'sealed' })).toEqual({ sources: [], fetchSources: [], gate: false, connect: undefined, bridge: false, origins: false });
         const strict = await paths(STRICT_NETWORK);
         expect(strict.sources.length).toBeGreaterThan(0);
         expect(strict.fetchSources.length).toBeGreaterThan(0);
-        expect(strict.gate.length).toBeGreaterThan(0);
+        expect(strict.gate).toBe(true);
+        expect(strict.connect!.length).toBeGreaterThan(0);
         expect([strict.bridge, strict.origins]).toEqual([true, true]);
     });
 

@@ -43,7 +43,7 @@ export interface ViewNetwork {
     origins: OriginPolicy;
     fetchBridge: { timeoutMs: number } | null;
     /** The request gate's source (request-gate.ts, stringified): the bootstrap is given it, as sealed mode's never is. */
-    requestGate: string;
+    requestGateSource: string;
 }
 
 // The network of a build of strict, cooperative or worker mode, as the element holds it: the fetch bridge's frame, its

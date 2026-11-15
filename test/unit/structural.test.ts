@@ -112,10 +112,10 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIOLATION', 'sourceFile', 'cutAt(read.sourceFile, VIOLATION_MAX_STRING)'],
     ['VIOLATION', 'lineNumber', 'read.lineNumber'],
     ['VIOLATION', 'columnNumber', 'read.columnNumber'],
-    // the request gate's own reports (S74): the same frame, its strings cut the same way
+    // the request gate's own reports (S74; request-gate.ts hands them to the bootstrap's `report`): the same frame, its strings cut the same way
     ['VIOLATION', 'directive', "'connect-src'"],
-    ['VIOLATION', 'blockedURI', 'cutAt(reportedUrl(href), VIOLATION_MAX_STRING)'],
-    ['VIOLATION', 'sourceFile', 'GATE_SOURCE'],
+    ['VIOLATION', 'blockedURI', 'cutAt(blockedURI, VIOLATION_MAX_STRING)'],
+    ['VIOLATION', 'sourceFile', 'cutAt(sourceFile, VIOLATION_MAX_STRING)'],
     ['RESIZE', 'type', "'RESIZE'"],
     ['RESIZE', 'height', 'height'],
     ['LOG', 'type', "'LOG'"],
@@ -424,10 +424,10 @@ function platformRequestUses(file: string, text: string, allowed: [number, numbe
 }
 
 describe("the fetch bridge's requests are made by its frame, and only there (BD1:ISO-1, class E-net)", () => {
-    // The functions that may name the platform's fetch: the guest bootstrap, which guards the guest's own fetch
-    // (keepalive), and the bridge's frame, which makes every bridge request. The host page's own realm makes no request
+    // The functions that may name the platform's fetch: the request gate of the network modes, which guards the guest's own fetch
+    // (keepalive; the bootstrap itself names none), and the bridge's frame, which makes every bridge request. The host page's own realm makes no request
     // (not even to learn the page's policy: test/unit/host-policy-source.test.ts).
-    const MAY_FETCH: readonly [string, string][] = [['src/lib/in-sandbox-script.ts', 'inSandboxScript'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame']];
+    const MAY_FETCH: readonly [string, string][] = [['src/lib/request-gate.ts', 'requestGate'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame']];
     const unixOf = (file: string) => file.split(path.sep).join('/');
 
     it("no code of src/ names the platform's fetch outside those two functions, and the bridge's host-side modules name no other request API: the host never makes a bridge request itself", () => {

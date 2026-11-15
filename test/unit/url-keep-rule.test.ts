@@ -280,8 +280,8 @@ const SCHEME_TESTS: Readonly<Record<string, { readonly count: number; readonly w
     'src/lib/csp/host-connect.ts': { count: 6, why: "it reads the embedder's Content-Security-Policy text (hostContentSecurityPolicy), not a guest URL" },
     'src/lib/csp/origins.ts': { count: 2, why: "it pairs the embedder's typed origins (`origins`), not a guest URL" },
     'src/lib/fetch-bridge.ts': { count: 2, why: "the fetch bridge's request policy (strict mode's network option; sealed mode refuses every call): what the bridge sends, behind its allowlist of typed origins, never what the view keeps" },
-    'src/lib/in-sandbox-script.ts': { count: 9, why: "the worker's request gate: a guest request is admitted only by the guest policy's typed connect-src sources (sealed mode has none), and the scheme only shapes the refusal it reports and a WebSocket's URL; never what the view keeps" },
     'src/lib/origin.ts': { count: 1, why: "it reads the embedder's origins as written (`origins`, `fetchBridge.allow`), not a guest URL" },
+    'src/lib/request-gate.ts': { count: 9, why: "the request gate of the network modes' worker: a guest request is admitted only by the guest policy's typed connect-src sources, and the scheme only shapes the refusal it reports and a WebSocket's URL; never what the view keeps (sealed mode has no gate: its worker has no request maker)" },
     'src/lib/in-sandbox-view.ts': { count: 3, why: "inSandboxView reads what the platform reports of loads the view already kept (a failed load's source, a resource timing entry), never what it keeps; and an input's type `file`" },
 };
 

@@ -1994,11 +1994,12 @@ export class WebSandbox extends ElementBase {
         if (network?.fetchBridge) features.fetchBridge = { ...network.fetchBridge };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const scriptUnsafe = this._config.scriptUnsafe === true;
+        const sealed = network === null; // no network of the build's own: sealed mode, whose worker has no request maker
         const options = { maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
         const prelude = `(function (g) {${STRICT_DIRECTIVE}`
             + `(${assertEntryScoped.toString()})(g);`
-            + workerGlobalsStatement('g', scriptUnsafe, network === null)
-            + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()}${network ? `, undefined, ${network.requestGate}` : ''});`
+            + workerGlobalsStatement('g', scriptUnsafe, sealed)
+            + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()}${network ? `, undefined, ${network.requestGateSource}` : ''});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}, ${this._config.guestWrites === true ? 'comms.writeFiles' : 'null'}, ${toInlineScriptLiteral(VIEW_FILE_TYPES)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)}, ${isStyleProperty.toString()});`
             + (scriptUnsafe ? '' : refuseCodeFromStringsStatement('g'))

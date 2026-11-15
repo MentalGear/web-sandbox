@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { COOKIE_CARRIER_IDS } from '@src/lib/cookie-facts';
-import { SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { NETWORK_WORKER_GLOBALS, SEALED_WORKER_GLOBALS, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES } from '@src/lib/in-sandbox-view';
 import { LINK_REL_KINDS } from '@src/lib/load-kinds';
 import { cssReferences } from '@src/lib/css-references';
@@ -12,22 +11,19 @@ import { CSS_PLACES, SEALED_MAKERS, STYLE_MAKERS, makerCode, makerUrl, type CssK
 /**
  * The enumeration of sealed mode's request makers (test/e2e/sealed-makers.ts, which test/e2e/sealed-no-network.spec.ts
  * aims at a listener on every engine: research 24, step 3) against the library's own lists, so that a maker the library learns
- * about is in the enumeration, or this test fails: the names the request gate installs, the request makers the worker's
- * allowlist keeps out, the rows of COOKIE_CARRIERS, the renderer's URL attributes and `<link>` relations, and every kind of
+ * about is in the enumeration, or this test fails: the request makers the worker's allowlist keeps out (sealed mode's has
+ * none of fetch, XMLHttpRequest and WebSocket), the rows of COOKIE_CARRIERS, the renderer's URL attributes and `<link>` relations, and every kind of
  * URL a CSS reference makes in every place guest CSS reaches the view.
  */
 
 const covered = <K extends string>(key: K) => SEALED_MAKERS.flatMap(maker => maker.covers.filter((cover): cover is Extract<MakerCovers, Record<K, unknown>> => key in cover).map(cover => ({ maker, cover })));
-
-/** The globals the request gate installs (replaceGlobal), read from the bootstrap's text. */
-const gateNames = () => [...new Set([...inSandboxScript.toString().matchAll(/replaceGlobal\(\s*["'](\w+)["']/g)].map(match => match[1]!))].sort();
 
 describe('sealed mode\'s request makers: one enumeration, tied to the library\'s lists', () => {
     it('the ids are unique, and each maker says how sealed mode stops it and what it is checked against', () => {
         const ids = SEALED_MAKERS.map(maker => maker.id);
         expect(new Set(ids).size).toBe(ids.length);
         for (const maker of SEALED_MAKERS) {
-            if (maker.outcome === 'gate' || maker.outcome === 'dropped') expect(maker.directive, maker.id).toBeTruthy();
+            if (maker.outcome === 'dropped') expect(maker.directive, maker.id).toBeTruthy();
             if (maker.realm === 'worker') expect(maker.sees, maker.id).toBeTruthy();
             if (maker.click) expect(maker.realm, maker.id).toBe('view');
             // a positive control on every engine, or the reason it has none
@@ -39,28 +35,19 @@ describe('sealed mode\'s request makers: one enumeration, tied to the library\'s
         }
     });
 
-    it('every global the request gate installs is a maker the gate refuses; each is on the strict worker\'s allowlist', () => {
-        const names = gateNames();
-        expect(names).toEqual(['WebSocket', 'XMLHttpRequest', 'fetch']); // the scan finds them (positive control)
-        const makers = covered('gate');
-        for (const name of names) {
-            expect(makers.some(({ cover }) => cover.gate === name), name).toBe(true);
-            expect(STRICT_WORKER_GLOBALS, name).toContain(name);
-        }
-        for (const { maker, cover } of makers) {
-            expect(names, maker.id).toContain(cover.gate);
-            expect(maker.outcome, maker.id).toBe('gate');
-        }
-    });
-
-    it('every request maker the allowlist keeps out of the worker is a maker, absent there: importScripts (strict\'s), and the platform\'s other makers', () => {
+    it('every request maker the allowlist keeps out of the worker is a maker, absent there: the network names (sealed mode has no network), importScripts (strict\'s), and the platform\'s other makers', () => {
         const globals = covered('global');
-        // strict's list leaves out importScripts, a maker, and the names only a secure context has, which make no request
+        // sealed's list leaves out the network names and importScripts, makers, and the names only a secure context has, which make no request
+        const offSealed = WORKER_GLOBALS.filter(name => !SEALED_WORKER_GLOBALS.includes(name));
+        expect(offSealed.filter(name => !(SECURE_CONTEXT_ONLY.globals as readonly string[]).includes(name)).sort()).toEqual([...NETWORK_WORKER_GLOBALS, 'importScripts'].sort());
+        for (const name of NETWORK_WORKER_GLOBALS) expect(globals.some(({ cover }) => cover.global === name), name).toBe(true);
+        // strict mode's list keeps the network names (its request gate governs them), and leaves out importScripts alone
+        for (const name of NETWORK_WORKER_GLOBALS) expect(STRICT_WORKER_GLOBALS, name).toContain(name);
         const offStrict = WORKER_GLOBALS.filter(name => !STRICT_WORKER_GLOBALS.includes(name));
         expect(offStrict.filter(name => !(SECURE_CONTEXT_ONLY.globals as readonly string[]).includes(name))).toEqual(['importScripts']);
-        for (const name of offStrict.filter(name => name === 'importScripts')) expect(globals.some(({ cover }) => cover.global === name), name).toBe(true);
+        expect(globals.some(({ cover }) => cover.global === 'importScripts')).toBe(true);
         for (const { maker, cover } of globals) {
-            expect(STRICT_WORKER_GLOBALS, `${maker.id}: on the allowlist, so not absent: its outcome is no longer 'absent'`).not.toContain(cover.global);
+            expect(SEALED_WORKER_GLOBALS, `${maker.id}: on the allowlist, so not absent: its outcome is no longer 'absent'`).not.toContain(cover.global);
             expect(maker.outcome, maker.id).toBe('absent');
         }
         for (const { maker, cover } of covered('navigator')) {

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { VIOLATION_EVENT_FIELDS } from '@src/lib/violation';
 import { buildGuestDocument, buildWrapperDocument, escapeAttribute, toInlineScriptLiteral } from '@src/lib/frame-documents';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
+import { requestGate } from '@src/lib/request-gate';
 import { environmentGate } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from '@src/lib/in-sandbox-files';
 import { rewriteMarkupReferences } from '@src/lib/markup-references';
@@ -74,7 +75,7 @@ const UNSAFE_POLICY = DEFAULT_POLICY.replace("script-src 'unsafe-inline'", "scri
 describe('with no files: the policy is unchanged, and the document differs only by the empty files bootstrap', () => {
     // How the bootstrap is composed when no files are registered; `post` is the postMessage that worker mode's bootstrap
     // is handed (R4:M-1): null in cooperative mode
-    const comms = (scriptUnsafe: boolean, mode: string, post = 'null') => `(${inSandboxScript.toString()})(${scriptUnsafe}, '${mode}', console, ${createBroker.toString()}, ${FEATURES(mode)}, ${createSizeOf.toString()}, ${post});`;
+    const comms = (scriptUnsafe: boolean, mode: string, post = 'null') => `(${inSandboxScript.toString()})(${scriptUnsafe}, '${mode}', console, ${createBroker.toString()}, ${FEATURES(mode)}, ${createSizeOf.toString()}, ${post}, ${requestGate.toString()});`;
     const EMPTY_FILES = `(${inSandboxFiles.toString()})([]);`;
 
     it('cooperative mode, default config', async () => {
@@ -269,7 +270,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
     const snapshotLiteral = (el: any) => toInlineScriptLiteral(el._files.snapshot());
     // FILES has one JavaScript file, so the bootstrap also registers the import map (module graph)
     const filesStep = (el: any) => `(${inSandboxImportMap.toString()})((${inSandboxFiles.toString()})(${snapshotLiteral(el)}), ["app.js"], null)`;
-    const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()}, ${FEATURES(mode, ['blob:'])}, ${createSizeOf.toString()}, null);`;
+    const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()}, ${FEATURES(mode, ['blob:'])}, ${createSizeOf.toString()}, null, ${requestGate.toString()});`;
     const bootstrapScriptOf = (el: HTMLElement) => ungated(parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!);
 
     it.each([
@@ -372,7 +373,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
 
 describe('module graph (PR3): one import map, registered by the bootstrap, only with JavaScript files', () => {
     const SCRIPTS = { capabilities: ['allow-scripts'] };
-    const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()}, ${FEATURES(mode, ['blob:'])}, ${createSizeOf.toString()}, null);`;
+    const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()}, ${FEATURES(mode, ['blob:'])}, ${createSizeOf.toString()}, null, ${requestGate.toString()});`;
     const filesCall = (el: any) => `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(el._files.snapshot())})`;
     const mapCall = (el: any, paths: string[], guest: string | null) => `(${inSandboxImportMap.toString()})(${filesCall(el)}, ${toInlineScriptLiteral(paths)}, ${toInlineScriptLiteral(guest)})`;
     const bootstrapScriptOf = (el: HTMLElement) => ungated(parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!);

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
+import { requestGate } from '@src/lib/request-gate';
 import { createBroker } from '@src/lib/rpc';
 
 /**
@@ -113,9 +114,8 @@ describe('CB2: the EXECUTE path looks up no global', () => {
 
 describe('PD2: the guest realm\'s fetch refuses keepalive', () => {
     it('keepalive in the init, through a getter that answers twice, or in a Request: refused before the platform\'s fetch; a plain request reaches it (control)', async () => {
-        // the gate of an earlier test's bootstrap is still the realm's fetch (not configurable, writable): the platform's again
         (globalThis as any).fetch = recordingFetch;
-        inSandboxScript(false, 'cooperative', console_(), createBroker, { connect: ['https://a.example'] });
+        inSandboxScript(false, 'cooperative', console_(), createBroker, { connect: ['https://a.example'] }, undefined, undefined, requestGate);
         reached.length = 0;
         // An init whose keepalive getter answers differently on each read: the guard reads it exactly once, through the
         // Request it builds, and sends that Request, so the answer it checked is the request that is made.
@@ -170,7 +170,7 @@ describe('PD4, PD6: history traversal and window.name in the guest realm', () =>
         expect(window.name).toBe('');
     });
 
-    it('a worker gets neither (it has no history and no name of a frame): only the fetch guard', () => {
+    it('a worker gets neither (it has no history and no name of a frame)', () => {
         expect(() => worker()).not.toThrow();
     });
 });

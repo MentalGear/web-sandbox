@@ -116,6 +116,7 @@ const OWN_RECORDS = 'it reads a string and the tokens and references it makes it
 /** Every function the library stringifies into a realm. */
 export const STRINGIFIED = {
     inSandboxScript: { module: 'src/lib/in-sandbox-script.ts', realms: ['cooperative', 'worker', 'strict-worker'], capture: true, readOnce: true, typeofRead: true },
+    requestGate: { module: 'src/lib/request-gate.ts', realms: ['cooperative', 'worker', 'strict-worker'], capture: true, readOnce: true, typeofRead: true },
     createBroker: { module: 'src/lib/rpc.ts', realms: ['cooperative', 'worker', 'strict-worker'], capture: true, readOnce: true, typeofRead: true },
     createSizeOf: { module: 'src/lib/structured-size.ts', realms: ['cooperative', 'worker', 'strict-worker'], capture: true, readOnce: true, typeofRead: true },
     inSandboxFiles: { module: 'src/lib/in-sandbox-files.ts', realms: ['cooperative', 'worker', 'strict-worker', 'view'], capture: true, readOnce: true, typeofRead: true },

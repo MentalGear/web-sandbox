@@ -176,7 +176,7 @@ export class NetworkMethods {
             connect: this._gateConnect(files, reach.origins),
             origins: reach.origins,
             fetchBridge: this._fetchPolicy ? { timeoutMs: this._fetchPolicy.timeoutMs } : null,
-            requestGate: requestGate.toString(),
+            requestGateSource: requestGate.toString(),
         };
         const prepared = this._prepareViewFrame(built, files, this._guestPolicy(files, reach.origins), network);
         return { ...prepared, network: this._prepareNetwork(reach.fetchPolicy) };

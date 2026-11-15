@@ -134,8 +134,12 @@ describe('the stringified sources: what no import shows', () => {
         const users = [...graphOf('src/host.ts').units].filter(([, text]) => text.includes('inSandboxScript.toString()')).map(([name]) => name);
         expect(users).toEqual(['this._getStrictWorkerSource']);
         expect(member('_getStrictWorkerSource')).toContain("(${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console,");
-        // with no network (the default build's only call: _prepareSealedFrame hands null), the features say `sealed`
-        expect(member('_getStrictWorkerSource')).toContain("listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [], sealed: true,");
+        // with no network (the default build's only call: _prepareSealedFrame hands null), the features say `sealed`, have no gate list,
+        // and the bootstrap is given no request gate (a network module's function: only a build with a network hands it one)
+        expect(member('_getStrictWorkerSource')).toContain("listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, sealed: true,");
+        expect(member('_getStrictWorkerSource')).toContain("${network ? `, undefined, ${network.requestGateSource}` : ''});`");
+        expect(code('src/host.ts')).not.toContain('request-gate');
+        expect(stringifiers('requestGate').map(file => classOf(file))).toEqual(['network']);
         expect(member('_prepareSealedFrame')).toMatch(/return this\._prepareViewFrame\(built, files, this\._sealedPolicy\(files\), null\);\s*$/);
     });
 
@@ -170,7 +174,7 @@ describe('the bundle: `bun scripts/build-lib.ts` writes the default build from s
         expect(names.filter(name => declares(defaultBundle, name)), "a network module's function is in the default bundle").toEqual([]);
         // not every one is in the network bundle either (a bundler leaves out what nothing calls), but most are
         expect(names.filter(name => declares(networkBundle, name)).length).toBeGreaterThan(40);
-        for (const name of ['inBridgeFrame', 'workerBootstrap', 'createFetchBridge', 'parseOrigins', 'hostReach', 'limitHostReach', 'rewriteGuestMarkup', 'toFetchPolicy']) {
+        for (const name of ['inBridgeFrame', 'workerBootstrap', 'createFetchBridge', 'parseOrigins', 'hostReach', 'limitHostReach', 'rewriteGuestMarkup', 'toFetchPolicy', 'requestGate']) {
             expect(declares(networkBundle, name), name).toBe(true);
         }
         // nor the methods the network build installs on the element, nor the functions stringified for its realms alone
@@ -181,7 +185,7 @@ describe('the bundle: `bun scripts/build-lib.ts` writes the default build from s
             expect(declaresMethod(networkBundle, name), name).toBe(true);
             if (!(NETWORK_ELEMENT_METHODS as readonly string[]).includes(name)) expect(new RegExp(`\\b${name}\\(`).test(defaultBundle), name).toBe(false);
         }
-        for (const name of ['inSandboxImportMap', 'inSandboxMarkup']) {
+        for (const name of ['inSandboxImportMap', 'inSandboxMarkup', 'requestGate']) {
             expect(declares(defaultBundle, name), name).toBe(false);
             expect(declares(networkBundle, name), name).toBe(true);
         }

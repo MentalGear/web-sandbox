@@ -407,7 +407,7 @@ export function inSandboxScript(
         requestGateFn(g, mode, features?.connect ?? [], (blockedURI: string, sourceFile: string) => {
             if (violationsSent >= VIOLATION_LIMIT) return;
             violationsSent++;
-            send({ type: 'VIOLATION', directive: 'connect-src', blockedURI: cutAt(blockedURI, VIOLATION_MAX_STRING), sourceFile });
+            send({ type: 'VIOLATION', directive: 'connect-src', blockedURI: cutAt(blockedURI, VIOLATION_MAX_STRING), sourceFile: cutAt(sourceFile, VIOLATION_MAX_STRING) });
         });
     }
 
