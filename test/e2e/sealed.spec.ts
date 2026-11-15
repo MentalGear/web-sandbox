@@ -1,7 +1,6 @@
 import { test, expect } from './fixture';
 import type { Page } from '@playwright/test';
 import type { SandboxConfig } from '@src/host';
-import { GATE_SOURCE_FILE } from '@src/lib/violation';
 import { CROSSING_TEXTS } from '@src/lib/minted-errors';
 import { useRecorder } from './recorder';
 import { inFrames, inView, waitInView } from './strict-view';
@@ -93,9 +92,9 @@ test.describe('sealed mode', () => {
     // these tests give that build sealed configs on purpose: its own sealed mode, and its refusals of a network option
     test.use({ build: 'network', otherBuildConfigs: true });
 
-    test('no network: a guest fetch is refused and reported by the request gate, sandboxFetch() is FETCH_NOT_ALLOWED from the guest itself (nothing reaches the host), a raw bridge.call of sandbox:fetch reaches the host and is refused, and the listener sees nothing; strict mode with the listener in origins reaches it, and its sandboxFetch() asks the host (positive control)', async ({ sandbox, page }) => {
+    test('no network: a sealed guest has no fetch (feature-detected, nothing to refuse or report), sandboxFetch() is FETCH_NOT_ALLOWED from the guest itself (nothing reaches the host), a raw bridge.call of sandbox:fetch reaches the host and is refused, and the listener sees nothing; strict mode with the listener in origins reaches it, and its sandboxFetch() asks the host (positive control)', async ({ sandbox, page }) => {
         const probe = (path: string) => `
-            const fetched = await fetch('${recorder.allowed}${path}').then(() => 'sent', (e) => e.name);
+            const fetched = typeof fetch === 'undefined' ? 'absent' : await fetch('${recorder.allowed}${path}').then(() => 'sent', (e) => e.name);
             const bridged = await sandboxFetch('${recorder.allowed}${path}-bridge').then(() => 'sent', (e) => e.code);
             return { fetched, bridged };
         `;
@@ -111,8 +110,8 @@ test.describe('sealed mode', () => {
         });
         const hostFetches = () => page.evaluate(() => (window as any).hostFetches as number);
         // the guest's code is its entry: sealed mode has no execute() (it refuses scriptUnsafe)
-        expect(await sandbox.inEntry({ mode: 'sealed' }, probe('/sealed'))).toEqual({ fetched: 'TypeError', bridged: 'FETCH_NOT_ALLOWED' });
-        await expect.poll(async () => (await sandbox.violations()).filter(v => v.sourceFile === GATE_SOURCE_FILE).map(v => v.blockedURI)).toEqual([`${recorder.allowed}/sealed`]);
+        expect(await sandbox.inEntry({ mode: 'sealed' }, probe('/sealed'))).toEqual({ fetched: 'absent', bridged: 'FETCH_NOT_ALLOWED' });
+        expect(await sandbox.violations(), 'no gate, so no report: nothing was attempted that a policy refused').toEqual([]);
         await sandbox.page.waitForTimeout(500);
         expect(recorder.paths('allowed')).toEqual([]);
         expect(await hostFetches()).toBe(0);

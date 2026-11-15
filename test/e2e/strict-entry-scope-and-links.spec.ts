@@ -95,9 +95,9 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
                     again: await fetch(sandboxFiles.url('data.png')).then((response) => response.arrayBuffer()).then(b => b.byteLength, (e) => 'refused: ' + e.name),
                 };
             `);
-            // sealed mode's connect-src has no blob: (no network, not even its own files'): the request gate refuses a fetch of
-            // a file's URL, and the worker reads its files with sandboxFiles.read() and text(), which make no request
-            const fetched = mode === 'sealed' ? { viaUrl: 'refused: TypeError', again: 'refused: TypeError' } : { viaUrl: 'héllo', again: 5 };
+            // sealed mode has no network, not even for its own files': its worker has no fetch (a ReferenceError), and reads its
+            // files with sandboxFiles.read() and text(), which make no request
+            const fetched = mode === 'sealed' ? { viaUrl: 'refused: ReferenceError', again: 'refused: ReferenceError' } : { viaUrl: 'héllo', again: 5 };
             expect(r).toEqual({ entryRan: true, text: 'héllo', read: [0, 1, 2, 250, 255], blob: 'abc', ...fetched });
             await sandbox.run('throw new Error("after-revoke-sync")');
             expect(await sandbox.waitForLog('after-revoke-sync')).toContain('after-revoke-sync');
