@@ -1,0 +1,28 @@
+q4b.run {"engine":"firefox","config":"default (Playwright)","version":"159.0","date":"2026-11-15T12:53:04.701Z","load1":0.52}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"idle","median":23,"range":"13-57","gaps":[30,57,13,23,17],"load1":[0.72,0.72,0.72,0.66,0.66]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"today's view","median":1201,"range":"1200-1202","gaps":[1201,1201,1202,1201,1200],"load1":[0.61,0.61,0.64,0.64,0.67]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"today's worker","median":19,"range":"12-49","gaps":[26,49,19,12,12],"load1":[0.67,0.62,0.62,0.57,0.57]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"same-origin F","median":1208,"range":"1200-1210","gaps":[1208,1209,1208,1200,1210],"load1":[0.57,0.52,0.52,0.56,0.56]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"same-origin C","median":1202,"range":"1199-1203","gaps":[1202,1201,1202,1203,1199],"load1":[0.6,0.6,0.63,0.63,0.58]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"same-origin W","median":12,"range":"12-20","gaps":[20,12,12,12,12],"load1":[0.58,0.53,0.53,0.53,0.49]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"cross-site F","median":1201,"range":"1199-1202","gaps":[1200,1201,1202,1199,1201],"load1":[0.49,0.53,0.53,0.57,0.57]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"cross-site C","median":1200,"range":"1200-1204","gaps":[1200,1201,1200,1204,1200],"load1":[0.6,0.6,0.55,0.55,0.51]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"cross-site W","median":13,"range":"12-19","gaps":[19,13,12,17,13],"load1":[0.51,0.51,0.47,0.47,0.51]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"other-domain F","median":1201,"range":"1199-1211","gaps":[1200,1208,1201,1199,1211],"load1":[0.51,0.55,0.55,0.59,0.59]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"other-domain C","median":1202,"range":"1201-1211","gaps":[1209,1211,1201,1202,1201],"load1":[0.54,0.54,0.5,0.5,0.5]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"other-domain W","median":15,"range":"12-26","gaps":[15,12,23,26,12],"load1":[0.54,0.54,0.65,0.65,0.68]}
+q4b {"engine":"firefox","config":"default (Playwright)","case":"control: cross-site frame, no sandbox","median":1201,"range":"1200-1202","gaps":[1201,1200,1202,1202,1201],"load1":[0.68,0.71,0.71,0.65,0.65]}
+q4b.run {"engine":"firefox","config":"fission.autostart = true","version":"159.0","date":"2026-11-15T12:55:36.780Z","load1":0.6}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"idle","median":11,"range":"11-12","gaps":[11,12,11,11,11],"load1":[0.6,0.6,0.55,0.55,0.51]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"today's view","median":1201,"range":"1200-1201","gaps":[1201,1201,1201,1200,1200],"load1":[0.51,0.55,0.55,0.58,0.58]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"today's worker","median":12,"range":"11-17","gaps":[11,11,17,12,15],"load1":[0.54,0.54,0.54,0.49,0.49]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"same-origin F","median":1201,"range":"1199-1202","gaps":[1202,1199,1201,1201,1201],"load1":[0.53,0.53,0.57,0.57,0.61]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"same-origin C","median":1200,"range":"1199-1201","gaps":[1200,1200,1199,1200,1201],"load1":[0.61,0.56,0.56,0.51,0.51]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"same-origin W","median":12,"range":"11-21","gaps":[11,11,12,21,12],"load1":[0.51,0.47,0.47,0.51,0.51]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"cross-site F","median":1201,"range":"1199-1203","gaps":[1202,1200,1201,1199,1203],"load1":[0.55,0.55,0.59,0.59,0.54]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"cross-site C","median":1200,"range":"1200-1201","gaps":[1201,1201,1200,1200,1200],"load1":[0.54,0.5,0.5,0.5,0.46]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"cross-site W","median":11,"range":"11-15","gaps":[12,15,11,11,11],"load1":[0.46,0.5,0.5,0.54,0.54]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"other-domain F","median":1202,"range":"1199-1202","gaps":[1202,1201,1199,1202,1202],"load1":[0.66,0.66,0.61,0.61,0.56]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"other-domain C","median":1201,"range":"1200-1202","gaps":[1201,1200,1200,1202,1201],"load1":[0.56,0.56,0.51,0.51,0.55]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"other-domain W","median":12,"range":"11-13","gaps":[12,11,13,11,12],"load1":[0.55,0.59,0.59,0.62,0.62]}
+q4b {"engine":"firefox","config":"fission.autostart = true","case":"control: cross-site frame, no sandbox","median":1201,"range":"1200-1206","gaps":[1201,1206,1202,1201,1200],"load1":[0.57,0.57,0.52,0.52,0.52]}

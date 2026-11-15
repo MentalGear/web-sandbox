@@ -1,0 +1,10 @@
+q1w.run {"engine":"webkit","version":"27.2","date":"2026-11-15T14:16:51.080Z","load1":0.34}
+q1w {"engine":"webkit","step":"plain","global":"{\"started\":true}","connected":true,"pages":2}
+q1w {"engine":"webkit","step":"blob worker","global":"{\"started\":true,\"worker\":\"null\"}","connected":true,"pages":2}
+q1w {"engine":"webkit","step":"srcdoc child","global":"{\"started\":true,\"child\":\"added\"}","connected":true,"pages":2}
+q1w {"engine":"webkit","step":"F, no init","global":"{\"started\":true,\"F\":{\"kind\":\"F\",\"origin\":\"null\",\"secure\":true,\"coi\":false,\"cookieRead\":\"throws SecurityError\",\"cookieWrite\":\"throws SecurityError\",\"localStorage\":\"throws SecurityError\",\"sessionStorage","connected":true,"pages":2}
+q1w {"engine":"webkit","step":"F, init","global":"{\"started\":true,\"F\":{\"kind\":\"F\",\"origin\":\"null\",\"secure\":true,\"coi\":false,\"cookieRead\":\"throws SecurityError\",\"cookieWrite\":\"throws SecurityError\",\"localStorage\":\"throws SecurityError\",\"sessionStorage","connected":true,"pages":2}
+q1w {"engine":"webkit","step":"F, init, grant","error":"Error: evaluate: Target page, context or browser has been closed","connected":false,"pages":"n/a"}
+q1w {"engine":"webkit","step":"F, init, seed tab","global":"{\"started\":true,\"F\":{\"kind\":\"F\",\"origin\":\"null\",\"secure\":true,\"coi\":false,\"cookieRead\":\"throws SecurityError\",\"cookieWrite\":\"throws SecurityError\",\"localStorage\":\"throws SecurityError\",\"sessionStorage","connected":true,"pages":3}
+q1w {"engine":"webkit","step":"F, init, seed tab with Service Worker","global":"{\"started\":true,\"F\":{\"kind\":\"F\",\"origin\":\"null\",\"secure\":true,\"coi\":false,\"cookieRead\":\"throws SecurityError\",\"cookieWrite\":\"throws SecurityError\",\"localStorage\":\"throws SecurityError\",\"sessionStorage","connected":true,"pages":3}
+q1w {"engine":"webkit","step":"F, init, grant, seed tab with Service Worker","error":"Error: evaluate: Target page, context or browser has been closed","connected":false,"pages":"n/a"}

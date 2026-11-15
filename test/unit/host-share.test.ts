@@ -29,6 +29,9 @@ const OUTSIDE: Record<string, string> = {
     // research 27 is a standalone script as research 20's: it reports the host timer's longest gap while a served frame, its
     // child or its worker loops, and asserts nothing
     'docs/research/27_served_document_headerless/q6-thread.mjs': 'a standalone probe script that reports a gap per run and bounds nothing',
+    // research 28 is a standalone script as research 27's: it reports the host timer's longest gap while a served file, its
+    // view or its worker loops, on several sites and engines, and asserts nothing
+    'docs/research/28_served_topology/q4-thread.mjs': 'a standalone probe script that reports a gap per run and bounds nothing',
 };
 
 function sources(dir: string): string[] {

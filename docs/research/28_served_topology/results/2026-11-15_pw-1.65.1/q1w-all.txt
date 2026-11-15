@@ -1,0 +1,18 @@
+q1w.run {"engine":"webkit","version":"27.2","date":"2026-11-15T12:46:40.525Z","load1":0.06}
+q1w {"engine":"webkit","step":"plain","global":"{\"started\":true}","connected":true,"pages":2}
+q1w {"engine":"webkit","step":"blob worker","global":"{\"started\":true,\"worker\":\"null\"}","connected":true,"pages":2}
+q1w {"engine":"webkit","step":"srcdoc child","global":"{\"started\":true,\"child\":\"added\"}","connected":true,"pages":2}
+q1w {"engine":"webkit","step":"F, no init","global":"{\"started\":true,\"F\":{\"kind\":\"F\",\"origin\":\"null\",\"secure\":true,\"coi\":false,\"cookieRead\":\"throws SecurityError\",\"cookieWrite\":\"throws SecurityError\",\"localStorage\":\"throws SecurityError\",\"sessionStorage","connected":true,"pages":2}
+q1w {"engine":"webkit","step":"F, init","global":"{\"started\":true,\"F\":{\"kind\":\"F\",\"origin\":\"null\",\"secure\":true,\"coi\":false,\"cookieRead\":\"throws SecurityError\",\"cookieWrite\":\"throws SecurityError\",\"localStorage\":\"throws SecurityError\",\"sessionStorage","connected":true,"pages":2}
+q1w.run {"engine":"chromium","version":"159.0.8154.6","date":"2026-11-15T12:46:58.802Z","load1":0.13}
+q1w {"engine":"chromium","step":"plain","global":"{\"started\":true}","connected":true,"pages":2}
+q1w {"engine":"chromium","step":"blob worker","global":"{\"started\":true,\"worker\":\"null\"}","connected":true,"pages":2}
+q1w {"engine":"chromium","step":"srcdoc child","global":"{\"started\":true,\"child\":\"added\"}","connected":true,"pages":2}
+q1w {"engine":"chromium","step":"F, no init","global":"{\"started\":true,\"F\":{\"kind\":\"F\",\"origin\":\"null\",\"secure\":true,\"coi\":false,\"cookieRead\":\"throws SecurityError\",\"cookieWrite\":\"throws SecurityError\",\"localStorage\":\"throws SecurityError\",\"sessionStorage","connected":true,"pages":2}
+q1w {"engine":"chromium","step":"F, init","global":"{\"started\":true,\"F\":{\"kind\":\"F\",\"origin\":\"null\",\"secure\":true,\"coi\":false,\"cookieRead\":\"throws SecurityError\",\"cookieWrite\":\"throws SecurityError\",\"localStorage\":\"throws SecurityError\",\"sessionStorage","connected":true,"pages":2}
+q1w.run {"engine":"firefox","version":"159.0","date":"2026-11-15T12:47:16.638Z","load1":0.16}
+q1w {"engine":"firefox","step":"plain","global":"{\"started\":true}","connected":true,"pages":2}
+q1w {"engine":"firefox","step":"blob worker","global":"{\"started\":true,\"worker\":\"null\"}","connected":true,"pages":2}
+q1w {"engine":"firefox","step":"srcdoc child","global":"{\"started\":true,\"child\":\"added\"}","connected":true,"pages":2}
+q1w {"engine":"firefox","step":"F, no init","global":"{\"started\":true,\"F\":{\"kind\":\"F\",\"origin\":\"null\",\"secure\":true,\"coi\":false,\"cookieRead\":\"throws SecurityError\",\"cookieWrite\":\"throws SecurityError\",\"localStorage\":\"throws SecurityError\",\"sessionStorage","connected":true,"pages":2}
+q1w {"engine":"firefox","step":"F, init","global":"{\"started\":true,\"F\":{\"kind\":\"F\",\"origin\":\"null\",\"secure\":true,\"coi\":false,\"cookieRead\":\"throws SecurityError\",\"cookieWrite\":\"throws SecurityError\",\"localStorage\":\"throws SecurityError\",\"sessionStorage","connected":true,"pages":2}
