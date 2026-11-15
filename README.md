@@ -128,7 +128,7 @@ mode (the default) or strict mode.
 
 | Mode | Guest code runs in | For |
 | :--- | :--- | :--- |
-| `sealed` (default) | a worker; the view runs only the library's own script, admitted by its hash, and shows what the worker renders. No network: the view's policy admits only `blob:` for registered files and `connect-src 'none'`, and a config that names `origins` or `fetchBridge` is refused | content you do not trust ([Strict mode](#strict-mode) describes the view and worker it shares; [API](docs/API.md#modes)) |
+| `sealed` (default) | a worker; the view runs only the library's own script, admitted by its hash, and shows what the worker renders. No network: the view's policy admits only `blob:` for registered files and `connect-src 'none'`, the worker has no `fetch`, `XMLHttpRequest` or `WebSocket` (`typeof fetch === 'undefined'`), and a config that names `origins` or `fetchBridge` is refused | content you do not trust ([Strict mode](#strict-mode) describes the view and worker it shares; [API](docs/API.md#modes)) |
 | `strict` (network build) | as sealed, with the network options: `origins` and `fetchBridge` (named with `mode: 'strict'`) | content you do not trust that needs the network ([Strict mode](#strict-mode)) |
 | `cooperative` (network build) | the guest document: its scripts, handlers and `execute()` | cooperative content: code that does not attack the page, such as your own, within the [cooperative-mode limits](#cooperative-mode-limits) |
 | `worker` (network build) | a worker inside a hidden frame; no markup, code through `execute()` | headless code; frozen, to be folded into strict mode |
@@ -254,7 +254,7 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     the guest and guest code can suppress its own reports, so an event is evidence that the guest tried
     something; no event proves nothing. A frame the guest creates reports to itself, not here. A `fetch()`,
     `XMLHttpRequest` or `WebSocket` to an origin `origins.connect` does not list (in strict mode, any `WebSocket`) is
-    refused by the library's request gate and reported by it, the same on every engine and in every mode
+    refused by the library's request gate and reported by it, the same on every engine and in every mode that has a network (sealed mode's worker has none of the three names)
     (`sourceFile: 'web-sandbox:request-gate'`);
     what the browser reports itself in a worker depends on the engine (WebKit raises none there; Firefox none for
     worker mode's `importScripts`). At most 100 per environment (`VIOLATION_EVENT_LIMIT`; for the strict view, per directive);
@@ -676,7 +676,7 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     and an `http(s)` one reported as a `violation`; guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
     `Referer`); the worker keeps only allowlisted globals, so it can request only through `fetch`, `XMLHttpRequest` and
-    `WebSocket`, the library's request gate (each request checked against `origins.connect` and reported when refused,
+    `WebSocket` (none of them in sealed mode, which has no network), the library's request gate in the other modes (each request checked against `origins.connect` and reported when refused,
     the same on every engine; `fetch` and `XMLHttpRequest` without credentials), and reaches its parent only through
     the library's port (it has no `postMessage` of its own); the view forwards only trusted events, never a URL, never
     where focus went, and no pointer coordinate outside its own box (a press that began in it is clamped to its edge),

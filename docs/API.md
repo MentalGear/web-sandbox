@@ -102,7 +102,7 @@ The package has two builds, chosen by one build flag that is off by default
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
 | default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 47 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 64 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 65 modules of `src/` |
 <!-- generated:end -->
 
 - **The default build is sealed mode alone.** It is what `bun run build:lib` writes and what the package is as
@@ -226,9 +226,9 @@ sandbox.setConfig({ mode: 'strict', origins: { connect: ['https://api.example.co
 - <a id="strict-no-websocket"></a>**Strict mode opens no `WebSocket`, on any engine.** A handshake carries the cookies
   the browser attaches by site, which nothing can strip, so in strict mode a `wss://` entry of `connect` is dropped with
   one warning per entry, and the request gate refuses every `new WebSocket()`, a listed origin's too, with a
-  `SecurityError` (`refused by the sandbox: strict mode opens no WebSocket`; in sealed mode, which has no network at
-  all, `refused by the sandbox: sealed mode opens no WebSocket (it has no network)`) and its own
-  [`violation`](#violation--sandboxviolation) report, as below. What takes its place:
+  `SecurityError` (`refused by the sandbox: strict mode opens no WebSocket`) and its own
+  [`violation`](#violation--sandboxviolation) report, as below. (Sealed mode, which has no network at all, does not
+  have `WebSocket` as a name: [`typeof WebSocket === 'undefined'`](#the-request-gate).) What takes its place:
   - **A streamed `fetch()` response.** The worker reads `response.body` as it arrives (`getReader()`), chunk by chunk, on
     every engine (`test/e2e/request-gate.spec.ts`), so a server that pushes events over one long response (server-sent
     events' format, or lines of JSON) reaches the guest through `fetch()`, without credentials. Send to the server with
@@ -237,10 +237,16 @@ sandbox.setConfig({ mode: 'strict', origins: { connect: ['https://api.example.co
     what the guest may see with [`expose()`](#exposename-fn) and [`call()`](#callmethod-args): your page decides what
     crosses, and the guest never holds the socket.
 - <a id="the-request-gate"></a>**The request gate: `fetch()`, `XMLHttpRequest` and `WebSocket` behave and report the same on
-  every engine.** In every mode the guest's three request makers are the library's, put in its realm before any guest
-  code runs. Each request's URL is resolved as the browser resolves it and admitted only when its scheme, host and port
+  every engine.** In every mode that has a network (strict, cooperative and worker mode: the build with the network
+  modes) the guest's three request makers are the library's, put in its realm before any guest code runs. **Sealed mode
+  has no gate because it has no network: its worker has no `fetch`, `XMLHttpRequest` or `WebSocket` at all** (nor
+  `XMLHttpRequestEventTarget` or `XMLHttpRequestUpload`). They are not functions that refuse; the names are gone before
+  the bootstrap runs, and the gate's code is not in the default build's bundle. `typeof fetch === 'undefined'` there, and
+  calling one is a `ReferenceError`: an app feature-detects (`typeof fetch === 'function'`) rather than catching a refusal,
+  and reaches data through [`call()`](#callmethod-args), a registered file, or a method the host page exposes.
+  Each request's URL is resolved as the browser resolves it and admitted only when its scheme, host and port
   are exactly those of a `connect-src` source of the guest policy (the `connect` origins as kept, and `blob:` when files
-  are registered; in sealed mode the list is empty, and so is its `connect-src`), which is the list the policy is written from; in strict mode a `WebSocket` is never admitted. A
+  are registered), which is the list the policy is written from; in strict mode a `WebSocket` is never admitted. A
   refused request never reaches the browser: `fetch()`
   rejects with a `TypeError`, an `XMLHttpRequest` fails as a network error does (`loadstart`, then `readystatechange`,
   `error` and `loadend` with `readyState` 4 and `status` 0; a synchronous `send()` throws a `NetworkError`), and
@@ -253,7 +259,7 @@ sandbox.setConfig({ mode: 'strict', origins: { connect: ['https://api.example.co
   it creates); a frame or a worker it creates is a realm of its own, with the browser's request makers under the same
   policy, and reports nothing here.
 - **`fetch()` and `XMLHttpRequest` send no credentials, on any engine.** Every `fetch()` is made with
-  `credentials: 'omit'`, whatever the guest asks for, and `withCredentials` stays `false`. In cooperative and worker
+  `credentials: 'omit'`, whatever the guest asks for, and `withCredentials` stays `false` (sealed mode has neither name). In cooperative and worker
   mode a `WebSocket` handshake cannot be stripped: it carries the cookies the engine attaches
   ([table below](#cookies-by-engine)), and so does, in cooperative mode, a load of the guest's markup or CSS. A server
   behind a listed `wss://` origin must check the `Origin` header (a sandbox sends `null`), as any WebSocket server must.
@@ -1250,7 +1256,7 @@ host page's console.
 
 ## Guest globals
 
-<!-- describes: worker-globals sig:59bf -->
+<!-- describes: worker-globals sig:8d70 -->
 What guest code can use, by mode. Everything here is installed by the library's bootstrap before any guest code
 runs; in cooperative mode that needs `allow-scripts` (the policy always admits it).
 
@@ -1263,7 +1269,8 @@ runs; in cooperative mode that needs `allow-scripts` (the policy always admits i
 | `console` relayed | every method ([`sandbox-log`](#sandbox-log--sandboxlog)) | every method | every method | every method |
 
 Sealed mode is strict mode's view and worker with no network, so what is said below of strict mode's worker and view holds
-in sealed mode too.
+in sealed mode too, except the request makers: a sealed worker has no `fetch`, `XMLHttpRequest` or `WebSocket` (nor the two
+`XMLHttpRequest` helper interfaces), so `typeof fetch === 'undefined'` there ([the request gate](#the-request-gate)).
 
 Removed before guest code runs: `RTCPeerConnection` (and prefixed variants) in every mode. In strict, sealed and worker mode
 also `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without `'wasm-unsafe-eval'` but refuses to instantiate it, so
@@ -1305,8 +1312,11 @@ character a fixed number of times (`test/unit/host-passes-scaling.test.ts` times
 only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WORKER_NAVIGATOR_MEMBERS` for
 `navigator`) and deletes every other one, so a platform API that is not listed is absent. The listed globals that can
 make a request are `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`), which are the library's
-[request gate](#the-request-gate) in every mode (in strict and sealed mode `WebSocket` is kept as a name but refuses every
-socket: [no `WebSocket`](#strict-no-websocket)), and in worker mode `importScripts` (`script-src`). Strict mode's worker
+[request gate](#the-request-gate) in strict, cooperative and worker mode (in strict mode `WebSocket` is kept as a name but refuses every
+socket: [no `WebSocket`](#strict-no-websocket)), and in worker mode `importScripts` (`script-src`). **Sealed mode's worker
+has none of the three**, nor `XMLHttpRequestEventTarget` and `XMLHttpRequestUpload` (`SEALED_WORKER_GLOBALS`: strict mode's list
+without `NETWORK_WORKER_GLOBALS`): sealed mode has no network, so the names are absent (`typeof fetch === 'undefined'`), not
+refusing functions, and no code that could reach the network is in the sealed worker's source. Strict mode's worker
 has no `importScripts`: its policy's `script-src` is the view's hash, so it could never load anything, and nothing only a
 secure context has ([Guest globals](#guest-globals): no `crypto.subtle`, Web Locks or WebCodecs coders, in any engine). Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
 encoding, streams, `crypto` (`getRandomValues()`), `Blob`, `File`, `URL`, `OffscreenCanvas` with 2D and WebGL, WebCodecs' frames and chunks (worker mode: its coders, where the engine offers them),
@@ -1708,7 +1718,7 @@ What changes for an embed written when strict mode was the default:
 
 | You have | Now | What to do |
 | :--- | :--- | :--- |
-| no `mode`, and no `origins`, `fetchBridge`, `scriptUnsafe: true`, no `execute()` and `html` of at most 262144 characters | sealed mode: the same view, worker and API, nothing visible changes. A `<script>` or `on…` handler in `html` behaves as in strict mode: it never runs, and the one warning says `sealed mode (the default) runs no script in html; …`. `connect-src` has no `blob:`, so a guest `fetch()` of its own file's URL is refused: read the file with `sandboxFiles.read()` or `text()` | nothing |
+| no `mode`, and no `origins`, `fetchBridge`, `scriptUnsafe: true`, no `execute()` and `html` of at most 262144 characters | sealed mode: the same view, worker and API, nothing visible changes. A `<script>` or `on…` handler in `html` behaves as in strict mode: it never runs, and the one warning says `sealed mode (the default) runs no script in html; …`. A sealed guest has no `fetch`, `XMLHttpRequest` or `WebSocket` (`typeof fetch === 'undefined'`), so a guest that calls `fetch()` throws a `ReferenceError` where it was refused before: read a file with `sandboxFiles.read()` or `text()`, and feature-detect the names rather than catching | an app that fetched its own files, or that tried the network and handled the refusal: read the files with `sandboxFiles`, drop the network code, or use `mode: 'strict'` in the build with the network modes |
 | no `mode`, with `origins` or `fetchBridge`, in a build with the network modes | refused: nothing is built, and the sandbox terminates with the reason `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` ``; in TypeScript, a type error | add `mode: 'strict'` |
 | no `mode`, with `origins` or `fetchBridge`, or any config with `mode: 'strict'`, `'cooperative'` or `'worker'`, in the default build (the package as published: [Builds](#builds)) | refused: nothing is built, and the sandbox terminates with the reason `strict, cooperative and worker mode, origins and fetchBridge are the network modes, which this build of the package does not have: build it with WEB_SANDBOX_NETWORK_MODES=1 (WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib)`; in TypeScript, a type error | build the package with the flag, or drop the network options and stay in sealed mode |
 | no `mode`, with `scriptUnsafe: true` (which `execute()` needs) | refused: nothing is built, and the sandbox terminates with the reason `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1) ``; in TypeScript, a type error. Sealed mode runs only the registered `entry`: without `scriptUnsafe`, `execute()` does nothing | add `mode: 'strict'`, in a build with the network modes |
@@ -2030,8 +2040,9 @@ link.download = 'export.bin'; // a name you chose
 
 (The snippet is the body of a function you call when the app's `fileswritten` fires, hence the `return`s.)
 
-The app cannot `fetch()` its own files either: sealed mode's `connect-src` is `'none'`, so `fetch(sandboxFiles.url(path))` is
-refused. Read them with `sandboxFiles.read()` or `text()`, which make no request.
+The app cannot `fetch()` its own files either: a sealed guest has no `fetch` (nor `XMLHttpRequest` or `WebSocket`), because sealed
+mode has no network, so `typeof fetch === 'undefined'` and `fetch(sandboxFiles.url(path))` is a `ReferenceError`; feature-detect
+rather than catch. Read them with `sandboxFiles.read()` or `text()`, which make no request.
 
 ### Input
 
@@ -2045,7 +2056,7 @@ input](#sandboxview-strict-mode) describes them, and [research 23](research/23_v
 
 | It cannot | The way out |
 | :--- | :--- |
-| Reach the network: `fetch`, `XMLHttpRequest`, `WebSocket`, an `<img>` or a font from a URL | `mode: 'strict'` with [`origins`](#origins) or [`fetchBridge`](#fetchbridge), or have the host fetch and pass the data with `call()`, or register it as a file |
+| Reach the network: `fetch`, `XMLHttpRequest` and `WebSocket` are not there (`typeof fetch === 'undefined'`), nor is an `<img>` or a font from a URL | `mode: 'strict'` with [`origins`](#origins) or [`fetchBridge`](#fetchbridge), or have the host fetch and pass the data with `call()`, or register it as a file |
 | Run a `<script>` or a handler in `html` | put the code in `entry` |
 | Use a `<canvas>`, SVG animation, SVG filters, `contenteditable`, popovers | draw with `OffscreenCanvas` and write a raster image; inline `<svg>` for static vector graphics; `<textarea>` or `<input>` for editing; CSS animations with [`allowAnimations`](#allowanimations-and-allowautoplay) |
 | Use WebAssembly (`WebAssembly` is removed from the worker, [research 24](research/24_sealed_mode/README.md)) | write the code in JavaScript. A module **you** wrote and trust may run in your page and hand its results over with `call()` as copies of exactly the bytes they cover (a view arrives with a buffer of its own bytes, not the module's heap). Never the app's own module: running the app's code in your page gives it your page's rights, and the JavaScript glue a toolchain such as Emscripten ships would run as your page |

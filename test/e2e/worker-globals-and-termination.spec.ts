@@ -1,6 +1,6 @@
 import { test, expect, ORIGIN, type SandboxDriver, buildOfMode } from './fixture';
 import { useRecorder, wss } from './recorder';
-import { STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { SEALED_WORKER_GLOBALS, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { LIBRARY_GUEST_GLOBALS } from '@src/lib/sealed-reach';
 import { isViewMode, VIEW_MODES } from './view-modes';
 
@@ -123,8 +123,8 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
                 return { names: [...names], navigatorMembers: Object.getOwnPropertyNames(Object.getPrototypeOf(navigator)) };
             `);
             const have = new Set<string>(seen.names);
-            // the mode's own lists: strict mode keeps neither importScripts nor a secure-context-only name, on any engine
-            const globals = isViewMode(mode) ? STRICT_WORKER_GLOBALS : WORKER_GLOBALS;
+            // the mode's own lists: strict mode keeps neither importScripts nor a secure-context-only name, on any engine; sealed mode, no network name either
+            const globals = mode === 'sealed' ? SEALED_WORKER_GLOBALS : isViewMode(mode) ? STRICT_WORKER_GLOBALS : WORKER_GLOBALS;
             const navigatorMembers = isViewMode(mode) ? STRICT_WORKER_NAVIGATOR_MEMBERS : WORKER_NAVIGATOR_MEMBERS;
             // ledger: worker-global-set
             const expectedAbsentGlobals = [...ABSENT_GLOBALS[browserName]!, 'SharedArrayBuffer'].filter(name => globals.includes(name)).sort();

@@ -14,7 +14,7 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 
 ## Modes and realms
 
-<!-- describes: realms sig:70d0 -->
+<!-- describes: realms sig:31f6 -->
 
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
@@ -49,11 +49,11 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | :--- | :--- | :--- | :--- | :--- |
 | `host` | The host page's window: the element, its listeners, and the host end of every port. | no | — | `announcement`, `logic-port`, `view-port`, `view-init`, `bridge-init`, `bridge-port` |
 | `wrapper` | The sandbox frame's document (frame-documents.ts): it holds the guest frame or the strict view, and runs no script. | no | — | — |
-| `cooperative` | Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `inSandboxImportMap`, `inSandboxMarkup`, `checkSandboxEnvironment` | `announcement`, `logic-port` |
+| `cooperative` | Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts. | yes | `inSandboxScript`, `requestGate`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `inSandboxImportMap`, `inSandboxMarkup`, `checkSandboxEnvironment` | `announcement`, `logic-port` |
 | `worker-frame` | Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup. | no | `workerBootstrap`, `checkSandboxEnvironment` | `announcement`, `worker` |
-| `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals` | `logic-port`, `worker` |
+| `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `requestGate`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals` | `logic-port`, `worker` |
 | `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `cssReferences`, `withKeptReferences`, `keepsUrl`, `styleMarkup`, `viewInputOutbox`, `isStyleProperty`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
-| `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap, the prelude and the code-from-string refusal, then the guest's entry. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeSecureContextOnly`, `assertEntryScoped`, `inStrictWorker`, `refuseCodeFromStrings`, `isStyleProperty` | `logic-port`, `render-port`, `worker` |
+| `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap, the prelude and the code-from-string refusal, then the guest's entry. | yes | `inSandboxScript`, `requestGate`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeSecureContextOnly`, `assertEntryScoped`, `inStrictWorker`, `refuseCodeFromStrings`, `isStyleProperty` | `logic-port`, `render-port`, `worker` |
 | `bridge-frame` | The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it. | no | `checkSandboxEnvironment`, `inBridgeFrame` | `announcement`, `bridge-init`, `bridge-port` |
 <!-- generated:end -->
 
@@ -61,6 +61,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | Function | Module | Realms |
 | :--- | :--- | :--- |
 | `inSandboxScript` | `src/lib/in-sandbox-script.ts` | `cooperative`, `worker`, `strict-worker` |
+| `requestGate` | `src/lib/request-gate.ts` | `cooperative`, `worker`, `strict-worker` |
 | `createBroker` | `src/lib/rpc.ts` | `cooperative`, `worker`, `strict-worker` |
 | `createSizeOf` | `src/lib/structured-size.ts` | `cooperative`, `worker`, `strict-worker` |
 | `inSandboxFiles` | `src/lib/in-sandbox-files.ts` | `cooperative`, `worker`, `strict-worker`, `view` |
@@ -88,11 +89,11 @@ bundle, so those functions close over nothing, and the tests scan their text).
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:70d0b45f42cb49d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:31f6b45f42cb49d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
-there. The **view** has the DOM and none of the guest's code: it cleans the markup the worker asks to render (whatever it
+there (sealed mode's has no `fetch`, `XMLHttpRequest` or `WebSocket` at all; strict mode keeps them behind the request gate). The **view** has the DOM and none of the guest's code: it cleans the markup the worker asks to render (whatever it
 keeps loads without credentials: [API.md](docs/API.md#the-views-loads)), moves it into its document, applies the guest's styles through the CSSOM (never as an inline style, which the host page's policy would check: [API.md](docs/API.md#guest-styles)), and enforces the view's budgets. They talk on the render port, which the host is not on, so the host's own code never
 carries a render (the view's work still runs on the host page's thread where the browser places the view there, and is
 bounded: [API.md](docs/API.md#the-views-cost-to-the-host-page)). The host talks to each on a port of its own, and watches the view for liveness always and
@@ -114,12 +115,15 @@ with its network options left empty: the sealed path never reaches the code that
   the only ones that read the host page (its origin and its site, from `src/lib/host-site.ts`, through `readHostPage` in
   `src/host.ts`, which `normaliseConfig` calls only when such a rule asks), so a sealed `setConfig()` reads nothing of it.
 - **The build.** `_prepareBuild` turns to sealed mode's own path, `_prepareSealedFrame`, before anything of the network
-  is asked: no `_reach` (the host page's policy is applied to nothing), no bridge frame, no request-gate list. The view
+  is asked: no `_reach` (the host page's policy is applied to nothing), no bridge frame, no request gate and no list for one. The view
   and its worker are strict mode's (`_prepareViewFrame`), under `sealedViewPolicy`, whose input has no field an origin
   could come from (below: with no files; registered files and guest writes add `blob:` for their kind of load, and
   `connect-src` stays `'none'`).
-- **The worker.** Its bootstrap gets an empty request-gate list and `sealed`: `fetch`, `XMLHttpRequest` and `WebSocket`
-  refuse every request and report it as a `violation`, and `sandboxFetch()` rejects in the guest with
+- **The worker.** It has no `fetch`, `XMLHttpRequest` or `WebSocket`, nor the two `XMLHttpRequest` helper interfaces:
+  its allowlist (`SEALED_WORKER_GLOBALS`, `src/lib/worker-globals.ts`) is strict mode's without the network names
+  (`NETWORK_WORKER_GLOBALS`), which the worker's first statement deletes, so `typeof fetch === 'undefined'`. Its bootstrap
+  is given `sealed` and no request gate (a module of the network build, `src/lib/request-gate.ts`): nothing of the sealed
+  worker's source names, captures or installs a request maker. `sandboxFetch()` rejects in the guest with
   `FETCH_NOT_ALLOWED` and sends nothing to the host. A guest can still call the reserved method itself
   (`bridge.call('sandbox:fetch')`); the host's handler has no bridge in a sealed build and refuses it with the same code,
   and no request is made. The prelude's last statement puts the library's `EvalError` in place of every code-from-string
@@ -154,7 +158,7 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 
 ## Two builds: the network modes behind a flag
 
-<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eae3dfb26fa -->
+<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eae8ac126fa -->
 
 The package is built two ways, chosen by one flag that is off by default ([ADR-009](docs/ADR-009-network-modes-build-flag.md);
 `NETWORK_MODES_FLAG`, `src/lib/build-flag.ts`):
@@ -163,7 +167,7 @@ The package is built two ways, chosen by one flag that is off by default ([ADR-0
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
 | default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 47 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 64 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 65 modules of `src/` |
 <!-- generated:end -->
 
 - **Two entries.** `src/index.ts` is the default build's and `src/network.ts` the network build's; both export
@@ -191,7 +195,8 @@ The package is built two ways, chosen by one flag that is off by default ([ADR-0
 - **What is shared stays shared.** The functions stringified into the guest's worker and the view, the broker, the
   lifecycle reducer and the environment's teardown are the same text in both builds. They keep their branches for
   cooperative and worker mode and for strict mode's network, which the default build cannot reach: it stringifies the
-  guest's bootstrap for strict mode's worker with `sealed` alone, and hands the view no network.
+  guest's bootstrap for strict mode's worker with `sealed` alone, hands it no request gate (that function is a network
+  module's, stringified in by the network build only), and hands the view no network.
 
 `test/unit/default-build.test.ts` holds this: every module is classified, the default entry reaches sealed mode's alone
 (at run time, and for a type), no function of a network module is in the default bundle, and the refusal applies nothing.
@@ -458,6 +463,7 @@ the docs read) and the role its header comment gives.
 | `src/lib/realms.ts` | none (a registry) | The realms registry |
 | `src/lib/reasons.ts` | every build | The texts the element gives |
 | `src/lib/references.ts` | every build | What names a registered file in markup and in CSS |
+| `src/lib/request-gate.ts` | network | The request gate of strict, cooperative and worker mode |
 | `src/lib/rpc.ts` | every build | β — a typed, bidirectional RPC broker that rides the MessageChannel already connecting host and guest |
 | `src/lib/sandbox-log.ts` | every build | The detail of the element's 'sandbox-log' event |
 | `src/lib/sealed-reach.ts` | none (a registry) | Everything a sealed guest can reach, classified against every row of INHERITED_CONTEXT |
@@ -469,7 +475,7 @@ the docs read) and the role its header comment gives.
 | `src/lib/violation.ts` | every build | CSP violation reports from the guest |
 | `src/lib/watchdog.ts` | every build | Liveness watchdog for one frame generation |
 | `src/lib/worker-bootstrap.ts` | network | Worker mode's frame bootstrap: stringified and injected into the sandbox frame |
-| `src/lib/worker-globals.ts` | every build | What guest code may find on a worker's global object, in worker mode and in strict mode |
+| `src/lib/worker-globals.ts` | every build | What guest code may find on a worker's global object, in worker mode, in strict mode and in sealed mode |
 | `src/lib/csp/csp-generator.ts` | every build | The guest policy: one template per mode, filled with the parsed origins (origins.ts) and the library's own sources |
 | `src/lib/csp/host-connect.ts` | network | The host page's `connect-src`, as far as the library needs it |
 | `src/lib/csp/host-trusted-types.ts` | every build | The host page's Trusted Types directives, as far as the library needs them (INHERITED_CONTEXT.trustedTypesRequirement) |

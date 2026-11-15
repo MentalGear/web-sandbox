@@ -7,7 +7,7 @@ import { E2E_PORT } from './server';
 import { inView } from './strict-view';
 import { ENTRY_DONE_PREFIX } from '@src/lib/in-sandbox-view';
 import { LIBRARY_GUEST_GLOBALS, surfaceOf } from '@src/lib/sealed-reach';
-import { STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { SEALED_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 
 /**
  * Class A, closed by enumeration (S74; SEALED_REACH, src/lib/sealed-reach.ts): everything a sealed guest can reach is
@@ -55,7 +55,7 @@ test.describe('sealed mode: what the guest can reach, against every inherited ro
         `);
         const library = LIBRARY_GUEST_GLOBALS as readonly string[];
         const names = (seen.names as string[]).filter(name => !name.startsWith(ENTRY_DONE_PREFIX));
-        expect(names.filter(name => !STRICT_WORKER_GLOBALS.includes(name) && !library.includes(name)), "a global of the sealed worker that is neither the allowlist's nor the library's").toEqual([]);
+        expect(names.filter(name => !SEALED_WORKER_GLOBALS.includes(name) && !library.includes(name)), "a global of the sealed worker that is neither the allowlist's nor the library's").toEqual([]);
         for (const name of library) expect(names, name).toContain(name);
         expect(names.filter(name => !surfaceOf(name)), 'a global of the sealed worker with no surface in SEALED_REACH').toEqual([]);
         expect((seen.navigatorMembers as string[]).filter(name => !STRICT_WORKER_NAVIGATOR_MEMBERS.includes(name))).toEqual([]);

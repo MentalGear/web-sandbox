@@ -1,4 +1,8 @@
 /**
+ * What guest code may find on a worker's global object, in worker mode, in strict mode and in sealed mode: one allowlist ({@link WORKER_GLOBALS}) and the two that derive from it.
+ */
+
+/**
  * The names of the platform's request makers (the three the request gate governs, request-gate.ts, and the two helper
  * interfaces of `XMLHttpRequest`): the one list that both readers take. Strict mode's worker keeps them and gates them;
  * sealed mode's worker has no network, so it does not have them at all ({@link SEALED_WORKER_GLOBALS}).
@@ -6,7 +10,7 @@
 export const NETWORK_WORKER_GLOBALS = ['fetch', 'XMLHttpRequest', 'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'WebSocket'] as const;
 
 /**
- * What guest code may find on a worker's global object, in worker mode and in strict mode (VR:V1; ADR-005 G4 amendment).
+ * The allowlist of worker mode, from which strict mode's and sealed mode's derive (VR:V1; ADR-005 G4 amendment).
  *
  * Why an allowlist. A worker inherits its creator's policy, and connect-src is meant to govern every request it
  * makes, but an engine can miss one of its network APIs: Firefox (146) sent `new EventSource(url)` from a worker to
