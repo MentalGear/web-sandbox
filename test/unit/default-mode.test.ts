@@ -201,8 +201,8 @@ describe('scriptInMarkup: script elements and handler attributes, read with an i
 });
 
 // BD7:LIM-1 (class A, the host realm): the element read `html` with the host page's DOMParser to decide this warning, and
-// Chromium checks the host page's policy as it parses (a style attribute against style-src, with its sample reported; a
-// <base> against base-uri, with the guest's URL reported). The view's renderer notes what it drops of the initial view
+// Chromium and WebKit check the host page's policy as they parse (a style attribute against style-src, with its sample
+// reported on Chromium; Chromium also a <base> against base-uri, with the guest's URL reported). The view's renderer notes what it drops of the initial view
 // (VIEW_INITIAL), and the element warns from that: a strict or sealed build reads no markup in the host page's realm.
 describe('html that holds script warns once per element, from what the view dropped of it (BD7:LIM-1)', () => {
     // The view's notice of what it dropped of the initial view, on the element's current view port.

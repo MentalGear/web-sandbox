@@ -99,9 +99,7 @@
     },
     "parse-domparser": {
       "applied": null,
-      "heard": [
-        "style-src-attr inline --k:parse-domparser;color:rgb(1, 2, 3)"
-      ]
+      "heard": []
     },
     "parse-implementation": {
       "applied": null,
@@ -166,10 +164,6 @@
     {
       "step": "(no sample; style-src-elem)",
       "directive": "style-src-elem"
-    },
-    {
-      "step": "parse-domparser",
-      "directive": "style-src-attr"
     },
     {
       "step": "parse-implementation",

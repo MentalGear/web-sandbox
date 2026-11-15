@@ -2,10 +2,12 @@
   "steps": {
     "attr-parse": {
       "applied": null,
-      "heard": []
+      "heard": [
+        "style-src-attr inline --k:attr-parse;color:rgb(1, 2, 3)"
+      ]
     },
     "attr-insert": {
-      "applied": true,
+      "applied": false,
       "heard": []
     },
     "attr-set": {
@@ -97,15 +99,21 @@
     },
     "parse-domparser": {
       "applied": null,
-      "heard": []
+      "heard": [
+        "style-src-attr inline --k:parse-domparser;color:rgb(1, 2, 3)"
+      ]
     },
     "parse-implementation": {
       "applied": null,
-      "heard": []
+      "heard": [
+        "style-src-attr inline --k:parse-implementation;color:rgb(1, 2,"
+      ]
     },
     "parse-unsafe": {
       "applied": null,
-      "heard": []
+      "heard": [
+        "style-src-attr inline --k:parse-unsafe;color:rgb(1, 2, 3)"
+      ]
     },
     "parse-renamed": {
       "applied": false,

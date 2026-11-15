@@ -1106,8 +1106,8 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     };
     // A kept style attribute (S74, class A: INHERITED_CONTEXT.cspReporting; style-markup.ts): its text, without its network
     // URLs, becomes the element's own CSSOM declaration (the `cssText` setter), never an attribute written from guest text.
-    // A style attribute is an inline style that the host page's style-src checks (and Chromium checks it as it parses
-    // it, in the template too); a declaration set through the CSSOM is none, on any engine (docs/research/25_cssom_styles).
+    // A style attribute is an inline style that the host page's style-src checks (and Chromium and WebKit check it as they
+    // parse it, in the template too); a declaration set through the CSSOM is none, on any engine (docs/research/25_cssom_styles).
     // The element carries the declaration's serialization as its `style` attribute from then on (the engine writes it), and
     // the attribute goes when the declaration is empty.
     //
@@ -2526,7 +2526,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
     // The guest's markup as the parser gets it (S74, class A: INHERITED_CONTEXT.cspReporting; style-markup.ts): with no
     // style attribute and no <style> element in it, so that the parse makes no inline style the host page's policy
-    // checks (Chromium checks a style attribute as it parses it, in the template too). The nonce is drawn per render, and
+    // checks (Chromium and WebKit check a style attribute as they parse it, in the template too). The nonce is drawn per render, and
     // drawn again in the unlikely case that the markup holds it; `markup` is null where nothing had to be renamed.
     const randomSource = g.crypto;
     const randomValues = randomSource.getRandomValues;

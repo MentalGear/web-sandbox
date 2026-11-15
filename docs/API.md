@@ -2413,7 +2413,7 @@ policy must allow:
   is stopped before guest code hears it. So the guest reads nothing of your policy, and your endpoint receives nothing
   it caused from the worker. Nor from the element: a strict or sealed build hands nothing of the guest's to a parser, a
   loader or a markup sink of your page's realm, where the browser would check it against your policy (Chromium checks
-  each `style` attribute, `<style>` and `<base>` it parses, and reports them): the `html` goes to the view as data,
+  each `style` attribute, `<style>` and `<base>` it parses, and reports them; WebKit checks a `style` attribute): the `html` goes to the view as data,
   and the element warns about its scripts from what the view's renderer noted it dropped. Every function of the element
   that receives guest content is a row of `HOST_PASSES` (`src/lib/host-passes.ts`), held to that by a scan of the code.
   Cooperative mode reads its guest document with an inert parser in your page's realm, which Chromium checks as its

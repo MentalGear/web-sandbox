@@ -10,9 +10,9 @@ inherited `style-src` not check, on every engine, and can the view apply every g
 **Answer.** The CSSOM: an element's declaration (`cssText`, `setProperty`) and a constructed stylesheet (`new
 CSSStyleSheet()`, `replaceSync`, adopted) raise no violation and no report under a `style-src` of hashes alone, with
 `'report-sample'`, on Chromium, Firefox and WebKit, and apply (P1). But the old path's refusals do not happen at the same
-step everywhere (P2): **Chromium checks a `style` attribute as it parses it**, into an inert template, a `DOMParser`
-document, a document of `document.implementation` or `Document.parseHTMLUnsafe()` alike, so removing the attribute before
-insertion is too late there; and a `<style>` element is checked once connected, empty or with a `type` that is not CSS
+step everywhere (P2): **Chromium and WebKit check a `style` attribute as they parse it**, into an inert template, a
+document of `document.implementation` or `Document.parseHTMLUnsafe()` alike (WebKit a `DOMParser` document too, Chromium
+not), so removing the attribute before insertion is too late there; Firefox checks it on insertion; and a `<style>` element is checked once connected, empty or with a `type` that is not CSS
 too (Chromium). So the construction (adopted, [ADR-005](../../ADR-005-strict-mode.md), "The renderer"):
 
 - the view encodes the guest's markup before its parser sees it (`styleMarkup`, `src/lib/style-markup.ts`): every run of
@@ -41,34 +41,38 @@ instead of a hash).
 wrapper and, in it, a `sandbox="allow-scripts"` `srcdoc` view (an opaque origin) with the view's own `style-src
 'unsafe-inline'`. The host's policy: `style-src 'self' 'unsafe-inline' 'sha256-…' 'report-sample'` and a `report-uri`
 with a key in its URL; the second variant adds `style-src-elem` (hash) and `style-src-attr` (nothing). Each way of styling
-runs as a step of its own, its CSS starting with a marker so a report's sample names it. Results:
-`results/<engine>-<variant>.json` (both variants alike on every engine). Chromium 145, Firefox 146, WebKit 26 (Playwright
-1.58), 2026-11-07.
+runs as a step of its own, its CSS starting with a marker so a report's sample names it, and the view reads what it
+heard 250 ms after the step (a violation event is queued by the step itself, so the window is not what decides it).
+Results: `results/<engine>-<variant>.json` (both variants alike on every engine). Chromium 159, Firefox 159, WebKit 27.2
+(Playwright 1.65.1), 2026-11-15; each result file the same in 5 of 5 runs per engine and variant.
 
 | Step | Chromium | Firefox | WebKit |
 | :--- | :--- | :--- | :--- |
-| `style` attribute parsed into an inert template | **refused at the parse**, reported | not checked | not checked |
-| that template's content inserted | does not apply (refused before) | refused, reported | **applies, unchecked** |
+| `style` attribute parsed into an inert template | **refused at the parse**, reported | not checked | **refused at the parse**, no report |
+| that template's content inserted | does not apply (refused before) | refused, reported | does not apply (refused before) |
 | `setAttribute('style')` on a connected element | refused, reported | refused, reported | refused, no report |
 | `<style>` parsed into a template | not checked | not checked | not checked |
 | that `<style>` inserted (HTML or SVG), or its text replaced | refused, reported | refused, reported | refused, no report |
 | an empty `<style>` inserted | refused, reported (no sample) | refused, reported | refused, no report |
 | a `<style type="text/x-probe">` inserted (recorded only) | refused, reported | not checked | not checked |
-| `DOMParser`, `document.implementation`, `Document.parseHTMLUnsafe()` with a `style` attribute (recorded only) | refused at the parse, reported | not checked | not checked |
+| `document.implementation`, `Document.parseHTMLUnsafe()` with a `style` attribute (recorded only) | refused at the parse, reported | not checked | refused at the parse, no report |
+| `DOMParser` with a `style` attribute (recorded only) | not checked | not checked | refused at the parse, no report |
 | `cssText`, `setProperty` (HTML and SVG; on a connected element, and on one still in the template) | applies, no violation, no report | the same | the same |
 | a constructed stylesheet: `replaceSync`, adopted; `media`; `replaceSync` again; `insertRule` | applies, no violation, no report | the same | the same |
 | the encoded markup (a renamed attribute, a `noframes` with its markers) inserted, its text replaced | no violation, no report | the same | the same |
 
 Reports: Chromium and Firefox POST every refusal of the view to the host page's endpoint, with the first 40 characters
-of the style (`script-sample`); WebKit sends none from the sandboxed view, though it raises the violation there and
-reports the host page's own (the control). The host page's own listener hears none of the view's violations on any
+of the style (`script-sample`); WebKit sends none from the sandboxed view, though it raises the violation there (a
+parsed `style` attribute's too) and reports the host page's own (the control). The host page's own listener hears none of the view's violations on any
 engine.
 
 What the suite holds of it: `test/e2e/sealed-host-policy.spec.ts` renders every way the guest styles the view
 (`STYLE_MAKERS`, `test/e2e/sealed-makers.ts`) on the realistic host with a `style-src` of the documented hashes,
 `'report-sample'` and a keyed `report-uri`: no report, no violation, every style applies, on all three engines. Against
 the inline renderer it replaced, it fails on all three: Chromium and Firefox apply none of the guest's styles, and WebKit
-applies its `style` attributes (parsed into the template, unchecked) and none of its `<style>`s.
+applies none of its `<style>`s and, on 26, applied its `style` attributes (parsed into the template, unchecked). That
+comparison was run on the engines of 2026-11-07 and not repeated: the old renderer no longer builds against the code. On
+WebKit 27.2 the probe's template step is refused at the parse (`attr-insert` does not apply), so it would apply none.
 
 ## The cost
 
@@ -85,7 +89,7 @@ WEB_SANDBOX_MEASURE=1 bunx playwright test docs/research/25_cssom_styles/measure
 git checkout -- src/lib/in-sandbox-view.ts
 ```
 
-Chromium 145, Firefox 146, WebKit 26 (Playwright 1.58, headless), a shared 4-core VM, 2026-11-07; each figure the
+Chromium 145, Firefox 146, WebKit 26 (Playwright 1.58, headless; not repeated on the engines of 2026-11-15), a shared 4-core VM, 2026-11-07; each figure the
 medians of two runs (three for the CSSOM path on Firefox), inline → CSSOM:
 
 | Markup (characters) | Chromium | Firefox | WebKit |

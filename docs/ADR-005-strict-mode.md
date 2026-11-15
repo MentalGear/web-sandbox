@@ -80,7 +80,8 @@ creates the render port, spawns the worker from a `blob:` URL (`worker-src blob:
   is given the guest's `html`, entry or files, whose every pass there is a row of `HOST_PASSES`
   (`src/lib/host-passes.ts`), and `test/unit/host-passes.test.ts` fails on a parser or a sink reachable from the view's
   frame builders. A `DOMParser` of the host realm would have the browser check the guest's styles and `<base>` against
-  the host page's policy, and report them (Chromium; BD7:LIM-1). `html` longer than `VIEW_RENDER_MAX_LENGTH`, the most
+  the host page's policy, and report them (a style attribute: Chromium, though not in a `DOMParser`'s document, and
+  WebKit; a `<base>`: Chromium; BD7:LIM-1; [research 25](research/25_cssom_styles/README.md)). `html` longer than `VIEW_RENDER_MAX_LENGTH`, the most
   one render takes, is refused at configuration (`htmlTooLong`).
 - **Cooperative mode's limits are a frozen list.** No new guest-realm patch is made in cooperative mode; a new finding there
   is documented as a limit (README "Cooperative-mode limits", the same in API.md and backlog S44). The list: the
@@ -221,8 +222,8 @@ refused if it contains any, or anything that would end or re-enter the script el
 - **No guest style is an inline style** (S74, class A: `INHERITED_CONTEXT.cspReporting`, BD6:ISO-2;
   [research 25](research/25_cssom_styles/README.md)). The view inherits the host page's policy list, whose `style-src`
   checks every `style` attribute and `<style>` element, refuses them where the page lists hashes, and reports each
-  refusal to the page's endpoint with the style's first characters. Chromium checks a `style` attribute as it parses it,
-  in the inert template too. So the parser is never given one: the view encodes the markup first (`styleMarkup`,
+  refusal to the page's endpoint with the style's first characters. Chromium and WebKit check a `style` attribute as they
+  parse it, in the inert template too (Firefox on insertion). So the parser is never given one: the view encodes the markup first (`styleMarkup`,
   `src/lib/style-markup.ts`), which renames every run of `style` the tokenizer could read as an attribute name, makes
   every `<style>` a `noframes` (raw text the same way, ended by its renamed end tag) and every guest `noframes` an element
   of another name, and the renderer reads the texts and values back without the insertions. A style attribute's text

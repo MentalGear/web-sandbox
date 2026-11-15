@@ -132,7 +132,7 @@ export const CHOKEPOINTS = {
         token: 'export function withKeptReferences(',
     },
     styleEncoding: {
-        what: "the view's parser is given the guest's markup with no `style` attribute and no `<style>` element in it, in any context (styleMarkup renames them first): Chromium checks a style attribute as it parses it",
+        what: "the view's parser is given the guest's markup with no `style` attribute and no `<style>` element in it, in any context (styleMarkup renames them first): Chromium and WebKit check a style attribute as they parse it",
         file: 'src/lib/style-markup.ts',
         token: 'export function styleMarkup(nonce: string): StyleMarkup {',
     },
