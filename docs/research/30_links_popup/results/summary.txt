@@ -1,0 +1,168 @@
+# headless-chromium.jsonl: chromium 159.0.8154.6, headless, 2026-11-15T17:54:12.163Z
+# headless-firefox.jsonl: firefox 159.0, headless, 2026-11-15T17:58:24.416Z
+# headless-webkit.jsonl: webkit 27.2, headless, 2026-11-15T18:02:55.180Z
+# headless-shell.jsonl: shell 159.0.8154.6, headless, 2026-11-15T18:07:09.001Z
+# headless-fine-chromium.jsonl: chromium 159.0.8154.6, headless, 2026-11-15T18:11:54.335Z
+# headless-fine-firefox.jsonl: firefox 159.0, headless, 2026-11-15T18:16:45.390Z
+# headless-race4-chromium.jsonl: chromium 159.0.8154.6, headless, 2026-11-15T18:21:45.419Z
+# headless-race4-firefox.jsonl: firefox 159.0, headless, 2026-11-15T18:26:50.429Z
+# headless-race-chromium.jsonl: chromium 159.0.8154.6, headless, 2026-11-15T18:23:26.441Z
+# headless-race-firefox.jsonl: firefox 159.0, headless, 2026-11-15T18:28:59.537Z
+# headless-library.jsonl: chromium 159.0.8154.6, headless, 2026-11-15T18:33:21.686Z
+# headless-library.jsonl: firefox 159.0, headless, 2026-11-15T18:36:05.995Z
+# headless-library.jsonl: webkit 27.2, headless, 2026-11-15T18:38:57.833Z
+# headless-library.jsonl: shell 159.0.8154.6, headless, 2026-11-15T18:41:42.008Z
+# headless-library-guest-asks.jsonl: chromium 159.0.8154.6, headless, 2026-11-15T18:56:32.325Z
+# headless-library-guest-asks.jsonl: firefox 159.0, headless, 2026-11-15T18:58:33.883Z
+# headless-library-guest-asks.jsonl: webkit 27.2, headless, 2026-11-15T19:00:40.628Z
+# headed-probe.jsonl: chromium 159.0.8154.6, headed, 2026-11-15T18:44:23.313Z
+# headed-probe.jsonl: firefox 159.0, headed, 2026-11-15T18:46:36.521Z
+# headed-probe.jsonl: webkit 27.2, headed, 2026-11-15T18:49:00.422Z
+# headed-library.jsonl: chromium 159.0.8154.6, headed, 2026-11-15T18:51:15.858Z
+# headed-library.jsonl: firefox 159.0, headed, 2026-11-15T18:52:48.541Z
+# headed-library-guest-asks.jsonl: chromium 159.0.8154.6, headed, 2026-11-15T19:02:42.701Z
+# headed-library-guest-asks.jsonl: firefox 159.0, headed, 2026-11-15T19:04:44.525Z
+
+file | engine | variant | runs | opened (hits>0) | tabs event agrees | per click: opens that landed | opens called | activation at request | sinceClick ms (min-max) | errors | isActive false at request (runs) | ... of which opened
+headless-chromium | chromium | 1pos | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 12-15 | 0 | 0 | 0
+headless-chromium | chromium | 1neg | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | ----- |  | 0 | 0 | 0
+headless-chromium | chromium | 1async | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 114-119 | 0 | 0 | 0
+headless-chromium | chromium | 2 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 12-15 | 0 | 0 | 0
+headless-chromium | chromium | 3 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 12-16 | 0 | 0 | 0
+headless-chromium | chromium | 4 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 10-17 | 0 | 0 | 0
+headless-chromium | chromium | 5@0 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 11-15 | 0 | 0 | 0
+headless-chromium | chromium | 5@100 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 115-117 | 0 | 0 | 0
+headless-chromium | chromium | 5@500 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 512-516 | 0 | 0 | 0
+headless-chromium | chromium | 5@1000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AaAAA | 1011-1017 | 0 | 1 | 1
+headless-chromium | chromium | 5@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3012-3019 | 0 | 0 | 0
+headless-chromium | chromium | 5@6000 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | AAAAA | 6003-6004 | 0 | 0 | 0
+headless-chromium | chromium | 6 | 5 | 5 of 5 | 5 of 5 | 1/1 1/1 1/1 1/1 1/1 | 4 4 4 4 4 | AAAAA | 11-29 | 0 | 0 | 0
+headless-chromium | chromium | 6gap100 | 5 | 5 of 5 | 5 of 5 | 1/1 1/1 1/1 1/1 1/1 | 4 4 4 4 4 | AAAAA | 10-122 | 0 | 0 | 0
+headless-firefox | firefox | 1pos | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 24-41 | 0 | 0 | 0
+headless-firefox | firefox | 1neg | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | ----- |  | 0 | 0 | 0
+headless-firefox | firefox | 1async | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 126-135 | 0 | 0 | 0
+headless-firefox | firefox | 2 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 30-39 | 0 | 0 | 0
+headless-firefox | firefox | 3 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 27-36 | 0 | 0 | 0
+headless-firefox | firefox | 4 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 28-34 | 0 | 0 | 0
+headless-firefox | firefox | 5@0 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 31-44 | 0 | 0 | 0
+headless-firefox | firefox | 5@100 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 131-144 | 0 | 0 | 0
+headless-firefox | firefox | 5@500 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 527-534 | 0 | 0 | 0
+headless-firefox | firefox | 5@1000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 1027-1041 | 0 | 0 | 0
+headless-firefox | firefox | 5@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3029-3058 | 0 | 0 | 0
+headless-firefox | firefox | 5@6000 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | AAAAA | 6004-6006 | 0 | 0 | 0
+headless-firefox | firefox | 6 | 5 | 5 of 5 | 5 of 5 | 1/1 1/1 1/1 1/1 1/1 | 4 4 4 4 4 | AAAAA | 27-36 | 0 | 0 | 0
+headless-firefox | firefox | 6gap100 | 5 | 5 of 5 | 5 of 5 | 1/1 1/1 1/1 1/1 1/1 | 4 4 4 4 4 | AAAAA | 27-138 | 0 | 0 | 0
+headless-webkit | webkit | 1pos | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 2-3 | 0 | 0 | 0
+headless-webkit | webkit | 1neg | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | ----- |  | 0 | 0 | 0
+headless-webkit | webkit | 1async | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 102-107 | 0 | 0 | 0
+headless-webkit | webkit | 2 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 2-3 | 0 | 0 | 0
+headless-webkit | webkit | 3 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 2-3 | 0 | 0 | 0
+headless-webkit | webkit | 4 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3-4 | 0 | 0 | 0
+headless-webkit | webkit | 5@0 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 2-4 | 0 | 0 | 0
+headless-webkit | webkit | 5@100 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 103-104 | 0 | 0 | 0
+headless-webkit | webkit | 5@500 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 503-504 | 0 | 0 | 0
+headless-webkit | webkit | 5@1000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 1003-1005 | 0 | 0 | 0
+headless-webkit | webkit | 5@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3004-3004 | 0 | 0 | 0
+headless-webkit | webkit | 5@6000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 6003-6005 | 0 | 0 | 0
+headless-webkit | webkit | 6 | 5 | 5 of 5 | 5 of 5 | 2/2 2/2 2/2 2/2 2/2 | 4 4 4 4 4 | AAAAA | 2-8 | 0 | 0 | 0
+headless-webkit | webkit | 6gap100 | 5 | 5 of 5 | 5 of 5 | 2/2 2/2 2/2 2/2 2/2 | 4 4 4 4 4 | AAAAA | 2-106 | 0 | 0 | 0
+headless-shell | chromium-shell | 1pos | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 4-4 | 0 | 0 | 0
+headless-shell | chromium-shell | 1neg | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | ----- |  | 0 | 0 | 0
+headless-shell | chromium-shell | 1async | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 105-106 | 0 | 0 | 0
+headless-shell | chromium-shell | 2 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 4-6 | 0 | 0 | 0
+headless-shell | chromium-shell | 3 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 4-5 | 0 | 0 | 0
+headless-shell | chromium-shell | 4 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 4-6 | 0 | 0 | 0
+headless-shell | chromium-shell | 5@0 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 4-6 | 0 | 0 | 0
+headless-shell | chromium-shell | 5@100 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 105-107 | 0 | 0 | 0
+headless-shell | chromium-shell | 5@500 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 505-507 | 0 | 0 | 0
+headless-shell | chromium-shell | 5@1000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 1005-1010 | 0 | 0 | 0
+headless-shell | chromium-shell | 5@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3005-3006 | 0 | 0 | 0
+headless-shell | chromium-shell | 5@6000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 6005-6006 | 0 | 0 | 0
+headless-shell | chromium-shell | 6 | 5 | 5 of 5 | 5 of 5 | 2/2 2/2 2/2 2/2 2/2 | 4 4 4 4 4 | AAAAA | 3-13 | 0 | 0 | 0
+headless-shell | chromium-shell | 6gap100 | 5 | 5 of 5 | 5 of 5 | 2/2 2/2 2/2 2/2 2/2 | 4 4 4 4 4 | AAAAA | 4-111 | 0 | 0 | 0
+headless-fine-chromium | chromium | 5@4000 | 10 | 10 of 10 | 10 of 10 | 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAaA | 4013-4018 | 0 | 1 | 1
+headless-fine-chromium | chromium | 5@4500 | 10 | 10 of 10 | 10 of 10 | 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAA | 4511-4520 | 0 | 0 | 0
+headless-fine-chromium | chromium | 5@5000 | 10 | 0 of 10 | 10 of 10 | 0 0 0 0 0 0 0 0 0 0 | 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAA | 5003-5004 | 0 | 0 | 0
+headless-fine-chromium | chromium | 5@5500 | 10 | 0 of 10 | 10 of 10 | 0 0 0 0 0 0 0 0 0 0 | 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAA | 5503-5504 | 0 | 0 | 0
+headless-fine-firefox | firefox | 5@4000 | 10 | 10 of 10 | 10 of 10 | 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAA | 4030-4043 | 0 | 0 | 0
+headless-fine-firefox | firefox | 5@4500 | 10 | 10 of 10 | 10 of 10 | 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAA | 4526-4541 | 0 | 0 | 0
+headless-fine-firefox | firefox | 5@5000 | 10 | 0 of 10 | 10 of 10 | 0 0 0 0 0 0 0 0 0 0 | 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAA | 5004-5009 | 0 | 0 | 0
+headless-fine-firefox | firefox | 5@5500 | 10 | 0 of 10 | 10 of 10 | 0 0 0 0 0 0 0 0 0 0 | 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAA | 5504-5507 | 0 | 0 | 0
+headless-race4-chromium | chromium | 4 | 100 | 100 of 100 | 100 of 100 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAAAAAAAAAAAaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAaAAAAAAAAAAAAAAAAAA | 10-20 | 0 | 2 | 2
+headless-race4-firefox | firefox | 4 | 100 | 100 of 100 | 100 of 100 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA | 24-46 | 0 | 0 | 0
+headless-race-chromium | chromium | 2 | 50 | 50 of 50 | 50 of 50 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAAAAAAAAAaAAAAAAaAaAAAAAAAAAAAAAAaAAAAAAAA | 10-22 | 0 | 4 | 4
+headless-race-chromium | chromium | 3 | 50 | 50 of 50 | 50 of 50 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAAAAAAAAaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA | 10-21 | 0 | 1 | 1
+headless-race-chromium | chromium | 5@10 | 50 | 50 of 50 | 50 of 50 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA | 20-29 | 0 | 0 | 0
+headless-race-chromium | chromium | 5@50 | 50 | 50 of 50 | 50 of 50 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAaA | 60-70 | 0 | 1 | 1
+headless-race-firefox | firefox | 2 | 50 | 50 of 50 | 50 of 50 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA | 24-59 | 0 | 0 | 0
+headless-race-firefox | firefox | 3 | 50 | 50 of 50 | 50 of 50 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA | 23-209 | 0 | 0 | 0
+headless-race-firefox | firefox | 5@10 | 50 | 50 of 50 | 50 of 50 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA | 35-54 | 0 | 0 | 0
+headless-race-firefox | firefox | 5@50 | 50 | 50 of 50 | 50 of 50 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 | AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA | 77-93 | 0 | 0 | 0
+headless-library | chromium | 7 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 12-17 | 0 | 0 | 0
+headless-library | chromium | 7@500 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 514-520 | 0 | 0 | 0
+headless-library | chromium | 7@1000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 1013-1017 | 0 | 0 | 0
+headless-library | chromium | 7@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3014-3019 | 0 | 0 | 0
+headless-library | chromium | 7@6000 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | AAAAA | 6003-6005 | 0 | 0 | 0
+headless-library | chromium | 7twice | 5 | 5 of 5 | 5 of 5 | 1/1 1/1 1/1 1/1 1/1 | 4 4 4 4 4 | AAAAA | 12-30 | 0 | 0 | 0
+headless-library | firefox | 7 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 25-35 | 0 | 0 | 0
+headless-library | firefox | 7@500 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 529-535 | 0 | 0 | 0
+headless-library | firefox | 7@1000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 1030-1040 | 0 | 0 | 0
+headless-library | firefox | 7@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3027-3032 | 0 | 0 | 0
+headless-library | firefox | 7@6000 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | AAAAA | 6003-6005 | 0 | 0 | 0
+headless-library | firefox | 7twice | 5 | 5 of 5 | 5 of 5 | 1/1 1/1 1/1 1/1 1/1 | 4 4 4 4 4 | AAAAA | 27-46 | 0 | 0 | 0
+headless-library | webkit | 7 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 2-3 | 0 | 0 | 0
+headless-library | webkit | 7@500 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 503-504 | 0 | 0 | 0
+headless-library | webkit | 7@1000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 1003-1004 | 0 | 0 | 0
+headless-library | webkit | 7@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3003-3005 | 0 | 0 | 0
+headless-library | webkit | 7@6000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 6003-6007 | 0 | 0 | 0
+headless-library | webkit | 7twice | 5 | 5 of 5 | 5 of 5 | 2/2 2/2 2/2 2/2 2/2 | 4 4 4 4 4 | AAAAA | 2-9 | 0 | 0 | 0
+headless-library | chromium-shell | 7 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 5-6 | 0 | 0 | 0
+headless-library | chromium-shell | 7@500 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 505-509 | 0 | 0 | 0
+headless-library | chromium-shell | 7@1000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 1006-1006 | 0 | 0 | 0
+headless-library | chromium-shell | 7@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3006-3008 | 0 | 0 | 0
+headless-library | chromium-shell | 7@6000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 6005-6006 | 0 | 0 | 0
+headless-library | chromium-shell | 7twice | 5 | 5 of 5 | 5 of 5 | 2/2 2/2 2/2 2/2 2/2 | 4 4 4 4 4 | AAAAA | 4-11 | 0 | 0 | 0
+headless-library-guest-asks | chromium | 8 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | aaaaa | 3-5 | 0 | 5 | 0
+headless-library-guest-asks | chromium | 9 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 12-20 | 0 | 0 | 0
+headless-library-guest-asks | chromium | 10 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 14-17 | 0 | 0 | 0
+headless-library-guest-asks | chromium | 9late | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | aaaaa | 3-4 | 0 | 5 | 0
+headless-library-guest-asks | firefox | 8 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | aaaaa | 2-4 | 0 | 5 | 0
+headless-library-guest-asks | firefox | 9 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 32-41 | 0 | 0 | 0
+headless-library-guest-asks | firefox | 10 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 32-36 | 0 | 0 | 0
+headless-library-guest-asks | firefox | 9late | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | aaaaa | 2-4 | 0 | 5 | 0
+headless-library-guest-asks | webkit | 8 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | aaaaa | 3-4 | 0 | 5 | 5
+headless-library-guest-asks | webkit | 9 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 4-4 | 0 | 0 | 0
+headless-library-guest-asks | webkit | 10 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3-5 | 0 | 0 | 0
+headless-library-guest-asks | webkit | 9late | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | aaaaa | 3-4 | 0 | 5 | 5
+headed-probe | chromium | 1pos | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 11-19 | 0 | 0 | 0
+headed-probe | chromium | 1neg | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | ----- |  | 0 | 0 | 0
+headed-probe | chromium | 4 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 12-17 | 0 | 0 | 0
+headed-probe | chromium | 5@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3014-3021 | 0 | 0 | 0
+headed-probe | chromium | 5@6000 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | AAAAA | 6003-6004 | 0 | 0 | 0
+headed-probe | chromium | 6 | 5 | 5 of 5 | 5 of 5 | 1/1 1/1 1/1 1/1 1/1 | 4 4 4 4 4 | AAAAA | 12-29 | 0 | 0 | 0
+headed-probe | firefox | 1pos | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 26-36 | 0 | 0 | 0
+headed-probe | firefox | 1neg | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | ----- |  | 0 | 0 | 0
+headed-probe | firefox | 4 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 32-39 | 0 | 0 | 0
+headed-probe | firefox | 5@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3035-3039 | 0 | 0 | 0
+headed-probe | firefox | 5@6000 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | AAAAA | 6004-6005 | 0 | 0 | 0
+headed-probe | firefox | 6 | 5 | 5 of 5 | 5 of 5 | 1/1 1/1 1/1 1/1 1/1 | 4 4 4 4 4 | AAAAA | 28-38 | 0 | 0 | 0
+headed-probe | webkit | 1pos | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 7-9 | 0 | 0 | 0
+headed-probe | webkit | 1neg | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | ----- |  | 0 | 0 | 0
+headed-probe | webkit | 4 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 8-14 | 0 | 0 | 0
+headed-probe | webkit | 5@3000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 3010-3013 | 0 | 0 | 0
+headed-probe | webkit | 5@6000 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 6012-6018 | 0 | 0 | 0
+headed-probe | webkit | 6 | 5 | 5 of 5 | 5 of 5 | 2/2 2/2 2/2 2/2 2/2 | 4 4 4 4 4 | AAAAA | 8-20 | 0 | 0 | 0
+headed-library | chromium | 7 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 12-17 | 0 | 0 | 0
+headed-library | chromium | 7@6000 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | AAAAA | 6003-6004 | 0 | 0 | 0
+headed-library | chromium | 7twice | 5 | 5 of 5 | 5 of 5 | 1/1 1/1 1/1 1/1 1/1 | 4 4 4 4 4 | AAAAA | 12-27 | 0 | 0 | 0
+headed-library | firefox | 7 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 25-35 | 0 | 0 | 0
+headed-library | firefox | 7@6000 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | AAAAA | 6002-6004 | 0 | 0 | 0
+headed-library | firefox | 7twice | 5 | 5 of 5 | 5 of 5 | 1/1 1/1 1/1 1/1 1/1 | 4 4 4 4 4 | AAAAA | 25-37 | 0 | 0 | 0
+headed-library-guest-asks | chromium | 8 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | aaaaa | 3-4 | 0 | 5 | 0
+headed-library-guest-asks | chromium | 9 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 13-17 | 0 | 0 | 0
+headed-library-guest-asks | chromium | 10 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 13-17 | 0 | 0 | 0
+headed-library-guest-asks | chromium | 9late | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | aaaaa | 3-5 | 0 | 5 | 0
+headed-library-guest-asks | firefox | 8 | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | aaaaa | 3-5 | 0 | 5 | 0
+headed-library-guest-asks | firefox | 9 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 32-46 | 0 | 0 | 0
+headed-library-guest-asks | firefox | 10 | 5 | 5 of 5 | 5 of 5 | 1 1 1 1 1 | 1 1 1 1 1 | AAAAA | 33-38 | 0 | 0 | 0
+headed-library-guest-asks | firefox | 9late | 5 | 0 of 5 | 5 of 5 | 0 0 0 0 0 | 1 1 1 1 1 | aaaaa | 2-4 | 0 | 5 | 0
