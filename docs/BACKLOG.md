@@ -553,6 +553,14 @@ refuse or annotate a run above a threshold. (c) The exhaustive exploration in `l
 deterministic budget (a count of states) instead of a wall-clock timeout. To confirm first: rerun both e2e specs on WebKit
 at low load.
 
+**Seen once, not explained.** `test/e2e/view-urls.spec.ts` on Firefox 159, in a full run of the suite (2026-11-15): the
+view was alive and its document complete, the guest's last log line had arrived, and its last render (`#done`) was not in
+the view 20 s later. Not reproduced in 36 runs of the spec on the same machine: 6 alone with 0, 8 and 16 CPU-bound
+processes beside it (the render arrived 4.4 s after the log line each time, so CPU load does not stretch the wait), 24
+alone on four workers, and 6 among the other view specs. `waitInView`'s failure names each frame's visibility and element
+count, each sandbox element's state and the page's last log lines (`test/e2e/strict-view.ts`, describeFrames), so the
+next occurrence says whether the view was hidden, empty or ended.
+
 ### <a id="s82"></a>S82 · S74 pass 1: the low findings, one checklist — ⏳ **open** (P3 · M · low)
 
 The lows of the S74 board's pass 1, none of which leaks data. Each entry gives its ID in the board's report for that

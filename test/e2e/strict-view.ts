@@ -246,17 +246,30 @@ export function recordFrameEvents(browserName: string): () => void {
     };
 }
 
+/** In the host page: each sandbox element's state, and the last lines the page recorded of `sandbox-log` (a harness page's `sandboxLogs`). */
+const SANDBOXES_AND_LOGS = `(() => {
+    const states = [];
+    for (const element of document.querySelectorAll('*')) {
+        if (typeof element.state === 'string' && typeof element.terminate === 'function') states.push(element.localName + ': ' + element.state);
+    }
+    const logs = Array.isArray(window.sandboxLogs) ? window.sandboxLogs.slice(-5).map(line => '    ' + String(line).slice(0, 200)) : [];
+    return ['the sandbox elements: ' + (states.join(', ') || 'none'), 'the last log lines (' + logs.length + '):', ...logs].join('\\n');
+})()`;
+
 /**
  * Each frame the driver knows, with its path, name, URL, whether it is detached and what a 1 s evaluation in it
- * answers (its readyState and whether it holds #hello, or the error), then the frame events recorded since
- * recordFrameEvents: a 'no-context' failure then says whether the frame was missing or had no context, and why.
+ * answers (its readyState, its visibility, how many elements it holds and whether it holds #hello, or the error), then
+ * each sandbox element's state and the page's last log lines, then the frame events recorded since recordFrameEvents: a
+ * 'no-context' failure then says whether the frame was missing or had no context, and why, and a view that never showed
+ * a render says whether it was hidden (so no frame ran, and the view applies on frames), empty, or its sandbox ended.
  */
 async function describeFrames(page: Page): Promise<string> {
     const lines: string[] = [];
     for (const frame of page.frames()) {
-        const state = await withTimeout(frame.evaluate(`document.readyState + (document.getElementById('hello') ? ' #hello' : '')`).then(String, (error: Error) => `error: ${error.message.split('\n')[0]}`), 1000, 'no answer in 1 s');
+        const state = await withTimeout(frame.evaluate(`document.readyState + ' ' + document.visibilityState + ' ' + document.getElementsByTagName('*').length + ' elements' + (document.getElementById('hello') ? ' #hello' : '')`).then(String, (error: Error) => `error: ${error.message.split('\n')[0]}`), 1000, 'no answer in 1 s');
         lines.push(`  ${framePath(frame)} name=${JSON.stringify(frame.name())} ${frame.url().slice(0, 60)}${frame.isDetached() ? ' (detached)' : ''}: ${state}`);
     }
+    lines.push(await withTimeout(page.evaluate(SANDBOXES_AND_LOGS).then(String, (error: Error) => `the page: error: ${error.message.split('\n')[0]}`), 1000, 'the page: no answer in 1 s'));
     if (frameEvents) lines.push(`the driver's frame events (${frameEvents.length}):`, ...frameEvents.map(line => `  ${line}`));
     return lines.join('\n');
 }
