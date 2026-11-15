@@ -16,7 +16,7 @@ import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
 import { crossingText, mintError, mintUncodedError } from "./lib/minted-errors";
 import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
-import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from "./lib/worker-globals";
+import { keepOnlyWorkerGlobals, removeSecureContextOnly, SEALED_WORKER_GLOBALS, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from "./lib/worker-globals";
 import { dynamicImportAt } from "./lib/entry-imports";
 import { CODE_FROM_STRING_REFUSAL, FUNCTION_KINDS_SOURCE, REFUSED_GLOBALS, REFUSED_TIMERS, refuseCodeFromStrings } from "./lib/code-from-strings";
 import { startWatchdog, watchdogBudget } from "./lib/watchdog";
@@ -471,13 +471,15 @@ function sameData(a: unknown, b: unknown): boolean {
 // every engine. `global` is the expression for the global object in that source.
 // The call is an expression whose value is the worker's postMessage, which it deleted (worker-globals.ts); strict mode
 // runs it as a statement and keeps nothing of it.
-// Strict mode's worker keeps STRICT_WORKER_GLOBALS and STRICT_WORKER_NAVIGATOR_MEMBERS: no importScripts, which its policy
+// Strict mode's worker keeps STRICT_WORKER_GLOBALS (sealed mode's, SEALED_WORKER_GLOBALS) and STRICT_WORKER_NAVIGATOR_MEMBERS: no importScripts, which its policy
 // never lets load anything (S74), and none of the names only a secure context has, whose members removeSecureContextOnly
 // deletes next and whose isSecureContext it pins to false, so its surface is the same whatever the host page's URL and the
 // engine (class A: INHERITED_CONTEXT.secureContext; SECURE_CONTEXT_ONLY).
 export const workerGlobalsCall = (global: string, globals: readonly string[], navigatorMembers: readonly string[] = WORKER_NAVIGATOR_MEMBERS) =>
     `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(globals)}, ${toInlineScriptLiteral(navigatorMembers)})`;
-const workerGlobalsStatement = (global: string, scriptUnsafe: boolean) => `${workerGlobalsCall(global, workerGlobalsFor(STRICT_WORKER_GLOBALS, scriptUnsafe), STRICT_WORKER_NAVIGATOR_MEMBERS)};`
+// Sealed mode's worker keeps SEALED_WORKER_GLOBALS, which has none of the request makers (fetch, XMLHttpRequest, WebSocket):
+// the names are gone before the bootstrap runs, which then has nothing to gate.
+const workerGlobalsStatement = (global: string, scriptUnsafe: boolean, sealed: boolean) => `${workerGlobalsCall(global, workerGlobalsFor(sealed ? SEALED_WORKER_GLOBALS : STRICT_WORKER_GLOBALS, scriptUnsafe), STRICT_WORKER_NAVIGATOR_MEMBERS)};`
     + `(${removeSecureContextOnly.toString()})(${global}, ${toInlineScriptLiteral(SECURE_CONTEXT_ONLY.members)});`;
 
 // The strict prelude's last statement, before the guest's entry, unless scriptUnsafe (code-from-strings.ts; BD6:ISO-1,
@@ -546,7 +548,7 @@ export interface BootstrapFeatures {
     callBudget: CallBudget;
     listeners: BootstrapListener[];
     uncaught?: { count: number; characters: number };
-    connect: string[];
+    connect?: string[];
     sealed?: true;
     violationFields?: Readonly<Record<string, string | number>>;
 }
@@ -1984,19 +1986,19 @@ export class WebSandbox extends ElementBase {
     // (assertEntryScoped) refuses to start a worker whose entry escaped that scope. The prelude's function is strict-mode
     // code (STRICT_DIRECTIVE, BD5:CHL-3) and the entry's is not: it keeps the semantics of the script it was written as.
     // `network`: what strict mode takes of the network options (the request gate's list, the bridge's timeout); null, the
-    // default, in sealed mode, whose bootstrap gets an empty list and `sealed`, so its sandboxFetch() refuses in the guest.
+    // default, in sealed mode, whose bootstrap gets `sealed` and no request gate (the worker has no fetch, XMLHttpRequest or WebSocket), so its sandboxFetch() refuses in the guest.
     private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string, marker = entryDoneName(), network: ViewNetwork | null = null): string {
         const features: BootstrapFeatures = network
             ? { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [...network.connect], violationFields: { ...VIOLATION_EVENT_FIELDS } }
-            : { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [], sealed: true, violationFields: { ...VIOLATION_EVENT_FIELDS } };
+            : { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, sealed: true, violationFields: { ...VIOLATION_EVENT_FIELDS } };
         if (network?.fetchBridge) features.fetchBridge = { ...network.fetchBridge };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const scriptUnsafe = this._config.scriptUnsafe === true;
         const options = { maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
         const prelude = `(function (g) {${STRICT_DIRECTIVE}`
             + `(${assertEntryScoped.toString()})(g);`
-            + workerGlobalsStatement('g', scriptUnsafe)
-            + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()});`
+            + workerGlobalsStatement('g', scriptUnsafe, network === null)
+            + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()}${network ? `, undefined, ${network.requestGate}` : ''});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}, ${this._config.guestWrites === true ? 'comms.writeFiles' : 'null'}, ${toInlineScriptLiteral(VIEW_FILE_TYPES)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)}, ${isStyleProperty.toString()});`
             + (scriptUnsafe ? '' : refuseCodeFromStringsStatement('g'))

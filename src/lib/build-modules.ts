@@ -76,6 +76,7 @@ export const BUILD_MODULES = {
     'src/lib/rate-limit.ts': 'sealed',
     'src/lib/realms.ts': 'data',
     'src/lib/reasons.ts': 'sealed',
+    'src/lib/request-gate.ts': 'network',
     'src/lib/references.ts': 'sealed',
     'src/lib/rpc.ts': 'sealed',
     'src/lib/sandbox-log.ts': 'sealed',

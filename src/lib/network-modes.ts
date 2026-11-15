@@ -37,11 +37,13 @@ export interface StrictInit {
 }
 
 // What a strict view's build takes of the network options (network-host.ts, prepareStrictFrame), and sealed mode's takes
-// nothing of (_prepareSealedFrame: null): the request gate's list, the origins the renderer admits, the bridge's timeout.
+// nothing of (_prepareSealedFrame: null): the request gate and its list, the origins the renderer admits, the bridge's timeout.
 export interface ViewNetwork {
     connect: string[];
     origins: OriginPolicy;
     fetchBridge: { timeoutMs: number } | null;
+    /** The request gate's source (request-gate.ts, stringified): the bootstrap is given it, as sealed mode's never is. */
+    requestGate: string;
 }
 
 // The network of a build of strict, cooperative or worker mode, as the element holds it: the fetch bridge's frame, its

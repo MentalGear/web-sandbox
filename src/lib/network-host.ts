@@ -26,6 +26,7 @@ import { hostPageOrigin } from './host-site';
 import { mergeGuestImportMaps } from './import-map';
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from './in-sandbox-files';
 import { inSandboxScript } from './in-sandbox-script';
+import { requestGate } from './request-gate';
 import { environmentGate, STRICT_DIRECTIVE, viewBootstrapHash } from './in-sandbox-view';
 import type { Generation } from './lifecycle';
 import { setLongTimeout } from './long-timer';
@@ -175,6 +176,7 @@ export class NetworkMethods {
             connect: this._gateConnect(files, reach.origins),
             origins: reach.origins,
             fetchBridge: this._fetchPolicy ? { timeoutMs: this._fetchPolicy.timeoutMs } : null,
+            requestGate: requestGate.toString(),
         };
         const prepared = this._prepareViewFrame(built, files, this._guestPolicy(files, reach.origins), network);
         return { ...prepared, network: this._prepareNetwork(reach.fetchPolicy) };
@@ -273,7 +275,7 @@ export class NetworkMethods {
         if (this._config.guestWrites === true) features.guestWrites = true;
         const featuresArgument = `, ${toInlineScriptLiteral(features)}`;
         // Only literals are interpolated: `=== true` here as well, whatever setConfig() stored (AR:A6).
-        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument}, ${createSizeOf.toString()}, ${postToFrame})`;
+        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument}, ${createSizeOf.toString()}, ${postToFrame}, ${requestGate.toString()})`;
         // Guest writes (BL:C5): sandboxFiles gets the comms script's captured write call through `comms`, a constant
         // of a block the whole bootstrap then runs in: block-scoped, so never a global guest code could read.
         // Without them the bootstrap keeps its text: the comms statement, then sandboxFiles without a write call
