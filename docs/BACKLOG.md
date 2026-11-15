@@ -560,6 +560,10 @@ alone on four workers, and 6 among the other view specs. `waitInView`'s failure 
 count, each sandbox element's state and the page's last log lines (`test/e2e/strict-view.ts`, describeFrames), so the
 next occurrence says whether the view was hidden, empty or ended.
 
+The same day, `test/e2e/strict-renderer.spec.ts` on WebKit 27.2, strict mode ("every URL the view mints is of a type that
+is not a document"), failed once among six specs run together, and its error was not kept. Not reproduced: 6 runs alone
+and two more runs of the same six specs.
+
 ### <a id="s82"></a>S82 · S74 pass 1: the low findings, one checklist — ⏳ **open** (P3 · M · low)
 
 The lows of the S74 board's pass 1, none of which leaks data. Each entry gives its ID in the board's report for that

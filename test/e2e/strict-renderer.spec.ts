@@ -4,6 +4,7 @@ import { clickInSandbox, inView, waitInView } from './strict-view';
 import { lag, quietStall, startLag } from './host-share';
 import { VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS } from '@src/lib/in-sandbox-view';
 import type { StrictSandboxConfig } from '@src/lib/network-types';
+import { mountInput } from './view-input';
 import { VIEW_MODES, type ViewMode } from './view-modes';
 
 // The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
@@ -153,6 +154,33 @@ test.describe('the renderer is an allowlist', () => {
                 logo: true, styled: 'rgb(0, 0, 255)',
             });
             await expect.poll(() => inView(page, browserName, `document.getElementById('logo').naturalWidth`)).toBe(1);
+        });
+
+        test('a select shows the options its markup selects: the one that has `selected`, the last of several, the first that is not disabled where none has it, none in a list box, every one of a multiple select, one in an optgroup; rendered into an element or into the select itself', async ({ sandbox, page, browserName }) => {
+            const options = '<option>x</option><option selected>y</option><option>z</option>';
+            const selects = `<select id="marked">${options}</select>`
+                + '<select id="several"><option selected>x</option><option selected>y</option><option>z</option></select>'
+                + '<select id="plain"><option>x</option><option>y</option><option>z</option></select>'
+                + '<select id="disabled"><option disabled>x</option><option>y</option><option>z</option></select>'
+                + '<select id="listbox" size="3"><option>x</option><option>y</option><option>z</option></select>'
+                + '<select id="multiple" multiple><option selected>x</option><option>y</option><option selected>z</option></select>'
+                + '<select id="grouped"><optgroup label="g"><option>x</option><option>y</option></optgroup><optgroup label="h"><option selected>z</option><option>w</option></optgroup></select>'
+                + '<select id="groups"><optgroup label="g"><option>x</option><option>y</option></optgroup><optgroup label="h"><option>z</option></optgroup></select>';
+            const shown = `(() => {
+                const out = {};
+                for (const select of document.querySelectorAll('select')) out[select.id] = Array.from(select.selectedOptions).map((option) => option.value).join();
+                return out;
+            })()`;
+            const expected = { marked: 'y', several: 'y', plain: 'x', disabled: 'y', listbox: '', multiple: 'x,z', grouped: 'z', groups: 'x' };
+            // the entry renders (sealed mode has no execute()), and renders again when the host asks
+            await mountInput(mode, sandbox, browserName, `bridge.expose('renderInto', (html, into) => { sandboxView.render(html, into); return true; });`, selects + '<div id="box"></div><select id="own"></select><p id="ready">ready</p>');
+            expect(await inView(page, browserName, shown)).toEqual({ ...expected, own: '' });
+            // rendered into an element, and into a select
+            await sandbox.call('renderInto', selects.replaceAll('id="', 'id="in-'), 'box');
+            await sandbox.call('renderInto', options, 'own');
+            await waitInView(page, browserName, `document.getElementById('own').length === 3 && !!document.getElementById('in-groups')`);
+            const inBox = Object.fromEntries(Object.entries(expected).map(([id, value]) => [`in-${id}`, value]));
+            expect(await inView(page, browserName, shown)).toEqual({ ...expected, ...inBox, own: 'y' });
         });
     });
 });

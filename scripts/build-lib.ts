@@ -11,17 +11,17 @@
  * src/network.ts installs the network modes. Each build's bundle is made of the modules of that build and no other
  * (src/lib/build-modules.ts): the bundler reports the modules it kept code of, and a bundle that holds one outside the
  * build's list is not written. `--out <directory>` writes the bundle elsewhere than dist/ (the e2e server keeps the
- * network build beside the default one).
+ * network build beside the default one): a path from the checkout's root, or an absolute one.
  */
 import { rmSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { BUILD_ENTRIES, buildFor, NETWORK_MODES_FLAG } from '../src/lib/build-flag';
 import { modulesOf } from '../src/lib/build-modules';
 
 const root = join(import.meta.dir, '..');
 const build = buildFor(process.env[NETWORK_MODES_FLAG.env]);
 const outArgument = process.argv.indexOf('--out');
-const outdir = join(root, outArgument < 0 ? 'dist' : process.argv[outArgument + 1] ?? 'dist');
+const outdir = resolve(root, outArgument < 0 ? 'dist' : process.argv[outArgument + 1] ?? 'dist');
 const entry = join(root, BUILD_ENTRIES[build]);
 
 // The build's own modules, evaluated here (they need no DOM): the bootstrap's text is this build's, with the fetch
