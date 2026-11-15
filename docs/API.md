@@ -1678,6 +1678,41 @@ page in Chromium and Firefox, with no user activation (measured; cooperative mod
 
 ---
 
+### Forms and the browser's autofill
+
+<!-- describes: view-forms, inherited-context sig:5378e193 -->
+
+A guest's form gets nothing of the browser's autofill or autocomplete, in strict and sealed mode, and the guest's worker
+receives from a control only what the user entered into that control ([research 29](research/29_autofill/README.md); the
+`autofill` row of the [threat model](THREAT-MODEL.md#the-host-pages-context)). The browser keeps the user's data for every
+site (the history of what they typed, keyed by a field's name; their addresses, cards and logins) and fills a form's
+fields from it, several at one choice: a guest that names a field `email` would otherwise be offered what the user typed
+into any field of that name, and one choice in one field would fill the guest's other fields, those the user does not
+see included.
+
+- **The names are the view's.** Every `input`, `select`, `textarea`, `button`, `fieldset` and `output` the view renders
+  has a name the view chose, one per distinct name of the guest's and drawn per view, and a control the guest left
+  nameless has one of its own. The details carry the guest's own: `target.name`, and the names of a submit's `form`
+  fields; a nameless control is in no `form`, as it is in no submission. In the view's document the attribute is the
+  view's, so a guest stylesheet's `[name="…"]` selector matches nothing: select by `id` or `class`.
+- **`autocomplete` is the view's.** Every `form`, `input`, `select` and `textarea` has `autocomplete="off"`, and the
+  guest's own is dropped: a token such as `one-time-code`, `new-password`, `email` or `cc-number` has no effect. The
+  browser offers no history, address, card, login or one-time code in a guest's form, and saves nothing typed into one.
+- **The values are the user's.** A control's value reaches the worker only as the guest set it (`render()`, `text()`,
+  `set()`, a form's reset) or as the user entered it into that control: a text field while it is focused and the user's
+  latest pointer press, key, composition or drop was on it; a `select`, range, colour, date or time input the user pressed
+  or keyed; a checkbox or radio by the user's click on it or on its label. What the user types, deletes, pastes, cuts,
+  undoes, composes with an input method or drops reaches the worker unchanged. Any other change (a field filled while the
+  user is in another one, a value set by script with or without events of its own, as an extension sets one) is undone
+  in the view before anything is forwarded. A value written into the field the user is in, while they are in it, is
+  taken as theirs: one suggestion of the browser's they pick for that field (Chromium and Firefox fill the chosen field
+  so), or text an extension inserts where they type.
+- **What it costs.** No browser autofill or autocomplete in a guest's form: the user types every value. Text a tool
+  inserts into a field the guest focused with `set({ focus })`, before the user pressed a pointer or a key in it (some
+  dictation does), is undone. A hidden field named `_charset_` carries the value the guest gave it, not the document's
+  encoding.
+- **Cooperative mode** is outside it: its guest document reads what the browser fills there.
+
 ## Modes
 
 Sealed mode is in every build of the package; strict, cooperative and worker mode are the network modes, in the package
@@ -2047,7 +2082,9 @@ rather than catch. Read them with `sandboxFiles.read()` or `text()`, which make 
 ### Input
 
 `sandboxView.on(type, id, handler)` delivers the user's input to the app: the example reads a `submit` (the form's fields
-arrive in `event.form`) and a `change` (the checkbox), and clears the field with `sandboxView.set('new', { value: '' })`.
+arrive in `event.form`, under the app's own names) and a `change` (the checkbox), and clears the field with
+`sandboxView.set('new', { value: '' })`. The browser's autofill does not reach the app's form, and its fields carry only
+what the user entered ([Forms and the browser's autofill](#forms-and-the-browsers-autofill)).
 For drag and drop, sliders, gestures and virtual lists use the pointer, wheel and scroll events with the `pointerCapture`,
 `rect` and `preventDefault` options, and answer with `set(id, { css, scroll })`: [Pointer, wheel, scroll and focus
 input](#sandboxview-strict-mode) describes them, and [research 23](research/23_view_input/README.md) measures them.

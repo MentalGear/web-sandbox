@@ -29,7 +29,7 @@
  */
 import { CODE_FROM_STRING_SINKS } from './code-from-strings';
 import { sealedHostPasses } from './host-passes';
-import { RENDER_ATTRIBUTES, RENDER_ELEMENTS, VIEW_LOAD_KINDS } from './in-sandbox-view';
+import { RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_NAMED_CONTROLS, VIEW_LOAD_KINDS } from './in-sandbox-view';
 import type { InheritedContextId } from './inherited-context';
 import { NETWORK_WORKER_GLOBALS, SECURE_CONTEXT_ONLY, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
 
@@ -225,6 +225,21 @@ export const CHOKEPOINTS = {
         what: "every pass of the host realm over guest content a sealed build runs is library code over strings and bytes: it hands nothing of the guest's to a platform parser, loader or policy-checked API, and its cost is linear in what it takes (HOST_PASSES; test/unit/host-passes.test.ts scans every pass and the view's frame builders)",
         file: 'src/lib/host-passes.ts',
         token: 'export const HOST_PASSES = {',
+    },
+    controlNames: {
+        what: "the renderer gives every form control a name of the view's (one per distinct guest name, drawn per view; a nameless control one of its own), whatever the guest wrote, and the view maps it back in what it forwards: no store of the browser keyed by a name or an id matches a control of the view",
+        file: 'src/lib/in-sandbox-view.ts',
+        token: 'export const RENDER_NAMED_CONTROLS',
+    },
+    forcedAutocompleteOff: {
+        what: 'the renderer gives every `form`, `input`, `select` and `textarea` `autocomplete="off"`, and keeps no `autocomplete` of the guest\'s: the browser offers and saves no history of what the user typed in the view',
+        file: 'src/lib/in-sandbox-view.ts',
+        token: "['input', 'autocomplete', 'off'],",
+    },
+    valueModel: {
+        what: "the view's value model: a control's value reaches the worker only as the user entered it into that control, in a trusted event of that control while the user is in it; anything else is undone at every read the view forwards (describe(), a submit's fields)",
+        file: 'src/lib/in-sandbox-view.ts',
+        token: 'const entered = (element: Element, kind: number): boolean => {',
     },
     secureContextRemoval: {
         what: "strict and sealed mode's worker has nothing only a secure context has, and reads `isSecureContext` as false, on every engine and page (SECURE_CONTEXT_ONLY): its globals and navigator members are off the strict allowlists, and the prelude deletes its members and pins `isSecureContext`; the surface Chromium's worker has on every page",
@@ -522,17 +537,17 @@ export const SURFACES = {
             html:track@label html:track@default html:map@name html:link@type html:link@media html:link@sizes html:style@media
             html:ol@reversed html:ol@start html:ol@type html:li@value html:td@colspan html:td@rowspan html:td@headers
             html:th@colspan html:th@rowspan html:th@headers html:th@scope html:th@abbr html:col@span html:colgroup@span
-            html:time@datetime html:data@value html:del@datetime html:ins@datetime html:form@name html:form@autocomplete
+            html:time@datetime html:data@value html:del@datetime html:ins@datetime html:form@name
             html:form@novalidate html:label@for html:input@type html:input@name html:input@value html:input@checked
             html:input@disabled html:input@readonly html:input@required html:input@placeholder html:input@min html:input@max
             html:input@step html:input@minlength html:input@maxlength html:input@pattern html:input@size html:input@multiple
-            html:input@accept html:input@autocomplete html:input@list html:input@form html:input@dirname html:input@alt
+            html:input@accept html:input@list html:input@form html:input@dirname html:input@alt
             html:button@type html:button@name html:button@value html:button@disabled html:button@form html:select@name
             html:select@multiple html:select@size html:select@disabled html:select@required html:select@form
-            html:select@autocomplete html:option@value html:option@selected html:option@disabled html:option@label
+            html:option@value html:option@selected html:option@disabled html:option@label
             html:optgroup@label html:optgroup@disabled html:textarea@name html:textarea@rows html:textarea@cols
             html:textarea@placeholder html:textarea@disabled html:textarea@readonly html:textarea@required html:textarea@maxlength
-            html:textarea@minlength html:textarea@wrap html:textarea@form html:textarea@autocomplete html:textarea@dirname
+            html:textarea@minlength html:textarea@wrap html:textarea@form html:textarea@dirname
             html:fieldset@name html:fieldset@disabled html:fieldset@form html:output@for html:output@name html:output@form
             html:progress@value html:progress@max html:meter@value html:meter@min html:meter@max html:meter@low html:meter@high
             html:meter@optimum html:details@open html:details@name html:dialog@open
@@ -873,6 +888,19 @@ export const SEALED_REACH = {
             linkHref: neutralised(['inertHref', 'navigationCancel'], 'a link navigates nowhere, and its href names nothing of the guest\'s'),
             form: neutralised(['navigationCancel'], 'a submission is cancelled, and no form target is kept (no `action`, `formaction` or `target`)'),
             viewApi: neutralised(['viewFocusRule', 'inertHref', 'navigationCancel'], "`set({ focus })` moves focus inside the view only while the view has the user's focus, and no link it renders navigates"),
+        },
+    },
+    autofill: {
+        rest: 'is no field the browser fills, and carries no value of one to the guest',
+        cells: {
+            host: HOST_NOTHING,
+            form: remains(['userField'], "no store of the browser matches its controls (controlNames, forcedAutocompleteOff), and what the browser or an extension writes into one reaches the guest only from the field the user is in, while they are in it; every other change is undone before anything is forwarded (valueModel)"),
+            viewApi: remains(['userField'], 'what it renders: its form controls, whose values its events carry only as the user entered them (valueModel)'),
+            'html:button': neutralised(['valueModel', 'controlNames'], "a button's value and name are the guest's to the guest: no store fills one, and a value put into one is undone before it is forwarded"),
+            'html:input@value': neutralised(['valueModel'], "a field's value reaches the guest only as the guest set it or as the user entered it into that field; any other is undone before it is forwarded"),
+            'html:form': neutralised(['forcedAutocompleteOff', 'controlNames'], "a form of the view has `autocomplete='off'`, whatever the guest wrote, and its controls the view's names: the browser saves nothing typed into it, and matches none of its fields with a store"),
+            ...Object.fromEntries(RENDER_NAMED_CONTROLS.map(control => [`html:${control}@name`, neutralised(['controlNames'], "the guest's name is read and replaced by the view's own, which no store of the browser holds anything under; the guest sees its own name back")])),
+            'html:*@id': neutralised(['controlNames'], "every control has a name of the view's, so a browser that keys a nameless field by its id never keys a control of the view so"),
         },
     },
     eventDispatch: {

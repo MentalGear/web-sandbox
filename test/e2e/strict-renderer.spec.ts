@@ -77,7 +77,9 @@ test.describe('the renderer is an allowlist', () => {
         await render(sandbox, browserName, corpus);
         const read = await inView<any>(page, browserName, `(() => {
             const all = Array.from(document.body.querySelectorAll('*'));
-            const attrs = (id) => { const e = document.getElementById(id); return e ? e.getAttributeNames().sort().map((n) => n + '=' + e.getAttribute(n)) : null; };
+            // a control's name is the view's (RENDER_NAMED_CONTROLS): read as the guest's it stands for, or "nameless"
+            const own = (v) => { const m = /^\\d{18}([-_])(\\d*)$/.exec(v); if (!m) return v; if (m[1] === '_') return '(nameless)'; let g = ''; for (let i = 0; i < m[2].length; i += 5) g += String.fromCharCode(Number(m[2].slice(i, i + 5))); return "(view's for " + g + ")"; };
+            const attrs = (id) => { const e = document.getElementById(id); return e ? e.getAttributeNames().sort().map((n) => n + '=' + (n === 'name' ? own(e.getAttribute(n)) : e.getAttribute(n))) : null; };
             return {
                 svg: Array.from(document.getElementById('s').querySelectorAll('*')).map((e) => e.localName),
                 math: Array.from(document.getElementById('m').querySelectorAll('*')).map((e) => e.localName),
@@ -97,10 +99,11 @@ test.describe('the renderer is an allowlist', () => {
             // a paint reference keeps only a fragment of the document; any other URL becomes "" (keepsUrl, BD7:ISO-1)
             r: ['fill=url("")', 'height=5', 'id=r', 'stroke=url(#g)', 'width=5'],
             g: ['id=g', 'x1=0'],
-            btn: ['id=btn', 'type=button'],
+            // a control's name and a form's autocomplete are the view's (RENDER_NAMED_CONTROLS, RENDER_FORCED_ATTRIBUTES)
+            btn: ['id=btn', 'name=(nameless)', 'type=button'],
             pop: ['id=pop'],
-            frm: ['id=frm', 'name=f'],
-            inp: ['id=inp', 'name=i', 'type=image'],
+            frm: ['autocomplete=off', 'id=frm', 'name=f'],
+            inp: ['autocomplete=off', 'id=inp', "name=(view's for i)", 'type=image'],
             // crossorigin is the renderer's own, the guest's use-credentials replaced (RENDER_CROSSORIGIN_ELEMENTS, S74)
             // the style attribute is the engine's serialization of the declaration the view gave it (sanitizeRender: no inline style)
             img: ['alt=a', 'class=c', 'crossorigin=anonymous', 'id=img', 'referrerpolicy=no-referrer', 'src=https://x.example/i.png', 'style=color: red;', 'width=1'],
@@ -144,7 +147,8 @@ test.describe('the renderer is an allowlist', () => {
                 // a <style> is a noframes in the view, holding its text, which the view applies as a constructed stylesheet
                 'svg', 'defs', 'linearGradient', 'stop', 'g', 'path', 'circle', 'text', 'math', 'mfrac', 'mi', 'mn', 'my-card', 'noframes', 'p']);
             expect(read).toMatchObject({
-                n: 'id maxlength name placeholder required type', s: 'id name', c: 'checked id name type', b: 'id name type value', f: 'autocomplete id name',
+                // autocomplete is the view's on every form, input, select and textarea (RENDER_FORCED_ATTRIBUTES)
+                n: 'autocomplete id maxlength name placeholder required type', s: 'autocomplete id name', c: 'autocomplete checked id name type', b: 'id name type value', f: 'autocomplete id name',
                 d: 'id open', dl: 'id open', pr: 'id max value', card: 'class data-id id', v: 'controls crossorigin disablepictureinpicture disableremoteplayback id muted width', icon: 'aria-label height id role viewBox width',
                 logo: true, styled: 'rgb(0, 0, 255)',
             });

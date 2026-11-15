@@ -40,6 +40,7 @@ const INTERNAL: Readonly<Record<string, string>> = {
     'src/lib/host-site.ts:MAX_ANCESTORS': "how far up the parent chain the host page's site is read: past it the rest counts as unreadable, so the site is undecided (refused), never wider; a browser nests frames far less deep",
     'src/lib/files.ts:EDIT_OVERHEAD': "a term of the quota's cost model for a rewritten file, not a bound",
     'src/lib/files.ts:SLOT_URL_BYTES': "a term of the quota's cost model for a rewritten stylesheet, not a bound",
+    'src/lib/in-sandbox-view.ts:VIEW_NAME_PREFIX_DIGITS': "how many random digits start the names the view gives the guest's controls (viewControlNames): a property of a name, not a bound",
     'src/lib/files.ts:CHUNK': 'the size of the slices a byte array is turned into text in, an implementation detail',
     'src/lib/long-timer.ts:MAX_TIMER_DELAY': "the platform's longest timer delay",
     'src/lib/rpc.ts:MAX_IN_FLIGHT': "a mirror of MAX_INBOUND_IN_FLIGHT in the stringified broker (api-docs.test.ts keeps it equal)",

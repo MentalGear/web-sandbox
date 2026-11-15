@@ -226,7 +226,7 @@ test.describe('G4 navigation', () => {
                 `<math style="${at(200, 50)}" href="${B}/mathml"><mi>mathml</mi></math>`,
                 `<img usemap="#m" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="80" height="40" style="${at(0, 100)}"><map name="m"><area shape="rect" coords="0,0,80,40" href="${B}/area"></map>`,
                 `<form action="${B}/form" method="post"><button style="${at(100, 100)}">submit</button></form>`,
-                `<form action="${B}/form-get"><input name="q" value="x" style="${at(200, 100)}"></form>`,
+                `<form action="${B}/form-get"><input id="q" name="q" value="x" style="${at(200, 100)}"></form>`,
             ].join(''));
             for (const [x, y] of [[20, 20], [120, 20], [220, 20], [20, 70], [120, 70], [220, 70], [20, 120], [120, 120]]) {
                 await clickInSandbox(page, x!, y!);
@@ -235,7 +235,7 @@ test.describe('G4 navigation', () => {
             await clickInSandbox(page, 220, 120); // focus the input, then implicit submission
             // Only press Enter once the input has focus: otherwise the key never reaches the form and the
             // "no navigation" assertion below would pass without testing implicit submission at all.
-            await waitInView(page, browserName, `document.activeElement && document.activeElement.name === 'q'`);
+            await waitInView(page, browserName, `document.activeElement && document.activeElement.id === 'q'`);
             await page.keyboard.press('Enter');
             await clickInSandbox(page, 20, 20); // and a middle click on a link
             await page.mouse.click((await page.locator('web-sandbox').boundingBox())!.x + 20, (await page.locator('web-sandbox').boundingBox())!.y + 20, { button: 'middle' });

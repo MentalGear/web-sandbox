@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixture';
 import { RealisticHost, covering, withPolicySecrets, type PolicySecrets } from './realistic-host';
 import { E2E_PORT } from './server';
-import { inView } from './strict-view';
+import { clickInSandbox, inView, waitInView } from './strict-view';
 import { ENTRY_DONE_PREFIX } from '@src/lib/in-sandbox-view';
 import { LIBRARY_GUEST_GLOBALS, surfaceOf } from '@src/lib/sealed-reach';
 import { SEALED_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
@@ -148,6 +148,31 @@ test.describe('sealed mode: what the guest can reach, against every inherited ro
             expect(String(report['blocked-uri']), covering('cspReporting', 'a report names blob as blocked')).toBe('blob');
             expect(String(report['script-sample'] ?? ''), covering('cspReporting', 'a report carries no sample of the guest')).toBe('');
         }
+    });
+
+    test("the autofill row: on the realistic host, the guest's form carries the view's names and autocomplete off, and what is put into it without the user never reaches the guest", async ({ sandbox, browserName }) => {
+        const host = await RealisticHost.open(sandbox, { mode: 'sealed' });
+        const button = 'position:absolute;left:0;top:60px;width:80px;height:30px';
+        const events = await host.embed('sealed', {
+            guest: `
+                sandboxView.render(${JSON.stringify(`<form id="f" autocomplete="on"><input id="e" name="email" autocomplete="email"><input id="o" autocomplete="one-time-code"><button id="go" name="go" value="1" style="${button}">go</button></form>`)});
+                return await new Promise((resolve) => sandboxView.on('submit', null, (detail) => resolve(detail.form)));
+            `,
+        });
+        expect(events.at(-1)).toEqual({ type: 'ready', reason: null });
+        await waitInView(host.page, browserName, `!!document.getElementById('go')`);
+        const rendered = await inView<string[][]>(host.page, browserName, `[...document.querySelectorAll('form, input')].map((el) => [el.id, String(el.getAttribute('name')), String(el.getAttribute('autocomplete'))])`);
+        expect(rendered, 'the view is reachable').not.toBe('no-context');
+        if (rendered === 'no-context') return;
+        for (const [id, name, autocomplete] of rendered) {
+            expect(autocomplete, covering('autofill', `${id}: autocomplete is the view's, whatever the guest wrote`)).toBe('off');
+            if (id !== 'f') expect(name, covering('autofill', `${id}: the control's name is the view's, never the guest's`)).toMatch(/^\d{18}[-_]\d+$/);
+        }
+        // a value put into the guest's fields without the user, as an extension or a fill of a field the user is not in does
+        expect(await inView(host.page, browserName, `(() => { const e = document.getElementById('e'); e.value = 'r29-user@example.test'; e.dispatchEvent(new Event('input', { bubbles: true })); document.getElementById('o').value = '424242'; return true; })()`)).toBe(true);
+        await clickInSandbox(host.page, 40, 75);
+        const form = await host.guestResult<string[][]>(30000);
+        expect(form, covering('autofill', 'the guest receives its own names, and none of the values put in without the user')).toEqual([['email', ''], ['go', '1']]);
     });
 });
 

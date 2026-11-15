@@ -275,6 +275,21 @@ export const INHERITED_CONTEXT = {
         tests: ['test/e2e/guest-realm-hardening.spec.ts', 'test/e2e/strict.spec.ts'],
         sealed: { standing: 'not-applicable', because: 'no-guest-document', note: "cooperative and worker mode only; the view's focus rule (`set({ focus })`) stays" },
     },
+    autofill: {
+        channel: "The browser's autofill stores, which are the user's and not the host page's alone: the history of what the user typed into fields on any site (keyed by a field's name, or its id when it has none), saved addresses and payment cards, saved logins; and what a password manager's extension fills from script (docs/research/29_autofill)",
+        inheritedBy: "strict and sealed mode's view, whose form controls the library renders and whose values it forwards to the guest's worker; cooperative mode's guest document, which reads its own fields",
+        how: "Strict and sealed mode's view, in three layers. The view owns `name`: the renderer gives every control (RENDER_NAMED_CONTROLS) a name of the view's, one per distinct guest name, drawn per view, and every nameless control one of its own, so no history typed anywhere matches, and no id is the key; the view maps it back in what it forwards (`target.name`, a submit's fields), so the guest sees its own names (viewControlNames). `autocomplete` is the view's: off the guest's allowlist, and `autocomplete=\"off\"` on every `form`, `input`, `select` and `textarea` (RENDER_FORCED_ATTRIBUTES). And the view's value model: a control's value reaches the worker only as the user entered it into that control, in a trusted event of that control while the user is in it (the focused element their latest press, key, composition or drop was on; a checkbox or radio by the trusted click on it); any other change (the fields Chromium fills besides the one chosen from, a value set by script, a fill with no event) is undone at every read the view forwards and wherever its event is seen (inSandboxView). Saved logins are not offered in an opaque-origin document at all (measured). Cooperative mode's guest document is the guest's own: what the browser fills there, its script reads (documented)",
+        by: ['construct', 'documented'],
+        engines: ['chromium', 'firefox'],
+        tests: ['test/unit/view-autofill.test.ts', 'test/e2e/view-values.spec.ts', 'test/e2e/sealed-reach.spec.ts'],
+        sealed: { standing: 'reduced', note: 'no store of the browser matches a control of the view, and no value reaches the guest from a field the user is not in; what is written into the field the user is in, while they are in it, is taken as theirs' },
+        residuals: {
+            userField: {
+                what: "a value written into the control the user is in (focused, and the one their latest press, key, composition or drop was on), with a trusted `input` event, is taken as what the user entered there: one suggestion of the browser's they pick for that field (Chromium 159 and Firefox 159 fill the chosen field so), or text an extension inserts where the user is typing (`execCommand('insertText')`); never a value of a field they are not in",
+                tests: ['test/e2e/view-values.spec.ts'],
+            },
+        },
+    },
     eventDispatch: {
         channel: 'Events the browser dispatches synchronously into the host page when a frame is removed (focus, blur, pagehide)',
         inheritedBy: "the host page's listeners, during the element's teardown",

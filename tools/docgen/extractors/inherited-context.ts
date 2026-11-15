@@ -4,6 +4,7 @@
  */
 import { ENVIRONMENT_CHECKS } from '../../../src/lib/environment-check';
 import { CONTEXT_ENGINES, inheritedContextRows, type SealedStanding } from '../../../src/lib/inherited-context';
+import { RENDER_FORCED_ATTRIBUTES, RENDER_NAMED_CONTROLS, VIEW_VALUE_KINDS } from '../../../src/lib/in-sandbox-view';
 import { signatureOf } from '../engine';
 import { code, table, row, type Extractor } from './markdown';
 
@@ -37,6 +38,9 @@ export const inheritedContext: Extractor = {
         // the channels, how each is neutralised, where it matters and what it is in sealed mode: a section that describes
         // the inventory follows these
         { id: 'inherited-context', signature: signatureOf(inheritedContextRows().map(entry => [entry.id, entry.by, entry.engines, entry.sealed.standing])), render: () => '' },
+        // what the view does to a guest's form against the browser's autofill (the `autofill` row): the controls whose name
+        // is the view's, the attributes it forces on them, and the kinds of its value model
+        { id: 'view-forms', signature: signatureOf([RENDER_NAMED_CONTROLS, RENDER_FORCED_ATTRIBUTES.filter(([, attribute]) => attribute === 'autocomplete'), VIEW_VALUE_KINDS]), render: () => '' },
     ],
     regions: {
         'inherited-context': () => table(['Channel', 'Inherited by', 'How the library neutralises it', 'Engines', 'Sealed mode', 'Covered by'], rows()),

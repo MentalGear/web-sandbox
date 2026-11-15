@@ -14,7 +14,7 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 
 ## Modes and realms
 
-<!-- describes: realms sig:31f6 -->
+<!-- describes: realms sig:bfea -->
 
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
@@ -52,7 +52,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `cooperative` | Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts. | yes | `inSandboxScript`, `requestGate`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `inSandboxImportMap`, `inSandboxMarkup`, `checkSandboxEnvironment` | `announcement`, `logic-port` |
 | `worker-frame` | Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup. | no | `workerBootstrap`, `checkSandboxEnvironment` | `announcement`, `worker` |
 | `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `requestGate`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals` | `logic-port`, `worker` |
-| `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `cssReferences`, `withKeptReferences`, `keepsUrl`, `styleMarkup`, `viewInputOutbox`, `isStyleProperty`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
+| `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `cssReferences`, `withKeptReferences`, `keepsUrl`, `styleMarkup`, `viewInputOutbox`, `viewControlNames`, `isStyleProperty`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
 | `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap, the prelude and the code-from-string refusal, then the guest's entry. | yes | `inSandboxScript`, `requestGate`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeSecureContextOnly`, `assertEntryScoped`, `inStrictWorker`, `refuseCodeFromStrings`, `isStyleProperty` | `logic-port`, `render-port`, `worker` |
 | `bridge-frame` | The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it. | no | `checkSandboxEnvironment`, `inBridgeFrame` | `announcement`, `bridge-init`, `bridge-port` |
 <!-- generated:end -->
@@ -82,6 +82,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `keepsUrl` | `src/lib/css-references.ts` | `view` |
 | `styleMarkup` | `src/lib/style-markup.ts` | `view` |
 | `viewInputOutbox` | `src/lib/in-sandbox-view.ts` | `view` |
+| `viewControlNames` | `src/lib/in-sandbox-view.ts` | `view` |
 | `isStyleProperty` | `src/lib/in-sandbox-view.ts` | `view`, `strict-worker` |
 | `checkSandboxEnvironment` | `src/lib/environment-check.ts` | `cooperative`, `worker-frame`, `view`, `bridge-frame` |
 | `inBridgeFrame` | `src/lib/in-bridge-frame.ts` | `bridge-frame` |
@@ -89,12 +90,12 @@ bundle, so those functions close over nothing, and the tests scan their text).
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:31f6b45f42cb49d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:bfeab45f42cb49d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
 there (sealed mode's has no `fetch`, `XMLHttpRequest` or `WebSocket` at all; strict mode keeps them behind the request gate). The **view** has the DOM and none of the guest's code: it cleans the markup the worker asks to render (whatever it
-keeps loads without credentials: [API.md](docs/API.md#the-views-loads)), moves it into its document, applies the guest's styles through the CSSOM (never as an inline style, which the host page's policy would check: [API.md](docs/API.md#guest-styles)), and enforces the view's budgets. They talk on the render port, which the host is not on, so the host's own code never
+keeps loads without credentials: [API.md](docs/API.md#the-views-loads)), moves it into its document, applies the guest's styles through the CSSOM (never as an inline style, which the host page's policy would check: [API.md](docs/API.md#guest-styles)), names the guest's form controls itself and forwards a control's value only as the user entered it, so the browser's autofill reaches no guest ([API.md](docs/API.md#forms-and-the-browsers-autofill)), and enforces the view's budgets. They talk on the render port, which the host is not on, so the host's own code never
 carries a render (the view's work still runs on the host page's thread where the browser places the view there, and is
 bounded: [API.md](docs/API.md#the-views-cost-to-the-host-page)). The host talks to each on a port of its own, and watches the view for liveness always and
 the worker's with `watchdogTimeout`. The guest can therefore draw but not script, and a flood of drawing is bounded where
@@ -103,7 +104,7 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Sealed mode: strict mode with no network
 
-<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818ebf360da87e47 -->
+<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818ebf36e1937e47 -->
 
 Sealed mode, the default (no `mode`, or `mode: 'sealed'`), is strict mode's view and worker with no network
 ([research 24](docs/research/24_sealed_mode/README.md), [ADR-008](docs/ADR-008-sealed-mode.md)). It is not strict mode
@@ -135,7 +136,10 @@ with its network options left empty: the sealed path never reaches the code that
   stylesheet, is kept only as the one rule for a URL in the view allows (`keepsUrl`, `src/lib/css-references.ts`): a
   registered file's URL the view minted, or a fragment in an SVG reference, so what it shows loads from `blob:`. Its
   parser is never given a `style` attribute or a `<style>` element (`src/lib/style-markup.ts`), and the guest's styles
-  are applied through the CSSOM, so the host page's `style-src` checks and reports none of them.
+  are applied through the CSSOM, so the host page's `style-src` checks and reports none of them. Its form controls carry
+  names of the view's and `autocomplete="off"`, and it forwards a control's value only as the user entered it, so no store
+  of the browser's autofill reaches the guest from a field the user is not in
+  ([API.md](docs/API.md#forms-and-the-browsers-autofill)).
 - **The host page.** The one value of the page's a sealed build reads is `crossOriginIsolated`, only to refuse (as in
   every mode); `hostContentSecurityPolicy` serves only Trusted Types where the browser has none. Which inherited channels
   remain in sealed mode is the sealed column of the [host page's context](docs/THREAT-MODEL.md#the-host-pages-context),

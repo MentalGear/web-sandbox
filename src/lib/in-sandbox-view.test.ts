@@ -537,8 +537,9 @@ describe('broad review 2026-10-14: the renderer is an allowlist', () => {
             + '<form id="f" action="https://x.example/" method="post" target="_top"><button id="b" formaction="https://x.example/" popovertarget="p" commandfor="d" command="show-modal" onclick="x()">b</button></form>');
         const rect = fragment.getElementById('r')!;
         expect(rect.getAttributeNames().map(name => [name, rect.getAttribute(name)])).toEqual([['id', 'r'], ['fill', 'url(#g)'], ['stroke', 'url("")'], ['mask', 'url("")'], ['clip-path', 'url(#c) border-box']]);
-        expect(fragment.getElementById('f')!.getAttributeNames()).toEqual(['id']);
-        expect(fragment.getElementById('b')!.getAttributeNames()).toEqual(['id']);
+        // what stays is the view's own: a form's autocomplete and a control's name (RENDER_FORCED_ATTRIBUTES, RENDER_NAMED_CONTROLS)
+        expect(fragment.getElementById('f')!.getAttributeNames()).toEqual(['id', 'autocomplete']);
+        expect(fragment.getElementById('b')!.getAttributeNames()).toEqual(['id', 'name']);
     });
 
     it('the lists themselves: no element that instances, loads or animates content; no handler, and no URL attribute but the governed ones', () => {

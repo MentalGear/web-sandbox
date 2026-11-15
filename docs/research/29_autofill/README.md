@@ -23,6 +23,11 @@ checklist for a Mac). Raw output is in [`results/`](results/README.md). Each cel
 
 ## Answer in brief
 
+- **(Now) The library closes it** in the renderer and the view that strict and sealed mode share: the view names every
+  form control itself, forces `autocomplete="off"`, and forwards a control's value only as the user entered it into that
+  control ([What this means](#what-this-means-for-sealed-mode)). Measured with the change: no history offered on either
+  browser; with Chromium's switch on, an address or card choice reaches the guest only in the field the user chose from,
+  and the other fields are undone in the view. The bullets below are what was measured before it.
 - **(Leak today) Chromium 159 hands the guest of the library's default mode the user's autocomplete history, after one
   choice in a dropdown.** A value the user typed and submitted into a field named `r29note` on the host page was offered
   in the guest's field of the same name in the library's view (case e): a click in the field showed it, ArrowDown
@@ -80,7 +85,8 @@ checklist for a Mac). Raw output is in [`results/`](results/README.md). Each cel
 
 ## What the renderer admits and forwards
 
-From `src/lib/in-sandbox-view.ts` (`RENDER_ELEMENTS`, `RENDER_ATTRIBUTES`) at `298811d`:
+From `src/lib/in-sandbox-view.ts` (`RENDER_ELEMENTS`, `RENDER_ATTRIBUTES`) at `298811d`, what the measurements below ran
+against (the renderer and the view have changed since: [What this means](#what-this-means-for-sealed-mode)):
 
 | Element | Attributes admitted (besides the global `id`, `class`, `style`, `title`, `lang`, `dir`, `hidden`, `tabindex`, `role`, `translate`, `inert`, `spellcheck`, `inputmode`, `enterkeyhint`, `autocapitalize`, `data-*`, `aria-*`) |
 | :--- | :--- |
@@ -116,7 +122,7 @@ without an event, but it needs none of its own: the fill is one.
   every field), `bare` (names and ids `f1`…, no labels), `bare-text` (also every input `type=text`), `bare-text-off`,
   `bare-text-junk`, `renamed` (names and ids `f1`…, labels kept), `renamed-junk`, `search` (every input
   `type=search`), `search-junk`, `search-off`, `hidden` (`ac`, every field but the first moved off-screen by an inline
-  style) and `fix` (the recommended change: ids and labels kept, `name` replaced, text-like inputs `type=search`,
+  style) and `fix` (the change this note first proposed: ids and labels kept, `name` replaced, text-like inputs `type=search`,
   `autocomplete="off"`).
 - **Cases a to d** ([`run-plain.mjs`](run-plain.mjs)), one page load per case, form and variant, on
   `http://127.0.0.1:18929` (and `https://127.0.0.1:18943` for cards, [below](#https)): (a) the form in the host page;
@@ -277,62 +283,130 @@ of them ran a variant, they agree.
 
 ## What this means for sealed mode
 
-**There is a leak today, in the default mode.** On Chromium 159 and on Firefox 159, a guest that renders a text field
-with a `name` the embedder's site also uses (`email`, `name`, `q`, `address`, …) is handed what the user once typed
-into the embedder's field of that name, as soon as the user clicks the guest's field and picks the browser's suggestion:
-the view forwards the browser's trusted `input` event with the value. One click and one choice; the user sees an
-ordinary dropdown in what looks like the embedder's page. The values are not the embedder's alone (both browsers key
-this history by the name only, on every site), so the guest gets whatever the user typed anywhere under that name. The
-renderer admits the guest's `name` and `autocomplete` as they are, and the view forwards the value of every event's
-target; nothing else stands in the way. It is a data leak in the review board's sense, at a user gesture, and it fits
-class A of [research 18](../18_finding_classes/README.md): context of the host page that the sandbox inherits, here a
-store of what the user typed that the browser keeps across sites.
+**What leaked, measured above against the renderer as it was at `298811d`.** On Chromium 159 and Firefox 159, a guest
+that rendered a text field with a `name` the user had typed into anywhere (`email`, `name`, `q`, …) was handed what the
+user typed there, as soon as the user picked the browser's suggestion in the guest's field; the view forwarded the
+browser's trusted `input` event with the value. With Chromium's `AutofillExtractShadowDomIframes` on (and, for the plain
+documents, in the served topology at Chromium's defaults), one choice in one field filled every field of the guest's form
+with the saved address or card, fields the user never saw included, and the worker received all of them. A data leak in
+the review board's sense, at a user gesture; class A of [research 18](../18_finding_classes/README.md): a store of the
+user's that the browser offers in every document's fields.
 
-**What does not leak today, and why.** Saved credentials: neither browser fills or offers one in an opaque-origin
-document, and the view is one; that holds by construction as long as the view stays opaque. Saved addresses and cards
-(Chromium): not offered in the view, only because Chromium 159 does not join a frame inside the element's shadow root to
-the page's forms, and the tree it does build is rooted at the wrapper, an `about:srcdoc` document whose URL autofill
-refuses. That is not a property of the library: one Chromium feature already in the build turns it into a leak of the
-whole address and card (security code included) at the same gesture, and the planned served topology (D8 of
-[research 24](../24_sealed_mode/README.md), [research 27](../27_served_document_headerless/README.md)) removes it at
-Chromium's defaults, because the served file has an `http(s)` URL. A guest can also lay out one visible field and collect
-the rest of the profile in fields the user never sees.
+**What the library does now** (the `autofill` row of `INHERITED_CONTEXT`, `src/lib/inherited-context.ts`, and its column
+of `SEALED_REACH`; docs/API.md, [Forms and the browser's autofill](../../API.md#forms-and-the-browsers-autofill)). The
+invariant: the guest receives from a control only what the user entered into that control. Three layers, in the renderer
+and the view that strict and sealed mode share:
 
-**The recommended change, in the renderer** (measured as the `fix` variant: nothing offered of any kind, in cshadow and
-in the library with the switch on, on Chromium 159; nothing of the history on Firefox 159):
+1. **The view owns `name`** (by construction). The renderer gives every listed form control it keeps
+   (`RENDER_NAMED_CONTROLS`: `input`, `select`, `textarea`, `button`, `fieldset`, `output`) a name of the view's: a prefix of
+   18 random digits drawn when the view starts, then the guest's name as five decimal digits per UTF-16 code unit (one view
+   name per distinct guest name, so radio groups, `form` association and `FormData` keep their shape, and no word of the
+   guest's for a field heuristic to read), and a nameless control `prefix_n` of its own (so no two nameless radios form a
+   group, and the id is never the key). The view maps it back in `target.name` and in a submit's fields
+   (`viewControlNames`); a nameless control's field is dropped, as the browser would not have submitted it. Both browsers key
+   the history by the name, and by the id only for a nameless field (measured below), so nothing typed anywhere matches a
+   control of the view.
+2. **`autocomplete` is the view's** (by construction). It is on no allowlist, and every `form`, `input`, `select` and
+   `textarea` gets `autocomplete="off"` (`RENDER_FORCED_ATTRIBUTES`): neither browser offers or saves history there, and
+   Chromium offers no login email.
+3. **The view's value model** (by construction in the view, on every engine, whatever a browser fills by heuristics). The
+   view keeps the state it accepted per control and changes it only after the guest's own operations (a flush that renders,
+   writes text, or sets a value or checkedness accepts what it leaves, having undone anything else first), a form's reset
+   (the guest's defaults), or the user's entry in a trusted `input` or `change` event of that control, by its kind
+   (`VIEW_VALUE_KINDS`): a text field when it is focused and the user's latest pointer press, key (`KeyboardEvent`
+   `keydown`/`keyup`), composition or drop was on it; a select, range, colour, date or time input when the user's latest press
+   was on it, or their key with it focused; a checkbox or radio by the trusted click on it that is not cancelled (accepted in
+   the click, which the browser dispatches after it has toggled the control). A file input is not modelled: only the user's
+   choice sets one. Anything else is undone where it is seen: in the `input` or `change` event it raised, at the user's next
+   press, key, composition, drop or `beforeinput` on the control (so a user's edit applies to what the view accepted), and at
+   every read the view forwards (`describe()`, a submit's fields): the one chokepoint. A flush of `set()`s visits only their
+   targets (a radio with its group); a render or a text() every control of the view, linear in them.
 
-1. **The view owns `name`.** The renderer replaces the `name` of every form control with one of its own (one per
-   distinct guest name and view, so radio groups and `FormData` keep their shape, never a name a page would use) and maps
-   it back in the details it forwards (`target.name`, the `submit` pairs). Both browsers key the history by the field's
-   name (by its id only when it has no name), so no value typed outside the view matches a name the view chose, whatever
-   the browser honours: this one is by construction. Measured: `renamed` (name and id) not offered on either browser;
-   `fix` (name only, with `off`) not offered; that a set name keeps the id out of the key is the browsers' rule,
-   inferred, not isolated here. It also takes the names out of Chromium's address and card heuristics, but the labels
-   still classify the fields (`renamed`: filled), so it does not close those alone.
-2. **`autocomplete` is the view's, not the guest's:** removed from the guest's attributes, and `autocomplete="off"` set
-   on every `form`, `input`, `select` and `textarea`. Both browsers honour it for the history and Chromium for the
-   login email; Chromium ignores it for addresses and cards (measured).
-3. **Text-like inputs render as `type=search`** (`text`, `email`, `tel`, `url`; a password stays a password; the guest's
-   `inputmode` keeps the keyboard). Chromium 159 offered no address, card or login email in a search field, in any
-   variant (`search`, `search-junk`, `search-off`, `fix`). This is Chromium's choice, honoured today, not a guarantee:
-   it is a check the browser makes, and the reason the view should also refuse to forward an autofilled value (next).
-4. **A backstop at the view's one chokepoint (not measured; inferred):** `describe()` reads the target's value for every
-   forwarded event; if the target matches `:autofill`, the view clears the field and forwards `""`, so a fill the
-   renderer did not foresee (a `textarea` or `select` the browser classifies, a new heuristic) never reaches the
-   worker. Once the user edits the field the state goes, and what is forwarded is what the user typed. Measured here:
-   Chromium 159 set `:autofill` on every fill it made, the history included; **Firefox 159 did not set it on a
-   form-history fill** (the fields read without it), so this backstop does not cover Firefox's history, which points 1
-   and 2 do.
+Not adopted: text-like inputs rendered as `type=search` (part of the `fix` variant above) and `:autofill` as a backstop. The value
+model is browser-independent and stops every fill into a control the user is not in, so a heuristic Chromium honours today
+(no address in a search field) adds nothing to it, at the cost of the control's role, its validation and its keyboard; and
+`:autofill` is weaker than the model (Firefox sets no such state on a form-history fill) and would only decide what the
+model already decides.
 
-Points 1 and 2 close what leaks today; 3 and 4 close what leaks under the switch and in the served topology. The cost
-to guests: a guest's own form gets no browser autofill or autocomplete (the user types every value, which is what a
-legitimate guest form gets in an opaque frame today anyway), `email` and `url` lose the browser's built-in validation
-(the guest validates in its worker), search fields may show the engine's clear button (not measured), and
-`autocomplete` tokens the guest sets (`one-time-code`, `new-password`) have no effect. `name`, ids, labels, `FormData`
-and the details the guest receives keep their shape. Typing into a field with the change applied was not measured;
-nothing in it touches how a field is edited (inferred). Each point is a rule of the renderer's allowlist or of
-`describe()`, and each needs its e2e spec that fails against today's renderer (a seeded profile, as here, on Chromium
-and Firefox) and a row in `INHERITED_CONTEXT` for the browser's autofill stores.
+What the model takes as the user's: a value written into the field the user is in, while they are in it, with a trusted
+`input` event. That is one suggestion of the browser's the user picks for that field (the invariant: the user entering one
+value), or text an extension inserts where the user is typing (`execCommand('insertText')`, which raises trusted events
+indistinguishable from an input method's). It is the row's residual (`userField`), pinned by `test/e2e/view-values.spec.ts`.
+No allowlist of `inputType` is part of the rule: a user's spellcheck, autocorrect and datalist choices arrive as
+`insertReplacementText`, which Firefox's form history uses too, so an allowlist could not stop the one without losing the
+others, and the history is closed by points 1 and 2.
+
+Whether a guest should receive values of fields the user cannot see at all is a separate question (a guest can lay out a
+field off-screen, or under another element, and the user can still Tab into it and type): the user's own entry there is
+what the user entered, and the model forwards it; what the user sees of the view is the guest's (out of scope in
+docs/THREAT-MODEL.md: UI spoofing inside the element's box). This fix does not change it.
+
+### The editing matrix (no profile; Chromium 159, Firefox 159, WebKit 27.2)
+
+[`probe-editing.mjs`](probe-editing.mjs), in a top-level document and in an opaque sandboxed `srcdoc` frame inside a shadow
+root as the view is (both agree on every engine); raw output in [`results/2026-11-15_editing/`](results/2026-11-15_editing/),
+`bun summarize-editing.mjs <file>`. "Focused" is `document.activeElement` at the value event. Every user edit is trusted.
+
+| Way | What the document sees (all three engines unless named) | The model |
+| :--- | :--- | :--- |
+| typing, Backspace, Delete | `keydown`, `beforeinput` and `input` (`InputEvent`, `insertText`, `deleteContentBackward`, `deleteContentForward`), focused | accepted |
+| paste (keyboard), cut | `paste`/`cut`, then `beforeinput` and `input` (`insertFromPaste`, `deleteByCut`), focused | accepted |
+| undo, redo (Control+Z, Control+Shift+Z, Control+Y) | `beforeinput` and `input` (`historyUndo`, `historyRedo`), focused | accepted |
+| an input method's commit (`keyboard.insertText`) | Chromium, WebKit: `beforeinput` and `input` (`insertText`); Firefox: `compositionstart`, `insertCompositionText`, `compositionend`; focused | accepted |
+| IME composition (CDP `Input.imeSetComposition`, Chromium) | `compositionstart`, `beforeinput` and `input` (`insertCompositionText`) per update, focused | accepted |
+| a drop of text, into the focused field or another | `drop` while the field is not yet focused, then `focusin`, `beforeinput` and `input` (`insertFromDrop`), focused | accepted (the drop makes it the user's control) |
+| a value set by script, with no event; `setRangeText()` | nothing | undone at the next read |
+| a value set by script with a synthetic `input` | an untrusted `input` | undone at once |
+| `execCommand('insertText')` into the focused field | a trusted `input` (`insertText`; WebKit also `beforeinput`), focused | accepted only where the user's latest press or key was (the residual); undone after a script's `focus()` |
+| checkbox: click, Space, its label clicked | a trusted `click` on the checkbox (on the label, then the checkbox), then `input` and `change` (`Event`); WebKit does not focus it on a label's click | accepted at the click |
+| checkbox: a script's `click()` | an untrusted `click`, then **trusted** `input` and `change` | undone |
+| radio: click, arrow keys | a trusted `click` on the radio, `input`, `change` | accepted, with its group |
+| select: ArrowDown while focused | `keydown`, `input`, `change`, focused | accepted |
+| select: Playwright's `selectOption` (script) | untrusted `input` and `change` | undone |
+| range: a click on its track | `pointerdown`, then `input` **before** `focusin`, then `change` | accepted (a pointer's press) |
+| range: arrow key | `keydown`, `input`, `change`, focused | accepted |
+| date: typed | Firefox: `input` and `change` once complete, focused; Chromium and WebKit headless: no `input` in the probe | accepted where raised |
+| reset button | `reset` at the form; the values change after it | the guest's defaults |
+| spellcheck replacement, paste from the context menu | browser UI: not drivable here (not measured); they arrive on the focused field after the user's press on it | accepted (inferred) |
+
+### What a fill looks like to the document (the seeded profile; case a)
+
+[`probe-events.mjs`](probe-events.mjs); raw output `results/…/events*.json`, `bun summarize-events.mjs <file>`.
+
+| Fill | Chromium 159 | Firefox 159 |
+| :--- | :--- | :--- |
+| history, the field chosen from | trusted `keydown`, `input`, `change`, `keyup`, each a plain `Event` (no key, no `inputType`), on the focused field, `:autofill` | trusted `beforeinput` and `input` (`InputEvent`, `insertReplacementText`) on the focused field, no `:autofill` |
+| address, card: the field chosen from | as history | not measured (no saved address offered in the control) |
+| address, card: every other field | the same four plain `Event`s on each field, **not focused**, `:autofill` | not measured |
+| login, on load (host page's origin only) | the four plain `Event`s on each field, none focused | `beforeinput`, `input` (`insertReplacementText`), `change` on each, none focused |
+| the history's key | a nameless field with id `r29note` is offered the history of name `r29note`; a field with a name of the view's and that id is offered nothing (with and without `autocomplete="off"`) | the same for id `email`: a nameless field offered, a named one not |
+
+### Measured with the fix (case e: the library's default build with this change)
+
+`results/2026-11-15_chromium-159.0.8154.6/library-fixed-*.txt`, `results/2026-11-15_firefox/library-fixed.txt`; the
+before is the tables above (and `library-history.txt`, `library-flag-*.txt`, `library-two-arrows.txt`).
+
+| Case | Before | With the fix |
+| :--- | :--- | :--- |
+| Chromium, history (`noac`, `ac`, `off`) | offered; the worker received `r29-typed-note` | not offered; nothing received |
+| Firefox, form history (login and address forms, `noac`, `ac`) | offered; the worker received the email and the name | not offered; nothing received |
+| Chromium at its defaults, address and login | not offered (the shadow root) | not offered; nothing received |
+| Chromium with the switch, address (`ac`, `noac`, `hidden`) | all seven fields received, six of them off-screen in `hidden` | offered; the user's choice filled the field they were in, which the worker received (`Rtwonine Leakcheck`); the six others were undone in the view and never received |
+| Chromium with the switch, card (HTTPS; `ac`, `hidden`) | holder and number received | only the holder, the field chosen from; the number, expiry and code undone, never received |
+| Chromium with the switch, login form | the address email | not offered (`autocomplete="off"`) |
+
+The served topology (cshadow, ccshadow) is not the library yet (D8); its documents will run the same renderer and view,
+so the same layers apply there, but nothing of it was measured with the library.
+
+**What it costs guests.** No browser autofill or autocomplete in a guest's form (a guest's `autocomplete` tokens,
+`one-time-code` and `new-password` included, have no effect); a guest stylesheet's `[name=…]` selector matches nothing;
+text inserted into a field the guest focused with `set({ focus })` before the user pressed or keyed anything in it (some
+dictation) is undone; a hidden field named `_charset_` keeps the guest's value. Nothing of how a user edits a field
+changed (the matrix; `test/e2e/view-values.spec.ts` on all three engines). The model's own cost, measured 2026-11-15 on a
+view of 12 000 inputs, the median of 12 operations, the host page's longest stall (`test/e2e/host-share.ts`): a `set()` as
+before (1 to 4 ms on each engine, its target alone visited); a render of one element 12, 13 and 20 ms (Chromium, Firefox,
+WebKit) against 5, 2 and 5 ms before (every control visited twice, about 1 µs each); a keystroke the same as before (one control). All of it is
+charged to the view's time budget, so the bound on the host page is unchanged.
 
 ## Not measured
 
@@ -345,7 +419,11 @@ and Firefox) and a row in `INHERITED_CONTEXT` for the browser's autofill stores.
 - **Chromium's password manager across sites** (affiliated sites, a credential saved for the served file's own origin,
   passkeys and WebAuthn conditional UI): not measured. Only the host page's own origin was saved.
 - **`textarea` and `select` as the field the user clicks**, and a `select` among filled fields (country, expiry month):
-  not measured. The recommended `type=search` does not apply to them; point 4 is meant to cover them, unmeasured.
+  not measured with a profile. The value model treats them as it treats every control (a `select` filled while the user is
+  in another field is undone); `test/e2e/view-values.spec.ts` covers a `select`, a range and a `textarea` set by script.
+- **Safari.** The model's rules for a checkbox, a radio and a `select` do not depend on focus because Safari on macOS does
+  not focus them on a click; that was chosen from WebKit's behaviour on Linux (a checkbox not focused by its label's
+  click), not measured on Safari.
 - **Autofill on typing** (Chromium's suggestions after the first characters typed, `AutofillAddressSuggestionsOnTyping`)
   and suggestions on a guest's programmatic focus (`sandboxView.set(id, { focus: true })`): not measured; every case
   here began with a click.
@@ -375,7 +453,8 @@ passwords", "Credit cards" on):
    Without a working control, a negative below means nothing.
 5. Then `/lib-host?kind=login&variant=noac` (its first field is named `email`: the history, and the login),
    `kind=address&variant=ac` and `kind=card&variant=ac`: the same questions, and what the host page's `window.__guestLog`
-   (the guest's reports, in Web Inspector's console) contains after the choice. Repeat with `variant=fix`.
+   (the guest's reports, in Web Inspector's console) contains after the choice. A bundle of this checkout applies the
+   view's names, `autocomplete="off"` and its value model to every variant.
 6. The same for `case=b`, `c` and `cshadow`, where script in the frame reads the value (its reports are in the host
    page's `window.__r29log`).
 
@@ -390,7 +469,8 @@ password-manager extension that holds a login for `http://127.0.0.1:18929` and a
 1. The control: `/host?case=a&kind=login&variant=ac` and `kind=address`. Does the extension offer or fill?
 2. `/lib-host?kind=login&variant=noac` and `kind=address&variant=ac`: does the extension show its icon or menu in the
    view's fields, does it fill them (on load, on a click, from its own menu), and what does the host page's
-   `window.__guestLog` contain afterwards? Repeat with `variant=fix`.
+   `window.__guestLog` contain afterwards?
 
 An extension sets a field's value from script of its own, so the browser's `autocomplete`, `name` and `type` rules
-(points 1 to 3 above) do not bind it; whatever change the renderer gets should be chosen with this case in mind.
+do not bind it; the view's value model does: what it writes into a field the user is not in is undone before the guest
+hears of it, and what it inserts where the user is typing is the `autofill` row's residual.

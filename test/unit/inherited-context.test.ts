@@ -19,7 +19,7 @@ describe('INHERITED_CONTEXT', () => {
         expect(Object.keys(INHERITED_CONTEXT)).toEqual([
             'cspScript', 'cspWorker', 'cspStyle', 'cspBaseUri', 'cspFetch', 'cspPolicyText', 'cspReporting', 'trustedTypesRequirement', 'trustedTypesDefault', 'coep',
             'referrer', 'ancestorOrigins', 'documentOrigin', 'cookies', 'serviceWorker', 'hostRealmGlobals', 'permissionsPolicy', 'permissionState', 'secureContext',
-            'uiSurfaces', 'eventDispatch', 'thread',
+            'uiSurfaces', 'autofill', 'eventDispatch', 'thread',
         ]);
     });
 

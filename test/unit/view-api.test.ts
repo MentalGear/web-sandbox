@@ -256,10 +256,11 @@ describe('R4-5: the view applies text and set: text is assigned, never parsed; v
     });
 
     it('set: a value counts against the view\'s characters as it serializes (the input\'s value attribute, the textarea\'s and output\'s text)', async () => {
-        const { send } = await startView('<input id="i"><textarea id="t"></textarea>', 100);
+        // room for the controls' own attributes (the view's name and autocomplete: RENDER_NAMED_CONTROLS, RENDER_FORCED_ATTRIBUTES)
+        const { send } = await startView('<input id="i"><textarea id="t"></textarea>', 200);
         const base = document.body.innerHTML.length;
-        expect(await send({ type: 'VIEW_SET', id: 'i', value: 'x'.repeat(100 - base - ' value=""'.length) })).toEqual({ type: 'VIEW_ACK' });
-        expect(document.body.innerHTML.length).toBe(100);
+        expect(await send({ type: 'VIEW_SET', id: 'i', value: 'x'.repeat(200 - base - ' value=""'.length) })).toEqual({ type: 'VIEW_ACK' });
+        expect(document.body.innerHTML.length).toBe(200);
         expect(await send({ type: 'VIEW_SET', id: 't', value: 'y' })).toEqual({ type: 'VIEW_ACK', refused: ['VIEW_MAX_CHARACTERS'] });
         expect($('t').value).toBe('');
         expect(await send({ type: 'VIEW_SET', id: 'i', value: 'short' })).toEqual({ type: 'VIEW_ACK' }); // replacing frees what it held
