@@ -46,8 +46,18 @@ t('eval', () => String((0, eval)('1')));
 t('base', () => { const b = document.createElement('base'); b.href = '${CANARY}/'; document.head.append(b); return document.baseURI.startsWith('${CANARY}') ? 'applied' : 'refused'; });
 // the <meta> admits these
 img('img-blob', URL.createObjectURL(new Blob(['<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'], { type: 'image/svg+xml' })));
-t('style-attr', () => { const p = document.createElement('p'); p.setAttribute('style', 'color: rgb(7, 8, 9)'); document.body.append(p); return getComputedStyle(p).color === 'rgb(7, 8, 9)' ? 'applied' : 'refused'; });
-t('style-elem', () => { const s = document.createElement('style'); s.textContent = '#q { color: rgb(9, 8, 7) }'; document.head.append(s); const p = document.createElement('p'); p.id = 'q'; document.body.append(p); return getComputedStyle(p).color === 'rgb(9, 8, 7)' ? 'applied' : 'refused'; });
+// Computed style resolves only once the document has a presentation (a frame can still be 0x0 here, and then every colour reads
+// as ''): the two style canaries wait for it, so an empty colour is never read as a refusal.
+pend.push(new Promise((res) => {
+  const start = Date.now();
+  const go = () => {
+    if (getComputedStyle(document.documentElement).color === '' && Date.now() - start < 3000) return setTimeout(go, 20);
+    t('style-attr', () => { const p = document.createElement('p'); p.setAttribute('style', 'color: rgb(7, 8, 9)'); document.body.append(p); const c = getComputedStyle(p).color; return c === '' ? 'unmeasured' : c === 'rgb(7, 8, 9)' ? 'applied' : 'refused'; });
+    t('style-elem', () => { const s = document.createElement('style'); s.textContent = '#q { color: rgb(9, 8, 7) }'; document.head.append(s); const p = document.createElement('p'); p.id = 'q'; document.body.append(p); const c = getComputedStyle(p).color; return c === '' ? 'unmeasured' : c === 'rgb(9, 8, 7)' ? 'applied' : 'refused'; });
+    res();
+  };
+  go();
+}));
 t('tt-sink', () => { document.createElement('div').innerHTML = '<i>x</i>'; return 'accepted'; });
 pend.push(new Promise((res) => {
   try {
@@ -58,7 +68,8 @@ pend.push(new Promise((res) => {
   setTimeout(res, 2000);
 }));
 Promise.all(pend).then(() => setTimeout(() => {
-  for (const k of ['img-blob', 'style-attr', 'style-elem', 'tt-sink']) if (R.attempts[k] !== 'loaded' && R.attempts[k] !== 'applied' && R.attempts[k] !== 'accepted') R.refusedAllowed.push(k);
+  R.unmeasured = Object.keys(R.attempts).filter((k) => R.attempts[k] === 'unmeasured');
+  for (const k of ['img-blob', 'style-attr', 'style-elem', 'tt-sink']) if (!['loaded', 'applied', 'accepted', 'unmeasured'].includes(R.attempts[k])) R.refusedAllowed.push(k);
   if (R.attempts.worker) R.refusedAllowed.push('worker');
   R.events = ev.map((v) => ({ dir: v.dir, disp: v.disp, blocked: v.blocked, mine: norm(v.policy) === mine, policy: norm(v.policy) === mine ? '(the meta)' : v.policy.slice(0, 90) }));
   R.foreign = R.events.filter((v) => !v.mine).length;

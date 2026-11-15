@@ -1,13 +1,15 @@
 // Prints a compact view of the raw result lines in results/ (one line per document per case), the view the README's
-// tables were written from. Reads only results/; runs no browser.
+// tables were written from. Reads only results/<set>/; runs no browser.
 //
-//   bun docs/research/27_served_document_headerless/summarize.mjs [file-prefix]
+//   bun docs/research/27_served_document_headerless/summarize.mjs <set> [file-prefix]   # e.g. 2026-11-15_pw-1.65.1
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'results');
-const prefix = process.argv[2] ?? '';
+const set = process.argv[2];
+if (!set) throw new Error('usage: summarize.mjs <results set> [file-prefix]');
+const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'results', set);
+const prefix = process.argv[3] ?? '';
 const files = readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith('.txt')).sort();
 
 const viols = (v) => {

@@ -35,15 +35,25 @@ const R = { kind: C.kind, origin: String(self.origin), url: location.href.slice(
   ancestorOrigins: location.ancestorOrigins ? [...location.ancestorOrigins] : 'unsupported', top: window.top === window, secure: self.isSecureContext,
   coi: self.crossOriginIsolated, tt: typeof trustedTypes, viol: [], act: {} };
 document.addEventListener('securitypolicyviolation', (e) => R.viol.push((${VIOL})(e)));
-const st = (id, want) => { const el = document.getElementById(id); return el ? (getComputedStyle(el).color === want ? 'applied' : 'refused') : 'absent'; };
-R.act.styleAttr = st('sa', 'rgb(1, 2, 3)');
-R.act.styleElement = st('sb', 'rgb(4, 5, 6)');
+// Computed style resolves only once the document has a presentation (a frame can still be 0x0, and then every colour
+// reads as ''): the two style readings wait for it, and an empty colour is 'unmeasured', never 'refused'.
+const st = (id, want) => { const el = document.getElementById(id); if (!el) return 'absent'; const c = getComputedStyle(el).color; return c === '' ? 'unmeasured' : c === want ? 'applied' : 'refused'; };
 R.act.base = document.baseURI.startsWith(C.ip + '/based/') ? 'applied' : 'refused';
 try { R.act.eval = String((0, eval)('6*7')); } catch (e) { R.act.eval = e.name; }
 try { const d = document.createElement('div'); d.innerHTML = '<i>x</i>'; R.act.ttSink = 'accepted'; } catch (e) { R.act.ttSink = e.name; }
 let tp = null;
 try { if (self.trustedTypes) tp = trustedTypes.createPolicy('probe', { createHTML: (s) => s, createScriptURL: (s) => s }); } catch (e) { R.act.ttPolicy = e.name; }
 const pend = [];
+pend.push(new Promise((res) => {
+  const start = Date.now();
+  const read = () => {
+    if (getComputedStyle(document.documentElement).color === '' && Date.now() - start < 3000) { setTimeout(read, 20); return; }
+    R.act.styleAttr = st('sa', 'rgb(1, 2, 3)');
+    R.act.styleElement = st('sb', 'rgb(4, 5, 6)');
+    res();
+  };
+  read();
+}));
 pend.push(new Promise((res) => { const i = new Image(); i.onload = () => { R.act.img = 'loaded'; res(); }; i.onerror = () => { R.act.img = 'refused'; res(); }; i.src = C.ip + '/i.svg?k=' + C.kind; }));
 pend.push(fetch(C.ip + '/c?k=' + C.kind).then(() => { R.act.fetch = 'ok'; }, () => { R.act.fetch = 'refused'; }));
 pend.push(fetch(C.local + '/c?canary=' + C.kind).then(() => { R.act.fetchCanary = 'ok'; }, () => { R.act.fetchCanary = 'refused'; }));

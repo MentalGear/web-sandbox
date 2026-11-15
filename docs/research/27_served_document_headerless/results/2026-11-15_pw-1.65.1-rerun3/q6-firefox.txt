@@ -1,0 +1,8 @@
+q6.run {"engine":"firefox","version":"159.0","date":"2026-11-15T01:53:28.065Z","load1":0.48}
+q6 {"engine":"firefox","case":"idle","median":11,"range":"11-13","gaps":[11,11,11,13,11],"load1":[0.6,0.6,0.55,0.55,0.51]}
+q6 {"engine":"firefox","case":"today's srcdoc frame","median":1203,"range":"1200-1204","gaps":[1200,1204,1203,1203,1203],"load1":[0.51,0.47,0.47,0.47,0.43]}
+q6 {"engine":"firefox","case":"served frame","median":1204,"range":"1203-1205","gaps":[1203,1205,1204,1204,1203],"load1":[0.43,0.47,0.47,0.52,0.52]}
+q6 {"engine":"firefox","case":"served frame's srcdoc child","median":1204,"range":"1202-1204","gaps":[1204,1202,1204,1204,1203],"load1":[0.56,0.56,0.51,0.51,0.47]}
+q6 {"engine":"firefox","case":"served frame's blob: worker","median":12,"range":"12-12","gaps":[12,12,12,12,12],"load1":[0.47,0.47,0.43,0.43,0.48]}
+q6 {"engine":"firefox","case":"cross-site frame, no sandbox (control)","median":1203,"range":"1202-1204","gaps":[1204,1204,1202,1202,1203],"load1":[0.48,0.52,0.52,0.56,0.56]}
+q6 {"engine":"firefox","case":"same-origin frame, no sandbox (control)","median":1203,"range":"1203-1204","gaps":[1204,1203,1203,1203,1204],"load1":[0.51,0.51,0.47,0.47,0.47]}
