@@ -25,7 +25,7 @@ test.describe('the package as published: the default build', () => {
             sandbox.setConfig({ entry: 'main.js', autoResize: true });
         }));
         expect(outcome).toBe('ready');
-        await page.waitForFunction(() => (window as any).sandboxLogs.includes('from the package function undefined'));
+        await page.waitForFunction(() => (window as any).sandboxLogs.includes('from the package undefined undefined'));
         // auto-sizing is the view's own report back to the host, so the element's height is the evidence that the render reached it
         await expect.poll(() => page.evaluate(() => (document.querySelector('packaged-sandbox') as HTMLElement).style.height)).toMatch(/^3[45]\d?px$/);
         expect(violations).toEqual([]);
