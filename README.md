@@ -107,7 +107,7 @@ and output: [Building an app in sealed mode](docs/API.md#building-an-app-in-seal
 [`examples/sealed-app/`](examples/sealed-app).
 
 Importing the module registers nothing, so you choose the tag name. The element is a block by default; give it a
-height. The package is private and not published yet ([D1](docs/BACKLOG.md#bl-d1)), so `import … from 'web-sandbox'`
+height. The package is not published yet, so `import … from 'web-sandbox'`
 resolves only in a project that links or packs a checkout; from a checkout, import `./src/index.ts` (`./src/network.ts`
 for the build with the network modes), or build the package
 (`bun run build:lib`) and import `dist/index.js`: only the built package has the same `viewScriptHash()` in a build step and in
@@ -828,3 +828,8 @@ the default, or in strict mode. Measured per engine and asserted by tests; worke
     guest request carries a `Referer`.
 
 Each guarantee above names its code and the test that keeps it closed in [THREAT-MODEL.md](docs/THREAT-MODEL.md). The adversarial reviews of the design are kept in [the archive](docs/archive/README.md): [adversarial review report](docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md), [focused review](docs/archive/reviews/FOCUSED-REVIEW-2026-10-14.md), [broad review](docs/archive/reviews/BROAD-REVIEW-2026-10-14.md), [independent verification](docs/archive/reviews/VERIFICATION-2026-10-14.md).
+
+## Licence
+
+[Apache License 2.0](LICENSE). The third-party code compiled into the published bundle is listed, with its licences, in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Local-first sandbox for untrusted web content: opaque-origin iframe, immutable CSP, no backend.",
   "type": "module",
-  "private": true,
+  "license": "Apache-2.0",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,6 +16,7 @@
   "files": [
     "dist/index.js",
     "dist/**/*.d.ts",
+    "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ],
   "sideEffects": false,

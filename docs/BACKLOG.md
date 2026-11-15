@@ -29,8 +29,6 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S85](#s85) | ⏳ open (P3 · S) · low | The strict view's input outbox scans every slot on each event (S74 board BD4:LIM-5; availability only) |
 | [S87](#s87) | ⏳ open (P3 · S) · low | A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time (S74 board BD5:LIM-3; availability only) |
 | [S88](#s88) | 🟡 done except CI's first run | Playwright 1.65.1 (Chromium 159, Firefox 159, WebKit 27.2); the workflows name `ubuntu-26.04`, which no CI run has confirmed yet |
-| [D1](#bl-d1) | 🟡 ready except the licence | An installable package; waits for H5's `LICENSE` |
-| [H5](#bl-h5) | 🟡 partly done | Missing repo basics: the `LICENSE` is the owner's choice |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
 
 Done items, review rounds and the capability snapshot are in [the archive](archive/backlog/BACKLOG-done.md).
@@ -767,46 +765,6 @@ the latest Playwright would show the next engine change when it ships, not at th
 
 ---
 
-## D · Packaging & Distribution
-
-### <a id="bl-d1"></a>D1 · Ship an installable package — 🟡 **ready except the licence**
-
-**Done**: public entry `src/index.ts`; `exports` / `types` / `main` point at `dist/`, built by
-`bun run build:lib` (bun bundle + `tsc` declarations). `scripts/smoke-package.sh` runs `bun pm pack`,
-installs the tarball into a scratch project, type-checks and bundles a consumer (CI). The e2e spec
-`test/e2e/package.spec.ts` mounts a sandbox from `dist/` under a custom tag. **Open**: `private: true`
-stays until H5's licence is chosen.
-
-Every solution we compare against installs with one command. We do not install at all, which caps
-adoption regardless of how good the isolation is.
-
-**Verified in `package.json`**: `"private": true`; `"main": "dev-server.ts"` — **a file that does
-not exist**; no `exports`, no `types`; `build-dist` emits JS without declarations. `README.md`
-also documents a `server.ts` that does not exist (the dev server is a Vite plugin in
-`vite.config.ts`).
-
-**Work**: drop `private`, add `exports` + `types` with declaration emit, fix `main`, align the
-README with the real entry points.
-
-**Acceptance**: a packed tarball imports cleanly in a scratch project with working types, and a
-smoke test mounts a sandbox through the public entry point (with B4).
-
----
-
-## H · Repo & Docs Hygiene
-
-### <a id="bl-h5"></a>H5 · Missing repo basics — 🟡 **partly done**
-
-**Done**: `CONTRIBUTING.md`; `format` / `format:check` scripts; `.prettierrc` stripped of the Svelte
-and Tailwind plugins it was copied with. `format:check` is not a CI gate yet (101 files predate the
-config). **Open**: the `LICENSE` — the owner's choice, and it still blocks dropping `private` (D1).
-
-No `LICENSE`, no `CONTRIBUTING.md`, and `.prettierrc` exists with no `format` script and no
-formatting check. **Work**: add a license (blocks D1 — publishing without one is a non-starter),
-a short contributing note, and `format` / `format:check` scripts.
-
----
-
 ## Parity Reference
 
 Where the items above come from. This table covers the solutions named in the repo's original
@@ -819,7 +777,7 @@ comparisons; for the 2026 entrants (`quickjs-wasi`, `@tanstack/ai-isolate-quickj
 | Isolation with no server config | ✅ opaque origin | 🟡 | ➖ | ➖ | ❌ wildcard DNS |
 | Private `MessageChannel` | ✅ | ❌ | 🟡 | ✅ | ❌ |
 | Promise-based RPC | ✅ **B1** | ✅ | ✅ | ✅ | ➖ |
-| Typed package / `d.ts` | 🟡 **D1** | ✅ | ✅ | ✅ | ✅ |
+| Typed package / `d.ts` | ✅ **D1** | ✅ | ✅ | ✅ | ✅ |
 | Headless (worker) execution | ✅ **S1** | ❌ | ❌ | ❌ | ❌ |
 | Virtual files | ✅ **C1** | ❌ | ➖ | ❌ | ❌ |
 | Host-mediated network | ✅ **B5** | ❌ | ➖ | ✅ | ❌ |

@@ -70,7 +70,7 @@ smoke() {
     # `"files": ["dist"]` would pack).
     local expected actual
     expected="$(
-        printf '%s\n' package/package.json package/README.md package/THIRD_PARTY_NOTICES.md package/dist/index.js
+        printf '%s\n' package/package.json package/README.md package/LICENSE package/THIRD_PARTY_NOTICES.md package/dist/index.js
         (cd "$root" && find dist -name '*.d.ts' -type f | sed 's|^|package/|')
     )"
     actual="$(tar -tzf "$tarball")"

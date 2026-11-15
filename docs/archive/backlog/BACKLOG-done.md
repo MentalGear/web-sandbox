@@ -2629,6 +2629,28 @@ an uncommitted overlay is gone after `reset()`, and a committed one fires `files
 
 ## D · Packaging & Distribution
 
+### <a id="bl-d1"></a>D1 · Ship an installable package — ✅ **done**
+
+**Done**: public entry `src/index.ts`; `exports` / `types` / `main` point at `dist/`, built by
+`bun run build:lib` (bun bundle + `tsc` declarations). `scripts/smoke-package.sh` runs `bun pm pack`,
+installs the tarball into a scratch project, type-checks and bundles a consumer (CI). The e2e spec
+`test/e2e/package.spec.ts` mounts a sandbox from `dist/` under a custom tag. `private` is gone from `package.json`, which names the licence
+(Apache-2.0, H5) and packs the `LICENSE`; publishing is the owner's step.
+
+Every solution we compare against installs with one command. We do not install at all, which caps
+adoption regardless of how good the isolation is.
+
+**Verified in `package.json`**: `"private": true`; `"main": "dev-server.ts"` — **a file that does
+not exist**; no `exports`, no `types`; `build-dist` emits JS without declarations. `README.md`
+also documents a `server.ts` that does not exist (the dev server is a Vite plugin in
+`vite.config.ts`).
+
+**Work**: drop `private`, add `exports` + `types` with declaration emit, fix `main`, align the
+README with the real entry points.
+
+**Acceptance**: a packed tarball imports cleanly in a scratch project with working types, and a
+smoke test mounts a sandbox through the public entry point (with B4).
+
 ### <a id="bl-d2"></a>D2 · CI — ✅ **done**
 
 **Done**: `.github/workflows/ci.yml` runs unit tests and both builds, and the e2e suite on Chromium,
@@ -2707,6 +2729,16 @@ clean and runs in CI.
 `docs/research/README.md` now indexes all twelve findings with a per-finding status against the
 current opaque-origin architecture, distinguishing "closed by construction" from "open". A
 `docs/README.md` index was added alongside it.
+
+### <a id="bl-h5"></a>H5 · Missing repo basics — ✅ **done**
+
+**Done**: `CONTRIBUTING.md`; `format` / `format:check` scripts; `.prettierrc` stripped of the Svelte
+and Tailwind plugins it was copied with. `format:check` is not a CI gate yet (101 files predate the
+config). The `LICENSE` is the Apache License 2.0 (owner, 2026-11-15).
+
+No `LICENSE`, no `CONTRIBUTING.md`, and `.prettierrc` exists with no `format` script and no
+formatting check. **Work**: add a license (blocks D1 — publishing without one is a non-starter),
+a short contributing note, and `format` / `format:check` scripts.
 
 ---
 
