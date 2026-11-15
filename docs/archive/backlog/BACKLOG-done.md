@@ -2002,7 +2002,7 @@ an early return in `frameCommittedNewDocumentNavigation`, then `FFPage` holding 
 the frame or its parent attached) had nothing left to do and was removed, with `patchedDependencies`; so was
 `realistic-host.ts`'s detour through `about:blank` before a COOP page, which had lowered the odds of the same loss.
 On Firefox the directive matrix records the driver's frame events (`recordFrameEvents`), and `waitInView` lists the
-page's frames and those events when it fails (test/e2e/strict-view.ts). [S88](../../BACKLOG.md#s88)'s upgrade brings the
+page's frames and those events when it fails (test/e2e/strict-view.ts). [S88](#s88)'s upgrade brings the
 fix from upstream and removes the setup. The case was neither retried nor skipped.
 
 ### <a id="s80"></a>S80 · The event-read scan was never built; the guest's event getters are unguarded by any test — ✅ **done** (P2 · S · medium)
@@ -2036,6 +2036,22 @@ unit test per mode the listeners run in (`test/unit/egress.test.ts`) and `test/e
 a guest replaces the event accessors and the uncaught-characters budget must still end the sandbox, in worker, strict
 and sealed mode (WebKit mutes the error text, so its error flood is skipped: the `webkit-muted-errors` row of the
 engine ledger).
+
+### <a id="s88"></a>S88 · Upgrade Playwright for Ubuntu 26.04 runners — ✅ **done**
+
+*Not a finding.* Playwright 1.58.1 refuses to install its browsers on Ubuntu 26.04, which `ubuntu-latest` became on
+2026-11-06, so the workflows had been pinned to `ubuntu-24.04`.
+
+**Done.** `@playwright/test` and `playwright` are at 1.65.1 (Chromium 159, Firefox 159, WebKit 27.2). From 1.64.0
+Firefox's Juggler names each content channel uniquely ([S86](#s86)), so the e2e global
+setup that rewrote it, its unit test and both `globalSetup` entries are gone. The engine ledger, the cookie facts, the
+strict-mode probes and every engine-specific expectation were measured again on the new browsers, in full on all three:
+24 behaviours had changed. Two of them widen cooperative mode's limits ([S44](../../BACKLOG.md#s44): Firefox's keystrokes after the
+guest takes focus, WebKit's `writeText()` after any click in the guest); `test/e2e/view-focus-capture.spec.ts` asserts
+that a strict or sealed guest takes no focus without a user's gesture on any engine.
+
+CI runs on `ubuntu-26.04` (`.github/workflows/ci.yml`), and its runs on that image pass on all three engines
+(first on 2026-11-15).
 
 ### <a id="t6"></a>T6 · Two CPU-heavy unit tests failed once on a loaded machine — ✅ **done**
 

@@ -28,7 +28,6 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S84](#s84) | ⏳ open (P2 · S) · medium | The strict view's `VIEW_LISTEN` has no flow control: an `on()`/`off()` loop is uncounted (S74 board BD4:LIM-3; availability only) |
 | [S85](#s85) | ⏳ open (P3 · S) · low | The strict view's input outbox scans every slot on each event (S74 board BD4:LIM-5; availability only) |
 | [S87](#s87) | ⏳ open (P3 · S) · low | A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time (S74 board BD5:LIM-3; availability only) |
-| [S88](#s88) | 🟡 done except CI's first run | Playwright 1.65.1 (Chromium 159, Firefox 159, WebKit 27.2); the workflows name `ubuntu-26.04`, which no CI run has confirmed yet |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
 
 Done items, review rounds and the capability snapshot are in [the archive](archive/backlog/BACKLOG-done.md).
@@ -490,7 +489,7 @@ sealed mode alone. D8 is not built.
 **Pass 8 reviews sealed mode again** (same scope), in the default build, after D8: two of pass 7's three data findings
 came from the host page's policy reaching a `srcdoc` document, which a served document does not inherit
 ([research 27](research/27_served_document_headerless/README.md) measured it with no response headers), so a pass
-before D8 would review code D8 removes. The suite runs on Chromium 159, Firefox 159 and WebKit 27.2 ([S88](#s88)). The
+before D8 would review code D8 removes. The suite runs on Chromium 159, Firefox 159 and WebKit 27.2 ([S88](archive/backlog/BACKLOG-done.md#s88)). The
 two consecutive clean passes that clear the board start there.
 
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
@@ -753,23 +752,6 @@ second on the host thread, and leaves the garbage.
 `paths` filter, or return entries without `content` by default and offer a read of one write; bound the copying per second
 with the write rate; state the cost in the docs of `fileswritten`. Unit test: with one 8 MiB write pending, a hundred
 `list()` calls that ask for the new path copy a bounded number of bytes.
-
-### <a id="s88"></a>S88 · Upgrade Playwright for Ubuntu 26.04 runners — 🟡 **done except CI's first run** (P2 · S · low, test tooling)
-
-*Not a finding.* Playwright 1.58.1 refuses to install its browsers on Ubuntu 26.04, which `ubuntu-latest` became on
-2026-11-06, so the workflows were pinned to `ubuntu-24.04`.
-
-**Done.** `@playwright/test` and `playwright` are at 1.65.1 (Chromium 159, Firefox 159, WebKit 27.2). From 1.64.0
-Firefox's Juggler names each content channel uniquely ([S86](archive/backlog/BACKLOG-done.md#s86)), so the e2e global
-setup that rewrote it, its unit test and both `globalSetup` entries are gone. The engine ledger, the cookie facts, the
-strict-mode probes and every engine-specific expectation were measured again on the new browsers, in full on all three:
-24 behaviours had changed. Two of them widen cooperative mode's limits ([S44](#s44): Firefox's keystrokes after the
-guest takes focus, WebKit's `writeText()` after any click in the guest); `test/e2e/view-focus-capture.spec.ts` asserts
-that a strict or sealed guest takes no focus without a user's gesture on any engine.
-
-**Open.** The workflows name `ubuntu-26.04` (`.github/workflows/ci.yml`), and CI runs on pull requests and pushes to
-`main` only, so no run has confirmed that image yet. The first one does; the item closes with it. A scheduled run on
-the latest Playwright would show the next engine change when it ships, not at the next upgrade.
 
 ---
 
