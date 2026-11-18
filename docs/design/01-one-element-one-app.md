@@ -48,7 +48,7 @@ interface SandboxGrants {                    // the embedder's; never part of an
 type HostMethod = (...args: unknown[]) => unknown;
 ```
 
-**The app and the grants are two arguments** (waits for the owner; [index](README.md#waits-for-the-owner), 1). An
+**The app and the grants are two arguments.** An
 embedder that runs other people's apps stores each as one value, and that value is naturally the first argument. If the
 grants were fields of it, an app's author could ship their own `links` or `guestWrites` with the bundle. With two
 arguments, an app read from data carries no grant unless a line of the embedder's moves it there.
@@ -104,7 +104,7 @@ a terminated app that is still running and writes again (`BD5:DOC-3`'s second pa
 ## The lifecycle
 
 `state` keeps its four values: `'idle'`, `'loading'`, `'ready'`, `'terminated'`. A new read-only member says whether the
-element has its app (waits for the owner; [index](README.md#waits-for-the-owner), 2):
+element has its app:
 
 ```ts
 readonly started: boolean     // true once a start() has succeeded, for the rest of the element's life
@@ -196,7 +196,7 @@ So this is not a construction: it removes the mixing an embedder gets by acciden
 purpose.
 
 The construction would be to hand guest data to handlers given with the grants, so that no event object travels the
-tree. Not recommended ([index](README.md#waits-for-the-owner), 5): events are how an element reports, `ready` and
+tree. Not chosen ([index](README.md#decided-after-review-1), 5): events are how an element reports, `ready` and
 `terminated` stay events either way, and a page-wide capture listener named `sandbox-log` is a deliberate act.
 
 ## What it costs

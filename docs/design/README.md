@@ -7,12 +7,12 @@ such where it appears (the view's value model for form controls, [04](04-forms-a
 **Decided by the owner.** Sealed mode alone is the default build (D9, [ADR-009](../ADR-009-network-modes-build-flag.md)).
 Sealed mode's document becomes a static file the embedder serves, with its policy in a `<meta>` tag and no `srcdoc`
 fallback (D8, 2026-11-07). The binding method is named `start` (2026-11-18). The owner accepted the rest of the design
-in outline on 2026-11-18, before its review.
+in outline on 2026-11-18, before its review, and the five answers of the review that change a public name or an accepted
+promise on 2026-11-18, after it ([below](#decided-after-review-1)).
 
 **Reviewed once.** [REVIEW-1.md](REVIEW-1.md) is an independent adversarial pass on the design as it stood at `6b2f22f`,
 with its probes and their output in [review-1/](review-1/p1-output.txt). The files of this folder are the design after
-that review: [what the review changed](#what-review-1-changed) lists each finding and where its answer is. Five of the
-answers change a public name or a promise the owner accepted, and [wait for the owner](#waits-for-the-owner).
+that review: [what the review changed](#what-review-1-changed) lists each finding and where its answer is.
 
 ## What the design is for
 
@@ -71,31 +71,32 @@ I17 and I18 came from it.
 | Finding | What the design says now | Where |
 | :--- | :--- | :--- |
 | 1 · a header on the served file is an inherited policy | A row of `INHERITED_CONTEXT` for the file's response headers; a start-up gate that ends the build under any policy that is not the file's own (I18); every mitigation the view has for a host page's policy stays; the docs say what "no server config" excludes | [03](03-served-document.md#the-policies-in-force), [05](05-build-order.md) step 4 |
-| 2 · whoever answers `documentUrl` receives the app | Stated as a limit: that host is trusted with the app, as the host of the library's own code is. A second hostname adds a trusted host. A default `documentUrl` from the bundle's own asset is proposed | [03](03-served-document.md#who-is-trusted-with-the-app); **waits for the owner** |
+| 2 · whoever answers `documentUrl` receives the app | Stated as a limit: that host is trusted with the app, as the host of the library's own code is. A second hostname adds a trusted host. A default `documentUrl` from the bundle's own asset is proposed | [03](03-served-document.md#who-is-trusted-with-the-app) |
 | 3 · the gates were measured in a file the design does not build | The gates run in the view and the worker only; the host page sends nothing of the guest's until the view has announced its bootstrap's hash and the gates' verdict; to be measured in that form | [03](03-served-document.md#the-start-up-order) |
 | 4 · the view inherits the file's sandbox flags | The view's static attribute is the most the library ever grants; the element narrows it per app with the file's own attribute | [03](03-served-document.md#the-shape) |
 | 5 · a non-bubbling event reaches capture listeners | I5 restated as what holds | [01](01-one-element-one-app.md#events) |
-| 6 · `links` sat beside the app's own content | The app and the embedder's grants are two arguments (I17) | [01](01-one-element-one-app.md#startapp-grants); **waits for the owner** |
+| 6 · `links` sat beside the app's own content | The app and the embedder's grants are two arguments (I17) | [01](01-one-element-one-app.md#startapp-grants) |
 | 7 · the bootstrap differs between the builds | Sealed mode's view bootstrap is the same in both builds, and the file is checked by its hash | [03](03-served-document.md#the-public-surface) |
 | 8 · the quota needs the module rewrite the design moves | `start()` decides what the host page can decide without parsing guest text; what needs a parse is decided where the parse runs and ends the build with a reason | [01](01-one-element-one-app.md#startapp-grants), [03](03-served-document.md#a-thinner-host) |
 | 9 · step 4 would delete code the file's own policy needs | Step 4 deletes host-realm code only | [05](05-build-order.md) |
 | 10 · a stale write value stays committable | A value commits only while its entry is its path's current pending entry | [01](01-one-element-one-app.md#files-and-commits) |
 | 11 · `start()` is re-entrant through getters | The check and the store are one step | [01](01-one-element-one-app.md#startapp-grants) |
-| 12 · no member says whether an element is bound | A read-only `started` | [01](01-one-element-one-app.md#the-lifecycle); **waits for the owner** |
-| 13 · `download()` leaves the file's name to the embedder | `download()` answers a `File` the library named | [02](02-what-an-app-hands-over.md#guestbytes); **waits for the owner** |
+| 12 · no member says whether an element is bound | A read-only `started` | [01](01-one-element-one-app.md#the-lifecycle) |
+| 13 · `download()` leaves the file's name to the embedder | `download()` answers a `File` the library named | [02](02-what-an-app-hands-over.md#guestbytes) |
 | Claims that did not match | `BD5:CHL-1` is no longer listed as closed; the test migration's size is corrected; research 30 is cited for what it measured; I7 says "reaches the embedder" | [01](01-one-element-one-app.md), [02](02-what-an-app-hands-over.md) |
 | What the design did not specify | Each item has its answer in the file it concerns | 01, 02, 03 |
 
-## Waits for the owner
+## Decided after review 1
 
-Each changes a public name or a promise the owner accepted on 2026-11-18. The files describe the recommended answer.
+Each changes a public name or a promise the owner had accepted. The owner approved all five as recommended, on
+2026-11-18.
 
-| # | Decision | Recommended | If not |
+| # | Decision | Decided | The alternative, not chosen |
 | :--- | :--- | :--- | :--- |
 | 1 | The app and the grants as two arguments: `start(app, grants)`, with the types `SandboxApp` and `SandboxGrants` in place of one value with a `config` (finding 6) | yes | `links`, `guestWrites` and `capabilities` stay in the value an app bundle is naturally stored as, and "the embedder lists the links" is a convention |
 | 2 | A read-only `started` on the element (finding 12) | yes | an embedder cannot tell a new element from a bound one outside its document, and a framework's double set-up has no guard to write |
 | 3 | `GuestBytes.download()` answers a `File` named by the library, in place of a `Blob` (finding 13) | yes | the name stays the embedder's to choose, and the natural choice is the guest's path |
-| 4 | `documentUrl` optional, defaulting to the bundle's own copy of the file (finding 2) | yes, **if** the bundlers that matter are measured to serve it; until then it stays required | every embedder names a URL, and may name one on a host that adds a trust root |
+| 4 | `documentUrl` optional, defaulting to the bundle's own copy of the file (finding 2) | yes, once the bundlers that matter are measured to serve it; until then it stays required | every embedder names a URL, and may name one on a host that adds a trust root |
 | 5 | Guest data as DOM events that do not bubble, with I5 as restated (finding 5) | keep the events | handlers given with the grants, called by the element, so that no event object travels the tree |
 
 ## What the design does not do

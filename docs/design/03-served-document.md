@@ -54,7 +54,7 @@ with the app, exactly as the host that serves the library's own script is. A doc
 - **On the origin that serves the library's script, the file adds no one to trust.**
 - **A second hostname adds a host that is trusted with the app.** A name that later points somewhere else (a deleted
   bucket behind a CNAME, a CDN's copy) hands the app to whoever answers. [Below](#optional-the-file-on-a-second-hostname).
-- **Proposed** (waits for the owner; [index](README.md#waits-for-the-owner), 4): `documentUrl` optional, defaulting to
+- **Decided** ([index](README.md#decided-after-review-1), 4): `documentUrl` becomes optional, defaulting to
   the bundle's own copy, `new URL('./sealed-document.html', import.meta.url)`, which the common bundlers copy and serve
   beside the code. The file's host is then the code's host with nothing for the embedder to deploy. It becomes the
   default only after the bundlers that matter are measured to serve it; until then `documentUrl` is required.

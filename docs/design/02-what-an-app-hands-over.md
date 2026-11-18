@@ -116,7 +116,7 @@ A write's content is a value with four named ways out, in place of a `Uint8Array
   one. SVG is not among them: an SVG document opened from a `blob:` URL runs script as the host page. For anything else
   it answers `null`.
 - `download()` answers a `File` typed `application/octet-stream`, which a browser saves and does not render, under a
-  name the library chose (waits for the owner; [index](README.md#waits-for-the-owner), 3). The name is the last segment
+  name the library chose. The name is the last segment
   of the write's path when its extension is one of the library's inert types (the table that decides which writes need
   `{ code: true }`); otherwise that segment with `.download` added, so that `invoice.pdf.exe` and `report.html` are
   saved as files that nothing opens by a double click. Without it the embedder names the download, and the natural name

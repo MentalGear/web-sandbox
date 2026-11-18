@@ -2,8 +2,7 @@
 
 **Status: a plan, not started.** Each step ends with the repository's gates passing on both builds and three engines
 (CONTRIBUTING.md), and each brings the structural test of its invariant ([the folder's index](README.md)). The plan is
-the one after [review 1](REVIEW-1.md); the names it uses that [wait for the owner](README.md#waits-for-the-owner) are
-built as the owner decides.
+the one after [review 1](REVIEW-1.md) and the owner's [decisions on it](README.md#decided-after-review-1).
 
 ## Why this order
 
