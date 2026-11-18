@@ -1,0 +1,52 @@
+{
+  "id": "next-dev-webpack",
+  "app": "next",
+  "variant": null,
+  "build": null,
+  "serve": {
+    "cmd": "npx next dev --webpack --hostname 127.0.0.1 --port $PORT"
+  },
+  "buildExitCode": null,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5200/_next/static/media/sealed-document.38f08c4a.html",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "/_next/static/media/sealed-document.38f08c4a.html",
+  "rawHref": "/_next/static/media/sealed-document.38f08c4a.html",
+  "rawOrigin": "",
+  "appOrigin": "http://127.0.0.1:5200",
+  "scriptOrigin": "http://127.0.0.1:5200",
+  "documentOrigin": "http://127.0.0.1:5200",
+  "status": 200,
+  "contentType": "text/html; charset=UTF-8",
+  "length": 1911,
+  "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "iframe": {
+    "status": 200,
+    "contentType": "text/html; charset=UTF-8",
+    "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+    "bytesEqual": true
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": true,
+  "bytesEqual": true,
+  "fileName": "sealed-document.38f08c4a.html",
+  "console": [
+    "info: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold",
+    "log: [HMR] connected",
+    "error: Applying inline style violates the following Content Security Policy directive 'default-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-XkenByKsXTgsp1sB8zaz1en11bw/1JHNCxZJmVnrsIM='), or a nonce ('nonce-...') is required to enable inline execution. Note also that 'style-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-FzGRmXVa1n31Lrsg3i/S1CDsp/2WGN+LBSNOJ6zgqFw='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "outputFiles": [],
+  "documentFilesInOutput": [
+    "./.next/dev/server/static/media/sealed-document.38f08c4a.html",
+    "./.next/dev/static/media/sealed-document.38f08c4a.html"
+  ],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "next": "16.4.6",
+    "react": "19.3.1"
+  }
+}

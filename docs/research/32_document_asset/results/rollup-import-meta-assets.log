@@ -1,0 +1,6 @@
+$ npx rollup -c rollup.assets.config.js && cp index.html dist/
+[36m
+[1mmain.js[22m → [1mdist[22m...[39m
+[32mcreated [1mdist[22m in [1m48ms[22m[39m
+
+--- server output

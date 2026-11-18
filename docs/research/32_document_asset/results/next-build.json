@@ -1,0 +1,61 @@
+{
+  "id": "next-build",
+  "app": "next",
+  "variant": null,
+  "build": "npx next build",
+  "serve": {
+    "cmd": "npx next start --hostname 127.0.0.1 --port $PORT"
+  },
+  "buildExitCode": 0,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5199/_next/static/media/sealed-document.3qmjzogi2loyz.html",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "/_next/static/media/sealed-document.3qmjzogi2loyz.html",
+  "rawHref": "/_next/static/media/sealed-document.3qmjzogi2loyz.html",
+  "rawOrigin": "",
+  "appOrigin": "http://127.0.0.1:5199",
+  "scriptOrigin": "http://127.0.0.1:5199",
+  "documentOrigin": "http://127.0.0.1:5199",
+  "status": 200,
+  "contentType": "text/html; charset=UTF-8",
+  "length": 1911,
+  "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "iframe": {
+    "status": 200,
+    "contentType": "text/html; charset=UTF-8",
+    "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+    "bytesEqual": true
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": true,
+  "bytesEqual": true,
+  "fileName": "sealed-document.3qmjzogi2loyz.html",
+  "console": [
+    "error: Applying inline style violates the following Content Security Policy directive 'default-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-XkenByKsXTgsp1sB8zaz1en11bw/1JHNCxZJmVnrsIM='), or a nonce ('nonce-...') is required to enable inline execution. Note also that 'style-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-FzGRmXVa1n31Lrsg3i/S1CDsp/2WGN+LBSNOJ6zgqFw='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "outputFiles": [
+    "QDLGHv1R_j2aGzrqogTwN/_buildManifest.js (219 B)",
+    "QDLGHv1R_j2aGzrqogTwN/_clientMiddlewareManifest.js (96 B)",
+    "QDLGHv1R_j2aGzrqogTwN/_ssgManifest.js (80 B)",
+    "chunks/0cpqmmzje5s2h.js (1170 B)",
+    "chunks/0cz1d0mv5g_q7.js (112594 B)",
+    "chunks/0j1we3cwg31qe.js (17026 B)",
+    "chunks/0m3mby5pxg4oz.js (186788 B)",
+    "chunks/39_j1bdzreq0m.js (229288 B)",
+    "chunks/3qfy96eoyh-ek.js (13994 B)",
+    "chunks/turbopack-2u1d16houkiyo.js (9974 B)",
+    "media/sealed-document.3qmjzogi2loyz.html (1911 B)"
+  ],
+  "documentFilesInOutput": [
+    "./.next/static/media/sealed-document.3qmjzogi2loyz.html"
+  ],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "next": "16.4.6",
+    "react": "19.3.1"
+  }
+}

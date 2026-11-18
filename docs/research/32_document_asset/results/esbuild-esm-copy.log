@@ -1,0 +1,7 @@
+$ npx esbuild main.js --bundle --format=esm --outdir=dist && cp index.html dist/ && cp node_modules/fake-sealed/sealed-document.html dist/
+
+  dist/main.js  1.5kb
+
+⚡ Done in 3ms
+
+--- server output

@@ -1,0 +1,5 @@
+{
+  "name": "app-cdn",
+  "private": true,
+  "dependencies": { "fake-sealed": "file:../fake-sealed-1.0.0.tgz" }
+}

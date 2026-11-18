@@ -1,0 +1,12 @@
+$ npx parcel build index.html --dist-dir dist --no-cache --no-source-maps
+Building...
+Bundling...
+Packaging & Optimizing...
+√ Built in 491ms
+
+dist/index.html                     215 B    21ms
+dist/parcel.d0cb4a66.js             825 B    35ms
+dist/sealed-document.48086a9d.    1.91 kB    20ms
+resize:  can't open terminal /dev/tty
+
+--- server output

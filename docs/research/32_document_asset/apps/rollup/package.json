@@ -1,0 +1,13 @@
+{
+  "name": "app-rollup",
+  "private": true,
+  "type": "module",
+  "dependencies": { "fake-sealed": "file:../fake-sealed-1.0.0.tgz" },
+  "devDependencies": {
+    "rollup": "4.68.7",
+    "@rollup/plugin-node-resolve": "16.0.3",
+    "@web/rollup-plugin-import-meta-assets": "3.0.1",
+    "@rollup/plugin-url": "8.0.2",
+    "rollup-plugin-copy": "3.5.0"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "id": "webpack-build",
+  "app": "webpack",
+  "variant": null,
+  "build": "npx webpack && cp public/index.html dist/",
+  "serve": {
+    "static": "dist"
+  },
+  "buildExitCode": 0,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5177/486bcb520bae9fb307b2.html",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "http://127.0.0.1:5177/486bcb520bae9fb307b2.html",
+  "rawHref": "http://127.0.0.1:5177/486bcb520bae9fb307b2.html",
+  "rawOrigin": "http://127.0.0.1:5177",
+  "appOrigin": "http://127.0.0.1:5177",
+  "scriptOrigin": "http://127.0.0.1:5177",
+  "documentOrigin": "http://127.0.0.1:5177",
+  "status": 200,
+  "contentType": "text/html",
+  "length": 752,
+  "sha256": "432b9d856650531f927eb0254a7e20a31e535b4c00d8564396b42d247b9233cb",
+  "iframe": {
+    "status": 200,
+    "contentType": "text/html",
+    "sha256": "432b9d856650531f927eb0254a7e20a31e535b4c00d8564396b42d247b9233cb",
+    "bytesEqual": false
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": true,
+  "bytesEqual": false,
+  "fileName": "486bcb520bae9fb307b2.html",
+  "console": [
+    "error: Applying inline style violates the following Content Security Policy directive 'default-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-qy/8vz7OKFV3cSKXV+ny/5MHxaH5b4VGOionKR8c/iA='), or a nonce ('nonce-...') is required to enable inline execution. Note also that 'style-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-Ja/fUOcFoRzceQgp5SJmiRdJlc6DCHU9+kjKyFFigIs='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "outputFiles": [
+    "486bcb520bae9fb307b2.html (752 B)",
+    "index.html (125 B)",
+    "main.js (1727 B)"
+  ],
+  "documentFilesInOutput": [],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "webpack": "5.112.2",
+    "webpack-cli": "7.3.1",
+    "webpack-dev-server": "6.1.0"
+  }
+}

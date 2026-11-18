@@ -1,0 +1,7 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>app</title>
+<pre id="out">running</pre>
+<!-- no bundler: the package directory is served as it is, and its bare specifier is an import-map entry -->
+<script type="importmap">{ "imports": { "fake-sealed": "./node_modules/fake-sealed/index.js" } }</script>
+<script type="module" src="./main.js"></script>

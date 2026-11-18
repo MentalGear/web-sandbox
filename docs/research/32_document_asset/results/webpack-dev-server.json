@@ -1,0 +1,49 @@
+{
+  "id": "webpack-dev-server",
+  "app": "webpack",
+  "variant": null,
+  "build": null,
+  "serve": {
+    "cmd": "npx webpack serve --mode development"
+  },
+  "buildExitCode": null,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5180/6f38c2be02272e38de98.html",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "http://127.0.0.1:5180/6f38c2be02272e38de98.html",
+  "rawHref": "http://127.0.0.1:5180/6f38c2be02272e38de98.html",
+  "rawOrigin": "http://127.0.0.1:5180",
+  "appOrigin": "http://127.0.0.1:5180",
+  "scriptOrigin": "http://127.0.0.1:5180",
+  "documentOrigin": "http://127.0.0.1:5180",
+  "status": 200,
+  "contentType": "text/html; charset=utf-8",
+  "length": 1911,
+  "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "iframe": {
+    "status": 200,
+    "contentType": "text/html; charset=utf-8",
+    "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+    "bytesEqual": true
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": true,
+  "bytesEqual": true,
+  "fileName": "6f38c2be02272e38de98.html",
+  "console": [
+    "info: [webpack-dev-server] connected",
+    "error: Applying inline style violates the following Content Security Policy directive 'default-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-XkenByKsXTgsp1sB8zaz1en11bw/1JHNCxZJmVnrsIM='), or a nonce ('nonce-...') is required to enable inline execution. Note also that 'style-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-FzGRmXVa1n31Lrsg3i/S1CDsp/2WGN+LBSNOJ6zgqFw='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "outputFiles": [],
+  "documentFilesInOutput": [],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "webpack": "5.112.2",
+    "webpack-cli": "7.3.1",
+    "webpack-dev-server": "6.1.0"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "id": "parcel-build-no-optimize",
+  "app": "parcel",
+  "variant": null,
+  "build": "npx parcel build index.html --dist-dir dist --no-cache --no-source-maps --no-optimize",
+  "serve": {
+    "static": "dist"
+  },
+  "buildExitCode": 0,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5193/sealed-document.68e83e65.html",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "http://127.0.0.1:5193/sealed-document.68e83e65.html",
+  "rawHref": "http://127.0.0.1:5193/sealed-document.68e83e65.html",
+  "rawOrigin": "http://127.0.0.1:5193",
+  "appOrigin": "http://127.0.0.1:5193",
+  "scriptOrigin": "http://127.0.0.1:5193",
+  "documentOrigin": "http://127.0.0.1:5193",
+  "status": 200,
+  "contentType": "text/html",
+  "length": 1899,
+  "sha256": "1b3d8817143467633f46464f35610feda442537492d7532bc95a4a13cc7c5e4f",
+  "iframe": {
+    "status": 200,
+    "contentType": "text/html",
+    "sha256": "1b3d8817143467633f46464f35610feda442537492d7532bc95a4a13cc7c5e4f",
+    "bytesEqual": false
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": true,
+  "bytesEqual": false,
+  "fileName": "sealed-document.68e83e65.html",
+  "console": [
+    "error: Applying inline style violates the following Content Security Policy directive 'default-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-yOoxDVpDbb0sNHlwB1l+EKf0emnCaMhH3VHZKhNcAkc='), or a nonce ('nonce-...') is required to enable inline execution. Note also that 'style-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-i4g+k88H+7xeFGX6qJ5jcqP55ajjH23zQ2jeP2/SUA4='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-hOdCiqpHMHLs8beGorxZ2RC9fC3chWkqAJmzMu1/bbQ='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "outputFiles": [
+    "index.html (270 B)",
+    "parcel.11d67e68.js (2407 B)",
+    "sealed-document.68e83e65.html (1899 B)"
+  ],
+  "documentFilesInOutput": [
+    "./dist/sealed-document.68e83e65.html"
+  ],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "parcel": "2.16.4"
+  }
+}

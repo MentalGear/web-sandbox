@@ -1,0 +1,6 @@
+$ npx vite --config vite.noprebundle.config.js --host 127.0.0.1 --port 5172 --strictPort
+--- server output
+
+  [32m[1mVITE[22m v8.3.8[39m  [2mready in [0m[1m131[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5172[22m/[39m

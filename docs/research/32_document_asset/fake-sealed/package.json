@@ -1,0 +1,11 @@
+{
+  "name": "fake-sealed",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./sealed-document.html": "./sealed-document.html"
+  },
+  "files": ["index.js", "sealed-document.html"]
+}

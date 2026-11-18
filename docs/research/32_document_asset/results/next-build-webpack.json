@@ -1,0 +1,70 @@
+{
+  "id": "next-build-webpack",
+  "app": "next",
+  "variant": null,
+  "build": "npx next build --webpack",
+  "serve": {
+    "cmd": "npx next start --hostname 127.0.0.1 --port $PORT"
+  },
+  "buildExitCode": 0,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5201/_next/static/media/sealed-document.38f08c4a.html",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "/_next/static/media/sealed-document.38f08c4a.html",
+  "rawHref": "/_next/static/media/sealed-document.38f08c4a.html",
+  "rawOrigin": "",
+  "appOrigin": "http://127.0.0.1:5201",
+  "scriptOrigin": "http://127.0.0.1:5201",
+  "documentOrigin": "http://127.0.0.1:5201",
+  "status": 200,
+  "contentType": "text/html; charset=UTF-8",
+  "length": 1911,
+  "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "iframe": {
+    "status": 200,
+    "contentType": "text/html; charset=UTF-8",
+    "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+    "bytesEqual": true
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": true,
+  "bytesEqual": true,
+  "fileName": "sealed-document.38f08c4a.html",
+  "console": [
+    "error: Applying inline style violates the following Content Security Policy directive 'default-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-XkenByKsXTgsp1sB8zaz1en11bw/1JHNCxZJmVnrsIM='), or a nonce ('nonce-...') is required to enable inline execution. Note also that 'style-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-FzGRmXVa1n31Lrsg3i/S1CDsp/2WGN+LBSNOJ6zgqFw='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "outputFiles": [
+    "chunks/4bd1b696-c7408084347438ae.js (203721 B)",
+    "chunks/794-268803444e87b940.js (241744 B)",
+    "chunks/app/_global-error/page-8d471ba053881f22.js (151 B)",
+    "chunks/app/_not-found/page-06c33b4fe9f11ef9.js (2667 B)",
+    "chunks/app/layout-8d471ba053881f22.js (151 B)",
+    "chunks/app/page-0e8cfde8f51df4d0.js (1248 B)",
+    "chunks/framework-ea4f97ca039bd777.js (218916 B)",
+    "chunks/main-820d46b7c537c77a.js (137364 B)",
+    "chunks/main-app-2167c650306a2f5e.js (513 B)",
+    "chunks/next/dist/client/components/builtin/app-error-8d471ba053881f22.js (151 B)",
+    "chunks/next/dist/client/components/builtin/forbidden-8d471ba053881f22.js (151 B)",
+    "chunks/next/dist/client/components/builtin/global-error-fec51caad045fcf2.js (179 B)",
+    "chunks/next/dist/client/components/builtin/not-found-8d471ba053881f22.js (151 B)",
+    "chunks/next/dist/client/components/builtin/unauthorized-8d471ba053881f22.js (151 B)",
+    "chunks/polyfills-42372ed130431b0a.js (112594 B)",
+    "chunks/webpack-c09a3caff9a92935.js (3510 B)",
+    "media/sealed-document.38f08c4a.html (1911 B)",
+    "oub13cMy2XCYWGVUyp829/_buildManifest.js (440 B)",
+    "oub13cMy2XCYWGVUyp829/_ssgManifest.js (80 B)"
+  ],
+  "documentFilesInOutput": [
+    "./.next/server/chunks/static/media/sealed-document.38f08c4a.html",
+    "./.next/static/media/sealed-document.38f08c4a.html"
+  ],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "next": "16.4.6",
+    "react": "19.3.1"
+  }
+}

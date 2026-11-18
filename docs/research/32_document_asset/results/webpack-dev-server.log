@@ -1,0 +1,22 @@
+$ npx webpack serve --mode development
+--- server output
+asset main.js 265 KiB [emitted] (name: main)
+asset 6f38c2be02272e38de98.html 1.87 KiB [emitted] [immutable] [from: node_modules/fake-sealed/sealed-document.html] (auxiliary name: main)
+runtime modules 28.5 KiB 11 modules
+modules by path ./node_modules/webpack-dev-middleware/client/ 184 KiB
+  modules by path ./node_modules/webpack-dev-middleware/client/utils/*.js 30.8 KiB 10 modules
+  modules by path ./node_modules/webpack-dev-middleware/client/*.js 116 KiB 6 modules
+  modules by path ./node_modules/webpack-dev-middleware/client/clients/*.js 15.5 KiB 3 modules
+  modules by path ./node_modules/webpack-dev-middleware/client/modules/logger/*.cjs 21.4 KiB
+    ./node_modules/webpack-dev-middleware/client/modules/logger/Logger.cjs 11.2 KiB [built] [code generated]
+    ./node_modules/webpack-dev-middleware/client/modules/logger/createCon...(truncated) 10.2 KiB [built] [code generated]
+modules by path ./*.js 1.86 KiB
+  ./main.js 418 bytes [built] [code generated]
+  ./measure-lib.js 1.45 KiB [built] [code generated]
+modules by path ./node_modules/fake-sealed/ 234 bytes (javascript) 1.87 KiB (asset)
+  ./node_modules/fake-sealed/index.js 192 bytes [built] [code generated]
+  ./node_modules/fake-sealed/sealed-document.html 1.87 KiB (asset) 42 bytes (javascript) [built] [code generated]
+webpack 5.112.2 compiled successfully in 329 ms
+<i> [webpack-dev-server] Project is running at:
+<i> [webpack-dev-server] Loopback: http://127.0.0.1:5180/
+<i> [webpack-dev-server] Content not from webpack is served from '/tmp/claude-0/-home-user-web-sandbox/420067a7-000e-5c1b-adbe-64bc23c60332/scratchpad/bundlers/webpack/public' directory

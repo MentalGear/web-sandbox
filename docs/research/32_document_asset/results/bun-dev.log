@@ -1,0 +1,6 @@
+$ bun index.html --port 5191 --hostname 127.0.0.1
+--- server output
+Bun v1.4.4 dev server ready in 2.52 ms
+
+url: http://127.0.0.1:5191/
+Bundled page in 2ms: index.html

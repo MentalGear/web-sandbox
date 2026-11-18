@@ -1,0 +1,49 @@
+{
+  "id": "esbuild-esm-splitting",
+  "app": "esbuild",
+  "variant": null,
+  "build": "npx esbuild main.js --bundle --format=esm --splitting --outdir=dist && cp index.html dist/",
+  "serve": {
+    "static": "dist"
+  },
+  "buildExitCode": 0,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5188/sealed-document.html",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "http://127.0.0.1:5188/sealed-document.html",
+  "rawHref": "http://127.0.0.1:5188/sealed-document.html",
+  "rawOrigin": "http://127.0.0.1:5188",
+  "appOrigin": "http://127.0.0.1:5188",
+  "scriptOrigin": "http://127.0.0.1:5188",
+  "documentOrigin": "http://127.0.0.1:5188",
+  "status": 404,
+  "contentType": null,
+  "length": 9,
+  "sha256": "907ba78b4545338d3539683e63ecb51cf51c10adc9dabd86e92bd52339f298b9",
+  "iframe": {
+    "status": 404,
+    "contentType": null,
+    "sha256": "907ba78b4545338d3539683e63ecb51cf51c10adc9dabd86e92bd52339f298b9",
+    "bytesEqual": false
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": false,
+  "bytesEqual": false,
+  "fileName": "sealed-document.html",
+  "console": [
+    "error: Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "error: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "outputFiles": [
+    "index.html (134 B)",
+    "main.js (1540 B)"
+  ],
+  "documentFilesInOutput": [],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "esbuild": "0.28.2"
+  }
+}

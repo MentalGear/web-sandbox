@@ -1,0 +1,56 @@
+{
+  "id": "rollup-copy",
+  "app": "rollup",
+  "variant": null,
+  "build": "npx rollup -c rollup.copy.config.js && cp index.html dist/",
+  "serve": {
+    "static": "dist"
+  },
+  "buildExitCode": 0,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5185/sealed-document.html",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "http://127.0.0.1:5185/sealed-document.html",
+  "rawHref": "http://127.0.0.1:5185/sealed-document.html",
+  "rawOrigin": "http://127.0.0.1:5185",
+  "appOrigin": "http://127.0.0.1:5185",
+  "scriptOrigin": "http://127.0.0.1:5185",
+  "documentOrigin": "http://127.0.0.1:5185",
+  "status": 200,
+  "contentType": "text/html",
+  "length": 1911,
+  "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "iframe": {
+    "status": 200,
+    "contentType": "text/html",
+    "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+    "bytesEqual": true
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": true,
+  "bytesEqual": true,
+  "fileName": "sealed-document.html",
+  "console": [
+    "error: Applying inline style violates the following Content Security Policy directive 'default-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-XkenByKsXTgsp1sB8zaz1en11bw/1JHNCxZJmVnrsIM='), or a nonce ('nonce-...') is required to enable inline execution. Note also that 'style-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-FzGRmXVa1n31Lrsg3i/S1CDsp/2WGN+LBSNOJ6zgqFw='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "outputFiles": [
+    "index.html (134 B)",
+    "main.js (1994 B)",
+    "sealed-document.html (1911 B)"
+  ],
+  "documentFilesInOutput": [
+    "./dist/sealed-document.html"
+  ],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "rollup": "4.68.7",
+    "@rollup/plugin-node-resolve": "16.0.3",
+    "@web/rollup-plugin-import-meta-assets": "3.0.1",
+    "@rollup/plugin-url": "8.0.2",
+    "rollup-plugin-copy": "3.5.0"
+  }
+}
