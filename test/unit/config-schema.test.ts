@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { admitGuestCall, CALL_INVARIANTS, CALL_LIMIT_FIELDS, callBudgetOf, CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, DEFAULT_CALL_BUDGET, defaultConfig, heaviestCall, ignoredIn, NETWORK_MODES, NETWORK_OPTIONS, normaliseConfig, PARSED_APART, SANDBOX_MODES, type CallBudget, type NormalisedConfig, type NormaliseContext, type OptionName, type OptionRule, type SandboxMode } from '@src/lib/config-schema';
+import { admitGuestCall, APP_OPTIONS, CALL_INVARIANTS, CALL_LIMIT_FIELDS, callBudgetOf, CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, DEFAULT_CALL_BUDGET, defaultConfig, EMBEDDER_OPTIONS, heaviestCall, ignoredIn, NETWORK_MODES, NETWORK_OPTIONS, normaliseConfig, OPTION_OWNERS, optionsOf, PARSED_APART, SANDBOX_MODES, type CallBudget, type NormalisedConfig, type NormaliseContext, type OptionName, type OptionRule, type SandboxMode } from '@src/lib/config-schema';
 import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { FETCH_BRIDGE_FIELDS, type FetchPolicy } from '@src/lib/fetch-bridge';
 import { createRateLimiter } from '@src/lib/rate-limit';
@@ -264,6 +264,17 @@ describe('the config schema: every option, normalised once, with the cross-field
             const modes = (CONFIG_SCHEMA as Record<string, OptionRule>)[name]!.modes!;
             for (const mode of SANDBOX_MODES) expect(ignoredIn(name, mode), `${name} in ${mode}`).toBe(!modes.includes(mode));
         }
+    });
+
+    // I17 (design 01): start() takes the app and the grants as two arguments, each by the options of its owner
+    it("every option is classified as the app's or the embedder's; a removed option is neither", () => {
+        const rules = CONFIG_SCHEMA as Record<string, OptionRule>;
+        const unclassified = CONFIG_OPTIONS.filter(name => !(OPTION_OWNERS as readonly unknown[]).includes(rules[name]!.owner));
+        expect(unclassified, 'give each option its `owner` in CONFIG_SCHEMA').toEqual([]);
+        const removed = Object.keys(rules).filter(name => rules[name]!.removed !== undefined);
+        expect(removed.filter(name => rules[name]!.owner !== undefined)).toEqual([]);
+        expect([...APP_OPTIONS, ...EMBEDDER_OPTIONS].sort()).toEqual([...CONFIG_OPTIONS].sort());
+        for (const owner of OPTION_OWNERS) expect(optionsOf(owner), owner).toEqual(CONFIG_OPTIONS.filter(name => rules[name]!.owner === owner));
     });
 });
 
