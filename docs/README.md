@@ -51,6 +51,8 @@ Each ADR states its decision as it stands; how it changed is in [the archive](ar
 
 - [**BACKLOG.md**](BACKLOG.md) — the open work: what is not done, is deferred or waits for the owner, and the
   limits documented as accepted. Finished items are in the archive.
+- [**design/**](design/README.md) — a design that is not built: one app per element (`start(app)`), what an app hands
+  to the host page, and the served document (D8), with the invariant each part must hold and the order of the work.
 
 ## Research
 
