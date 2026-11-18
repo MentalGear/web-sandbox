@@ -1,0 +1,113 @@
+
+== chromium | host policy: (none) | T navigates F | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== chromium | host policy: (none) | T navigates C | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== chromium | host policy: (none) | T navigates F | iframe in closed shadow root: no (light DOM control)
+  {"top":"navigated F, frames.length=1"}
+  {"hostLog":"F load #1, window.length in H = 1"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"attacker\"}"}
+  {"stolen":{"html":"<p>app</p>","files":{"notes.txt":"EMBEDDER-FILE"}}}
+  {"hostLog":"guest called host method: {\"method\":\"save\",\"args\":[\"ATTACKER-DATA\"]}"}
+  {"stolenCall":{"call":"load","args":["USER-STATE"]}}
+
+== chromium | host policy: (none) | T navigates C | iframe in closed shadow root: no (light DOM control)
+  {"top":"error: Failed to read an indexed property [0] from 'Window': Blocked a frame with origin \"http://localhost:24811\" from accessing a cross-origin frame."}
+  {"hostLog":"F load #1, window.length in H = 1"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== firefox | host policy: (none) | T navigates F | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== firefox | host policy: (none) | T navigates C | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== firefox | host policy: (none) | T navigates F | iframe in closed shadow root: no (light DOM control)
+  {"top":"navigated F, frames.length=1"}
+  {"hostLog":"F load #1, window.length in H = 1"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"attacker\"}"}
+  {"stolen":{"html":"<p>app</p>","files":{"notes.txt":"EMBEDDER-FILE"}}}
+  {"hostLog":"guest called host method: {\"method\":\"save\",\"args\":[\"ATTACKER-DATA\"]}"}
+  {"stolenCall":{"call":"load","args":["USER-STATE"]}}
+
+== firefox | host policy: (none) | T navigates C | iframe in closed shadow root: no (light DOM control)
+  {"top":"error: Permission denied to access property 0 on cross-origin object"}
+  {"hostLog":"F load #1, window.length in H = 1"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== webkit | host policy: (none) | T navigates F | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== webkit | host policy: (none) | T navigates C | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== webkit | host policy: (none) | T navigates F | iframe in closed shadow root: no (light DOM control)
+  {"top":"navigated F, frames.length=1"}
+  {"hostLog":"F load #1, window.length in H = 1"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"attacker\"}"}
+  {"stolen":{"html":"<p>app</p>","files":{"notes.txt":"EMBEDDER-FILE"}}}
+  {"hostLog":"guest called host method: {\"method\":\"save\",\"args\":[\"ATTACKER-DATA\"]}"}
+  {"stolenCall":{"call":"load","args":["USER-STATE"]}}
+
+== webkit | host policy: (none) | T navigates C | iframe in closed shadow root: no (light DOM control)
+  {"top":"error: Sandbox access violation: Blocked a frame at \"http://localhost:24811\" from accessing a cross-origin frame.  The frame being accessed is sandboxed and lacks the \"allow-same-origin\" flag."}
+  {"hostLog":"F load #1, window.length in H = 1"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== chromium | host policy: frame-src 'self' | T navigates F | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== chromium | host policy: frame-src 'self' | T navigates C | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== chromium | host policy: frame-src 'self' | T navigates F | iframe in closed shadow root: no (light DOM control)
+  {"top":"navigated F, frames.length=1"}
+  {"hostLog":"F load #1, window.length in H = 1"}
+
+== chromium | host policy: frame-src 'self' | T navigates C | iframe in closed shadow root: no (light DOM control)
+  {"top":"error: Failed to read an indexed property [0] from 'Window': Blocked a frame with origin \"http://localhost:24811\" from accessing a cross-origin frame."}
+  {"hostLog":"F load #1, window.length in H = 1"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== firefox | host policy: frame-src 'self' | T navigates F | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== firefox | host policy: frame-src 'self' | T navigates C | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== firefox | host policy: frame-src 'self' | T navigates F | iframe in closed shadow root: no (light DOM control)
+  {"top":"navigated F, frames.length=1"}
+
+== firefox | host policy: frame-src 'self' | T navigates C | iframe in closed shadow root: no (light DOM control)
+  {"top":"error: Permission denied to access property 0 on cross-origin object"}
+  {"hostLog":"F load #1, window.length in H = 1"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== webkit | host policy: frame-src 'self' | T navigates F | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== webkit | host policy: frame-src 'self' | T navigates C | iframe in closed shadow root: yes
+  {"hostLog":"F load #1, window.length in H = 0"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}
+
+== webkit | host policy: frame-src 'self' | T navigates F | iframe in closed shadow root: no (light DOM control)
+  {"top":"navigated F, frames.length=1"}
+  {"hostLog":"F load #1, window.length in H = 1"}
+
+== webkit | host policy: frame-src 'self' | T navigates C | iframe in closed shadow root: no (light DOM control)
+  {"top":"error: Sandbox access violation: Blocked a frame at \"http://localhost:24811\" from accessing a cross-origin frame.  The frame being accessed is sandboxed and lacks the \"allow-same-origin\" flag."}
+  {"hostLog":"F load #1, window.length in H = 1"}
+  {"hostLog":"handshake answer: {\"hash\":\"sha256-LIBRARY-BOOTSTRAP\",\"gates\":\"passed\",\"who\":\"genuine C\"}"}

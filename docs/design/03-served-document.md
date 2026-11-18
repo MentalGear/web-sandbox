@@ -1,10 +1,10 @@
 # 03 · The served document
 
 **Status: a design, not built.** [The folder's index](README.md) has the invariants (I11 to I15 and I18 are this file's)
-and what [review 1](REVIEW-1.md) changed here. The measurements are
+and what [review 1](REVIEW-1.md) and [review 2](REVIEW-2.md) changed here. The measurements are
 [research 27](../research/27_served_document_headerless/README.md) and
-[research 28](../research/28_served_topology/README.md), on Chromium 159, Firefox 159 and WebKit 27.2, and the probes of
-review 1.
+[research 28](../research/28_served_topology/README.md), on Chromium 159, Firefox 159 and WebKit 27.2,
+[research 32](../research/32_document_asset/README.md) on the bundlers, and the probes of the two reviews.
 
 ## The root
 
@@ -26,8 +26,8 @@ defineWebSandbox(options: { tagName?: string; documentUrl: string | URL }): type
 | Piece | What it is |
 | :--- | :--- |
 | `sealed-document.html` | One static file per library version, the same in both builds, shipped in the package and exported as `./sealed-document.html`. The embedder serves it unchanged |
-| `documentUrl` | Where the embedder serves it. Given once, at registration. It is resolved against the document's base URL, must be `http:` or `https:`, and carries no user name, password or fragment; anything else throws. It may carry a query, and a path of the embedder's choosing |
-| New termination reasons | Named when built. Four cases: the document did not answer; it answered as another library's; a start-up gate failed; a policy that is not the file's own is in force |
+| `documentUrl` | Where the embedder serves it. Given once, at registration, and required. A relative one is resolved against the document's own URL (`document.URL`), never its base URL: a `<base>` element, which markup injection can add without any script, would otherwise point every element of the page at another host (review 2, finding 1). It must be `http:` or `https:`, and carries no user name, password or fragment; anything else throws. It may carry a query, and a path of the embedder's choosing |
+| New termination reasons | Named when built. The cases: the file is not the library's (missing, another page, modified, another version's, each named where [the check of the file](#the-check-of-the-file) can read it); a policy that is not the file's own is in force; the document did not answer; a start-up gate failed |
 
 - `documentUrl` is not part of the app or the grants ([01](01-one-element-one-app.md#startapp-grants)): data that
   describes an app can never choose the document that renders it.
@@ -36,10 +36,15 @@ defineWebSandbox(options: { tagName?: string; documentUrl: string | URL }): type
 - **One text in both builds.** Today the view's bootstrap differs between the builds: the build with the network modes
   adds the fetch bridge's branch (`viewBootstrapSource`). Sealed mode has no bridge, so its view's bootstrap is the
   form without it in both builds, and the file is generated from that one text (I12).
-- **A file of another version.** The view announces its bootstrap's hash before the host page sends anything of the
-  guest's ([below](#the-start-up-order)), and the host page compares it with its own (`viewScriptHash()`). So an old
-  file in a cache ends with a named reason, not with a view that half works. Serving the file at a URL that changes with
-  the version (a bundler's hashed asset, or a query) avoids the stale copy.
+- **A file of another version.** The view announces the library version its bootstrap was built for, a constant
+  written into it, before the host page sends anything of the guest's ([below](#the-start-up-order)). So an old file in
+  a cache ends with a named reason, not with a view that half works. This is a check of the version an honest copy
+  states about itself, and of nothing else; [the check of the file](#the-check-of-the-file) is the one that reads its
+  bytes. Serving the file at a URL that changes with the version (a hashed asset, or a query) avoids the stale copy.
+- **Schemes.** A host page that is not on `http:` or `https:` (a `file:` page, a browser extension's own page, an app
+  shell on a custom scheme such as Electron's) has no URL to serve the file from, and there is no `srcdoc` fallback
+  (D8): such pages can use sealed mode today and cannot in this design. Whether the file can be admitted from the host
+  page's own scheme there is not measured ([index](README.md#waits-for-the-owner), 3).
 
 "No backend, no server config" becomes "one static file, no response headers that set a policy on it"
 ([below](#the-policies-in-force)).
@@ -54,10 +59,41 @@ with the app, exactly as the host that serves the library's own script is. A doc
 - **On the origin that serves the library's script, the file adds no one to trust.**
 - **A second hostname adds a host that is trusted with the app.** A name that later points somewhere else (a deleted
   bucket behind a CNAME, a CDN's copy) hands the app to whoever answers. [Below](#optional-the-file-on-a-second-hostname).
-- **Decided** ([index](README.md#decided-after-review-1), 4): `documentUrl` becomes optional, defaulting to
-  the bundle's own copy, `new URL('./sealed-document.html', import.meta.url)`, which the common bundlers copy and serve
-  beside the code. The file's host is then the code's host with nothing for the embedder to deploy. It becomes the
-  default only after the bundlers that matter are measured to serve it; until then `documentUrl` is required.
+- **`documentUrl` stays required.** The owner's decision ([index](README.md#decided-after-review-1), 4) made it optional,
+  defaulting to the bundle's own copy (`new URL('./sealed-document.html', import.meta.url)`), once the bundlers were
+  measured to serve it. Research 32 measured them: Vite's production build and Next.js serve the file unchanged by
+  default; webpack's production build minifies it, Rollup, esbuild and Bun do not copy it, and Vite's dev server,
+  Parcel and Bun's dev server rewrite it, with no setting found for the last three. So the condition does not hold. The
+  docs carry a recipe per bundler, and the one that works in all of them is the plainest: the file goes into the
+  directory the site serves static files from, and is not imported.
+
+## The check of the file
+
+Tools treat a file named `.html` as a page to process: research 32 found a dev server that inserts its client's script
+ahead of the file's policy tag, a bundler that minifies the file and one that rewrites it. A site-wide policy header
+that refuses the view's bootstrap stops the view before it can say anything (review 2, finding 5), and a server that
+answers every path with the app's own page answers this one too. From outside the frame all of these look alike: no
+answer.
+
+So, once per registration and before the first frame, the element requests `documentUrl` itself where it can read the
+answer (the same origin, or a server that allows it), and compares the whole file's digest with the constant the library
+was built with, and reads the response's headers.
+
+| What it finds | The build ends with |
+| :--- | :--- |
+| no file, or a type that is not HTML | the file is missing |
+| other bytes | the file is not the library's: modified, or another version's (the reason names the tools that rewrite HTML) |
+| a `Content-Security-Policy` or `Content-Security-Policy-Report-Only` header, `X-Frame-Options`, a `frame-ancestors` | that header, by name |
+
+- **A check, for honest deployments.** It reads what the server answers this request; a hostile server answers the
+  frame differently. It adds no trust and removes none: the file's host is trusted either way (above).
+- **Where the answer cannot be read** (another origin without permission to read, or a host page whose own policy
+  refuses the request) there is no check, and the cases above end as "the document did not answer", whose text lists
+  them.
+- The request carries no credentials, and its result is kept for the registration.
+
+**Not measured:** its cost; a host page's `connect-src` and Service Worker in its path (the host page's Service Worker
+never answers the sandboxed frame's own navigation, on all three engines: review 2, probe 3).
 
 ## The shape
 
@@ -80,6 +116,17 @@ host page
   nothing: C never has more than its own attribute.
 - **The host page posts to C directly**: C is `frames[0]` of F. C accepts messages only from its parent's parent, as
   today's view does. The ports go from the host page to C, and C hands one to the worker. F handles no message.
+- **The frame of F is in the element's closed shadow root, and that is load-bearing.** A frame in a shadow tree is not
+  in the page's `window.frames`, so a site that frames the host page cannot reach F's frame and navigate it to a document
+  of its own, which would then answer the handshake and receive the app. Measured on all three engines (review 2,
+  finding 8): with the frame in a closed shadow root the framing page saw no frame; with the same frame in the light DOM
+  it replaced F before its load, received the app and its files, called a host method and received the user's state.
+  Today's view rests on the same property. The handshake authenticates nothing, so this is what keeps other sites out
+  of it, and it gets a test of its own ([05](05-build-order.md), step 3).
+- **One load.** The element accepts one load of F's frame per build; a second load ends the build, as today's rule for
+  the view's frame does (ADR-003, `frameLoad`).
+- **No referrer.** F's frame has `referrerpolicy="no-referrer"`, so the file's host does not receive the host page's
+  URL.
 
 **Measured** (research 28, Q1): with F static, C and its worker were opaque and reached nothing of the embedder's
 origin in all twelve ways of opening F that research 27 lists (Q2: framed, navigated to and opened as a popup, by the
@@ -123,8 +170,9 @@ The design's answer has three parts, in the order of the ladder.
 1. **The row exists.** `INHERITED_CONTEXT` gains a row for the policy the file's response carries, with its column in
    `SEALED_REACH`. The served document does not close the policy rows by construction: it replaces "the host page's
    policy" by "the file's response headers" as what is inherited.
-2. **A check that ends the build (I18).** Before the host page sends anything of the guest's, the view and the worker
-   make one load of each kind they can ever make for a guest (`VIEW_LOAD_KINDS`: a `blob:` image, a stylesheet, a font,
+2. **A check that ends the build (I18).** The view, before the host page sends anything of the guest's, and the worker,
+   before the guest's entry runs ([the start-up order](#the-start-up-order)), each make one load of each kind they can
+   ever make for a guest (`VIEW_LOAD_KINDS`: a `blob:` image, a stylesheet, a font,
    media; a `blob:` worker; a refused request; code from a string), with fixed library strings, and listen for
    `securitypolicyviolation`. A violation whose policy is not the file's own `<meta>` text means another policy is in
    force, enforced or report-only, and the view announces it; the build ends with a reason that names the header. What
@@ -139,8 +187,15 @@ The design's answer has three parts, in the order of the ladder.
 
 What "serve it unchanged" excludes, for the docs: a `Content-Security-Policy` or
 `Content-Security-Policy-Report-Only` header on the file, `X-Frame-Options` or a `frame-ancestors` that refuses the host
-page, and a content type that is not HTML. The first two end the build with their reason; the others with "the document
-did not answer".
+page, a content type that is not HTML, and any tool that rewrites the file. Where [the check of the file](#the-check-of-the-file)
+can read the answer, each ends the build with its own reason. Where it cannot: a report-only header, and an enforced one
+that still lets the view's bootstrap run, end it through the view's check; an enforced header that refuses the
+bootstrap, a refused framing and a wrong type stop the view before it exists, and end as "the document did not answer".
+
+The check sees policies of the Content-Security-Policy kind. Other report-only headers on the file
+(`Permissions-Policy-Report-Only`, `Cross-Origin-Embedder-Policy-Report-Only`, `Document-Policy`, network error logging)
+are not seen by the view; the check of the file can name them. No report under them that carries guest text was
+constructed (the view loads only `blob:` URLs it minted), and none is measured.
 
 **Not measured:** whether every engine raises `securitypolicyviolation` for a report-only header in the view and in the
 worker (review 1 saw WebKit send one report, from F only), and so whether the check sees on WebKit what it sees on the
@@ -148,25 +203,32 @@ other two.
 
 ## The start-up order
 
-1. The element frames `documentUrl` and, at the frame's load, posts one message to `frames[0]` with one port and
-   nothing of the guest's.
-2. The view checks the sender (its parent's parent), runs the gates and the policy check above, and answers on the
-   port: its bootstrap's hash, and each gate's verdict.
-3. The host page compares the hash with its own and reads the verdicts. Only then does it send the app: the files, the
-   worker's source, the second port.
-4. A view that does not answer within the load timeout ends the build with "the document did not answer". The host
-   page cannot tell why from outside: a missing file, a server that answers every path with another page, a header
-   that refuses the framing, and a host policy whose `frame-src` does not admit `documentUrl` all look alike. The
-   reason's text lists them.
+1. The element checks the file where it can ([above](#the-check-of-the-file)), frames `documentUrl` and, at the frame's
+   load, posts one message to `frames[0]` with one port and nothing of the guest's.
+2. The view checks the sender (its parent's parent), runs its gates and its policy check, and answers on the port: the
+   library version it was built for, and each gate's verdict.
+3. The host page reads the version and the verdicts. Only then does it send the app: the files, the worker's source, the
+   second port.
+4. The view starts the worker. The worker is made from the app (its source holds the guest's entry and files, and the
+   policy admits no code from strings, so a worker of the library's alone could not be given the guest's code later). So
+   the worker's gates and its half of the policy check run in the worker's prelude, **before the guest's entry runs**,
+   and the worker reports its verdicts on the logic port.
+5. The element becomes `'ready'`, and sends the calls that were waiting, only after the worker's verdicts. No data of
+   the embedder's reaches a worker whose gates failed.
+6. A view that does not answer within the load timeout ends the build with "the document did not answer". Where the
+   check of the file could not run, the host page cannot tell why from outside: a missing file, a server that answers
+   every path with another page, a header that refuses the framing or the bootstrap, and a host policy whose
+   `frame-src` does not admit `documentUrl` all look alike. The reason's text lists them.
 
-So no guest content exists anywhere in the file's documents before every gate has answered, and a file of another
-version receives nothing. A hostile document at `documentUrl` can announce whatever it likes; that is the trust of
-[the file's host](#who-is-trusted-with-the-app), which no order of messages changes.
+So the view holds nothing of the guest's before its own gates have answered, no guest code runs before the worker's
+have, and no data of the embedder's is sent before both. A file of another version receives nothing. A hostile document
+at `documentUrl` can announce whatever it likes; that is the trust of [the file's host](#who-is-trusted-with-the-app),
+which no order of messages changes.
 
 ## The start-up gates
 
-Canaries that confirm the browser enforces what the design assumes, run by the view and by the worker before step 2
-answers. F runs none: its only script is the guard. Research 28 (Q7) measured twelve: origin, framing, code from
+Canaries that confirm the browser enforces what the design assumes, run by the view before step 2 answers and by the
+worker's prelude before the entry runs. F runs none: its only script is the guard. Research 28 (Q7) measured twelve: origin, framing, code from
 strings, connect, image, style, base, frame, cookie, storage, parent, and the worker's network names. A canary that the
 browser does not refuse ends the build with a termination reason.
 
@@ -188,7 +250,8 @@ With the view in a document of its own, the passes over guest content that run i
 
 | Pass | In this design |
 | :--- | :--- |
-| the entry scan, the module rewrite, the stylesheet scans and cut, the assembly of the worker's source | move into C |
+| the entry scan, the module rewrite, the assembly of the worker's source | move out of the host page: into the worker's prelude, before the entry runs, where the code allows it; otherwise into C |
+| the stylesheet scans and cut | move into C, which applies the sheets |
 | the policy built from the kinds of file | goes: the policy is constant |
 | writing the frame's `srcdoc` through Trusted Types | goes: the host page sets a URL |
 | the options' copy and schema, the file store and its quota, the validation and measure of every typed message that comes back, guest writes, log lines, violations | stay: they are the element's own state, or the host page acts on them |
@@ -197,6 +260,15 @@ With the view in a document of its own, the passes over guest content that run i
 lexing in the host page (`rewriteCost`). With the lexers in C, the host page's quota counts the bytes given, which
 `start()` can refuse synchronously, and C refuses a build whose rewritten files pass a bound the library states; that
 refusal is a termination reason ([01](01-one-element-one-app.md#startapp-grants)).
+
+**Why the worker and not the view, where there is a choice.** In the served document the view holds the value model
+for forms, which is the only layer between Chromium's autofill and the guest ([04](04-forms-and-autofill.md)), the
+index of `links` and the view's port. A parser of guest text that runs in the view puts a parser bug next to all of
+them; the same parser in the guest's own worker puts it where the guest's code already runs (review 2, finding 11).
+
+**Reasons that come from a parse.** A build that ends because of what a parse found (an `import()` in the entry, the
+bound on rewritten files) ends with an identifier the view or the worker sends and text the host page holds. A path in
+it is the guest's, and is classified as such in `GUEST_VALUES` ([02](02-what-an-app-hands-over.md)).
 
 From reading the code; not measured.
 
@@ -225,7 +297,10 @@ Allowed, and not recommended over the code's own origin.
 ## The network build
 
 Sealed mode is the same code in both builds, so it is served in both, from the same file. Strict, cooperative and worker
-mode keep the documents they have today.
+mode keep the documents they have today, with everything those need: the `srcdoc` path and its Trusted Types handling,
+the policy generator, and the host passes strict mode uses. So the build with the network modes has two view
+bootstraps, sealed mode's and strict mode's (which has the fetch bridge's branch), and each has its own hash under its
+own name; `viewScriptHash()` there is strict mode's.
 
 ## Not measured
 
@@ -233,7 +308,11 @@ mode keep the documents they have today.
 - The file as it will ship: research 28's spike ran the library's per-build wrapper as a served file, framed with the
   library's own flags, and its gates ran in a scripted file.
 - The policy check of I18 on each engine, in the view and in the worker.
-- The bundlers' handling of the file as an asset of the package.
+- The check of the file: its cost, and a host page's `connect-src` and Service Worker in its path.
+- A host page on a scheme that is not `http(s)`.
+- A password manager's extension when another site frames the file: whether it offers the embedder's saved login in a
+  form that site drives there (review 2, open question).
+- Report-only headers that are not Content-Security-Policy.
 - The host page's Trusted Types and a host policy without `frame-src` for the file, with the library.
 - Whether a page that frames the host page can reach F's frame and navigate it before its first load (today's view has
   the same question).

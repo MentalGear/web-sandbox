@@ -1,7 +1,7 @@
 # 02 · What an app hands to the host page
 
 **Status: a design, not built.** [The folder's index](README.md) has the invariants (I6 to I10 are this file's) and
-what [review 1](REVIEW-1.md) changed here.
+what [review 1](REVIEW-1.md) and [review 2](REVIEW-2.md) changed here.
 
 ## The root
 
@@ -41,8 +41,8 @@ The app writes an ordinary link in its markup:
 - **The view marks a link whose `href` is a listed URL, character for character.** The comparison is of strings, with no
   parsing and no normalising of what the guest wrote. Any other `href` is inert, as today (`INERT_HREF`). A link is an
   HTML `a` element; an `area`, an SVG `a` and a MathML element with `href` are never marked.
-- **The click is the request.** On a trusted `click` whose target is a marked link or inside one, the view sends the
-  host page one message: the link's index in the list, an integer. Pressing Enter on a focused link is such a click; an
+- **The click is the request.** On a trusted `click` whose target is a marked link or inside one, and not on a form
+  control inside it, the view sends the host page one message: the link's index in the list, an integer. Pressing Enter on a focused link is such a click; an
   `auxclick` (the middle button) sends nothing. The view still cancels the click's default, as it does for every link.
   The app's worker has nothing to call, and no method of the guest's opens a link.
 - **The host page opens its own copy.** It checks that the index is an integer within the element's list and calls
@@ -55,8 +55,9 @@ The app writes an ordinary link in its markup:
 **Why not a call.** The first shape of this option was a call from the app's worker, `sandboxView.open(name)`.
 [Research 30](../research/30_links_popup/README.md) measured the popup blocker with it on Chromium 159 and Firefox
 159: the tab opens for 5 seconds after a click anywhere on the host page or in the view, not only a click on the link.
-With a call, the app picks the moment and the link within those 5 seconds. With the click on the link as the request,
-it picks neither.
+With a call, the app picks the moment and the link within those 5 seconds, whatever the user clicked. With the click
+on a link as the request, the user's click on that link is the moment, and the app picks only which listed URL the
+link carries.
 
 **Measured** (research 30, popup blocker verifiably on, Chromium 159 and Firefox 159): a host page's `window.open` opened
 the tab in every run after a click in the view, across the ports and the worker, and in the library as it is today with
@@ -71,7 +72,9 @@ none); touch and keyboard activation.
 - The moment is as strong as the view. An intact view asks only in the user's click on a marked link. A view that ran
   guest script (a renderer bug) could send any index of the list within the browser's 5 seconds of any click: any
   listed URL, never another one.
-- A listed URL on a server the app's author reads is a signal, sent when the user clicks: which link, and when.
+- A listed URL on a server the app's author reads is a signal, sent when the user clicks: which link, and when. The
+  app can change a link's `href` before every click, so each click carries a choice among the listed URLs: log₂(n) bits
+  for n links, 5 bits at `MAX_LINKS`, and the time. The egress table's row for `links` states it.
 - The host page cannot see that the browser blocked a tab: with `noopener`, `window.open` returns `null` either way.
 - It is sealed mode's first way out that is not the embedder's own code, so it gets a row in the egress table and a
   budget (`CHANNEL_BUDGETS`).
@@ -104,7 +107,7 @@ interface GuestBytes {
     bytes(): Uint8Array;      // a copy; the one raw way out
     text(): string;           // decoded as UTF-8
     image(): Blob | null;     // a Blob of one of GUEST_IMAGE_TYPES, or null
-    download(): File;         // always application/octet-stream, under a name the library chose
+    save(): void;             // the browser saves the bytes, under a name the library chose
 }
 
 const GUEST_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'] as const;
@@ -115,12 +118,15 @@ A write's content is a value with four named ways out, in place of a `Uint8Array
 - `image()` answers a `Blob` only for bytes that begin with the signature of one of `GUEST_IMAGE_TYPES`, typed as that
   one. SVG is not among them: an SVG document opened from a `blob:` URL runs script as the host page. For anything else
   it answers `null`.
-- `download()` answers a `File` typed `application/octet-stream`, which a browser saves and does not render, under a
-  name the library chose. The name is the last segment
-  of the write's path when its extension is one of the library's inert types (the table that decides which writes need
-  `{ code: true }`); otherwise that segment with `.download` added, so that `invoice.pdf.exe` and `report.html` are
-  saved as files that nothing opens by a double click. Without it the embedder names the download, and the natural name
-  is the guest's path (review 1, finding 13).
+- `save()` has the browser save the bytes, and names the file itself (waits for the owner;
+  [index](README.md#waits-for-the-owner), 1). The library makes a `Blob` typed `application/octet-stream`, which a
+  browser saves and does not render, puts its URL on a link whose `download` attribute is the library's name, clicks it
+  and revokes the URL. The name is the last segment of the write's path when its extension is one of the library's
+  inert types (the table that decides which writes need `{ code: true }`); otherwise that segment with `.download`
+  added, so that `invoice.pdf.exe` and `report.html` are saved as files that nothing opens by a double click.
+  The embedder names nothing. A `File` with that name, handed to the embedder, does not do this: Chromium and WebKit
+  ignore a `File`'s name when saving it, so the embedder's own `download` attribute, naturally the guest's path, would
+  name the file (review 2, finding 3, run on three engines).
 - `bytes()` hands out the raw bytes. `new Blob([w.content.bytes()], { type: w.type })` still runs an SVG as the host
   page: the two common needs have a safe name, and the unsafe one is a step the embedder writes out. That makes this
   part a check, one named step away, and not a construction.

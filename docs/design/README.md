@@ -10,9 +10,13 @@ fallback (D8, 2026-11-07). The binding method is named `start` (2026-11-18). The
 in outline on 2026-11-18, before its review, and the five answers of the review that change a public name or an accepted
 promise on 2026-11-18, after it ([below](#decided-after-review-1)).
 
-**Reviewed once.** [REVIEW-1.md](REVIEW-1.md) is an independent adversarial pass on the design as it stood at `6b2f22f`,
-with its probes and their output in [review-1/](review-1/p1-output.txt). The files of this folder are the design after
-that review: [what the review changed](#what-review-1-changed) lists each finding and where its answer is.
+**Reviewed twice.** [REVIEW-1.md](REVIEW-1.md) is an independent adversarial pass on the design as it stood at
+`6b2f22f`, and [REVIEW-2.md](REVIEW-2.md) a second one, by another reviewer, on the design as it stood at `80701b0`,
+first without reading the first review and then against the design's answers to it. Their probes and output are in
+[review-1/](review-1/p1-output.txt) and [review-2/](review-2/p1-output.txt). The files of this folder are the design
+after both: [what review 1 changed](#what-review-1-changed) and [what review 2 changed](#what-review-2-changed) list
+each finding and where its answer is. Three answers of review 2 change a public name or a decision the owner made, and
+[wait for the owner](#waits-for-the-owner).
 
 ## What the design is for
 
@@ -36,35 +40,36 @@ That one is built ([04](04-forms-and-autofill.md)) and is here because the serve
 | [03-served-document.md](03-served-document.md) | `sealed-document.html`, `documentUrl`, who is trusted with it, what is inside the file, the start-up order and gates, the thinner host |
 | [04-forms-and-autofill.md](04-forms-and-autofill.md) | The value model (built), and what the served document still has to show for it |
 | [05-build-order.md](05-build-order.md) | The order of the work, the tests each step brings, what is measured before what is promised |
-| [REVIEW-1.md](REVIEW-1.md) | The adversarial review of the design before it was revised; [review-1/](review-1/p1-output.txt) has its probes |
+| [REVIEW-1.md](REVIEW-1.md) | The first adversarial review, of the design before it was revised; [review-1/](review-1/p1-output.txt) has its probes |
+| [REVIEW-2.md](REVIEW-2.md) | The second adversarial review, of the design after the first; [review-2/](review-2/p1-output.txt) has its probes |
 
 ## The invariants
 
 Each is one sentence that must hold, the rung it stands on (CLAUDE.md: impossible to build, impossible to reach, a
 check, a documented limit), and the test that will enumerate it. A review of this design is a search for a case where
-one of them does not hold, or where its rung is lower than stated. The numbers are stable: review 1 cites I1 to I16, and
-I17 and I18 came from it.
+one of them does not hold, or where its rung is lower than stated. The numbers are stable: review 1 cites I1 to I16,
+I17 and I18 came from it, and review 2 cites all eighteen.
 
 | # | Invariant | Rung | Where | Structural test (planned unless marked built) |
 | :--- | :--- | :--- | :--- | :--- |
 | I1 | An element holds at most one app for its whole life | impossible to build: no member binds a second, and the check that the element has no app and the storing of the validated values are one step, with no code of the embedder's between them | [01](01-one-element-one-app.md) | `APP_SURFACE` (`src/lib/app-surface.ts`): every member of the element in the API report is classified as binding, acting on the bound app, or neither; exactly one binds. A unit test: a getter of the app that calls `start()` |
 | I2 | Nothing of an app is stored unless all of it was valid by the rules the host page can decide without parsing guest text | impossible to build: validation returns the values that are stored | [01](01-one-element-one-app.md) | a unit test over every way `start()` throws: the element equals a new one |
-| I3 | A host method is reachable only by the app it was given with, in the document the embedder's `documentUrl` serves | impossible to build on the element; **a documented limit** for the host that answers `documentUrl`, which is trusted with the app ([03](03-served-document.md#who-is-trusted-with-the-app)) | [01](01-one-element-one-app.md) | `APP_SURFACE`; the lifecycle model with no input that changes methods |
+| I3 | A host method is reachable only by the app it was given with, in the document the embedder's `documentUrl` serves | impossible to build on the element; **a documented limit** for the host that answers `documentUrl`, which is trusted with the app ([03](03-served-document.md#who-is-trusted-with-the-app)); against a page that frames the host page it rests on the browser keeping a frame in a closed shadow root out of `window.frames` ([03](03-served-document.md#the-shape)) | [01](01-one-element-one-app.md) | `APP_SURFACE`; the lifecycle model with no input that changes methods; an e2e spec: a cross-site page that frames the host page finds no frame; a `<base>` in the host page does not move `documentUrl` |
 | I4 | A commit stores only bytes the embedder was handed, and only while they are still what is pending | impossible to build: a commit takes the write values the library minted, and a value commits only if its entry is its path's current pending entry, by identity | [01](01-one-element-one-app.md) | a unit test: a guest write, a commit, a `reset()` or a re-insertion after the list each leave the listed value uncommittable |
 | I5 | An event that carries guest data does not bubble: a listener on an ancestor receives it only if it was added for the capture phase | **a documented limit** for capture listeners; by construction for bubbling ones | [01](01-one-element-one-app.md#events) | `ELEMENT_EVENTS`: each event that carries guest data has "Does not bubble." |
 | I6 | No text of the guest's reaches a URL the library opens, and an intact view asks for a tab only in the user's click on a listed link | impossible to build for the URL (an index crosses); for the moment, as strong as the view: a view that runs guest script could ask for any listed URL within the browser's 5 seconds of any click | [02](02-what-an-app-hands-over.md) | the frame builders: the message has one integer; an e2e spec with the popup blocker on |
 | I7 | No `Blob` or `File` from the guest reaches the embedder's code | impossible to build: the measure of a guest value refuses both before anything is handed on | [02](02-what-an-app-hands-over.md) | the snapshot measure's enumeration of value kinds |
 | I8 | A guest write's type and its name agree | impossible to build: the type is a function of the path | [02](02-what-an-app-hands-over.md) | a unit test over the type table |
-| I9 | A `Blob` or `File` the library makes from guest bytes has a type and a name the library chose | impossible to build inside `GuestBytes`; **a check** for the embedder, who can still call `bytes()` and type or name the result | [02](02-what-an-app-hands-over.md) | a unit test over `GUEST_IMAGE_TYPES`, bytes of other kinds (SVG, HTML, a polyglot) and names (`invoice.pdf.exe`, `report.html`) |
+| I9 | A `Blob` the library makes from guest bytes has a type the library chose, and a file the library saves has a name the library chose | impossible to build inside `GuestBytes`, whose `save()` names the file in its own step; **a check** for the embedder, who can still call `bytes()` and type or name the result | [02](02-what-an-app-hands-over.md) | a unit test over `GUEST_IMAGE_TYPES` and bytes of other kinds (SVG, HTML, a polyglot); an e2e spec on three engines for the saved names (`invoice.pdf.exe`, `report.html`) |
 | I10 | Every value the public API hands the embedder is classified: the library's, the embedder's, or the guest's | a check, run over the whole API report | [02](02-what-an-app-hands-over.md) | `GUEST_VALUES` (`src/lib/guest-values.ts`) against the API report |
 | I11 | Guest content never runs with an origin's authority, however the served file is opened | impossible to build, for the file of the package: the only document that could hold that authority runs nothing of the guest's, and the view's `sandbox` attribute is a byte of a static file | [03](03-served-document.md) | research 28's twelve ways of opening the file, as an e2e spec against the shipped file, framed with the flags the element uses |
-| I12 | The served file's text has no input: one text per library version, the same in both builds | impossible to build: sealed mode's view bootstrap is the same in both builds, and the file is generated from it | [03](03-served-document.md) | a unit test: both builds emit the same bytes |
-| I13 | Nothing can relay between the host page and the view | impossible to build, for the file of the package: it has no script that handles a message; the ports go from the host to the view | [03](03-served-document.md) | a source scan of the file: one script, the guard, with no listener |
+| I12 | The served file's text has no input: one text per library version, the same in both builds | impossible to build, for the package's bytes: sealed mode's view bootstrap is the same in both builds, and the file is generated from it. What a server answers is checked where the answer can be read ([03](03-served-document.md#the-check-of-the-file)): a check, for honest deployments | [03](03-served-document.md) | a unit test: both builds emit the same bytes; each way a deployment changes the file ends with its reason |
+| I13 | Nothing can relay between the host page and the view | impossible to build, for the file of the package: it has no script that handles a message; the ports go from the host to the view. Against a page that frames the host page, as I3 | [03](03-served-document.md) | a source scan of the file: one script, the guard, with no listener; I3's framing spec |
 | I14 | The served file builds the view only where it is framed and opaque | a check, in the file's one script | [03](03-served-document.md) | research 28's guarded cases as an e2e spec |
-| I15 | A browser that does not enforce what the design assumes ends the sandbox before any guest content is sent, with a reason | a check of the browser, at start-up only, in the view and the worker; **to be measured in that form** | [03](03-served-document.md#the-start-up-order) | each gate under the mutant that provokes it, on three engines, in the static file |
+| I15 | A browser that does not enforce what the design assumes ends the sandbox with a reason: the view's gates answer before anything of the guest's is sent, the worker's before any guest code runs, and both before any data of the embedder's is sent | a check of the browser, at start-up only; **to be measured in that form** | [03](03-served-document.md#the-start-up-order) | each gate under the mutant that provokes it, on three engines, in the static file; no call reaches a worker whose gate failed |
 | I16 | The guest receives from a form control only what the user entered into that control | a model in the view, independent of the browser's rules; **built** | [04](04-forms-and-autofill.md) | `test/unit/view-autofill.test.ts`, `test/e2e/view-values.spec.ts` (built) |
-| I17 | An app's own content cannot grant itself anything | impossible to build: the app and the embedder's grants are two arguments, each read by its own schema, and the app's schema refuses a key that is a grant | [01](01-one-element-one-app.md#startapp-grants) | `CONFIG_SCHEMA`: every option is classified as the app's or the embedder's, and the two types are derived from it |
-| I18 | The view runs under the file's own policy and no other, or the build ends | a check, at start-up, before any guest content is sent; the mitigations for a host page's policy stay in place behind it | [03](03-served-document.md#the-policies-in-force) | each kind of load the view makes (`VIEW_LOAD_KINDS`) under a header on the file, enforced and report-only: a named termination and no report that carries guest text, on three engines |
+| I17 | The app argument cannot carry a grant | impossible to build, for that argument: the app and the embedder's grants are two arguments, each read by its own schema, and the app's schema refuses a key that is a grant. A grant is whatever the embedder passes as the second | [01](01-one-element-one-app.md#startapp-grants) | `CONFIG_SCHEMA`: every option, the ones no longer accepted included, is classified as the app's or the embedder's, and the two types are derived from it |
+| I18 | The view and the worker run under the file's own policy and no other, or the build ends | a check, at start-up: in the view before anything of the guest's is sent, in the worker before the guest's entry runs; it sees a policy that lets the view's bootstrap run, and the check of the file names the others where it can read the answer; the mitigations for a host page's policy stay in place behind it | [03](03-served-document.md#the-policies-in-force) | each kind of load the view makes (`VIEW_LOAD_KINDS`) under a header on the file, enforced and report-only: a named termination and no report that carries guest text, on three engines |
 
 ## What review 1 changed
 
@@ -76,13 +81,13 @@ I17 and I18 came from it.
 | 4 · the view inherits the file's sandbox flags | The view's static attribute is the most the library ever grants; the element narrows it per app with the file's own attribute | [03](03-served-document.md#the-shape) |
 | 5 · a non-bubbling event reaches capture listeners | I5 restated as what holds | [01](01-one-element-one-app.md#events) |
 | 6 · `links` sat beside the app's own content | The app and the embedder's grants are two arguments (I17) | [01](01-one-element-one-app.md#startapp-grants) |
-| 7 · the bootstrap differs between the builds | Sealed mode's view bootstrap is the same in both builds, and the file is checked by its hash | [03](03-served-document.md#the-public-surface) |
+| 7 · the bootstrap differs between the builds | Sealed mode's view bootstrap is the same in both builds; a copy of another version is detected by the version the view states | [03](03-served-document.md#the-public-surface) |
 | 8 · the quota needs the module rewrite the design moves | `start()` decides what the host page can decide without parsing guest text; what needs a parse is decided where the parse runs and ends the build with a reason | [01](01-one-element-one-app.md#startapp-grants), [03](03-served-document.md#a-thinner-host) |
 | 9 · step 4 would delete code the file's own policy needs | Step 4 deletes host-realm code only | [05](05-build-order.md) |
 | 10 · a stale write value stays committable | A value commits only while its entry is its path's current pending entry | [01](01-one-element-one-app.md#files-and-commits) |
 | 11 · `start()` is re-entrant through getters | The check and the store are one step | [01](01-one-element-one-app.md#startapp-grants) |
-| 12 · no member says whether an element is bound | A read-only `started` | [01](01-one-element-one-app.md#the-lifecycle) |
-| 13 · `download()` leaves the file's name to the embedder | `download()` answers a `File` the library named | [02](02-what-an-app-hands-over.md#guestbytes) |
+| 12 · no member says whether an element is bound | A read-only `started`; the documented set-up makes and removes its own element | [01](01-one-element-one-app.md#the-lifecycle) |
+| 13 · `download()` leaves the file's name to the embedder | `save()`: the library saves the file under its own name | [02](02-what-an-app-hands-over.md#guestbytes) |
 | Claims that did not match | `BD5:CHL-1` is no longer listed as closed; the test migration's size is corrected; research 30 is cited for what it measured; I7 says "reaches the embedder" | [01](01-one-element-one-app.md), [02](02-what-an-app-hands-over.md) |
 | What the design did not specify | Each item has its answer in the file it concerns | 01, 02, 03 |
 
@@ -95,9 +100,36 @@ Each changes a public name or a promise the owner had accepted. The owner approv
 | :--- | :--- | :--- | :--- |
 | 1 | The app and the grants as two arguments: `start(app, grants)`, with the types `SandboxApp` and `SandboxGrants` in place of one value with a `config` (finding 6) | yes | `links`, `guestWrites` and `capabilities` stay in the value an app bundle is naturally stored as, and "the embedder lists the links" is a convention |
 | 2 | A read-only `started` on the element (finding 12) | yes | an embedder cannot tell a new element from a bound one outside its document, and a framework's double set-up has no guard to write |
-| 3 | `GuestBytes.download()` answers a `File` named by the library, in place of a `Blob` (finding 13) | yes | the name stays the embedder's to choose, and the natural choice is the guest's path |
-| 4 | `documentUrl` optional, defaulting to the bundle's own copy of the file (finding 2) | yes, once the bundlers that matter are measured to serve it; until then it stays required | every embedder names a URL, and may name one on a host that adds a trust root |
+| 3 | `GuestBytes.download()` answers a `File` named by the library, in place of a `Blob` (finding 13). **Does not do what it was for** (review 2, finding 3, run): two engines of three ignore the name. Its replacement [waits for the owner](#waits-for-the-owner) | yes | the name stays the embedder's to choose, and the natural choice is the guest's path |
+| 4 | `documentUrl` optional, defaulting to the bundle's own copy of the file (finding 2) | yes, once the bundlers that matter are measured to serve it; until then it stays required. **Measured** ([research 32](../research/32_document_asset/README.md)): most do not, so it stays required | every embedder names a URL, and may name one on a host that adds a trust root |
 | 5 | Guest data as DOM events that do not bubble, with I5 as restated (finding 5) | keep the events | handlers given with the grants, called by the element, so that no event object travels the tree |
+
+## What review 2 changed
+
+| Finding | What the design says now | Where |
+| :--- | :--- | :--- |
+| 1 · a relative `documentUrl` follows an injected `<base>` | It is resolved against the document's own URL | [03](03-served-document.md#the-public-surface) |
+| 2 · the pattern built on `started` restarts the old app silently | The documented set-up makes and removes its own element; no pattern branches on `started` | [01](01-one-element-one-app.md#the-lifecycle) |
+| 3 · two engines ignore the name of the `File` from `download()` | `save()`: the library saves the file itself | [02](02-what-an-app-hands-over.md#guestbytes); **waits for the owner** |
+| 4 · the worker cannot run its gates before the app is sent | The worker's gates run in its prelude before the entry runs; `'ready'` and the waiting calls follow its verdicts; I15 says so | [03](03-served-document.md#the-start-up-order) |
+| 5 · an enforced site-wide header stops the view before it can report | The check of the file names it where the answer can be read; elsewhere it is listed under "did not answer" | [03](03-served-document.md#the-check-of-the-file) |
+| 6 · step 4 and "one bootstrap" in the network build | Step 4 deletes sealed mode's paths only; the two bootstraps have their own names | [03](03-served-document.md#the-network-build), [05](05-build-order.md) |
+| 7 · the announced hash checks a version, not the file | Said as that; the check of the file reads the bytes where it can | [03](03-served-document.md#the-check-of-the-file) |
+| 8 · the closed shadow root keeps framing pages out, unstated | Stated, with its test; one load of the file's frame per build; no referrer | [03](03-served-document.md#the-shape) |
+| 9 · `links`: the app picks the link on every click | Said, with the bits per click in the egress row; a click on a form control inside a link sends nothing | [02](02-what-an-app-hands-over.md) |
+| 10 · a commit skips silently | All or none, answering `true` or `false` | [01](01-one-element-one-app.md#files-and-commits); **waits for the owner** |
+| 11 · the moved parsers sit beside the value model | They go into the worker's prelude where the code allows; the view keeps the stylesheet cut | [03](03-served-document.md#a-thinner-host) |
+| 12 · I17's rung, and unclassified options | I17 restated; every option classified | [01](01-one-element-one-app.md#startapp-grants) |
+| 13 · host pages the design leaves out | Named as a cost | [03](03-served-document.md#the-public-surface); **waits for the owner** |
+| Not specified | The order to `'ready'`, the second load, the referrer, the reasons from a parse, no release inside step 3 | [03](03-served-document.md), [05](05-build-order.md) |
+
+## Waits for the owner
+
+| # | Decision | Recommended | If not |
+| :--- | :--- | :--- | :--- |
+| 1 | `GuestBytes.save(): void` in place of `download()` (review 2, finding 3) | yes | `download()` stays and the docs say that the name holds only when the embedder copies it into the link's `download` attribute |
+| 2 | `commitGuestWrites()` commits all of its list or none, and answers `boolean` in place of `void` (review 2, finding 10) | yes | stale values are skipped one by one, and the embedder cannot tell which were committed |
+| 3 | A host page that is not on `http(s)` (a `file:` page, a browser extension's page, an app shell on its own scheme) cannot use sealed mode, since there is no `srcdoc` fallback (D8) | accept it for now, and measure whether the file can be admitted from such a scheme before the served document is released | keep a `srcdoc` path for those pages, which keeps the code step 4 would delete |
 
 ## What the design does not do
 
@@ -128,4 +160,7 @@ Stated once here; each file repeats what concerns it.
 - Autofill inside the served file, with the value model.
 - Whether a page that frames the host page can reach the file's frame and navigate it before its first load. Today's
   view has the same question.
-- A password manager's extension.
+- A password manager's extension, and one when another site frames the served file.
+- The check of the file: its cost, and what stands in its path on a host page.
+- Report-only headers on the file that are not Content-Security-Policy.
+- A host page that is not on `http(s)`.

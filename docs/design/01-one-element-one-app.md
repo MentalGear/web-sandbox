@@ -1,7 +1,7 @@
 # 01 · One element runs one app, given once
 
 **Status: a design, not built.** [The folder's index](README.md) has the invariants (I1 to I5 and I17 are this file's)
-and what [review 1](REVIEW-1.md) changed here.
+and what [review 1](REVIEW-1.md) and [review 2](REVIEW-2.md) changed here.
 
 ## The root
 
@@ -52,8 +52,13 @@ type HostMethod = (...args: unknown[]) => unknown;
 embedder that runs other people's apps stores each as one value, and that value is naturally the first argument. If the
 grants were fields of it, an app's author could ship their own `links` or `guestWrites` with the bundle. With two
 arguments, an app read from data carries no grant unless a line of the embedder's moves it there.
-`CONFIG_SCHEMA` classifies every option as the app's or the embedder's; the two types are derived from it; and each
+`CONFIG_SCHEMA` classifies every option as the app's or the embedder's, the ones no longer accepted included
+(`html` and `entry` are the app's; everything else is the embedder's); the two types are derived from it; and each
 argument's schema refuses a key that belongs to the other, so `start({ html, links })` throws (I17).
+
+What this is and is not: it keeps an app read from data from carrying a grant by accident. A grant is whatever the
+embedder passes as the second argument. An embedder that stores a manifest of what each app asks for, and passes it as
+the grants, has granted it.
 
 - **It validates everything before it stores anything.** The app and the grants are each read once by their schema, the
   files are checked as one batch by the file store's rules, and the methods are read: own enumerable string keys, each
@@ -125,21 +130,26 @@ readonly started: boolean     // true once a start() has succeeded, for the rest
 | Every build (the first, a `reset()`, a re-insertion) | pending guest writes are discarded | unchanged, and the write values listed before it can no longer be committed ([below](#files-and-commits)) |
 | `call()` before the element is ready, or with no app | queued or refused by today's rules | unchanged; on an element with no app it is refused as it is today on one that is `'idle'` |
 
-The lifecycle model (research 17, `LC_INPUTS`) loses the inputs for `setConfig`, `load` and the file and method
-changes, and gains one rule: no input builds an environment on an element with no app.
+The lifecycle model (research 17, `LC_INPUTS`) loses the inputs for `setConfig` and `load`, keeps the one for changed
+files (a commit), and gains one rule: no input builds an environment on an element with no app.
 
-**Frameworks.** One element per app means a framework must not reuse the element for another app: in React, a `key`
-that changes with the app. A set-up that runs twice on one element (React's development StrictMode runs an effect, its
-clean-up, and the effect again) is written with the member above:
+**Frameworks.** One element per app means the code that starts an app also makes its element, and removes it:
 
 ```ts
 useEffect(() => {
-    if (el.started) el.reset(); else el.start(app, grants);
-    return () => el.terminate();
-}, []);
+    const el = document.createElement('web-sandbox');
+    el.start(app, grants);
+    box.current.append(el);
+    return () => el.remove();
+}, [app, grants]);
 ```
 
-Catching and ignoring the second `start()`'s error is wrong for an element that is reused: the first app keeps running.
+A set-up that runs twice (React's development StrictMode runs an effect, its clean-up, and the effect again) makes two
+elements and removes one; another app is another element. An element the framework keeps and reuses must not be
+restarted for another app. Two patterns are wrong for it, and the docs show neither: catching and ignoring the second
+`start()`'s error, and `if (el.started) el.reset(); else el.start(app, grants)`. Both leave the first app running under
+the second app's name, and the embedder's next `call()` hands it the second app's data (review 2, finding 2).
+`started` says what the element is; it is not a way to reuse one.
 
 **What stays the embedder's.** Its own storage keys, a closure two elements share, and relaying one app's data to
 another element are the embedder's code. A host method still running after its app ended can go on writing to the
@@ -160,7 +170,7 @@ is the guest's data.
 `listFiles()` and `listGuestWrites()` list this app's files and pending writes.
 
 ```ts
-commitGuestWrites(writes: readonly GuestWrite[], options?: { code?: boolean }): void
+commitGuestWrites(writes: readonly GuestWrite[], options?: { code?: boolean }): boolean
 ```
 
 Today `commitGuestWrites(paths)` commits whatever is pending for each path at the moment of the call. An embedder that
@@ -172,10 +182,14 @@ between (`BD5:DOC-6`). In this design the commit takes the write values themselv
   value.
 - Every value of the list is checked first. A value this element did not mint throws a `TypeError`, and nothing is
   committed.
-- **A value commits only while its entry is its path's current pending entry**, by identity. Anything else is skipped:
-  a value whose path has a newer pending write, one whose entry was already committed, and one listed before a build
-  discarded the pending writes. So an older write the embedder was still checking cannot overwrite a newer one that
-  was committed meanwhile. `listGuestWrites()` shows what is pending.
+- **A value can commit only while its entry is its path's current pending entry**, by identity. A value whose path has
+  a newer pending write, one whose entry was already committed, and one listed before a build discarded the pending
+  writes are all stale. So an older write the embedder was still checking cannot overwrite a newer one that was
+  committed meanwhile.
+- **All or none** (waits for the owner; [index](README.md#waits-for-the-owner), 2). If every value of the list is
+  current, all are committed and the method returns `true`. If any is stale, nothing is committed and it returns
+  `false`: the embedder lists again and checks again. An embedder that checked two files as a pair never has one of them
+  committed without the other, and always knows which happened (review 2, finding 10).
 - `options.code` keeps its meaning: a write of a type that can run needs it.
 - `fileschanged` fires only when a commit changed the files, since nothing else can.
 
@@ -207,7 +221,8 @@ tree. Not chosen ([index](README.md#decided-after-review-1), 5): events are how 
 - Cooperative mode loses quick re-runs on one element.
 - A large test migration: `setConfig` appears in 84 files of `test/`, about 400 times, and the playground and the
   example app change with it.
-- Less code in the library: roughly 350 lines out and 150 in under `src/`, and the lifecycle model loses three inputs.
+- Less code in the library: roughly 350 lines out and 150 in under `src/`. The lifecycle model loses the inputs of
+  `setConfig` and `load`; the input for changed files stays, for commits.
 
 ## Considered and not chosen
 
