@@ -37,7 +37,7 @@ suggestion they pick for that field, or text an extension inserts where they typ
 
 | Owed | When |
 | :--- | :--- |
-| The research 29 harness run against the library **in the served document**, at Chromium's defaults: one choice gives the guest the chosen field and nothing else | when the served document is built, before it is released |
+| The research 29 harness run against the library **in the served document**, framed as the element frames it (with `allow-forms`: research 29's served case had no such flag on the file's frame), at Chromium's defaults: one choice gives the guest the chosen field and nothing else | when the served document is built, before it is released |
 | Safari, with the checklist of research 29 | before the docs promise it there |
 | Firefox's saved addresses and cards | the same |
 | A password manager's extension, with the checklist of research 29 | the same |

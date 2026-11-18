@@ -1,6 +1,7 @@
 # 02 · What an app hands to the host page
 
-**Status: a design, not built.** [The folder's index](README.md) has the invariants (I6 to I10 are this file's).
+**Status: a design, not built.** [The folder's index](README.md) has the invariants (I6 to I10 are this file's) and
+what [review 1](REVIEW-1.md) changed here.
 
 ## The root
 
@@ -21,8 +22,11 @@ The construction: guest data stays data, and the steps that carry authority are 
 ## `links`: the user's click on a listed link opens it
 
 ```ts
-config.links?: readonly string[]     // exact https: URLs, at most MAX_LINKS (32)
+grants.links?: readonly string[]     // exact https: URLs, at most MAX_LINKS (32)
 ```
+
+`links` is a grant: it is the embedder's argument of `start()`, never part of the app
+([01](01-one-element-one-app.md#startapp-grants)).
 
 The app writes an ordinary link in its markup:
 
@@ -35,10 +39,12 @@ The app writes an ordinary link in its markup:
   At most `MAX_LINKS`, no two equal. The schema refuses a list that breaks a rule, and `start()` throws. The default is
   no list: no link opens, as today.
 - **The view marks a link whose `href` is a listed URL, character for character.** The comparison is of strings, with no
-  parsing and no normalising of what the guest wrote. Any other `href` is inert, as today (`INERT_HREF`).
-- **The click is the request.** On a trusted `click` on a marked link, the view sends the host page one message: the
-  link's index in the list, an integer. The view still cancels the click's default, as it does for every link. The
-  app's worker has nothing to call, and no method of the guest's opens a link.
+  parsing and no normalising of what the guest wrote. Any other `href` is inert, as today (`INERT_HREF`). A link is an
+  HTML `a` element; an `area`, an SVG `a` and a MathML element with `href` are never marked.
+- **The click is the request.** On a trusted `click` whose target is a marked link or inside one, the view sends the
+  host page one message: the link's index in the list, an integer. Pressing Enter on a focused link is such a click; an
+  `auxclick` (the middle button) sends nothing. The view still cancels the click's default, as it does for every link.
+  The app's worker has nothing to call, and no method of the guest's opens a link.
 - **The host page opens its own copy.** It checks that the index is an integer within the element's list and calls
   `window.open(links[index], '_blank', 'noopener,noreferrer')` in the task of that message. The URL it opens is the
   string the embedder listed; nothing of the guest's is part of it.
@@ -52,15 +58,19 @@ The app writes an ordinary link in its markup:
 With a call, the app picks the moment and the link within those 5 seconds. With the click on the link as the request,
 it picks neither.
 
-**Measured** (research 30, popup blocker verifiably on, Chromium 159 and Firefox 159): the host page's `window.open`
-opened the tab in every run after a click in the view, through the real library in sealed mode; one tab per click; no
-tab without a click. **Not measured:** Safari and any WebKit with a popup blocker (Playwright's WebKit has none), touch
-and keyboard activation.
+**Measured** (research 30, popup blocker verifiably on, Chromium 159 and Firefox 159): a host page's `window.open` opened
+the tab in every run after a click in the view, across the ports and the worker, and in the library as it is today with
+the request as a call from the worker; one tab per click; no tab without a click. **Not measured:** this design's shape
+(the view's own message, in the served file); Safari and any WebKit with a popup blocker (Playwright's WebKit has
+none); touch and keyboard activation.
 
 **What it leaves.**
 
 - The app chooses which listed links it shows and how they look, so it can dress one up as something else, or cover its
   whole box with one.
+- The moment is as strong as the view. An intact view asks only in the user's click on a marked link. A view that ran
+  guest script (a renderer bug) could send any index of the list within the browser's 5 seconds of any click: any
+  listed URL, never another one.
 - A listed URL on a server the app's author reads is a signal, sent when the user clicks: which link, and when.
 - The host page cannot see that the browser blocked a tab: with `noopener`, `window.open` returns `null` either way.
 - It is sealed mode's first way out that is not the embedder's own code, so it gets a row in the egress table and a
@@ -69,7 +79,9 @@ and keyboard activation.
 ## No `Blob` or `File` crosses from the guest
 
 A `Blob` carries a type, and a `blob:` URL made from it in the host page is a document of the host page's origin. The
-measure of a guest value refuses `Blob` and `File` wherever a guest value arrives: a host method's arguments, the result
+measure of a guest value refuses `Blob` and `File` before the value is handed to any code of the embedder's (the
+browser has deserialised it in the host page by then; nothing of the embedder's sees it), wherever a guest value
+arrives: a host method's arguments, the result
 of `call()`, a log line's arguments. The guest sends bytes (`Uint8Array`, `ArrayBuffer`) and the host page decides what
 they are. A changed promise: an app that returned a `Blob` must return its bytes.
 
@@ -92,7 +104,7 @@ interface GuestBytes {
     bytes(): Uint8Array;      // a copy; the one raw way out
     text(): string;           // decoded as UTF-8
     image(): Blob | null;     // a Blob of one of GUEST_IMAGE_TYPES, or null
-    download(): Blob;         // always application/octet-stream
+    download(): File;         // always application/octet-stream, under a name the library chose
 }
 
 const GUEST_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'] as const;
@@ -103,7 +115,12 @@ A write's content is a value with four named ways out, in place of a `Uint8Array
 - `image()` answers a `Blob` only for bytes that begin with the signature of one of `GUEST_IMAGE_TYPES`, typed as that
   one. SVG is not among them: an SVG document opened from a `blob:` URL runs script as the host page. For anything else
   it answers `null`.
-- `download()` answers a `Blob` typed `application/octet-stream`, which a browser saves and does not render.
+- `download()` answers a `File` typed `application/octet-stream`, which a browser saves and does not render, under a
+  name the library chose (waits for the owner; [index](README.md#waits-for-the-owner), 3). The name is the last segment
+  of the write's path when its extension is one of the library's inert types (the table that decides which writes need
+  `{ code: true }`); otherwise that segment with `.download` added, so that `invoice.pdf.exe` and `report.html` are
+  saved as files that nothing opens by a double click. Without it the embedder names the download, and the natural name
+  is the guest's path (review 1, finding 13).
 - `bytes()` hands out the raw bytes. `new Blob([w.content.bytes()], { type: w.type })` still runs an SVG as the host
   page: the two common needs have a safe name, and the unsafe one is a step the embedder writes out. That makes this
   part a check, one named step away, and not a construction.
@@ -141,3 +158,4 @@ review passes each found a member missing from it.
 | Docs and tested examples only, as now | It pins the example, not the embedder's code |
 | `links` as a map of names, opened by `sandboxView.open(name)` | The app would pick the link and the moment within 5 seconds of any click (research 30) |
 | URL patterns in `links` | A pattern's path is where the data would go |
+| `links` as an option beside the app's `html` and `entry` | An app stored as one value would carry its own links (review 1, finding 6) |

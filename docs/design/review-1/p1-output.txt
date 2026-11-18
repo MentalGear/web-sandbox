@@ -1,0 +1,40 @@
+chromium | none | done=done | reports=0 | carrying guest text=0
+chromium | report-only default-src self | done=done | reports=7 | carrying guest text=1
+    script-src-elem doc=http://localhost:43733/f.html blocked=inline sample=
+    script-src-elem doc=about blocked=inline sample=
+    worker-src doc=about blocked=blob sample=
+    img-src doc=about blocked=blob sample=
+    img-src doc=about blocked=data sample=
+    script-src-elem doc=blob blocked=https://leak.invalid/GUEST-SECRET-IMPORT sample=
+    script-src doc=blob blocked=eval sample=
+chromium | report-only default-src self 'report-sample' | done=done | reports=7 | carrying guest text=2
+    script-src-elem doc=http://localhost:43733/f.html blocked=inline sample=if (!(self.origin === 'null' && top !== 
+    script-src-elem doc=about blocked=inline sample=const img = new Image(); img.src = URL.c
+    worker-src doc=about blocked=blob sample=
+    img-src doc=about blocked=blob sample=
+    img-src doc=about blocked=data sample=
+    script-src-elem doc=blob blocked=https://leak.invalid/GUEST-SECRET-IMPORT sample=
+    script-src doc=blob blocked=eval sample=/* GUEST-SECRET-EVAL */ 1
+firefox | none | done=done | reports=0 | carrying guest text=0
+firefox | report-only default-src self | done=done | reports=7 | carrying guest text=1
+    script-src-elem doc=http://localhost:43733/f.html blocked=inline sample=
+    script-src-elem doc=about blocked=inline sample=
+    img-src doc=about blocked=blob sample=
+    img-src doc=about blocked=data sample=
+    worker-src doc=about blocked=blob sample=
+    script-src doc=about blocked=eval sample=
+    script-src-elem doc=about blocked=https://leak.invalid/GUEST-SECRET-IMPORT sample=
+firefox | report-only default-src self 'report-sample' | done=done | reports=7 | carrying guest text=2
+    script-src-elem doc=http://localhost:43733/f.html blocked=inline sample=if (!(self.origin === 'null' && top !== 
+    script-src-elem doc=about blocked=inline sample=
+const img = new Image(); img.src = URL.
+    img-src doc=about blocked=blob sample=
+    img-src doc=about blocked=data sample=
+    worker-src doc=about blocked=blob sample=
+    script-src-elem doc=about blocked=https://leak.invalid/GUEST-SECRET-IMPORT sample=
+    script-src doc=about blocked=eval sample=/* GUEST-SECRET-EVAL */ 1
+webkit | none | done=done | reports=0 | carrying guest text=0
+webkit | report-only default-src self | done=done | reports=1 | carrying guest text=0
+    script-src-elem doc=http://localhost:43733/f.html blocked=inline sample=
+webkit | report-only default-src self 'report-sample' | done=done | reports=1 | carrying guest text=0
+    script-src-elem doc=http://localhost:43733/f.html blocked=inline sample=
