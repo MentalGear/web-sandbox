@@ -16,8 +16,8 @@ promise on 2026-11-18, after it ([below](#decided-after-review-1)).
 first without reading the first review and then against the design's answers to it. Their probes and output are in
 [review-1/](review-1/p1-output.txt) and [review-2/](review-2/p1-output.txt). The files of this folder are the design
 after both: [what review 1 changed](#what-review-1-changed) and [what review 2 changed](#what-review-2-changed) list
-each finding and where its answer is. Three answers of review 2 change a public name or a decision the owner made: the owner approved two of them on
-2026-11-19, and [one waits](#waits-for-the-owner).
+each finding and where its answer is. Three answers of review 2 change a public name or a decision the owner made: the owner approved all three on
+2026-11-19 ([decided after review 2](#decided-after-review-2-and-the-first-two-steps)).
 
 **Measured as drawn.** [Research 31](../research/31_served_startup/README.md) built the served document's shape and
 start-up order as a fixture on the three engines; [what it changed](#what-research-31-changed) is below.
@@ -125,7 +125,7 @@ Each changes a public name or a promise the owner had accepted. The owner approv
 | 10 · a commit skips silently | All or none, answering `true` or `false` | [01](01-one-element-one-app.md#files-and-commits); approved by the owner |
 | 11 · the moved parsers sit beside the value model | They go into the worker's prelude where the code allows; the view keeps the stylesheet cut | [03](03-served-document.md#a-thinner-host) |
 | 12 · I17's rung, and unclassified options | I17 restated; every option classified | [01](01-one-element-one-app.md#startapp-grants) |
-| 13 · host pages the design leaves out | Named as a cost | [03](03-served-document.md#the-public-surface); **waits for the owner** |
+| 13 · host pages the design leaves out | Named as a cost | [03](03-served-document.md#the-public-surface); the rule the owner approved |
 | Not specified | The order to `'ready'`, the second load, the referrer, the reasons from a parse, no release inside step 3 | [03](03-served-document.md), [05](05-build-order.md) |
 
 ## What review 3 found
@@ -158,11 +158,18 @@ and the gates as written, on Chromium 159, Firefox 159 and WebKit 27.2.
 | `crypto.subtle` is absent from the view under a host page that is not a secure context | The reason the version is a constant | [03](03-served-document.md#the-public-surface) |
 | WebKit raises the events and sends almost no report | Replaces "not measured on WebKit" | [03](03-served-document.md#what-the-policy-check-provokes) |
 
-## Waits for the owner
+## Decided after review 2 and the first two steps
 
-| # | Decision | Recommended | If not |
+The owner approved each as recommended, on 2026-11-19.
+
+| # | Decision | Decided | The alternative, not chosen |
 | :--- | :--- | :--- | :--- |
-| 3 | What a host page that is not on `http(s)` (a `file:` page, a browser extension's page, an app shell on its own scheme) does for sealed mode, with no `srcdoc` fallback (D8). **Measured** ([research 34](../research/34_non_http_host/README.md)): an `http(s)` copy of the file works from all of them; the file beside the page works with its guard on Electron only, and on a browser's `file:` page the guard cannot work ([03](03-served-document.md#the-public-surface)) | no `srcdoc` path. `documentUrl` is `http(s)`, or a URL of the host page's own origin where that origin is not opaque (Electron's `file:` and an app's own standard scheme, where the guard was measured to hold); a browser's `file:` page and an extension's page name an `http(s)` copy | keep a `srcdoc` path for those pages, which keeps the code step 4 would delete. What it alone keeps working: a browser's `file:` page with no server at all (today as one classic script), and an extension's sandbox page offline |
+| 1 | `GuestBytes.save(): void` in place of `download()` (review 2, finding 3) | yes | `download()` stays, and the name holds only when the embedder copies it into a link's `download` attribute |
+| 2 | `commitGuestWrites()` commits all of its list or none, and answers `boolean` (review 2, finding 10) | yes | stale values are skipped one by one, and the embedder cannot tell which were committed |
+| 3 | A host page that is not on `http(s)` (review 2, finding 13; [research 34](../research/34_non_http_host/README.md)) | no `srcdoc` path. `documentUrl` is `http(s)`, or a URL of the host page's own origin where that origin is not opaque (Electron's `file:` and an app's own standard scheme, where the guard was measured to hold); a browser's `file:` page and an extension's page name an `http(s)` copy ([03](03-served-document.md#the-public-surface); [05](05-build-order.md), 3.10) | a `srcdoc` path for those pages, which keeps the code step 4 deletes |
+| 4 | A `Blob` or a `File` crosses in neither direction, where the design asked for the guest's direction only | yes: the measure is one list for both directions | a direction in the measure, and a host's `Blob` reaches the guest |
+| 5 | `links` in strict mode as in sealed mode | yes: the mechanism is the view's, which both modes share | sealed mode alone, and a second egress table |
+| 6 | Steps 1 and 2 are merged before step 3.2, and step 3 has a pull request of its own | yes: between 3.2 and 3.6 the branch is in an intermediate state ([05](05-build-order.md)) | one pull request until step 3 is whole |
 
 ## What the design does not do
 

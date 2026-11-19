@@ -58,6 +58,7 @@ render and fetched the page on a long press, before any click; with the inert `h
 | 3.7 | the passes leave the host page (into the worker's prelude where the code allows, the stylesheet cut into the view); the quota counts the bytes given | the cost of each pass on every engine, as the code it replaces is measured |
 | 3.8 | README, `package.json` and the ADRs say "one static file, no response headers that set a policy on it", who is trusted with the file, the recipe per bundler (research 32), and which host pages cannot use it; an ADR for D8 | `docs:check` |
 | 3.9 | research 29's harness against the library in the served document, framed with `allow-forms` | [04](04-forms-and-autofill.md) |
+| 3.10 | `documentUrl` may be a URL of the host page's own origin where that origin is not opaque (the owner's decision 3): one rule, in the function that reads `documentUrl` | the rule's test, every refusal: a browser's `file:` page and an opaque host page are refused with the reason that names an `http(s)` copy; research 34's Electron probe against the library, `file:` and the app's own scheme, the guard included (I14) |
 
 **Step 3 is released whole.** Between 3.2 and 3.6 the served document runs without the policy check: with the
 mitigations in place, but with the report channel review 1's probe showed under a site-wide header. Nothing of step 3 is
@@ -85,7 +86,7 @@ the served file, the popup blocker and autofill; a real browser profile; a revie
 | `links` works at all | step 2.6's spec: research 30 measured a call from the worker in today's view, not the click as the request |
 | `links` works in Safari | the popup blocker measured on a Mac (research 30's pages) |
 | `documentUrl` can default to the bundle's own copy | not promised: research 32 found that most bundlers do not serve the file unchanged |
-| A host page on `file:`, an extension's page or an app's own scheme can use sealed mode | with an `http(s)` copy of the file: measured ([research 34](../research/34_non_http_host/README.md)), and step 3.2's spec with the library. With the file beside the page: the owner's decision 3, and the rule's own test |
+| A host page on `file:`, an extension's page or an app's own scheme can use sealed mode | with an `http(s)` copy of the file: measured ([research 34](../research/34_non_http_host/README.md)), and step 3.2's spec with the library. With the file beside the page: 3.10 |
 | A site-wide policy header ends the build on WebKit as on the others | step 3.6 on WebKit, in the view and in the worker |
 | The served document on Safari and Android | the twelve ways of opening it, there |
 | Autofill does not reach a guest in the served document | step 3.9 |

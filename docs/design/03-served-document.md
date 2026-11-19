@@ -61,7 +61,9 @@ defineWebSandbox(options: { tagName?: string; documentUrl: string | URL }): type
 
   Today's build, for comparison, runs sealed mode on a browser's `file:` page only as one classic script (the published
   module loads there on Firefox alone), on Electron, and in an extension only as a sandbox page with a narrowed policy.
-  Whether the rule admits more than `http(s)` waits for the owner ([index](README.md#waits-for-the-owner), 3).
+  The owner's decision: no `srcdoc` path, and `documentUrl` may also be a URL of the host page's own origin where that
+  origin is not opaque, which admits Electron and no browser's `file:` page
+  ([index](README.md#decided-after-review-2-and-the-first-two-steps), 3; built as [05](05-build-order.md)'s 3.10).
 
 "No backend, no server config" becomes "one static file, no response headers that set a policy on it"
 ([below](#the-policies-in-force)).

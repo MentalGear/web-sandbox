@@ -1,6 +1,6 @@
 # Research 34: the served document on a host page that is not on `http(s)`
 
-**Question (decision 3 of [the design's index](../../design/README.md#waits-for-the-owner)).** The served document of
+**Question (decision 3 of [the design's index](../../design/README.md#decided-after-review-2-and-the-first-two-steps)).** The served document of
 [03](../../design/03-served-document.md) frames a static file F from `documentUrl`; F's `<meta>` holds the policy, its
 one script is the guard, its static markup holds the view C, and C starts the guest's worker from a `blob:`. 03
 ("Schemes") says a host page that is not on `http:` or `https:` "has no URL to serve the file from", and that whether
