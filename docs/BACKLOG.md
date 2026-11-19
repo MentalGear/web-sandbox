@@ -760,6 +760,29 @@ second on the host thread, and leaves the garbage.
 with the write rate; state the cost in the docs of `fileswritten`. Unit test: with one 8 MiB write pending, a hundred
 `list()` calls that ask for the new path copy a bounded number of bytes.
 
+### <a id="s89"></a>S89 · A resizable `ArrayBuffer`'s maximum is reserved by the browser before any receiver measures it — ⏳ **open** (P3 · S · low, availability only)
+
+*[REVIEW-3.md](design/REVIEW-3.md), finding 5, its probe 6 ([p6-output.txt](design/review-3/p6-output.txt)).* Class P,
+the snapshot measure (a length counted for a buffer whose clone carries more; research 18), and E-cpu for the browser's work before it. Availability only: no data moves, the host page kept control in every run measured, and `terminate()` or
+removing the element ends it (CONTRIBUTING.md, "Availability findings").
+
+**What holds.** The measure refuses a resizable `ArrayBuffer`, and a typed array or a `DataView` over one
+(`SNAPSHOT_REFUSED_KINDS`, `src/lib/structured-size.ts`), so the guest's broker and console relay refuse it before they
+post, and the host's measure refuses it on arrival: no message of the library's carries one to the embedder's code.
+
+**What is open.** What the browser does with one before any receiver can refuse it. In the probe, outside the library,
+a worker posted 1000 buffers of 8 bytes with a `maxByteLength` of 1 GiB in one message: Chromium's headless shell never
+delivered it (neither `message` nor `messageerror` in 25 s) and its renderer reserved about 1.5 TiB of address space; WebKit
+refused to make more than about 60 (`RangeError: Out of memory`); Firefox delivered all. With the library, the snapshot a
+sender makes is itself a structured clone in the guest's realm, so a guest's resizable buffers are reserved again there
+before the measure refuses them, in the guest's own worker (on Chromium, in the renderer process the host page shares),
+and a cooperative guest can post one to the host window, which the library does not hear (a cooperative-mode limit).
+Measure, on three engines: a sealed guest that makes and sends such buffers through `bridge.call` and `console.log`
+(the host page's ticks and its renderer's virtual size, with `test/e2e/host-share.ts`), and a cooperative guest's
+`parent.postMessage` of them. The bound docs/API.md states is the browser's: nothing the library sets bounds what an
+engine reserves for a buffer a guest makes. A fix that refuses earlier would have to keep the guest from making one
+(`ArrayBuffer`'s options are not on the worker's allowlist to strip), which would need its own measurement first.
+
 ---
 
 ## Parity Reference

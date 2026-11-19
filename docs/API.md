@@ -2206,7 +2206,13 @@ hexadecimal digits); any other primitive 8. A plain object adds its keys, each l
 of its source plus 24; an array the more of its `length` times 8 and its keys, so a sparse array of 2**32 - 1 slots is past
 every limit; an `ArrayBuffer` its byte length; a typed array or a `DataView` its whole buffer, once (in an RPC message a view
 that covers part of its buffer has already been given a buffer of its own bytes). Any other kind is refused as
-unsupported, with its kind named: an `Error`, an `ImageData`, a `SharedArrayBuffer`, and a `Blob` or a `File`. A `Blob` or a
+unsupported, with its kind named: an `Error`, an `ImageData`, a `SharedArrayBuffer`, a `Blob` or a `File`, and a resizable
+`ArrayBuffer` (`resizable ArrayBuffer`), whose clone keeps its maximum length, which its byte length does not count, and
+a typed array or a `DataView` over one. The guest's own sender refuses one before it posts (its broker and console relay
+measure the copy they would send), so no message of the library's carries one to your page. What a browser does with
+a resizable buffer before any receiver can measure it (Chromium reserves its maximum while it clones or deserialises
+one, in the guest's own worker too) is the browser's, bounded by nothing the library states ([S89](BACKLOG.md#s89)).
+A `Blob` or a
 `File` from the guest is refused wherever it arrives, at any depth (I7): its type is the guest's, and a `blob:` URL made of
 it in your page is a document of your origin, so the guest must send its bytes (`Uint8Array`, `ArrayBuffer`). The library's
 own walks of a delivered value follow its own keys, never an array's `length`.

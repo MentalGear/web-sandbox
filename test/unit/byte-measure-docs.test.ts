@@ -52,8 +52,8 @@ describe('the constants of the byte measure that docs/API.md states', () => {
     });
 
     it('the kinds it says are refused measure past every limit, their kind named: a Blob and a File among them (I7)', () => {
-        expect(PARAGRAPH).toContain('Any other kind is refused as unsupported, with its kind named: an `Error`, an `ImageData`, a `SharedArrayBuffer`, and a `Blob` or a `File`.');
-        for (const value of [new Error('e'), new SharedArrayBuffer(8), new Blob([]), new File([], 'f')]) {
+        expect(PARAGRAPH).toContain('Any other kind is refused as unsupported, with its kind named: an `Error`, an `ImageData`, a `SharedArrayBuffer`, a `Blob` or a `File`, and a resizable `ArrayBuffer` (`resizable ArrayBuffer`),');
+        for (const value of [new Error('e'), new SharedArrayBuffer(8), new Blob([]), new File([], 'f'), new ArrayBuffer(8, { maxByteLength: 16 })]) {
             const unsupported = { kind: '' };
             expect(measure(value, Infinity, undefined, unsupported)).toBe(Infinity);
             expect(unsupported.kind).not.toBe('');

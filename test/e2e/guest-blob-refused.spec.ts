@@ -93,3 +93,70 @@ for (const [mode, config] of Object.entries(MODES)) {
         });
     });
 }
+
+// A resizable ArrayBuffer (docs/design/REVIEW-3.md, finding 5): its length is not what its clone carries, which keeps its
+// maxByteLength, so the measure refuses it, and a typed array or a DataView over one, with the kind named. The guest's
+// worker says whether it has resizable buffers, and every engine's has (Chromium's, Firefox's and WebKit's): an
+// engine without them would fail here, not skip.
+const RESIZABLE_KINDS = `{
+    buffer: () => new ArrayBuffer(8, { maxByteLength: 1 << 20 }),
+    bytes: () => new Uint8Array(new ArrayBuffer(8, { maxByteLength: 1 << 20 })),
+    view: () => new DataView(new ArrayBuffer(8, { maxByteLength: 1 << 20 })),
+    inObject: () => ({ attachment: { data: new ArrayBuffer(8, { maxByteLength: 1 << 20 }) } }),
+    inMap: () => new Map([['k', new Float64Array(new ArrayBuffer(16, { maxByteLength: 1 << 20 }))]]),
+}`;
+const RESIZABLE_NAMES = ['buffer', 'bytes', 'view', 'inObject', 'inMap'];
+
+for (const [mode, config] of Object.entries(MODES)) {
+    test.describe(`${mode} mode: resizable buffers`, () => {
+        test.use({ build: buildOfMode(mode) });
+
+        test(`${mode} mode: a guest's resizable ArrayBuffer, or a view over one, is refused at each arrival with its kind named; a fixed one arrives`, async ({ sandbox, page, browserName }) => {
+            await page.evaluate(() => {
+                const w = window as any;
+                w.__resizableSeen = [];
+                w.__isResizable = (value: unknown, seen = new Set<unknown>()): boolean => {
+                    if (value instanceof ArrayBuffer) return value.resizable;
+                    if (ArrayBuffer.isView(value)) return (value.buffer as ArrayBuffer).resizable;
+                    if (typeof value !== 'object' || value === null || seen.has(value)) return false;
+                    seen.add(value);
+                    if (value instanceof Map) return [...value].some(([k, v]) => w.__isResizable(k, seen) || w.__isResizable(v, seen));
+                    return Object.values(value).some(v => w.__isResizable(v, seen));
+                };
+                window.addEventListener('sandbox-log', (event) => {
+                    if (w.__isResizable((event as CustomEvent).detail.args)) w.__resizableSeen.push('sandbox-log');
+                }, true);
+            });
+            await sandbox.exposeHost('take', `(...args) => { if (window.__isResizable(args)) window.__resizableSeen.push('take'); return args.length; }`);
+            const sent = await sandbox.inEntry<Record<string, unknown>>(config, `
+                const kinds = ${RESIZABLE_KINDS};
+                const has = new ArrayBuffer(1, { maxByteLength: 2 }).resizable === true;
+                for (const [name, make] of Object.entries(kinds)) bridge.expose('give_' + name, () => make());
+                const calls = { has };
+                for (const [name, make] of Object.entries(kinds)) {
+                    try { await bridge.call('take', 'before', make()); calls[name] = 'sent'; } catch (error) { calls[name] = error.code; }
+                }
+                for (const [name, make] of Object.entries(kinds)) console.log('I7-RESIZABLE ' + name, make());
+                console.log('I7-RESIZABLE fixed', new ArrayBuffer(8));
+                calls.fixed = await bridge.call('take', new ArrayBuffer(8)).then(() => 'sent', (error) => error.code);
+                return calls;`);
+
+            expect(sent.has, `${browserName}: resizable buffers in the guest's worker`).toBe(true);
+            const expected: Record<string, unknown> = { has: true, fixed: 'sent' };
+            for (const name of RESIZABLE_NAMES) expected[name] = 'ARGS_NOT_TRANSFERABLE';
+            expect(sent).toEqual(expected);
+
+            for (const name of RESIZABLE_NAMES) {
+                expect(await sandbox.callOutcome(`give_${name}`), name).toMatchObject({ status: 'rejected', code: 'RESULT_NOT_TRANSFERABLE' });
+            }
+
+            await sandbox.waitForLog('I7-RESIZABLE fixed');
+            const lines = (await sandbox.logs()).filter(line => line.startsWith('I7-RESIZABLE ') && !line.startsWith('I7-RESIZABLE fixed'));
+            expect(lines.map(line => line.split(' ')[1])).toEqual(RESIZABLE_NAMES);
+            for (const line of lines) expect(line).toMatch(/^I7-RESIZABLE \w+ \[unsupported value: resizable ArrayBuffer\]$/);
+
+            expect(await page.evaluate(() => (window as any).__resizableSeen)).toEqual([]);
+            expect(await sandbox.state()).toBe('ready');
+        });
+    });
+}

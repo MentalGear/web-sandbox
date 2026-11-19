@@ -58,7 +58,18 @@ const REFUSED_SAMPLES: Record<keyof typeof SNAPSHOT_REFUSED_KINDS, () => unknown
     Error: () => new TypeError('t'),
     DOMException: () => new DOMException('d', 'DataCloneError'),
     SharedArrayBuffer: () => new SharedArrayBuffer(8),
+    // docs/design/REVIEW-3.md, finding 5: 8 bytes long, and its clone keeps a maximum of 1 GiB
+    'resizable ArrayBuffer': () => new ArrayBuffer(8, { maxByteLength: 2 ** 30 }),
 };
+
+// The views over a resizable buffer, refused with it: every typed array of the environment, and a DataView.
+const RESIZABLE_VIEWS = (): [string, () => unknown][] => [
+    ...typedArrayNames.map((name): [string, () => unknown] => [name, () => new (globalThis as any)[name](new ArrayBuffer(16, { maxByteLength: 2 ** 30 }))]),
+    ['DataView', () => new DataView(new ArrayBuffer(16, { maxByteLength: 2 ** 30 }))],
+];
+
+// What a refused kind's sample is: its tag, but for a resizable buffer, whose tag is ArrayBuffer's.
+const kindOfSample = (value: unknown) => (value instanceof ArrayBuffer && value.resizable ? 'resizable ArrayBuffer' : tagOf(value));
 
 // A value at every place a container holds one, the container's own key included.
 const PLACES: [string, (value: unknown) => unknown][] = [
@@ -81,7 +92,10 @@ describe('SNAPSHOT_MEASURED_KINDS and SNAPSHOT_REFUSED_KINDS: the measure agains
 
     it('each sample is of the kind its row names', () => {
         for (const [kind, make] of Object.entries(MEASURED_SAMPLES)) expect(tagOf(structuredClone(make())), kind).toBe(kind);
-        for (const [kind, make] of Object.entries(REFUSED_SAMPLES)) expect(tagOf(make()), kind).toBe(kind);
+        for (const [kind, make] of Object.entries(REFUSED_SAMPLES)) expect(kindOfSample(make()), kind).toBe(kind);
+        // the clone keeps a resizable buffer resizable, with its maximum: what the measure would not count
+        const cloned = structuredClone(REFUSED_SAMPLES['resizable ArrayBuffer']()) as ArrayBuffer;
+        expect([cloned.resizable, cloned.byteLength, cloned.maxByteLength]).toEqual([true, 8, 2 ** 30]);
     });
 
     it('a measured kind, and every typed array of the environment, measures finite alone and at every place', () => {
@@ -106,6 +120,19 @@ describe('SNAPSHOT_MEASURED_KINDS and SNAPSHOT_REFUSED_KINDS: the measure agains
                 }
             }
         }
+    });
+
+    it('a typed array or a DataView over a resizable buffer measures Infinity at every place, its kind named as the buffer\'s; over a fixed buffer, finite', () => {
+        for (const [kind, make] of RESIZABLE_VIEWS()) {
+            for (const [place, put] of PLACES) {
+                const unsupported = { kind: '' };
+                expect(sizeOf(structuredClone(put(make())), Infinity, undefined, unsupported), `${kind} ${place}`).toBe(Infinity);
+                expect(unsupported.kind, `${kind} ${place}`).toBe('resizable ArrayBuffer');
+            }
+        }
+        // the same bytes in a fixed buffer, and a resizable buffer made fixed by transfer(): measured
+        expect(sizeOf(new Uint8Array(new ArrayBuffer(16)), Infinity)).toBe(32);
+        expect(sizeOf(new ArrayBuffer(8, { maxByteLength: 2 ** 30 }).transferToFixedLength(), Infinity)).toBe(24);
     });
 
     it('docs/API.md says a Blob and a File are refused, and what to send instead', () => {

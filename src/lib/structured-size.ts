@@ -23,6 +23,9 @@
  *   - a Map or a Set: its entries; a Date 16; a RegExp its source like a string (the flags are at most 8 characters);
  *     a String, Number, Boolean or BigInt object like its primitive;
  *   - an ArrayBuffer: its byteLength; a typed array or a DataView: its whole buffer, which clone copies, once per buffer.
+ *     A resizable one is not counted faithfully by its length (its clone keeps its `maxByteLength`, which the receiving
+ *     engine may reserve; docs/design/REVIEW-3.md, finding 5), so it is refused, and a view over one with it: a fixed
+ *     buffer carries the same bytes.
  * Anything else measures Infinity, past every limit (SNAPSHOT_REFUSED_KINDS names the ones a sender meets): a `Blob` or a
  * `File` (I7: a `blob:` URL the host page makes of one is a document of the host page's origin, so no guest value carries
  * one to the embedder's code; the guest sends bytes), an Error (its stack is the engine's to serialize), a platform
@@ -72,6 +75,7 @@ export const SNAPSHOT_REFUSED_KINDS = {
     Error: "its stack is the engine's to serialize: the console relay sends an error's `name`, `message` and `stack` as strings",
     DOMException: 'an error, as `Error`',
     SharedArrayBuffer: 'clone shares its memory, or refuses it: never measured',
+    'resizable ArrayBuffer': "its clone keeps its `maxByteLength`, which its length does not count and the receiving engine may reserve (docs/design/REVIEW-3.md, finding 5): the guest sends a fixed buffer, which carries the same bytes; a typed array or a `DataView` over one is refused with it",
 } as const;
 
 export function createSizeOf(): SizeOf {
@@ -88,6 +92,7 @@ export function createSizeOf(): SizeOf {
     const setAdd = Set.prototype.add;
     // Brand checks through the platform's own getters and methods: each throws for anything that is not one, in any realm.
     const bufferBytes = getOwn(ArrayBuffer.prototype, 'byteLength')!.get!;
+    const bufferResizable = getOwn(ArrayBuffer.prototype, 'resizable')?.get; // absent where no buffer is resizable
     const typedArrayBuffer = getOwn(protoOf(Uint8Array.prototype), 'buffer')!.get!;
     const dataViewBuffer = getOwn(DataView.prototype, 'buffer')!.get!;
     const mapSize = getOwn(Map.prototype, 'size')!.get!;
@@ -123,6 +128,9 @@ export function createSizeOf(): SizeOf {
         const digits = apply(bigintText, value, [16]) as string;
         return (digits.length + 1) / 2 + 8;
     };
+    // Whether an ArrayBuffer is resizable (SNAPSHOT_REFUSED_KINDS): false where the engine has no resizable buffers.
+    const RESIZABLE = 'resizable ArrayBuffer';
+    const isResizable = (buffer: unknown): boolean => bufferResizable !== undefined && brand(bufferResizable, buffer) === true;
     // A String, Number, Boolean or BigInt object: what its primitive measures, or undefined for any other object.
     const wrapped = (object: object, limit: number): number | undefined => {
         const text = brand(stringValue, object);
@@ -151,6 +159,10 @@ export function createSizeOf(): SizeOf {
             if (unsupported) unsupported.kind = kindOf(item);
             return Infinity;
         };
+        const resizable = (): number => {
+            if (unsupported) unsupported.kind = RESIZABLE;
+            return Infinity;
+        };
         try {
             // A list without a prototype (AR:C3): an index written to it never reaches an inherited setter.
             const stack: unknown[] = setPrototype([], null);
@@ -163,6 +175,10 @@ export function createSizeOf(): SizeOf {
                 const bytes = brand(bufferBytes, buffer);
                 if (typeof bytes !== 'number') {
                     total = unknown(buffer); // a SharedArrayBuffer: clone shares it, or refuses it; never measured
+                    return;
+                }
+                if (isResizable(buffer)) {
+                    total = resizable(); // a view over a resizable buffer: refused with it
                     return;
                 }
                 total += bytes;
@@ -212,6 +228,7 @@ export function createSizeOf(): SizeOf {
                 }
                 const bytes = brand(bufferBytes, object);
                 if (typeof bytes === 'number') {
+                    if (isResizable(object)) return resizable();
                     total += bytes;
                     if (buffers) buffers[buffers.length] = object;
                     continue;
