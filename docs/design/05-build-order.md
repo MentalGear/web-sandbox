@@ -41,9 +41,9 @@ with the behaviour it tested, and the commit says which.
 | 2.5 | **built**: `GUEST_VALUES`, every value of both builds' API reports classified; docs/API.md's list of guest-chosen text generated from it | the registry's test against the API report (I10; built: `test/unit/guest-values.test.ts`) |
 | 2.6 | `links`, with the click as the request | an e2e spec with the popup blocker on (Chromium, Firefox): the tab opens for a click on a marked link, and for nothing else the guest can do; the egress table's row and its budget (I6) |
 
-Before 2.6 promises a marked link's `href` can be the listed URL: measure, on three engines, that a real `href` in the
-view fetches nothing on hover, focus or pointer press (preconnect, prefetch, speculation). Until that is measured the
-`href` stays the inert one.
+A marked link's `href` stays the inert one in 2.6. **Measured** ([research 33](../research/33_link_href/README.md)): with
+the listed URL as the `href`, Chromium connected to the listed host on a pointer press and Firefox resolved it on
+render and fetched the page on a long press, before any click; with the inert `href` no engine reached anything.
 
 ## Step 3 · The served document
 

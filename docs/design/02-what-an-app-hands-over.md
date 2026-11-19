@@ -48,9 +48,19 @@ The app writes an ordinary link in its markup:
 - **The host page opens its own copy.** It checks that the index is an integer within the element's list and calls
   `window.open(links[index], '_blank', 'noopener,noreferrer')` in the task of that message. The URL it opens is the
   string the embedder listed; nothing of the guest's is part of it.
-- **What the link shows.** The marked link's `href` in the view's document stays the inert one, so the browser's status
-  bar and "copy link address" do not show the listed URL. Whether the listed URL can be the `href` itself without
-  giving the browser something to fetch on hover is measured before that changes ([05](05-build-order.md)).
+- **What the link shows.** The marked link's `href` in the view's document is the inert one, so the browser's status
+  bar and "copy link address" do not show the listed URL: a documented limit. The listed URL as the `href` itself
+  reaches the listed site before any click, under the view's policy and with the click cancelled
+  ([research 33](../research/33_link_href/README.md), measured): Chromium opened a connection to the listed host on a
+  pointer press and on a touch start; Firefox resolved the host when the link was rendered, connected on a press, and
+  fetched the listed page on a press held one second (its link preview); WebKit reached nothing. An app that moves a
+  link under the pointer would choose the moment of each. With the inert `href`, or none, no engine reached anything
+  before the click.
+- **No `<link>` that names a host.** A `<link rel=preconnect>` connected under the view's policy on all three
+  engines, since no directive governs a preconnect, and on Chromium `prerender` connected and `dns-prefetch` resolved
+  the host (research 33). The view's renderer keeps a `link` only with the `rel` tokens of `LINK_RELATIONS`
+  (`stylesheet`, `icon`; `src/lib/in-sandbox-view.ts`) and an `href` the view minted, so a guest can write none of
+  these; that list stays a list of allowed tokens.
 
 **Why not a call.** The first shape of this option was a call from the app's worker, `sandboxView.open(name)`.
 [Research 30](../research/30_links_popup/README.md) measured the popup blocker with it on Chromium 159 and Firefox
