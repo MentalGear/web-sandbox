@@ -1,0 +1,3 @@
+q1b.run {"engine":"chromium","version":"159.0.8154.6","date":"2026-11-19T02:17:23.671Z","load1":0.34}
+q1b {"engine":"chromium","host":"http://app.insecure.test","hostPage":{"secure":false,"subtle":"undefined"},"inC":{"secure":false,"subtle":"undefined","origin":"null"},"end":"no answer in 4000 ms","decision":null,"errors":["TypeError: Cannot read properties of undefined (reading 'digest')"]}
+q1b {"engine":"chromium","host":"http://localhost","hostPage":{"secure":true,"subtle":"object"},"inC":{"secure":true,"subtle":"object","origin":"null"},"end":"content acknowledged","decision":"send","errors":[]}
