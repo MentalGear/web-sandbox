@@ -42,14 +42,15 @@ export function buildSettled(element: HTMLElement): Promise<void> {
 
 /**
  * A harness page inserts its element so that the build on insertion has nothing a host policy could refuse, and a spec's
- * own setConfig() is the first build that matters. The build with the network modes has a mode for that, set before the
- * insertion: cooperative mode without allow-scripts runs no script of the library's. The default build has sealed mode
- * alone, whose view is a script, so there the build on insertion is ended at once, before its frame can load, and
- * leaves no trace a spec would read as its own: not the console's line, nor the fixture's record of the termination.
+ * own start() (on a fresh element that takes this one's place: the fixture's startFresh()) is the first build that
+ * matters. The build with the network modes has a mode for that, started before the insertion: cooperative mode without
+ * allow-scripts runs no script of the library's. The default build has sealed mode alone, whose view is a script, so
+ * there the element gets no app, and a build on insertion is ended at once, before its frame can load, and leaves no
+ * trace a spec would read as its own: not the console's line, nor the fixture's record of the termination.
  */
-export function insertInert(element: HTMLElement & { setConfig(config: object): void; terminate(): void }): void {
+export function insertInert(element: HTMLElement & { start(app: object, grants?: object): void; terminate(): void }): void {
     if (pageBuild() === 'network') {
-        element.setConfig({ mode: 'cooperative' });
+        element.start({}, { mode: 'cooperative' });
         document.body.appendChild(element);
         return;
     }

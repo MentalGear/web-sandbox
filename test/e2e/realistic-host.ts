@@ -277,11 +277,11 @@ export class RealisticHost {
         return this.page.evaluate(() => [...((window as any).hostErrors ?? [])]);
     }
 
-    /** setConfig() on the element, and the lifecycle events from then on, once it settled. */
+    /** start() on a fresh element in the place of the last one (startFresh()), and its lifecycle events, once it settled. */
     async configure(config: object): Promise<HostEvent[]> {
         const { page } = this;
         await page.evaluate(() => { (window as any).sandboxEvents.length = 0; });
-        await page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
+        await page.evaluate((c) => startFresh(c), config as any);
         await page.waitForTimeout(300); // a termination right after 'ready' would show here
         return page.evaluate(() => [...(window as any).sandboxEvents]);
     }

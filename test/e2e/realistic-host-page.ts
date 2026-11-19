@@ -94,16 +94,21 @@ window.addEventListener('violation', (event: any) => { w.sandboxViolations.push(
 w.sandboxFetches = [];
 window.addEventListener('fetch', (event: any) => { w.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail }); });
 w.sandboxWrites = [];
-// Inserted so that the build on insertion has nothing a host policy could refuse, and a spec's own setConfig() is the
+// Each element the page shows is sized and heard the same way: this one, and each fresh one a spec starts in its place
+// (the fixture's startFresh() calls the hook before it inserts it).
+w.sandboxAdopt = (element: HTMLElement) => {
+    element.style.display = 'block';
+    element.style.width = '400px';
+    element.style.height = '300px';
+    for (const type of ['ready', 'terminated']) {
+        element.addEventListener(type, (event: any) => w.sandboxEvents.push({ type, reason: event.detail?.reason ?? null }));
+    }
+};
+// Inserted so that the build on insertion has nothing a host policy could refuse, and a spec's own start() is the
 // first build that matters (library.ts, insertInert: each build's way).
-const element = document.createElement('web-sandbox') as HTMLElement & { setConfig(config: object): void; terminate(): void };
+const element = document.createElement('web-sandbox') as HTMLElement & { start(app: object, grants?: object): void; terminate(): void };
 insertInert(element);
-element.style.display = 'block';
-element.style.width = '400px';
-element.style.height = '300px';
-for (const type of ['ready', 'terminated']) {
-    element.addEventListener(type, (event: any) => w.sandboxEvents.push({ type, reason: event.detail?.reason ?? null }));
-}
+w.sandboxAdopt(element);
 w.viewScriptHash = viewScriptHash;
 await buildSettled(element); // a spec's own build is the next one
 w.harnessReady = true;
