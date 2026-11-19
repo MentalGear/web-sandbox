@@ -263,6 +263,37 @@ describe('commitGuestWrites() and listGuestWrites() on the element', () => {
         close();
     });
 
+    // The write-time quota counts the files and their bytes, without lexing; a commit also counts what the rewrites add
+    // (docs/design/REVIEW-3.md, finding 3, its probe 3). A stylesheet of url() references fits the first and not the
+    // second: it is recorded and listed, every commit of it is refused, and the refusal tells the embedder so.
+    it('a write whose rewrites pass the quota is recorded and listed; every commit of it is refused FILES_QUOTA_EXCEEDED and changes nothing; the rest commits alone', async () => {
+        const el = await mount({ guestWrites: true });
+        const heard = events(el);
+        const { answers, send, close } = connect(el);
+        const sheet = 'a{b:url(a)}'.repeat(120_000); // 1.3 MB; each reference costs more at the commit than its 6 bytes
+        send(write('big.css', sheet));
+        send(write('ok.txt', 'ok'));
+        await settle();
+        expect(answers.map(answer => answer.ok)).toEqual([true, true]);
+        expect(heard.flat()).toEqual(['big.css', 'ok.txt']);
+        const listed = el.listGuestWrites();
+        expect(listed.map((w: any) => [w.path, w.size])).toEqual([['big.css', sheet.length], ['ok.txt', 2]]);
+        const changed: string[][] = [];
+        el.addEventListener('fileschanged', (e: CustomEvent) => changed.push(e.detail.paths));
+        for (const writes of [listed, [listed[0]]]) {
+            let caught: any;
+            try { el.commitGuestWrites(writes); } catch (error) { caught = error; }
+            expect([caught instanceof Error, caught?.code]).toEqual([true, 'FILES_QUOTA_EXCEEDED']);
+            expect([el.listFiles(), changed]).toEqual([[], []]);
+            expect(el.listGuestWrites().map((w: any) => w.path)).toEqual(['big.css', 'ok.txt']);
+        }
+        // the refusal touched no entry: the values listed before it are current, and the other one commits alone
+        expect(el.commitGuestWrites([listed[1]])).toBe(true);
+        expect(el.listFiles().map((f: any) => f.path)).toEqual(['ok.txt']);
+        expect(() => el.commitGuestWrites([listed[0]])).toThrow(expect.objectContaining({ code: 'FILES_QUOTA_EXCEEDED' }));
+        close();
+    });
+
     it("listGuestWrites() hands out copies: changing what it returned changes nothing", async () => {
         const el = await mount({ guestWrites: true });
         const { send, close } = connect(el);

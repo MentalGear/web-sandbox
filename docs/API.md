@@ -1354,8 +1354,12 @@ has accepted them: `list()`, `read()` and `text()` show them, `url()` of a writt
 is the one the library's table has for the path's extension, or `application/octet-stream` for one it does not know, so a
 write to `evil.html` is `text/html` whatever the app would have claimed, and a write that carries a type of its own is
 refused `INVALID_FILE`. The element checks each request as `start()` checks the app's files (path, content, the
-quota with every pending change applied) and at most `GUEST_WRITES_PER_SECOND` requests and
-`GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; a refused request changes nothing on either side. Nothing the
+quota with every pending change applied, by the files' count and bytes; what the rewrites of a JavaScript or CSS file
+add is counted at the commit) and at most `GUEST_WRITES_PER_SECOND` requests and
+`GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; a refused request changes nothing on either side. A
+write that fits by its bytes but not with what its rewrites add (a stylesheet of many `url()` references) is recorded
+and listed, and every commit that holds it is refused with `FILES_QUOTA_EXCEEDED` and changes nothing: the refusal is
+how you tell, and the other values commit without it. Nothing the
 guest writes reaches the files, a policy or another environment until the host calls
 [`commitGuestWrites()`](#commitguestwriteswrites-options) with the values
 [`listGuestWrites()`](#listguestwrites) returned; it is listed there and announced by `fileswritten`. Each recorded

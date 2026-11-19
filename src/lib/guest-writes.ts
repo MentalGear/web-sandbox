@@ -13,10 +13,13 @@
  *     content of a FileContent, and its type is a function of its path (I8): FILE_TYPES's for the extension, or
  *     FALLBACK_TYPE. The guest gives a path and bytes, and a write that carries a type of its own is refused. The
  *     write-time quota is FileStore.check() of the build's store with the overlay and this write applied: the count and
- *     the registered bytes, exactly apply()'s first step, without lexing. The commit is FileStore.apply(), the
- *     full check including what module and stylesheet rewrites add. So a write the host could never register is
- *     refused at once with the store's own code, and a commit can still be refused (FILES_QUOTA_EXCEEDED)
- *     if the host registered more in between; a refused commit changes neither the store nor the overlay.
+ *     the registered bytes, exactly apply()'s first step, without lexing (lexing every write would cost each request
+ *     what only a commit needs). The commit is FileStore.apply(), the full check including what module and stylesheet
+ *     rewrites add. So a write whose files or bytes the store could never hold is refused at once with the store's own
+ *     code; a write that fits by its bytes and not with what its rewrites add (a stylesheet of many `url()`
+ *     references; docs/design/REVIEW-3.md, finding 3) is recorded and listed, and every commit of it is refused
+ *     FILES_QUOTA_EXCEEDED, which tells the embedder so. A refused commit changes neither the store nor the overlay,
+ *     so the other listed values still commit without it.
  *   - The host is the single source of truth. A refused request changes nothing here; the guest's own view
  *     (in-sandbox-files.ts) changes only after this module's answer.
  *   - Removal marks are bounded by the guest's base and by the store, with one predicate (`markable`) for recording and
