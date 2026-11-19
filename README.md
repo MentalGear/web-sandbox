@@ -707,7 +707,9 @@ sandbox.start({ entry: 'main.js', files }, { mode: 'strict', watchdogTimeout: 20
     the browser's own link actions (copy, open in a new tab, drag) carry no guest URL; an external URL opens only as
     one the embedder lists in the grants' `links`: the view marks a link whose `href` is one of them, character for
     character, and on the user's click on it the host page opens its own copy in a new tab, with no opener and no
-    referrer (a click carries which listed URL the app gave the link, and when: [Links](docs/API.md#links)); the watchdog stops a looping guest on every
+    referrer (the app chooses which listed link is under the pointer or has the focus when the user acts, so a click or
+    an Enter in the view carries the listed URL the app steered it to, one per user action, and when; list only URLs you
+    would let the app send the user to at any moment: [Links](docs/API.md#links)); the watchdog stops a looping guest on every
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
     directive apart, and cannot be forged; the view renders no `blob:` content but registered files and raster-image
     guest writes, decoded only (the worker's own source URL is revoked once its script ran).

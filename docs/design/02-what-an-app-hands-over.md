@@ -87,6 +87,12 @@ popup blocker (Playwright's WebKit has none); touch activation.
 
 - The app chooses which listed links it shows and how they look, so it can dress one up as something else, or cover its
   whole box with one.
+- The app chooses which listed link is under the pointer or has the focus when the user acts: `set({ focus })` moves the
+  focus to a marked link at any time, and the user's next Enter in the view, meant for anything, opens it
+  ([REVIEW-3.md](REVIEW-3.md), finding 2). A user's click or Enter in the view is a choice the app can steer among the
+  listed URLs, one per user action, so the embedder lists only URLs it would let the app send the user to at any
+  moment. The focus stays the app's to move: an app that moves it among its links with the arrow keys is a legitimate
+  pattern, and the bound is per user action, not per focus.
 - The moment is as strong as the view. An intact view asks only in the user's click on a marked link. A view that ran
   guest script (a renderer bug) could send any index of the list within the browser's 5 seconds of any click: any
   listed URL, never another one.

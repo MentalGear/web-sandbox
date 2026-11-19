@@ -99,8 +99,11 @@ The boundaries those tables cross:
 7. **The sandbox and a new tab.** In strict and sealed mode the one tab a guest's app can lead to is one of the URLs the
    embedder lists in `links`, and only on the user's click on a link the view marked: the view sends the link's index
    (`VIEW_LINK`), and the host page opens its own copy of the URL with no opener and no referrer, in the task of that
-   message. The guest's worker has nothing to call. What a click carries to a listed site is which listed URL the app
-   gave the link, and when ([Budgets](API.md#budgets)).
+   message. The guest's worker has nothing to call. The app chooses which listed link is under the pointer or has the
+   focus when the user acts (it can focus a marked link at any time, and the user's next Enter in the view opens it), so
+   a click or an Enter in the view is a choice the app can steer among the listed URLs, one per user action: what it
+   carries to a listed site is that choice, and when ([Budgets](API.md#budgets)). The embedder lists only URLs it would
+   let the app send the user to at any moment.
 
 Every sandbox realm's origin is opaque, and serializes as `"null"`, so no message check reads an origin string: the host takes
 the announcement only from the guest frame's own window (`event.source`), the view takes `INIT_VIEW` only from

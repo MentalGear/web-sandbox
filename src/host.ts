@@ -481,10 +481,13 @@ export interface SandboxConfigOptions {
      * the user's trusted `click` on a marked link or inside one, not on a form control inside it (Enter on a focused link
      * is such a click; a middle click is not): the view sends the link's index in the list, and the element calls
      * `window.open(url, '_blank', 'noopener,noreferrer')` in the task of that message, where the browser's popup blocker
-     * allows it for the click. The guest's worker has nothing to call. The app chooses which listed URL each link carries
-     * and how it looks, so each click carries a choice among the listed URLs to their sites, and its time
-     * (docs/API.md#budgets). The element cannot see a tab the browser blocked: with `noopener`, `window.open` returns
-     * `null` either way.
+     * allows it for the click. The guest's worker has nothing to call. While a key is held, no click is a request, and
+     * the element opens at most {@link LINK_TABS_PER_SECOND} tabs in any one-second window. The app chooses which listed
+     * URL each link carries and how it looks, and which listed link is under the pointer or has the focus when the user
+     * acts (it can move the focus to a marked link at any time, and the user's next Enter in the view opens it): a user's
+     * click or Enter in the view is a choice the app can steer among the listed URLs, one per user action, sent to their
+     * sites with its time (docs/API.md#budgets). List only URLs you would let the app send the user to at any moment.
+     * The element cannot see a tab the browser blocked: with `noopener`, `window.open` returns `null` either way.
      *
      * @defaultValue none: no link opens
      */
