@@ -41,6 +41,8 @@ interface Declaration {
     readonly name: string;
     readonly block: boolean;
     readonly members: string[];
+    /** The members that are values (a property, an event detail's field), not methods. */
+    readonly properties: string[];
 }
 
 /** The member a line of a block declares: its indent, its name, and whether it is a property (`:`) or a method. */
@@ -51,7 +53,7 @@ const MEMBER = /^( {4}| {8})(?:readonly )?(?:get |set )?'?([\w-]+)'?\??([:(<])/;
  * indent further in, under a property (not a method, whose nested lines are its parameters' types), is that property's
  * field, named `property.field` (an event's detail).
  */
-function membersAt(lines: readonly string[], start: number): string[] {
+function membersAt(lines: readonly string[], start: number, properties: string[] = []): string[] {
     const members: string[] = [];
     let property: string | null = null;
     // the block ends at its closing line; `} & ({` and `} | {` join the parts of one object type
@@ -62,9 +64,12 @@ function membersAt(lines: readonly string[], start: number): string[] {
         if (indent === '    ') {
             property = after === ':' ? key! : null;
             if (key !== 'constructor') members.push(key!);
+            if (property !== null) properties.push(key!);
             continue;
         }
-        if (property !== null) members.push(`${property}.${key}`);
+        if (property === null) continue;
+        members.push(`${property}.${key}`);
+        properties.push(`${property}.${key}`);
     }
     return members;
 }
@@ -79,8 +84,9 @@ function declarationsOf(report: string): Map<string, Declaration> {
         const name = head[2]!;
         const block = head[1] !== 'const' && head[1] !== 'function' && lines[i]!.trimEnd().endsWith('{');
         const known = found.get(name);
-        const members = [...(known?.members ?? []), ...(block ? membersAt(lines, i) : [])];
-        found.set(name, { name, block: block || (known?.block ?? false), members: [...new Set(members)].sort() });
+        const properties = [...(known?.properties ?? [])];
+        const members = [...(known?.members ?? []), ...(block ? membersAt(lines, i, properties) : [])];
+        found.set(name, { name, block: block || (known?.block ?? false), members: [...new Set(members)].sort(), properties: [...new Set(properties)].sort() });
     }
     return found;
 }
@@ -95,6 +101,30 @@ function classified(): [string, GuestValue][] {
         for (const [member, value] of Object.entries(members)) values.push([`${name}.${member}`, value]);
     }
     return values;
+}
+
+/**
+ * The values of the library's that hold one of the guest's beside them and do not say where they come from: in a
+ * declaration with a member of the guest's (a type the guest fills), a property of the library's names the constant or
+ * table it comes from (`from`). A number or a choice the library carries from the guest is the guest's, with its
+ * `bound` (docs/design/REVIEW-3.md, finding 4: sizes and closed-set choices were filed as the library's, "counted by
+ * the library"); a value of the library's there has to say which of its own it is.
+ */
+function libraryValuesWithoutSource(rows: Readonly<Record<string, GuestValueRow>>, build: Build): string[] {
+    const missing: string[] = [];
+    for (const declaration of declarationsOf(readReport(build)).values()) {
+        const row = rows[declaration.name];
+        if (!row || !('members' in row)) continue;
+        const values: Record<string, GuestValue> = { ...row.members, ...(row.inherited ?? {}) };
+        let holdsGuest = false;
+        for (const value of Object.values(values)) holdsGuest ||= value.owner === 'guest';
+        if (!holdsGuest) continue;
+        for (const property of declaration.properties) {
+            const value = values[property];
+            if (value?.owner === 'library' && !value.from) missing.push(`${declaration.name}.${property}`);
+        }
+    }
+    return missing;
 }
 
 describe('GUEST_VALUES: every value the API hands the embedder is classified, in each build (I10)', () => {
@@ -123,6 +153,24 @@ describe('GUEST_VALUES: every value the API hands the embedder is classified, in
             expect(value.why.length, at).toBeGreaterThan(5);
             if (value.text) expect(value.owner, at).toBe('guest');
         }
+    });
+
+    it.each(BUILDS)("in the %s build, a value of the library's beside one of the guest's says which constant or table it comes from; a value of the guest's the library bounds says what bounds it", (build) => {
+        expect(libraryValuesWithoutSource(GUEST_VALUES, build)).toEqual([]);
+        for (const [at, value] of classified()) {
+            if (value.from !== undefined) expect([at, value.owner, value.from.length > 3]).toEqual([at, 'library', true]);
+            if (value.bound !== undefined) expect([at, value.owner, value.bound.length > 3]).toEqual([at, 'guest', true]);
+        }
+    });
+
+    it("positive control: the sizes and choices the guest makes, filed as the library's with no source, are found", () => {
+        const filed = (row: GuestValueRow, member: string): GuestValueRow => ('members' in row ? { ...row, members: { ...row.members, [member]: { owner: 'library', why: 'counted by the library' } } } : row);
+        const rows: Record<string, GuestValueRow> = { ...GUEST_VALUES };
+        rows.GuestWrite = filed(filed(filed(rows.GuestWrite!, 'size'), 'change'), 'type');
+        rows.GuestBytes = filed(rows.GuestBytes!, 'size');
+        rows.FileInfo = filed(rows.FileInfo!, 'size');
+        rows.SandboxLog = filed(rows.SandboxLog!, 'level');
+        expect(libraryValuesWithoutSource(rows, 'default').sort()).toEqual(['FileInfo.size', 'GuestBytes.size', 'GuestWrite.change', 'GuestWrite.size', 'GuestWrite.type', 'SandboxLog.level']);
     });
 
     it('an event carries guest data exactly when ELEMENT_EVENTS says so', () => {

@@ -2,7 +2,13 @@
  * Every value the public API hands the embedder, classified by who chose it (design 02, "One registry of guest values";
  * I10): the library, the embedder itself, or the guest. A value whose owner is the guest is attacker data, whatever the
  * library validated or clamped. Mixed values take the least trusted owner of what they can hold: `listFiles()` is the
- * guest's because a committed guest write is one of its files.
+ * guest's because a committed guest write is one of its files. A value the library carries from the guest is the
+ * guest's even where the library bounds it: the length of the guest's bytes (bounded by the quota), a choice the guest
+ * makes within a closed set (`'write'` or `'remove'`, a log level, the type row its path picks, a code the other side
+ * claims), the size and the time of a response to a request the guest made; its row's `bound` names what bounds it. A
+ * decision the library makes about what the guest did (a refusal's code, a termination's reason) is the library's,
+ * and a value of the library's in a declaration that holds one of the guest's says, in `from`, which constant or table
+ * it comes from.
  *
  * Keyed by the declarations of each build's API report, and so complete by a test: test/unit/guest-values.test.ts
  * enumerates both reports and fails for a declaration without a row, a row the build does not export, and, in a
@@ -17,9 +23,9 @@ import type { Build } from './build-flag';
 
 /** Who chose a value the API hands the embedder. */
 export const GUEST_VALUE_OWNERS = {
-    library: "the library's: a constant, a state, a code of a closed set, a count or a text from its own tables",
+    library: "the library's: a constant, a state, or a code or text of its own tables that the library chose, never a number or a choice it carries from the guest",
     embedder: "the embedder's own: what it gave the element, given back (a method's result, a reason it passed, a file type it registered), or the library's",
-    guest: "the guest's, in whole or in part: attacker data, validated and clamped by the library, never made safe by it",
+    guest: "the guest's, in whole or in part: attacker data, validated and clamped by the library, never made safe by it; a number or a choice the guest makes within the library's bounds included",
 } as const;
 export type GuestValueOwner = keyof typeof GUEST_VALUE_OWNERS;
 
@@ -27,6 +33,10 @@ export type GuestValueOwner = keyof typeof GUEST_VALUE_OWNERS;
 export interface GuestValue {
     readonly owner: GuestValueOwner;
     readonly why: string;
+    /** For a value of the guest's that the library bounds: what bounds it (a cap, a closed set). */
+    readonly bound?: string;
+    /** For a value of the library's in a declaration that holds one of the guest's: the constant or table it comes from. */
+    readonly from?: string;
     /** For text the guest chooses: the name the attacker-text lists must use, and the phrase docs/API.md's list shows. */
     readonly text?: { readonly name: string; readonly phrase: string };
 }
@@ -141,8 +151,8 @@ export const GUEST_VALUES = {
             callWithTimeout: { owner: 'guest', why: "the guest method's return value, typed unknown" },
             listFiles: { owner: 'guest', why: "the app's files, among them the guest's committed writes (FileInfo)" },
             listGuestWrites: { owner: 'guest', why: "the guest's pending changes (GuestWrite)" },
-            started: { owner: 'library', why: 'whether start() bound an app' },
-            state: { owner: 'library', why: 'the lifecycle state, a closed set' },
+            started: { owner: 'library', why: 'whether start() bound an app', from: "the element's lifecycle (lifecycle.ts)" },
+            state: { owner: 'library', why: 'the lifecycle state, a closed set', from: 'SandboxState' },
         },
     },
     NetworkModeMethods: { builds: 'network', members: { execute: NOTHING } },
@@ -159,7 +169,7 @@ export const GUEST_VALUES = {
     WebSandboxEventMap: {
         builds: 'every',
         members: {
-            'ready': { owner: 'library', why: 'no detail (null)' },
+            'ready': { owner: 'library', why: 'no detail (null)', from: 'the constant null' },
             'terminated': { owner: 'embedder', why: "its detail's reason (below)" },
             'terminated.reason': { owner: 'embedder', why: "a reason of the library's table, or the one the embedder passed to terminate()" },
             'sandbox-log': { owner: 'guest', why: 'its detail, a SandboxLog (the element\'s own lines ride it too)' },
@@ -174,9 +184,9 @@ export const GUEST_VALUES = {
     SandboxLog: {
         builds: 'every',
         members: {
-            type: { owner: 'library', why: "always 'LOG'" },
-            level: { owner: 'library', why: 'normalised to SandboxLogLevel' },
-            source: { owner: 'library', why: 'set by the element from the port the line came on' },
+            type: { owner: 'library', why: "always 'LOG'", from: "the constant 'LOG'" },
+            level: { owner: 'guest', why: 'the level the guest logged at, normalised to SandboxLogLevel (one it does not name reads as log)', bound: 'SandboxLogLevel, a closed set' },
+            source: { owner: 'library', why: 'set by the element from the port the line came on', from: "the element's ports: 'guest' or 'host'" },
             args: { owner: 'guest', why: 'what the guest logged, structured-cloned and measured, typed unknown', text: { name: 'args', phrase: "a log line's `args`" } },
         },
     },
@@ -188,7 +198,7 @@ export const GUEST_VALUES = {
             sourceFile: { owner: 'guest', why: "the guest's report, cut", text: { name: 'sourceFile', phrase: "a violation's `sourceFile`" } },
             lineNumber: { owner: 'guest', why: "a number of the guest's report" },
             columnNumber: { owner: 'guest', why: "a number of the guest's report" },
-            source: { owner: 'library', why: 'the port the report arrived on' },
+            source: { owner: 'library', why: 'the port the report arrived on', from: "the element's ports" },
         },
     },
     FetchRecord: {
@@ -196,36 +206,36 @@ export const GUEST_VALUES = {
         members: {
             method: { owner: 'guest', why: "the guest's method, checked to be one (else '')" },
             url: { owner: 'guest', why: 'the URL the guest asked for, cut', text: { name: 'url', phrase: "a `fetch` record's `url` (it can be `javascript:`)" } },
-            durationMs: { owner: 'library', why: 'measured by the library' },
-            outcome: { owner: 'library', why: 'a closed set' },
+            durationMs: { owner: 'guest', why: 'measured by the library, of a request the guest chose to a server it may run', bound: '`fetchBridge.timeoutMs`' },
+            outcome: { owner: 'guest', why: 'how a request the guest chose ended, which its server can decide', bound: 'a closed set' },
             status: { owner: 'guest', why: 'the status of a response to a request the guest chose' },
-            bytes: { owner: 'library', why: 'counted by the library' },
-            code: { owner: 'library', why: 'a FetchErrorCode' },
-            reason: { owner: 'library', why: "the library's text for a refusal" },
+            bytes: { owner: 'guest', why: 'counted by the library, of a response to a request the guest chose', bound: '`fetchBridge.maxBytes`' },
+            code: { owner: 'guest', why: 'a FetchErrorCode: the library\'s refusal, or how the server the guest chose failed the request', bound: 'FETCH_ERROR_CODES, a closed set' },
+            reason: { owner: 'library', why: "the library's text for a refusal", from: "the fetch bridge's refusal texts (fetch-bridge.ts)" },
         },
     },
     FileInfo: {
         builds: 'every',
         members: {
             path: { owner: 'guest', why: "a registered path, or the path of a guest's committed write", text: { name: 'listFiles()', phrase: "a path `listFiles()` gives for a committed write" } },
-            size: { owner: 'library', why: 'counted by the library' },
-            type: { owner: 'embedder', why: "the type the embedder registered, or the library's for the path (FILE_TYPES)" },
+            size: { owner: 'guest', why: "a registered file's length, or a committed guest write's: the length of the guest's bytes, counted by the library", bound: 'the quota, MAX_TOTAL_BYTES' },
+            type: { owner: 'guest', why: "the type the embedder registered, or for a committed guest write FILE_TYPES's for the path the guest chose (I8)", bound: 'FILE_TYPES, a closed table, and FALLBACK_TYPE' },
         },
     },
     GuestWrite: {
         builds: 'every',
         members: {
             path: { owner: 'guest', why: 'the path the guest wrote', text: { name: 'listGuestWrites()', phrase: "the path of a guest's write (`listGuestWrites()`)" } },
-            change: { owner: 'library', why: "'write' or 'remove'" },
-            type: { owner: 'library', why: "FILE_TYPES's for the path (I8): never a type the guest gave, though the guest chose the path" },
-            size: { owner: 'library', why: 'counted by the library' },
+            change: { owner: 'guest', why: "the guest's request: 'write' or 'remove'", bound: 'a closed set of two' },
+            type: { owner: 'guest', why: "FILE_TYPES's for the path (I8): never a type the guest gave, but the row its path picks", bound: 'FILE_TYPES, a closed table, and FALLBACK_TYPE' },
+            size: { owner: 'guest', why: 'the length of the bytes the guest wrote, counted by the library', bound: 'the quota, MAX_TOTAL_BYTES' },
             content: { owner: 'guest', why: 'the bytes the guest wrote, as GuestBytes (below)' },
         },
     },
     GuestBytes: {
         builds: 'every',
         members: {
-            size: { owner: 'library', why: 'counted by the library' },
+            size: { owner: 'guest', why: 'the length of the bytes the guest wrote, counted by the library', bound: 'the quota, MAX_TOTAL_BYTES' },
             bytes: { owner: 'guest', why: 'a copy of the bytes the guest wrote' },
             text: { owner: 'guest', why: 'the bytes the guest wrote, decoded as UTF-8', text: { name: 'content.text()', phrase: "a guest write's `content.text()`" } },
             image: { owner: 'guest', why: "the bytes the guest wrote, in a Blob whose type is the library's, read from their signature (GUEST_IMAGE_TYPES), or null" },
@@ -234,12 +244,12 @@ export const GUEST_VALUES = {
     },
     RpcError: {
         builds: 'every',
-        members: { code: { owner: 'library', why: 'an RpcErrorCode: a code the other side claims outside the set reads as HANDLER_ERROR' } },
+        members: { code: { owner: 'guest', why: 'an RpcErrorCode the library set or the other side claimed: a code it claims outside the set reads as HANDLER_ERROR', bound: 'RpcErrorCode, a closed set' } },
         inherited: { message: { owner: 'guest', why: "for UNKNOWN_METHOD, HANDLER_ERROR and RESULT_NOT_TRANSFERABLE, the guest's text", text: { name: 'message', phrase: 'the message of a call the guest rejected' } } },
     },
     FileError: {
         builds: 'every',
-        members: { code: { owner: 'library', why: 'a FileErrorCode' } },
+        members: { code: { owner: 'library', why: 'a FileErrorCode', from: 'FILE_ERROR_CODES' } },
         inherited: { message: { owner: 'guest', why: "the library's text, quoting a path a guest write may have chosen" } },
     },
 } as const satisfies Readonly<Record<string, GuestValueRow>>;

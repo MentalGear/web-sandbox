@@ -182,7 +182,10 @@ users only.
 
 `GUEST_VALUES` (`src/lib/guest-values.ts`) classifies every value the public API hands the embedder: the library's, the
 embedder's own, or the guest's. A unit test enumerates the API report against it, so a new member without a row fails,
-and the docs' lists of guest-chosen text are generated from it. The list of such entry points was kept by hand, and four
+and the docs' lists of guest-chosen text are generated from it. A number or a choice the library carries from the guest
+(the length of its bytes, `'write'` or `'remove'`, a log level, the type row its path picks) is the guest's, with the
+bound that holds it (the quota, a closed set); a value of the library's in a type the guest fills names the constant or
+table it comes from, which the test checks ([REVIEW-3.md](REVIEW-3.md), finding 4). The list of such entry points was kept by hand, and four
 review passes each found a member missing from it.
 
 ## Stays a documented limit

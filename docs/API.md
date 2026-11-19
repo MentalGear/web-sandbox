@@ -874,7 +874,10 @@ library's text, which never quotes a value of your configuration, or the text yo
 or the guest's (`GUEST_VALUES`, src/lib/guest-values.ts, which a test holds to each build's API report). The guest's text
 among them is below: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or
 `console` format-string sink, and do not forward it to a network sink, an error reporter or analytics (`fetch`,
-`navigator.sendBeacon`) as if it were your page's own event: whoever wrote the app reads that sink.
+`navigator.sendBeacon`) as if it were your page's own event: whoever wrote the app reads that sink. A number or a
+choice the guest makes within the library's bounds is the guest's too: a write's `size`, `change` and `type`,
+`GuestBytes`'s `size`, `FileInfo`'s `size` and `type`, a log line's `level`, an `RpcError`'s `code`. Each is bounded (by
+the quota, `MAX_TOTAL_BYTES`, or a closed set), and the guest picks it within that bound.
 
 <!-- generated:begin guest-text -->
 | Text the guest chooses | Where |
