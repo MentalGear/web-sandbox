@@ -503,7 +503,7 @@ describe('the docs say what the code does', () => {
     });
 
     it("I-2: API.md's events table qualifies the fetch event by fetchBridge", () => {
-        expect(read('docs/API.md')).toMatch(/^\| `fetch` \| `FetchRecord` \| yes \| .*Dispatched only with `fetchBridge` configured/m);
+        expect(read('docs/API.md')).toMatch(/^\| `fetch` \| `FetchRecord` \| no \| .*Dispatched only with `fetchBridge` configured/m);
     });
 
     it('I-2: the backlog does not say the guest has no sandboxFetch without the bridge', () => {
