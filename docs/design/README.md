@@ -16,8 +16,8 @@ promise on 2026-11-18, after it ([below](#decided-after-review-1)).
 first without reading the first review and then against the design's answers to it. Their probes and output are in
 [review-1/](review-1/p1-output.txt) and [review-2/](review-2/p1-output.txt). The files of this folder are the design
 after both: [what review 1 changed](#what-review-1-changed) and [what review 2 changed](#what-review-2-changed) list
-each finding and where its answer is. Three answers of review 2 change a public name or a decision the owner made, and
-[wait for the owner](#waits-for-the-owner).
+each finding and where its answer is. Three answers of review 2 change a public name or a decision the owner made: the owner approved two of them on
+2026-11-19, and [one waits](#waits-for-the-owner).
 
 **Measured as drawn.** [Research 31](../research/31_served_startup/README.md) built the served document's shape and
 start-up order as a fixture on the three engines; [what it changed](#what-research-31-changed) is below.
@@ -104,7 +104,7 @@ Each changes a public name or a promise the owner had accepted. The owner approv
 | :--- | :--- | :--- | :--- |
 | 1 | The app and the grants as two arguments: `start(app, grants)`, with the types `SandboxApp` and `SandboxGrants` in place of one value with a `config` (finding 6) | yes | `links`, `guestWrites` and `capabilities` stay in the value an app bundle is naturally stored as, and "the embedder lists the links" is a convention |
 | 2 | A read-only `started` on the element (finding 12) | yes | an embedder cannot tell a new element from a bound one outside its document, and a framework's double set-up has no guard to write |
-| 3 | `GuestBytes.download()` answers a `File` named by the library, in place of a `Blob` (finding 13). **Does not do what it was for** (review 2, finding 3, run): two engines of three ignore the name. Its replacement [waits for the owner](#waits-for-the-owner) | yes | the name stays the embedder's to choose, and the natural choice is the guest's path |
+| 3 | `GuestBytes.download()` answers a `File` named by the library, in place of a `Blob` (finding 13). **Does not do what it was for** (review 2, finding 3, run): two engines of three ignore the name. Its replacement, `save()`, is approved ([02](02-what-an-app-hands-over.md#guestbytes)) | yes | the name stays the embedder's to choose, and the natural choice is the guest's path |
 | 4 | `documentUrl` optional, defaulting to the bundle's own copy of the file (finding 2) | yes, once the bundlers that matter are measured to serve it; until then it stays required. **Measured** ([research 32](../research/32_document_asset/README.md)): most do not, so it stays required | every embedder names a URL, and may name one on a host that adds a trust root |
 | 5 | Guest data as DOM events that do not bubble, with I5 as restated (finding 5) | keep the events | handlers given with the grants, called by the element, so that no event object travels the tree |
 
@@ -114,14 +114,14 @@ Each changes a public name or a promise the owner had accepted. The owner approv
 | :--- | :--- | :--- |
 | 1 · a relative `documentUrl` follows an injected `<base>` | It is resolved against the document's own URL | [03](03-served-document.md#the-public-surface) |
 | 2 · the pattern built on `started` restarts the old app silently | The documented set-up makes and removes its own element; no pattern branches on `started` | [01](01-one-element-one-app.md#the-lifecycle) |
-| 3 · two engines ignore the name of the `File` from `download()` | `save()`: the library saves the file itself | [02](02-what-an-app-hands-over.md#guestbytes); **waits for the owner** |
+| 3 · two engines ignore the name of the `File` from `download()` | `save()`: the library saves the file itself | [02](02-what-an-app-hands-over.md#guestbytes); approved by the owner |
 | 4 · the worker cannot run its gates before the app is sent | The worker's gates run in its prelude before the entry runs; `'ready'` and the waiting calls follow its verdicts; I15 says so | [03](03-served-document.md#the-start-up-order) |
 | 5 · an enforced site-wide header stops the view before it can report | The check of the file names it where the answer can be read; elsewhere it is listed under "did not answer" | [03](03-served-document.md#the-check-of-the-file) |
 | 6 · step 4 and "one bootstrap" in the network build | Step 4 deletes sealed mode's paths only; the two bootstraps have their own names | [03](03-served-document.md#the-network-build), [05](05-build-order.md) |
 | 7 · the announced hash checks a version, not the file | Said as that; the check of the file reads the bytes where it can | [03](03-served-document.md#the-check-of-the-file) |
 | 8 · the closed shadow root keeps framing pages out, unstated | Stated, with its test; one load of the file's frame per build; no referrer | [03](03-served-document.md#the-shape) |
 | 9 · `links`: the app picks the link on every click | Said, with the bits per click in the egress row; a click on a form control inside a link sends nothing | [02](02-what-an-app-hands-over.md) |
-| 10 · a commit skips silently | All or none, answering `true` or `false` | [01](01-one-element-one-app.md#files-and-commits); **waits for the owner** |
+| 10 · a commit skips silently | All or none, answering `true` or `false` | [01](01-one-element-one-app.md#files-and-commits); approved by the owner |
 | 11 · the moved parsers sit beside the value model | They go into the worker's prelude where the code allows; the view keeps the stylesheet cut | [03](03-served-document.md#a-thinner-host) |
 | 12 · I17's rung, and unclassified options | I17 restated; every option classified | [01](01-one-element-one-app.md#startapp-grants) |
 | 13 · host pages the design leaves out | Named as a cost | [03](03-served-document.md#the-public-surface); **waits for the owner** |
@@ -148,8 +148,6 @@ and the gates as written, on Chromium 159, Firefox 159 and WebKit 27.2.
 
 | # | Decision | Recommended | If not |
 | :--- | :--- | :--- | :--- |
-| 1 | `GuestBytes.save(): void` in place of `download()` (review 2, finding 3) | yes | `download()` stays and the docs say that the name holds only when the embedder copies it into the link's `download` attribute |
-| 2 | `commitGuestWrites()` commits all of its list or none, and answers `boolean` in place of `void` (review 2, finding 10) | yes | stale values are skipped one by one, and the embedder cannot tell which were committed |
 | 3 | A host page that is not on `http(s)` (a `file:` page, a browser extension's page, an app shell on its own scheme) cannot use sealed mode, since there is no `srcdoc` fallback (D8) | accept it for now, and measure whether the file can be admitted from such a scheme before the served document is released | keep a `srcdoc` path for those pages, which keeps the code step 4 would delete |
 
 ## What the design does not do

@@ -5,7 +5,7 @@
 network modes only, `APP_SURFACE` (I1, I3) and `CONFIG_SCHEMA`'s owners (I17) with their tests, an element with no app
 that builds nothing (the lifecycle's rows below), and the events that carry guest data not bubbling (`ELEMENT_EVENTS`,
 I5; the network build's `fetch` is held to the same rule). Not built yet: commits by identity
-(1.7), which waits for the owner. The code as it is:
+(1.7). The code as it is:
 [API.md](../API.md). [The folder's index](README.md) has the invariants (I1 to I5 and I17 are this file's) and what
 [review 1](REVIEW-1.md) and [review 2](REVIEW-2.md) changed here.
 
@@ -201,7 +201,7 @@ between (`BD5:DOC-6`). In this design the commit takes the write values themselv
   a newer pending write, one whose entry was already committed, and one listed before a build discarded the pending
   writes are all stale. So an older write the embedder was still checking cannot overwrite a newer one that was
   committed meanwhile.
-- **All or none** (waits for the owner; [index](README.md#waits-for-the-owner), 2). If every value of the list is
+- **All or none.** If every value of the list is
   current, all are committed and the method returns `true`. If any is stale, nothing is committed and it returns
   `false`: the embedder lists again and checks again. An embedder that checked two files as a pair never has one of them
   committed without the other, and always knows which happened (review 2, finding 10).

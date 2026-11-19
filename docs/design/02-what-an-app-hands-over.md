@@ -118,8 +118,7 @@ A write's content is a value with four named ways out, in place of a `Uint8Array
 - `image()` answers a `Blob` only for bytes that begin with the signature of one of `GUEST_IMAGE_TYPES`, typed as that
   one. SVG is not among them: an SVG document opened from a `blob:` URL runs script as the host page. For anything else
   it answers `null`.
-- `save()` has the browser save the bytes, and names the file itself (waits for the owner;
-  [index](README.md#waits-for-the-owner), 1). The library makes a `Blob` typed `application/octet-stream`, which a
+- `save()` has the browser save the bytes, and names the file itself. The library makes a `Blob` typed `application/octet-stream`, which a
   browser saves and does not render, puts its URL on a link whose `download` attribute is the library's name, clicks it
   and revokes the URL. The name is the last segment of the write's path when its extension is one of the library's
   inert types (the table that decides which writes need `{ code: true }`); otherwise that segment with `.download`
