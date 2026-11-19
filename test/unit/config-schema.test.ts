@@ -267,14 +267,14 @@ describe('the config schema: every option, normalised once, with the cross-field
     });
 
     // I17 (design 01): start() takes the app and the grants as two arguments, each by the options of its owner
-    it("every option is classified as the app's or the embedder's; a removed option is neither", () => {
+    it("every key of the schema, a removed one included, is classified as the app's or the embedder's", () => {
         const rules = CONFIG_SCHEMA as Record<string, OptionRule>;
-        const unclassified = CONFIG_OPTIONS.filter(name => !(OPTION_OWNERS as readonly unknown[]).includes(rules[name]!.owner));
-        expect(unclassified, 'give each option its `owner` in CONFIG_SCHEMA').toEqual([]);
-        const removed = Object.keys(rules).filter(name => rules[name]!.removed !== undefined);
-        expect(removed.filter(name => rules[name]!.owner !== undefined)).toEqual([]);
-        expect([...APP_OPTIONS, ...EMBEDDER_OPTIONS].sort()).toEqual([...CONFIG_OPTIONS].sort());
-        for (const owner of OPTION_OWNERS) expect(optionsOf(owner), owner).toEqual(CONFIG_OPTIONS.filter(name => rules[name]!.owner === owner));
+        const keys = Object.keys(rules);
+        const unclassified = keys.filter(name => !(OPTION_OWNERS as readonly unknown[]).includes(rules[name]!.owner));
+        expect(unclassified, 'give each key its `owner` in CONFIG_SCHEMA').toEqual([]);
+        expect([...APP_OPTIONS, ...EMBEDDER_OPTIONS].sort()).toEqual([...keys].sort());
+        expect(APP_OPTIONS.filter(name => EMBEDDER_OPTIONS.includes(name))).toEqual([]);
+        for (const owner of OPTION_OWNERS) expect(optionsOf(owner), owner).toEqual(keys.filter(name => rules[name]!.owner === owner));
     });
 });
 

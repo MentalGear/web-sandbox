@@ -357,9 +357,9 @@ export type OptionOwner = (typeof OPTION_OWNERS)[number];
  *  - `notice`: what an option in use says about itself (an unsafe value enabled).
  *  - `owner`: whose the option is (I17, design 01): the app's own content, which `start()` takes in its first argument
  *    (SandboxApp), or the embedder's, which it takes in the second (SandboxGrants). Each argument refuses an option of
- *    the other. Every option has one (test/unit/config-schema.test.ts).
- * A removed option (`removed`) is never stored: it is ignored, with that warning. It has no owner: start() refuses it as
- * a key it does not know.
+ *    the other. Every key of the schema has one, a removed one included (test/unit/config-schema.test.ts).
+ * A removed option (`removed`) is never stored: it is ignored, with that warning, by setConfig() and by start(), whose
+ * grants take it as the embedder's key it always was.
  */
 export interface OptionRule {
     readonly owner?: OptionOwner;
@@ -458,9 +458,9 @@ export const CONFIG_SCHEMA = {
         read: ({ given, warn, invalid }) => callBudgetOf(given, warn, invalid),
     },
     // the raw policy, replaced by `origins` (ADR-007): ignored, never adapted, so it fails closed (no origin)
-    connectionsAllowed: { removed: '[Sandbox] connectionsAllowed was removed; use origins. It was ignored: the guest policy admits only the exact origins listed in `origins` (see docs/API.md#origins).' },
+    connectionsAllowed: { owner: 'embedder', removed: '[Sandbox] connectionsAllowed was removed; use origins. It was ignored: the guest policy admits only the exact origins listed in `origins` (see docs/API.md#origins).' },
     // configured the removed Service-Worker hub (ADR-004)
-    virtualFilesUrl: { removed: '[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).' },
+    virtualFilesUrl: { owner: 'embedder', removed: '[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).' },
     origins: {
         owner: 'embedder',
         // Never read in sealed mode, the default (readIn), as fetchBridge; its rule is the network modes' too.
@@ -526,16 +526,19 @@ const RULES = CONFIG_SCHEMA as Record<OptionName, OptionRule>;
 const SCHEMA_NAMES = Object.keys(CONFIG_SCHEMA) as OptionName[];
 /** The options SandboxConfig has, in the schema's order (the removed ones are not options). */
 export const CONFIG_OPTIONS: readonly OptionName[] = SCHEMA_NAMES.filter(name => RULES[name].removed === undefined);
-/** The options of an owner, in the schema's order: what start()'s argument of that owner may name besides its own key. */
-export const optionsOf = (owner: OptionOwner): readonly OptionName[] => CONFIG_OPTIONS.filter(name => RULES[name].owner === owner);
-/** The app's options (SandboxApp, with `files`). */
+/**
+ * The keys of the schema an owner has, removed ones included, in the schema's order: what start()'s argument of that
+ * owner may name besides its own key.
+ */
+export const optionsOf = (owner: OptionOwner): readonly OptionName[] => SCHEMA_NAMES.filter(name => RULES[name].owner === owner);
+/** The app's keys (SandboxApp, with `files`). */
 export const APP_OPTIONS = optionsOf('app');
-/** The embedder's options (SandboxGrants, with `methods`). */
+/** The embedder's keys (SandboxGrants, with `methods`), the removed options among them. */
 export const EMBEDDER_OPTIONS = optionsOf('embedder');
 /** The app's options as a type, derived from the schema: what SandboxApp (host.ts) is checked against. */
 export type AppOptionName = { [K in OptionName]: (typeof CONFIG_SCHEMA)[K] extends { readonly owner: 'app' } ? K : never }[OptionName];
 /** The embedder's options as a type, derived from the schema. */
-export type EmbedderOptionName = { [K in OptionName]: (typeof CONFIG_SCHEMA)[K] extends { readonly owner: 'embedder' } ? K : never }[OptionName];
+export type EmbedderOptionName = { [K in OptionName]: (typeof CONFIG_SCHEMA)[K] extends { readonly removed: string } ? never : (typeof CONFIG_SCHEMA)[K] extends { readonly owner: 'embedder' } ? K : never }[OptionName];
 
 /** The options parsed into a policy or a budget of their own (NormalisedConfig), never into StoredConfig. */
 export const PARSED_APART: readonly OptionName[] = ['fetchBridge', 'callLimits', 'origins'];
