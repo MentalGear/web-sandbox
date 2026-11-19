@@ -5,13 +5,14 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { join } from 'node:path';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { inStrictWorker, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
-import { defineWebSandbox, SAME_DATA_MAX_PAIRS } from '@src/host';
+import { defineWebSandbox } from '@src/host';
 import { createBroker, RPC_MAX_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, LOG_MAX_STRING } from '@src/lib/sandbox-log';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 import { stringifiedFor } from './stringified';
 import { runBootstrap } from './sandbox-environment';
+import { startWith } from './start-app';
 
 const CAPTURED = await stringifiedFor('capture');
 
@@ -376,51 +377,6 @@ describe('C-4: a view operation costs what it changes, not the size of the whole
     });
 });
 
-describe("C-7: setConfig()'s equal-config check is linear in the config, shared references included", () => {
-    it('a config sharing one object 18 levels deep is compared once per pair of objects; the same config still rebuilds nothing', () => {
-        defineWebSandbox();
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = document.createElement('web-sandbox') as any;
-        document.body.appendChild(el);
-        let shared: Record<string, unknown> = { leaf: 1 };
-        for (let i = 0; i < 18; i++) shared = { a: shared, b: shared };
-        const config = { mode: 'cooperative', capabilities: ['allow-scripts'], data: shared };
-        el.setConfig(config);
-        const frame = el.shadowRoot.querySelector('iframe');
-        const keys = vi.spyOn(Object, 'keys');
-        el.setConfig(config);
-        expect(keys.mock.calls.length).toBeLessThan(1000); // one per compared pair, not 2^18
-        expect(el.shadowRoot.querySelector('iframe')).toBe(frame); // the same config: no rebuild (R1:R3-7)
-        keys.mockRestore();
-        el.remove();
-    });
-
-    // Sized from the cap (T6): a config of `wide` objects is compared in wide + 3 pairs (the config, its capabilities,
-    // `data`, then one per object). The comparison stops at the cap, but each setConfig() structured-clones the whole
-    // config, so objects far past the cap only cost time (the clone of 200 000 takes about 640 ms), which a loaded machine
-    // turns into vitest's 5 s. Both sides of the cap: the control, just within it, rebuilds nothing, so the rebuild past
-    // it is the cap's doing (0.2–0.5 s in full runs, idle or loaded).
-    it('past the comparison cap the configs count as different: the sandbox rebuilds (the safe answer)', () => {
-        defineWebSandbox();
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const setTwice = (wide: number) => {
-            const el = document.createElement('web-sandbox') as any;
-            document.body.appendChild(el);
-            const data: Record<string, unknown> = {};
-            for (let i = 0; i < wide; i++) data['k' + i] = { i };
-            const config = { mode: 'cooperative', capabilities: ['allow-scripts'], data };
-            el.setConfig(config);
-            const frame = el.shadowRoot.querySelector('iframe');
-            el.setConfig(config);
-            const rebuilt = el.shadowRoot.querySelector('iframe') !== frame;
-            el.remove();
-            return rebuilt;
-        };
-        expect(setTwice(SAME_DATA_MAX_PAIRS - 3)).toBe(false); // the control: SAME_DATA_MAX_PAIRS pairs, all compared
-        expect(setTwice(2 * SAME_DATA_MAX_PAIRS)).toBe(true);
-    });
-});
-
 describe('C-9: coalescing a render keeps the order of the operations that remain', () => {
     // The prelude against stand-ins of the platform it captures, passed in by name, so the test can deliver a trusted
     // INIT_WORKER and read what is posted on the render port in order.
@@ -543,7 +499,7 @@ describe("M-1, M-2: the relay's own lines always reach the host, and its budgets
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'] });
         const dispatched: string[] = [];
         el.addEventListener('sandbox-log', (event: CustomEvent) => dispatched.push(String(event.detail.args[0])));
         // a fresh environment's limits each time, on a port of its own

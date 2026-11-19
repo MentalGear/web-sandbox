@@ -2,6 +2,7 @@ import '@src/network'; // the network build: this file tests modes and options t
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_SANDBOX_FLAGS } from '@src/csp-directives';
 import { runBootstrap } from './sandbox-environment';
+import { startWith } from './start-app';
 
 /**
  * The owner's decisions on open findings, each reproduced here first where library logic decides: R1:R2-2 (`allow-forms`
@@ -22,7 +23,7 @@ async function mount(config: Record<string, unknown>) {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    el.setConfig(config);
+    startWith(el, config);
     return el;
 }
 
@@ -43,13 +44,16 @@ describe('R2-2: allow-forms is an unsafe capability (cooperative and worker mode
         expect(UNSAFE_SANDBOX_FLAGS as readonly string[]).toContain('allow-forms');
     });
 
-    it("cooperative mode: capabilities: ['allow-forms'] is dropped with a warning that names unsafeCapabilities; no frame gets the flag", async () => {
-        const messages = warnings();
-        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts', 'allow-forms'] });
-        expect(flagsOf(el)).toEqual(['allow-scripts', 'allow-scripts']);
-        const dropped = messages().filter(message => message.includes('"allow-forms" is not allowed in "capabilities"'));
-        expect(dropped).toHaveLength(1);
-        expect(dropped[0]).toContain('unsafeCapabilities');
+    it("cooperative mode: capabilities: ['allow-forms'] is refused by start() with a TypeError that names unsafeCapabilities; no frame is built", async () => {
+        warnings();
+        const { defineWebSandbox } = await import('@src/host');
+        defineWebSandbox();
+        const el = document.createElement('web-sandbox') as any;
+        expect(() => startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts', 'allow-forms'] })).toThrow(TypeError);
+        expect(() => startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts', 'allow-forms'] })).toThrow(/"allow-forms" is not allowed in "capabilities"\. .*opt in via "unsafeCapabilities"/);
+        expect(el.started).toBe(false);
+        document.body.appendChild(el); // with no app, the element builds its default mode's frames, never a cooperative one
+        expect(el._config.mode).not.toBe('cooperative');
     });
 
     it("cooperative mode: unsafeCapabilities: ['allow-forms'] is accepted on both frames, with the one unsafe-capability warning", async () => {

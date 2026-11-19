@@ -1,6 +1,7 @@
 import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { runBootstrap } from './sandbox-environment';
+import { startWith } from './start-app';
 
 /**
  * R1:R4-5, the owner's decision on an open finding:
@@ -17,7 +18,7 @@ async function mount(config: Record<string, unknown>) {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    el.setConfig(config);
+    startWith(el, config);
     return el;
 }
 

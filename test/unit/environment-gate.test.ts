@@ -10,6 +10,7 @@ import { prepareBridgeFrame } from '@src/lib/bridge-frame';
 import { BRIDGE_ROLE, environmentGate, STRICT_DIRECTIVE, viewBootstrapSource, viewBootstrapText, VIEW_OPTIONS } from '@src/lib/in-sandbox-view';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { runBootstrap, type SandboxEnvironmentRecord } from './sandbox-environment';
+import { startWith } from './start-app';
 
 /**
  * The environment check is the first statement of every bootstrap that runs in a sandbox document (S74, class B;
@@ -33,7 +34,7 @@ async function guestBootstrapOf(config: Record<string, unknown>): Promise<string
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    el.setConfig(config);
+    startWith(el, config);
     const wrapper = new DOMParser().parseFromString(el.shadowRoot.querySelector('iframe').srcdoc, 'text/html');
     const guest = new DOMParser().parseFromString(wrapper.querySelector('iframe')!.getAttribute('srcdoc')!, 'text/html');
     return guest.head.querySelector('script')!.textContent!;
@@ -269,7 +270,7 @@ describe('the element refuses to build on a cross-origin isolated host page, bef
         const events: { type: string; reason: string | null }[] = [];
         for (const type of ['ready', 'terminated']) el.addEventListener(type, (event: any) => events.push({ type, reason: event.detail?.reason ?? event.reason ?? null }));
         document.body.appendChild(el);
-        el.setConfig(config);
+        startWith(el, config);
         await new Promise(resolve => setTimeout(resolve, 0)); // the element's events are dispatched on a later task
         return { el, events };
     };

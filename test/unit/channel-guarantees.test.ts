@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkIn } from './check-in';
 import { elementSource } from './element-source';
+import { startWith } from './start-app';
 
 /**
  * Channels and lifecycle, host side:
@@ -21,7 +22,7 @@ async function mount(config?: Record<string, unknown>) {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    if (config) el.setConfig(config);
+    if (config) startWith(el, config);
     return el;
 }
 

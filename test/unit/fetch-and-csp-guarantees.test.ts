@@ -9,6 +9,7 @@ import { rewriteInlineModule } from '@src/lib/module-specifiers';
 import { admitsAll, linkKinds } from '@src/lib/load-kinds';
 import { isViewFileType, RENDER_RULES, type RenderSwitches, sanitizeRender } from '@src/lib/in-sandbox-view';
 import { keptCss } from '@src/lib/css-references';
+import { startWith, type AppSetup } from './start-app';
 
 // the renderer with every switch on: what it keeps besides its rules is not what this file tests
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
@@ -19,12 +20,12 @@ const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets
  * src/lib/in-sandbox-script.test.ts and test/unit/guest-realm-hardening.test.ts.
  */
 
-async function mount(config?: Record<string, unknown>) {
+async function mount(config?: Record<string, unknown>, setup: AppSetup = {}) {
     const { defineWebSandbox } = await import('@src/host');
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    if (config) el.setConfig(config);
+    if (config) startWith(el, config, setup);
     return el;
 }
 
@@ -74,41 +75,22 @@ function connect(el: any) {
 }
 
 describe('CB4: a guest write is answered from the build the guest has, never from files registered later', () => {
-    it('removing a path the host registered after the build: answered "none", as for any path the guest does not have', async () => {
+    it('removing a path the guest does not have: answered "none"', async () => {
         const el = await mount({ capabilities: ['allow-scripts'], guestWrites: true });
-        el.registerFiles({ 'late.txt': 'registered after the build' });
         const { answers, send, close } = connect(el);
-        send({ change: 'remove', path: 'late.txt' });
-        send({ change: 'remove', path: 'never.txt' }); // the same answer: nothing tells the two apart
+        send({ change: 'remove', path: 'never.txt' });
         await settle();
-        expect(answers.map(a => a.value)).toEqual([{ path: 'late.txt', change: 'none' }, { path: 'never.txt', change: 'none' }]);
+        expect(answers.map(a => a.value)).toEqual([{ path: 'never.txt', change: 'none' }]);
         expect(el.listGuestWrites()).toEqual([]);
         close();
     });
 
     it('a file the build delivered can be removed (positive control)', async () => {
-        const el = await mount({ capabilities: ['allow-scripts'], guestWrites: true });
-        el.registerFiles({ 'built.txt': 'x' });
-        el.reset();
+        const el = await mount({ capabilities: ['allow-scripts'], guestWrites: true }, { files: { 'built.txt': 'x' } });
         const { answers, send, close } = connect(el);
         send({ change: 'remove', path: 'built.txt' });
         await settle();
         expect(answers[0].value).toEqual({ path: 'built.txt', change: 'remove' });
-        close();
-    });
-
-    it('the write-time quota counts the build, not files registered later: a write the build has room for is recorded', async () => {
-        const { MAX_FILES } = await import('@src/lib/files');
-        const el = await mount({ capabilities: ['allow-scripts'], guestWrites: true });
-        const late: Record<string, string> = {};
-        for (let i = 0; i < MAX_FILES; i++) late[`late/${i}.txt`] = 'x';
-        el.registerFiles(late); // the store is full now; the guest's build holds none of these
-        const { answers, send, close } = connect(el);
-        send({ change: 'write', path: 'mine.txt', entry: 'x' });
-        await settle();
-        expect(answers[0]).toMatchObject({ ok: true, value: { path: 'mine.txt', change: 'write' } });
-        // the commit is the store's full check, against the store as it is: refused there, on the host's side
-        expect(() => el.commitGuestWrites(['mine.txt'])).toThrow(expect.objectContaining({ code: 'FILES_QUOTA_EXCEEDED' }));
         close();
     });
 });
@@ -118,21 +100,16 @@ describe('CB4: a guest write is answered from the build the guest has, never fro
 describe('CB5: a terminated listener that builds again from the same inputs is answered once', () => {
     // a build's 'terminated' comes in a task of its own (R1:R3-2)
     const settled = () => new Promise(resolve => setTimeout(resolve, 0));
-    it.each([
-        ['an unknown mode (a refusal)', { mode: 'Strict' }, false],
-        ['origins that cannot be read (a refusal)', { mode: 'strict', origins: { images: 'x; script-src *' } }, false],
-        // a config other than the mount's: the same one again would be no change, and build nothing (R1:R3-7)
-        ['a build that throws (a build failure)', { mode: 'strict', capabilities: ['allow-scripts'], html: '<p>other</p>' }, true],
-    ])('%s: one termination, one warning, no recursion; the state stays terminated', async (_, config, breakBuild) => {
+    it('a build that throws (a build failure): one termination, one warning, no recursion; the state stays terminated', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'] });
-        if (breakBuild) el._guestPolicy = () => { throw new Error('no policy'); };
+        const el = await mount();
+        el._guestPolicy = () => { throw new Error('no policy'); };
         let heard = 0;
         el.addEventListener('terminated', () => {
             heard++;
             if (heard < 2000) el.reset();
         });
-        expect(() => el.setConfig(config)).not.toThrow();
+        expect(() => startWith(el, { mode: 'strict', capabilities: ['allow-scripts'], html: '<p>other</p>' })).not.toThrow();
         await settled();
         expect(heard).toBe(1);
         expect(el.state).toBe('terminated');
@@ -141,33 +118,6 @@ describe('CB5: a terminated listener that builds again from the same inputs is a
         el.reset();
         await settled();
         expect(heard).toBe(2);
-    });
-
-    it('load() of other markup from the listener under an unknown mode: the refusal does not depend on the markup, so one dispatch', async () => {
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'] });
-        let heard = 0;
-        el.addEventListener('terminated', () => {
-            heard++;
-            if (heard < 2000) el.load(`<p>${heard}</p>`);
-        });
-        el.setConfig({ mode: 'Strict' });
-        await settled();
-        expect([heard, el.state]).toEqual([1, 'terminated']);
-    });
-
-    it('a listener that changes the inputs first builds normally (positive control)', async () => {
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'] });
-        const states: string[] = [];
-        el.addEventListener('terminated', () => {
-            el.setConfig({ capabilities: ['allow-scripts'] });
-            states.push(el.state);
-        }, { once: true });
-        el.setConfig({ mode: 'Strict' });
-        await settled();
-        expect(states).toEqual(['loading']);
-        expect(el.state).toBe('loading');
     });
 });
 

@@ -1,5 +1,6 @@
 import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { startWith } from './start-app';
 
 /**
  * The element's warnings that a config or a build brings back (host.ts, _warnOnce): every build of the same config says
@@ -14,9 +15,8 @@ async function mount(config: Record<string, unknown>, files: Record<string, stri
     const { defineWebSandbox } = await import('@src/host');
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
-    el.registerFiles(files);
-    el.setConfig(config);
-    document.body.appendChild(el); // configured first: the one build of the first config is the config's mode
+    startWith(el, config, { files });
+    document.body.appendChild(el); // started first: the one build of the first config is the config's mode
     return el;
 }
 
@@ -33,13 +33,14 @@ const CASES: [string, Record<string, unknown>, Record<string, string>, string][]
 ];
 
 describe('every warning a build brings back is said once per element', () => {
-    it.each(CASES)('%s: once across rebuilds (reset(), a setConfig() that changes only html), and once more for another element', async (_, config, files, text) => {
+    it.each(CASES)('%s: once across rebuilds (reset(), a removal and an insertion), and once more for another element', async (_, config, files, text) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const said = () => warn.mock.calls.map(call => String(call[0])).filter(message => message.includes(text));
         const el = await mount(config, files);
         expect(said(), 'the first build says it').toHaveLength(1);
         el.reset();
-        el.setConfig({ ...config, html: '<p>another build</p>' + String(config.html ?? '') });
+        el.remove();
+        document.body.appendChild(el);
         el.reset();
         expect(said()).toHaveLength(1);
         await mount(config, files);

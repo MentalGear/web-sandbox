@@ -3,6 +3,7 @@ import { defineWebSandbox } from '@src/index';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { keepOnlyWorkerGlobals, NETWORK_WORKER_GLOBALS, SEALED_WORKER_GLOBALS, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS } from '@src/lib/worker-globals';
+import { startWith } from './start-app';
 
 /**
  * Sealed mode has no network, so its worker does not have `fetch`, `XMLHttpRequest` or `WebSocket` as names (ADR-008): not
@@ -110,8 +111,7 @@ describe("a sealed worker's source and its bootstrap name none of them", () => {
         defineWebSandbox();
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        el.registerFiles({ 'main.js': 'void 0' });
-        el.setConfig({ mode: 'sealed', entry: 'main.js' });
+        startWith(el, { mode: 'sealed', entry: 'main.js' }, { files: { 'main.js': 'void 0' } });
         const source: string = el._strictInit.workerSource;
         expect(source).toContain('"sealed":true');
         expect(source).toContain(JSON.stringify(SEALED_WORKER_GLOBALS.filter(name => name !== 'WebAssembly')));

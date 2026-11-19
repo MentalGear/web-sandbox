@@ -2,6 +2,7 @@ import '@src/network'; // the network build: this file tests modes and options t
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { viewBootstrapHash, viewBootstrapText } from '@src/lib/in-sandbox-view';
 import { STRICT_WORKER_GLOBALS, WORKER_GLOBALS } from '@src/lib/worker-globals';
+import { startWith } from './start-app';
 
 /**
  * Strict mode on the host (ADR-005): the documents the element builds, read back from the wrapper's srcdoc.
@@ -19,9 +20,8 @@ async function mount(config: Record<string, unknown>, files?: Record<string, str
     const { defineWebSandbox } = await import('@src/host');
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
-    if (files) el.registerFiles(files);
     document.body.appendChild(el);
-    el.setConfig(config);
+    startWith(el, config, { files });
     return el;
 }
 
@@ -73,13 +73,15 @@ describe('the strict view policy: exact strings', () => {
 
     it("scripts are dropped with one warning per instance (across reset); the policy never shows them; nothing else can be configured", async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const messages = () => warn.mock.calls.map(c => String(c[0]));
         const el = await mount({ mode: 'strict', origins: { scripts: ['https://cdn.example'], images: ["'self'", 'https://img.example'] } });
         el.reset();
-        el.setConfig({ mode: 'strict', origins: { scripts: ['https://cdn.example'] } });
-        expect(policyOf(el)).toBe(STRICT(H()));
-        const messages = warn.mock.calls.map(c => String(c[0]));
-        expect(messages.filter(m => m.includes('origins.scripts is not used in strict mode'))).toHaveLength(1);
-        expect(messages.filter(m => m.includes("'self'"))).toHaveLength(1);
+        expect(policyOf(el)).toBe(STRICT(H(), { img: 'https://img.example' }));
+        expect(messages().filter(m => m.includes('origins.scripts is not used in strict mode'))).toHaveLength(1);
+        expect(messages().filter(m => m.includes("'self'"))).toHaveLength(1);
+        const another = await mount({ mode: 'strict', origins: { scripts: ['https://cdn.example'] } });
+        expect(policyOf(another)).toBe(STRICT(H()));
+        expect(messages().filter(m => m.includes('origins.scripts is not used in strict mode')), 'once more for another element').toHaveLength(2);
     });
 
     it('the shipping defaults raise no strict-mode warning', async () => {
@@ -103,7 +105,8 @@ describe('the strict documents', () => {
 
     it('sandbox flags: allow-scripts allow-forms plus the safe capabilities, on both frames; unsafe capabilities (allow-pointer-lock too) dropped with one warning, no allow attribute', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'strict', capabilities: ['allow-orientation-lock', 'allow-pointer-lock' as never], unsafeCapabilities: ['allow-popups', 'allow-modals', 'allow-pointer-lock', 'fullscreen'] });
+        await expect(mount({ mode: 'strict', capabilities: ['allow-orientation-lock', 'allow-pointer-lock' as never] })).rejects.toThrow(/"allow-pointer-lock" is not allowed in "capabilities"/);
+        const el = await mount({ mode: 'strict', capabilities: ['allow-orientation-lock'], unsafeCapabilities: ['allow-popups', 'allow-modals', 'allow-pointer-lock', 'fullscreen'] });
         el.reset();
         const wrapper = wrapperOf(el);
         const inner = parse(wrapper.srcdoc).querySelector('iframe')!;
@@ -111,17 +114,18 @@ describe('the strict documents', () => {
         expect([wrapper.getAttribute('allow'), inner.getAttribute('allow'), wrapper.hasAttribute('allowfullscreen')]).toEqual([null, null, false]);
         const messages = warn.mock.calls.map(c => String(c[0]));
         expect(messages.filter(m => m.includes('not available in strict mode'))).toEqual(['[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: allow-popups, allow-modals, allow-pointer-lock, fullscreen.']);
-        expect(messages.filter(m => m.includes('"allow-pointer-lock" is not allowed in "capabilities"'))).toHaveLength(1);
         expect(messages.filter(m => m.includes('is enabled: it lets guest content act outside'))).toEqual([]);
         expect(await mount({ mode: 'strict' }).then(e => wrapperOf(e).getAttribute('sandbox'))).toBe('allow-scripts allow-forms');
     });
 
     it('"entry" outside strict mode is ignored with one warning', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const entryWarnings = () => warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('"entry"'));
         const el = await mount({ mode: 'cooperative', entry: 'main.js' });
         el.reset();
-        el.setConfig({ mode: 'worker', entry: 'main.js' });
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('"entry"'))).toHaveLength(1);
+        expect(entryWarnings()).toHaveLength(1);
+        await mount({ mode: 'worker', entry: 'main.js' });
+        expect(entryWarnings(), 'once more for another element').toHaveLength(2);
     });
 });
 
@@ -180,13 +184,16 @@ describe('guest writes in strict mode (backlog C5): the worker carries the write
 
     it('without guestWrites (or with anything but a literal true): no writer, no feature, no overlay', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        for (const guestWrites of [undefined, 'true', 1]) {
+        for (const guestWrites of [undefined, false]) {
             const el = await mount({ mode: 'strict', guestWrites });
             const source = sourceOf(el);
             expect(source).not.toContain('"guestWrites":true');
             expect(source).not.toContain('comms.writeFiles');
             expect(el._guestWrites).toBeNull();
             el.remove();
+        }
+        for (const guestWrites of ['true', 1]) {
+            await expect(mount({ mode: 'strict', guestWrites }), String(guestWrites)).rejects.toThrow(/guestWrites must be a boolean/);
         }
     });
 });

@@ -1,6 +1,7 @@
 import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { GUEST_WRITES_PER_SECOND } from '@src/lib/guest-writes';
+import { startWith } from './start-app';
 
 /**
  * Guest writes on the element (backlog C5): the config, the reserved method's wiring, the overlay's lifecycle,
@@ -13,7 +14,7 @@ async function mount(config?: Record<string, unknown>) {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    if (config) el.setConfig(config);
+    if (config) startWith(el, config);
     return el;
 }
 
@@ -45,7 +46,15 @@ afterEach(() => {
 });
 
 describe('the config: only a literal true turns guest writes on', () => {
-    it.each([[undefined], [false], ['true'], [1], [{}]])('guestWrites: %j → off: no overlay, no feature in the bootstrap, and the method refuses FILES_NOT_ALLOWED', async (guestWrites) => {
+    it.each([['true'], [1], [{}]])('guestWrites: %j → start() refuses it with a TypeError: no app, no overlay', async (guestWrites) => {
+        const { defineWebSandbox } = await import('@src/host');
+        defineWebSandbox();
+        const el = document.createElement('web-sandbox') as any;
+        expect(() => startWith(el, { capabilities: ['allow-scripts'], guestWrites })).toThrow(/guestWrites must be a boolean/);
+        expect([el.started, el._guestWrites]).toEqual([false, null]);
+    });
+
+    it.each([[undefined], [false]])('guestWrites: %j → off: no overlay, no feature in the bootstrap, and the method refuses FILES_NOT_ALLOWED', async (guestWrites) => {
         const el = await mount({ capabilities: ['allow-scripts'], guestWrites });
         expect(el._config.guestWrites).toBe(false);
         expect(el._guestWrites).toBeNull();
@@ -72,17 +81,20 @@ describe('the config: only a literal true turns guest writes on', () => {
         close();
     });
 
-    it('expose() cannot take the reserved name: a host method named sandbox:write is refused and never runs', async () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ guestWrites: true });
+    it('start() cannot take the reserved name: a host method named sandbox:write is refused and never runs', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { defineWebSandbox } = await import('@src/host');
+        defineWebSandbox();
+        const el = document.createElement('web-sandbox') as any;
+        document.body.appendChild(el);
         const forged = vi.fn(() => 'forged');
-        el.expose('sandbox:write', forged);
+        expect(() => startWith(el, { guestWrites: true }, { methods: { 'sandbox:write': forged } })).toThrow(/reserved for the library/);
+        startWith(el, { guestWrites: true });
         const { answers, send, close } = connect(el);
         send(write('a.txt'));
         await settle();
         expect(forged).not.toHaveBeenCalled();
         expect(answers[0].value).toMatchObject({ change: 'write' });
-        expect(warn.mock.calls.some(c => String(c[0]).includes('reserved for the library'))).toBe(true);
         close();
     });
 
@@ -109,10 +121,6 @@ describe('lifecycle: discarded by the next build and on removal, kept through a 
 
     it.each([
         ['reset()', (el: any) => el.reset()],
-        ['load()', (el: any) => el.load('<p>x</p>')],
-        // another config: the same one again is no change and builds nothing (R1:R3-7)
-        ['setConfig()', (el: any) => el.setConfig({ guestWrites: true, html: '<p>another</p>' })],
-        ['a setConfig() that cannot be used', (el: any) => el.setConfig(null)],
         ['removal from the document', (el: any) => el.remove()],
     ])('%s discards it', async (_label, act) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});

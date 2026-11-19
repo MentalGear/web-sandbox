@@ -8,6 +8,7 @@ import { elementSource } from './element-source';
 import { ELEMENT_EVENTS, elementEvent, freezeDeep } from '@src/lib/element-events';
 import { LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { createSizeOf } from '@src/lib/structured-size';
+import { startWith } from './start-app';
 
 /**
  * The element's events (class D/L, R5:L-3): one table, one constructor that freezes every detail deeply,
@@ -153,12 +154,12 @@ describe('the details the element dispatches are frozen, every one', () => {
         };
         for (const type of Object.keys(ELEMENT_EVENTS)) el.addEventListener(type, (e: CustomEvent) => { heard[type] = deeplyFrozen(e.detail); });
         document.body.appendChild(el);
-        el.registerFiles({ 'a.txt': 'a' });
-        el.setConfig({ mode: 'strict', guestWrites: true });
+        startWith(el, { mode: 'strict', guestWrites: true }, { files: { 'a.txt': 'a' } });
         el._step({ t: 'viewReady', gen: el._lc.gen, height: null, stillStyleRefused: false }); // the view's check-in: 'ready'
         el._dispatchLog({ level: 'log', args: [{ a: [{ b: 1 }] }] }, 'guest');
         el._dispatchViolation({ type: 'VIOLATION', directive: 'img-src', blockedURI: 'https://x.example/' }, 'view');
         await el._handleGuestWrite(el._guestWrites, { change: 'write', path: 'w.txt', entry: 'w' });
+        el.commitGuestWrites(['w.txt']); // the files change: 'fileschanged'
         el._dispatchFetch({ method: 'GET', url: 'https://x.example/', outcome: 'refused', bytes: 0, durationMs: 0 });
         el.terminate();
         expect(heard).toEqual({ 'ready': true, 'terminated': true, 'sandbox-log': true, 'violation': true, 'fetch': true, 'fileschanged': true, 'fileswritten': true });

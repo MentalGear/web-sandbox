@@ -9,6 +9,7 @@ import { vi } from 'vitest';
 import { runBootstrap } from './sandbox-environment';
 import { keptCss } from '@src/lib/css-references';
 import { declared, parseAsView } from './view-parse';
+import { startWith } from './start-app';
 
 /**
  * The strict view's findings of R5 (unit): the library's own logic where no browser decides. The engines' side is in test/e2e/strict-view-budget.spec.ts.
@@ -308,7 +309,7 @@ describe("S72 (class P): the repeated-overrun rule, the owner's decision on VIEW
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        el.setConfig({ mode: 'strict' });
+        startWith(el, { mode: 'strict' });
         const heard: any[] = [];
         el.addEventListener('sandbox-log', (e: Event) => heard.push((e as CustomEvent).detail));
         const reasons: string[] = [];

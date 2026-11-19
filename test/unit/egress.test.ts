@@ -10,6 +10,7 @@ import { createBroker } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { defineWebSandbox } from '@src/host';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
+import { startWith } from './start-app';
 
 /**
  * The egress table (class E-cpu, R5:N-1): every row has its bound and its test, and the bootstrap installs
@@ -285,7 +286,7 @@ describe('what each listener does (5:N-1)', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        el.setConfig({ mode: 'worker' });
+        startWith(el, { mode: 'worker' });
         const { port1 } = new MessageChannel();
         el._port = port1;
         const reasons: string[] = [];

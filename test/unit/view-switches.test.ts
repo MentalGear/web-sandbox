@@ -6,6 +6,7 @@ import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { runBootstrap } from './sandbox-environment';
 import { keptCss } from '@src/lib/css-references';
 import { declared, parseAsView } from './view-parse';
+import { startWith } from './start-app';
 
 /**
  * The strict view's two switches, `allowAnimations` and `allowAutoplay` (both default false), where the
@@ -164,16 +165,20 @@ describe('the configuration: allowAnimations and allowAutoplay', () => {
         const { defineWebSandbox } = await import('@src/host');
         defineWebSandbox();
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = document.createElement('web-sandbox') as any;
-        document.body.appendChild(el);
+        const created = () => {
+            const el = document.createElement('web-sandbox') as any;
+            document.body.appendChild(el);
+            return el;
+        };
+        const el = created();
         const warnings = () => warn.mock.calls.map(call => String(call[0])).filter(message => /allowAnimations|allowAutoplay/.test(message));
-        // what the view is told (INIT_VIEW): read right after setConfig(), before the wrapper loads
+        // what the view is told (INIT_VIEW), for an element of its own started with `config`: read right after start(),
+        // before the wrapper loads
         const init = (config: Record<string, unknown>) => {
-            el.setConfig(config);
-            const { allowAnimations, allowAutoplay } = el._strictInit;
+            const { allowAnimations, allowAutoplay } = startWith(created(), config)._strictInit;
             return { allowAnimations, allowAutoplay };
         };
-        return { el, warnings, init };
+        return { el, created, warnings, init };
     }
 
     it('the defaults: no animations, no autoplay; left out and undefined alike', async () => {
@@ -190,46 +195,34 @@ describe('the configuration: allowAnimations and allowAutoplay', () => {
         expect(warnings()).toEqual([]);
     });
 
-    it('any other value is false, the safe side, with one warning per element', async () => {
-        const { init, warnings } = await element();
+    it('any other value is refused by start() with a TypeError, and nothing is started', async () => {
+        const { created } = await element();
         for (const value of ['false', 0, 1, null, 'yes', {}, []]) {
-            expect(init({ allowAnimations: value, allowAutoplay: value })).toEqual({ allowAnimations: false, allowAutoplay: false });
+            for (const name of ['allowAnimations', 'allowAutoplay']) {
+                const el = created();
+                expect(() => startWith(el, { [name]: value }), `${name}: ${JSON.stringify(value)}`).toThrow(`[Sandbox] start(): ${name} must be a boolean`);
+                expect(el.started).toBe(false);
+            }
         }
-        init({ allowAnimations: 'yes', allowAutoplay: 'yes' }); // the same value again: no second warning
-        const said = warnings();
-        expect(said).toHaveLength(10); // per switch: "false", a number, null, "yes", an object (shown() names a type, not a value)
-        expect(said).toContain('[Sandbox] allowAnimations must be a boolean; "yes" was taken as false: animations and transitions are removed from the view.');
-        expect(said).toContain('[Sandbox] allowAutoplay must be a boolean; "yes" was taken as false: media in the view does not autoplay.');
     });
 
     it('ignored in cooperative and worker mode, with one warning each per element, the way entry is', async () => {
-        const { el, warnings } = await element();
-        el.setConfig({ mode: 'cooperative', allowAnimations: false, allowAutoplay: true });
-        el.setConfig({ mode: 'worker', allowAnimations: 'x', allowAutoplay: true });
-        el.setConfig({ mode: 'cooperative', allowAnimations: undefined });
-        expect(warnings()).toEqual([
+        const { el, created, warnings } = await element();
+        const IGNORED = [
             '[Sandbox] "allowAnimations" is used only in strict and sealed mode and was ignored.',
             '[Sandbox] "allowAutoplay" is used only in strict and sealed mode and was ignored.',
-        ]);
-    });
-
-    it('part of the equal-config comparison: the same config rebuilds nothing, a changed switch rebuilds', async () => {
-        const { el } = await element();
-        for (const [name, other] of [['allowAnimations', true], ['allowAutoplay', false]] as const) {
-            const config = { mode: 'strict', [name]: !other };
-            el.setConfig(config);
-            el._lc = { ...el._lc, state: 'ready' }; // as after the view's check-in
-            const frame = el.shadowRoot.querySelector('iframe');
-            el.setConfig(structuredClone(config));
-            expect(el.shadowRoot.querySelector('iframe'), `${name}: the same`).toBe(frame);
-            el.setConfig({ ...config, [name]: other });
-            expect(el.shadowRoot.querySelector('iframe'), `${name}: changed`).not.toBe(frame);
-        }
+        ];
+        startWith(el, { mode: 'cooperative', allowAnimations: false, allowAutoplay: true });
+        el.reset();
+        expect(warnings()).toEqual(IGNORED);
+        startWith(created(), { mode: 'worker', allowAnimations: true, allowAutoplay: true });
+        startWith(created(), { mode: 'cooperative', allowAnimations: undefined });
+        expect(warnings(), 'another element says them for itself; a switch left undefined is not given').toEqual([...IGNORED, ...IGNORED]);
     });
 
     it("the view's check-in says the host page refused the still stylesheet: one warning per element, with its hash", async () => {
         const { el } = await element();
-        el.setConfig({ mode: 'strict', allowAnimations: false });
+        startWith(el, { mode: 'strict', allowAnimations: false });
         const { port1 } = new MessageChannel();
         el._viewPort = port1;
         const warn = vi.mocked(console.warn);

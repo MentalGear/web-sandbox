@@ -2,6 +2,7 @@ import '@src/network'; // the network build: this file tests modes and options t
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
 import { parseLikeABrowser } from './policy-helpers';
+import { startWith } from './start-app';
 
 /**
  * Mutation gaps the verification found (VR; AR:A1, BR:CB7, FR:F5), host and library side: each is a test that fails under a mutation of the code that
@@ -20,7 +21,7 @@ async function mount(config: Record<string, unknown>) {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    el.setConfig(config);
+    startWith(el, config);
     return el;
 }
 

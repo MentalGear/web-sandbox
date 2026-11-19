@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createBroker } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { STRICT_DIRECTIVE, viewBootstrapSource, viewBootstrapText, VIEW_OPTIONS } from '@src/lib/in-sandbox-view';
+import { startWith } from './start-app';
 
 /**
  * Every build hands the guest's bootstrap the byte measure (BD3:TST-10, class P): the bootstrap measures what it posts with
@@ -17,8 +18,8 @@ async function build(mode: 'strict' | 'cooperative' | 'worker') {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    el.setConfig({ mode, ...(mode === 'strict' ? { entry: 'main.js' } : {}) });
-    if (mode === 'strict') el.registerFiles({ 'main.js': 'void 0' });
+    if (mode === 'strict') startWith(el, { mode, entry: 'main.js' }, { files: { 'main.js': 'void 0' } });
+    else startWith(el, { mode });
     const prepared = el._prepareBuild();
     let text: string = mode === 'strict' ? prepared.strictInit.workerSource : prepared.iframe.srcdoc;
     for (let i = 0; i < 4; i++) text = text.replaceAll('&quot;', '"').replaceAll('&amp;', '&').replaceAll('&lt;', '<').replaceAll('&gt;', '>');
@@ -58,8 +59,7 @@ describe('every generated source starts strict', () => {
         defineWebSandbox();
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        if (files) el.registerFiles(files);
-        el.setConfig(config);
+        startWith(el, config, { files });
         return el;
     }
     const guestScript = (el: any) => parse(parse(el.shadowRoot.querySelector('iframe').srcdoc).querySelector('iframe')!.getAttribute('srcdoc')!).head.querySelector('script')!.textContent!;

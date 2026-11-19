@@ -8,6 +8,8 @@ import { fileKinds, SEALED_FILE_KINDS, sealedViewPolicy, type SealedFileKind, ty
 import { NO_ORIGINS } from '@src/lib/csp/origins';
 import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
 import { reasonText, TERMINATION_REASONS } from '@src/lib/reasons';
+import { startWith } from './start-app';
+import { UNSAFE_CAPABILITIES } from '@src/csp-directives';
 
 /**
  * Sealed mode (docs/research/24_sealed_mode, ADR-008): strict mode with no network, and the default. "No network" is a
@@ -235,8 +237,7 @@ describe('T3: sealedViewPolicy can carry no network source', () => {
     it('the element builds it: a sealed view has the sealed policy, with blob: for its files and guest writes, and its worker admits no request', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
-        el.registerFiles({ 'main.js': 'void 0', 'a.css': 'p{}', 'b.png': 'x', 'c.json': '{}' });
-        el.setConfig({ mode: 'sealed', entry: 'main.js' });
+        startWith(el, { mode: 'sealed', entry: 'main.js' }, { files: { 'main.js': 'void 0', 'a.css': 'p{}', 'b.png': 'x', 'c.json': '{}' } });
         expect(el.state).toBe('loading');
         const kinds = new Set<SealedFileKind>(['styles', 'images']);
         expect(policyOf(el)).toBe(sealedViewPolicy({ fileKinds: kinds, bootstrapHash: HASH }));
@@ -246,8 +247,8 @@ describe('T3: sealedViewPolicy can carry no network source', () => {
         expect(el._strictInit.workerSource).not.toContain('"connect"'); // no gate list: no gate (T4)
         expect(el._strictInit.workerSource).not.toContain('function requestGate(');
         expect(wrapperOf(el)!.getAttribute('sandbox')).toBe('allow-scripts allow-forms');
-        el.setConfig({ mode: 'sealed', guestWrites: true });
-        expect(directives(policyOf(el)).get('img-src')).toEqual(['blob:']);
+        const writing = startWith(await mount(), { mode: 'sealed', guestWrites: true });
+        expect(directives(policyOf(writing)).get('img-src')).toEqual(['blob:']);
     });
 });
 
@@ -276,15 +277,19 @@ describe('TST-1: the sandbox flags of a sealed view are exactly these, whatever 
     it('unsafeCapabilities opens no flag in a sealed view', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
-        el.setConfig({ mode: 'sealed', unsafeCapabilities: [...HTML_SANDBOX_TOKENS, 'fullscreen', 'camera', 'geolocation'] });
+        expect(() => startWith(el, { mode: 'sealed', unsafeCapabilities: [...HTML_SANDBOX_TOKENS, 'fullscreen', 'camera', 'geolocation'] })).toThrow(/is not allowed in "unsafeCapabilities"/);
+        startWith(el, { mode: 'sealed', unsafeCapabilities: [...UNSAFE_CAPABILITIES] }); // every one it takes
         expect(wrapperOf(el)!.getAttribute('sandbox')!.split(' ').sort()).toEqual(['allow-forms', 'allow-scripts']);
         expect(wrapperOf(el)!.getAttribute('allow') ?? '').toBe('');
     });
 
-    it.each([['sealed', 'sealed'], ['no mode', undefined], ['strict', 'strict']])('the built frames: %s with every token asked for carries only the sealed flags, on the wrapper and on the view', async (_, mode) => {
+    it.each([['sealed', 'sealed'], ['no mode', undefined], ['strict', 'strict']])('the built frames: %s with every token asked for is refused by start(); with the sealed flags asked for, carries only those, on the wrapper and on the view', async (_, mode) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
-        el.setConfig({ ...(mode === undefined ? {} : { mode }), capabilities: HTML_SANDBOX_TOKENS });
+        const withMode = mode === undefined ? {} : { mode };
+        expect(() => startWith(el, { ...withMode, capabilities: HTML_SANDBOX_TOKENS })).toThrow(/is not allowed in "capabilities"/);
+        expect(el.started).toBe(false);
+        startWith(el, { ...withMode, capabilities: SEALED_FLAGS });
         const flags = (frame: Element | null) => (frame?.getAttribute('sandbox') ?? '').split(' ').filter(Boolean).sort();
         expect(flags(wrapperOf(el))).toEqual(SEALED_FLAGS);
         const view = parse(wrapperOf(el)!.srcdoc).querySelector('iframe');
@@ -298,22 +303,20 @@ describe('the refusal, at the element: terminated at once with the reason', () =
         ['fetchBridge', { mode: 'sealed' }, { fetchBridge: { allow: ['https://api.example'] } }],
         ['origins, with no mode (sealed is the default)', {}, { origins: { images: ['https://cdn.example'] } }],
         ['fetchBridge, with no mode (sealed is the default)', {}, { fetchBridge: { allow: ['https://api.example'] } }],
-    ])('a sealed config naming %s: no frame, state terminated, the reason; reset() keeps it closed; a sealed config without it builds', async (_, mode, network) => {
-        const el = await mount();
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+    ])('a sealed config naming %s: start() throws the reason, nothing of it is applied; a sealed config without it builds', async (_, mode, network) => {
+        const { defineWebSandbox } = await import('@src/host');
+        defineWebSandbox();
+        const el = document.createElement('web-sandbox') as any;
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
-        el.setConfig({ ...mode, ...network });
-        expect(el.state).toBe('terminated');
-        expect(wrapperOf(el)).toBeNull();
-        expect(el._config.mode).toBe('cooperative'); // nothing of the refused config was applied
+        expect(() => startWith(el, { ...mode, ...network })).toThrow(new TypeError(`[Sandbox] start(): ${REASON}.`));
+        expect([el.started, el._fetchPolicy, el._origins.images ?? []]).toEqual([false, null, []]); // nothing of the refused config was applied
+        document.body.appendChild(el);
         await settled();
-        expect(reasons).toEqual([REASON]);
-        el.reset();
-        await settled();
-        expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
-        expect(reasons).toEqual([REASON, REASON]);
-        el.setConfig({ mode: 'sealed' });
+        expect(reasons).toEqual([]);
+        el.remove();
+        startWith(el, { mode: 'sealed' });
+        document.body.appendChild(el);
         expect(el.state).toBe('loading');
         expect(el._config.mode).toBe('sealed');
         expect(policyOf(el)).toContain("connect-src 'none'");

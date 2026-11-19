@@ -1,5 +1,6 @@
 import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { afterEach, describe, expect, it } from 'vitest';
+import { startWith, type AppSetup } from './start-app';
 
 /**
  * The list the request gate admits (`features.connect` of each bootstrap) is the guest policy's connect-src, exactly, in
@@ -14,12 +15,12 @@ afterEach(() => { document.body.replaceChildren(); });
 const A = 'https://a.example';
 const B = 'https://b.example';
 
-async function element(config: Record<string, unknown>) {
+async function element(config: Record<string, unknown>, setup: AppSetup = {}) {
     const { defineWebSandbox } = await import('@src/host');
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    el.setConfig(config);
+    startWith(el, config, setup);
     return el;
 }
 
@@ -39,8 +40,7 @@ describe('the gate admits the policy\'s connect-src, exactly', () => {
 
     for (const mode of ['strict', 'cooperative', 'worker'] as const) {
         it(`${mode}: the bootstrap's list equals the connect-src of the guest policy (the host page's policy dropped ${B})`, async () => {
-            const el = await element({ ...narrowed, mode, ...(mode === 'strict' ? { entry: 'main.js' } : {}) });
-            if (mode === 'strict') el.registerFiles({ 'main.js': 'void 0' });
+            const el = await element({ ...narrowed, mode, ...(mode === 'strict' ? { entry: 'main.js' } : {}) }, mode === 'strict' ? { files: { 'main.js': 'void 0' } } : {});
             const prepared = el._prepareBuild();
             const policy: string = el._guestPolicy(el._files.snapshot(), el._reach().origins);
             const expected = connectSrcOf(policy);

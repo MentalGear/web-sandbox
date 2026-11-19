@@ -4,6 +4,7 @@ import { connectSources } from '@src/lib/csp/host-connect';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 import { VIEW_STILL_STYLE } from '@src/lib/in-sandbox-view';
+import { startWith } from './start-app';
 
 /**
  * The warnings that tell the embedder what to add to `style-src` (BD3:NEW-2, class C: one place says what a source looks
@@ -56,7 +57,7 @@ async function element() {
 describe('the style-src hints are sources a policy can take', () => {
     it("the wrapper's style: a view 150 px high in a taller frame names its hash as one source", async () => {
         const { el, said } = await element();
-        el.setConfig({ mode: 'strict' });
+        startWith(el, { mode: 'strict' });
         Object.defineProperty(el._iframe, 'clientHeight', { configurable: true, value: 300 });
         el._checkViewSize(150);
         const [message] = said(/refuses the wrapper's style/);
@@ -66,7 +67,7 @@ describe('the style-src hints are sources a policy can take', () => {
 
     it("the view's still stylesheet: the allowAnimations warning names its hash as one source", async () => {
         const { el, said } = await element();
-        el.setConfig({ mode: 'strict', allowAnimations: false });
+        startWith(el, { mode: 'strict', allowAnimations: false });
         const { port1 } = new MessageChannel();
         el._viewPort = port1;
         el._onViewMessage(port1, { type: 'VIEW_READY', width: 400, height: 300, stillStyleRefused: true });
