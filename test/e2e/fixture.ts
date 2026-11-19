@@ -196,7 +196,7 @@ export class SandboxDriver {
         return this.page.evaluate(() => {
             const files: Record<string, unknown> = {};
             for (const write of (document.querySelector('web-sandbox') as any).listGuestWrites()) {
-                if (write.change === 'write') files[write.path] = { content: write.content, type: write.type };
+                if (write.change === 'write') files[write.path] = { content: write.content.bytes(), type: write.type };
             }
             const outcome = sandboxCollectFiles(files);
             if (outcome !== 'ok') throw new Error(`[e2e] the guest's writes could not be collected: ${outcome}`);

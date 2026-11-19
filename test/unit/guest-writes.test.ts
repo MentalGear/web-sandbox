@@ -268,8 +268,8 @@ describe('commitGuestWrites() and listGuestWrites() on the element', () => {
         const { send, close } = connect(el);
         send(write('a.bin', new Uint8Array([1, 2])));
         await settle();
-        el.listGuestWrites()[0].content.fill(9);
-        expect(Array.from(el.listGuestWrites()[0].content)).toEqual([1, 2]);
+        el.listGuestWrites()[0].content.bytes().fill(9);
+        expect(Array.from(el.listGuestWrites()[0].content.bytes())).toEqual([1, 2]);
         close();
     });
 });
@@ -331,7 +331,7 @@ describe("I4: a commit takes the listed values, by identity of their path's curr
 
     it('the bytes stored are the ones listed: changing a value\'s content changes nothing committed', async () => {
         const { el, listed, close } = await withListed({ 'a.txt': 'abc' });
-        listed[0].content.fill(0x7a);
+        listed[0].content.bytes().fill(0x7a);
         expect(el.commitGuestWrites(listed)).toBe(true);
         expect(atob(el._files._files.get('a.txt').base64)).toBe('abc'); // the store's own file, as registered
         close();
@@ -341,7 +341,10 @@ describe("I4: a commit takes the listed values, by identity of their path's curr
         const { el, changed, listed, close } = await withListed({ 'a.txt': 'a', 'b.txt': 'b' });
         const [a, b] = listed;
         expect([Object.isFrozen(a), Object.isFrozen(b)]).toEqual([true, true]);
-        for (const copy of [{ ...b }, Object.freeze({ ...b }), structuredClone(b), JSON.parse(JSON.stringify(b)), new Proxy(b, {})]) {
+        // a write's content has methods, so a structured clone is of its data: the value with its content's bytes
+        expect(() => structuredClone(b)).toThrow(/could not be cloned/);
+        const cloned = structuredClone(b.change === 'write' ? { ...b, content: b.content.bytes() } : b);
+        for (const copy of [{ ...b }, Object.freeze({ ...b }), cloned, JSON.parse(JSON.stringify(b)), new Proxy(b, {})]) {
             expect(() => el.commitGuestWrites([a, copy])).toThrow(TypeError);
         }
         expect([files(el), changed]).toEqual([[], []]);

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isValidPath } from '@src/lib/files';
 import { guestText } from '@src/lib/guest-values';
+import { guestBytes } from '@src/lib/guest-bytes';
 
 /**
  * The strings a guest chooses and the host page's events carry are attacker text, and the docs say so in three places: the
@@ -173,43 +174,49 @@ sandbox.start(app, { methods: { openExternal } });`;
 
 describe('the docs\' image snippet runs when the app has written nothing, a PNG, or something else (BD6:DOC-4)', () => {
     const snippet = (() => {
-        const block = [...read('docs/API.md').matchAll(/```js\n([^]*?)```/g)].map(match => match[1]!).find(code => code.includes('const PNG = ['));
+        const block = [...read('docs/API.md').matchAll(/```js\n([^]*?)```/g)].map(match => match[1]!).find(code => code.includes('write.content.image()'));
         expect(block, 'the image snippet is a js block of docs/API.md').toBeDefined();
         return block!;
     })();
 
+    // A write as listGuestWrites() lists it: its content is the library's GuestBytes, whose save() is recorded here
+    // (test/unit/guest-bytes.test.ts holds what save() itself does).
+    const saved: string[] = [];
+    const write = (path: string, type: string, bytes: Uint8Array) => {
+        const content = guestBytes(path, bytes);
+        return { path, change: 'write', type, size: content.size, content: { ...content, save: () => { saved.push(path); } } };
+    };
     function run(writes: object[]) {
-        const created: Array<{ bytes: number[]; type: string }> = [];
+        saved.length = 0;
+        const created: Array<{ type: string; size: number }> = [];
         const sandbox = { listGuestWrites: () => writes };
         const img: { src?: string } = {};
-        const link: { href?: string; download?: string } = {};
-        class FakeBlob { constructor(readonly parts: Uint8Array[], readonly options: { type: string }) {} }
-        const fakeURL = { createObjectURL: (blob: FakeBlob) => (created.push({ bytes: [...blob.parts[0]!], type: blob.options.type }), `blob:${created.length}`) };
-        new Function('sandbox', 'img', 'link', 'URL', 'Blob', `return (() => { ${snippet} })();`)(sandbox, img, link, fakeURL, FakeBlob);
-        return { img, link, created };
+        const fakeURL = { createObjectURL: (blob: Blob) => (created.push({ type: blob.type, size: blob.size }), `blob:${created.length}`) };
+        new Function('sandbox', 'img', 'URL', `return (() => { ${snippet} })();`)(sandbox, img, fakeURL);
+        return { img, created, saved: [...saved] };
     }
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2]);
 
     it('does nothing, and does not throw, when nothing was written', () => {
-        for (const writes of [[], [{ path: 'other.bin', change: 'write', content: png }], [{ path: 'progress.png', change: 'remove' }]]) {
-            const { img, link, created } = run(writes);
-            expect({ img, link, created }, JSON.stringify(writes).slice(0, 50)).toEqual({ img: {}, link: {}, created: [] });
+        for (const writes of [[], [write('other.bin', 'application/octet-stream', png)], [{ path: 'progress.png', change: 'remove' }]]) {
+            const { img, created, saved } = run(writes);
+            expect({ img, created, saved }, JSON.stringify(writes).slice(0, 50)).toEqual({ img: {}, created: [], saved: [] });
         }
     });
 
-    it('shows a PNG in an <img> typed image/png, and nothing as a link', () => {
-        const { img, link, created } = run([{ path: 'progress.png', change: 'write', type: 'text/html', content: png }]);
-        expect(created).toEqual([{ bytes: [...png], type: 'image/png' }]); // the type is the host's, never the write's
+    it('shows a PNG in an <img> from image(), typed image/png by its signature, and saves nothing', () => {
+        const { img, created, saved } = run([write('progress.png', 'text/html', png)]);
+        expect(created).toEqual([{ type: 'image/png', size: png.length }]); // the type is the signature's, never the write's
         expect(img.src).toBe('blob:1');
-        expect(link).toEqual({});
+        expect(saved).toEqual([]);
     });
 
-    it('offers anything else as a download of an octet-stream blob, never as an image', () => {
+    it('offers anything else with save(), never as an image', () => {
         const html = new TextEncoder().encode('<script>1</script>');
-        const { img, link, created } = run([{ path: 'progress.png', change: 'write', type: 'image/png', content: html }]);
-        expect(created).toEqual([{ bytes: [...html], type: 'application/octet-stream' }]);
+        const { img, created, saved } = run([write('progress.png', 'image/png', html)]);
+        expect(created).toEqual([]);
         expect(img).toEqual({});
-        expect(link).toEqual({ href: 'blob:1', download: 'export.bin' });
+        expect(saved).toEqual(['progress.png']);
     });
 });
 
@@ -217,18 +224,23 @@ describe('the docs name the rule for the guest\'s bytes where the embedder takes
     it.each([
         ['docs/API.md', 'Never make a URL of the app\'s bytes with the app\'s type'],
         ['docs/API.md', 'The bytes are the guest\'s too, and a URL made of them is a document of your origin'],
-        ['src/lib/guest-writes.ts', 'Never make an object URL of `content` with the'],
+        ['src/lib/guest-writes.ts', 'Never make an object URL of `content.bytes()` with the write\'s `type`'],
         ['src/host.ts', 'Never make an object URL of its bytes with a type the guest chose'],
     ])('%s says: %s', (file, sentence) => {
         expect(read(file).replace(/\s+/g, ' ').replace(/ \* /g, ' ').replace(/ \/\/ /g, ' ')).toContain(sentence.replace(/\s+/g, ' '));
     });
 
-    it('the guest-writes section and the recipe tell what to do instead: the sandbox view, an image Blob typed by the host, a download', () => {
+    it('the guest-writes section and the recipe tell what to do instead: the sandbox view, image(), save(); bytes() is the raw step', () => {
         const api = read('docs/API.md');
-        const section = api.slice(api.indexOf('The bytes are the guest\'s too'), api.indexOf('A committed write\'s type is the guest\'s claim'));
-        for (const word of ['sandbox view', 'image/png', 'signature', '<img>', '<a download>', 'application/octet-stream', 'target="_blank"', '<iframe>', '<object>', 'location']) expect(section, word).toContain(word);
+        const start = api.indexOf('The bytes are the guest\'s too');
+        const end = api.indexOf('A committed write\'s type and its name agree');
+        expect(start, 'the section starts').toBeGreaterThan(-1);
+        expect(end, 'and ends').toBeGreaterThan(start);
+        const section = api.slice(start, end);
+        for (const word of ['sandbox view', 'content.image()', 'GUEST_IMAGE_TYPES', 'signature', '<img>', 'content.save()', 'application/octet-stream', '.download', 'content.bytes()', 'target="_blank"', '<iframe>', '<object>', 'location']) expect(section, word).toContain(word);
         const recipe = api.slice(api.indexOf('### Images the app makes'), api.indexOf('### Input'));
-        for (const word of ['createObjectURL', "type: 'image/png'", "'application/octet-stream'", 'link.download']) expect(recipe, word).toContain(word);
+        for (const word of ['createObjectURL', 'write.content.image()', 'write.content.save()']) expect(recipe, word).toContain(word);
         expect(recipe).not.toMatch(/type: (?:write|w)\.type/);
+        expect(recipe, 'the embedder names no saved file').not.toContain('.download =');
     });
 });

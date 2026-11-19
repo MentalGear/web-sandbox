@@ -203,7 +203,9 @@ page's own, where the element reads the app's `html`, its entry, its files (give
 it commits) and the guest's frames. Each pass
 of the host realm over guest content that a sealed build runs is a name too (`host:<row>`, the rows of `HOST_PASSES`,
 `src/lib/host-passes.ts`): library code over strings and bytes, which hands nothing of the guest's to a parser, a loader or
-a sink of the host realm, whose policy the browser would check against it (`hostPassRule`), and whose cost on the host
+a sink of the host realm, whose policy the browser would check against it (`hostPassRule`; the one link of the
+library's a pass clicks is `GuestBytes`'s `save()`, when the embedder calls it: a download of an
+`application/octet-stream` blob, which no directive governs, `LIBRARY_SINKS`), and whose cost on the host
 page's thread is linear in what it takes and capped (the `thread` row's `hostPasses` residual).
 Every name of those lists is classified against every row above (`SEALED_REACH`, `src/lib/sealed-reach.ts`): `none` (it
 cannot make the browser consult the row's inherited state, nor read it, and the cell says why), `neutralised` (a chokepoint
@@ -236,7 +238,7 @@ sends every way the guest styles markup and an absolute `<base>` through `start(
 element's insertion, on the same host page, and the page's endpoint and its listener receive nothing.
 
 <!-- generated:begin sealed-reach -->
-736 names × 23 rows = 16928 cells.
+737 names × 23 rows = 16951 cells.
 
 | Row | None | Neutralised (by) | Remains (the residual, the surfaces that reach it) |
 | :--- | :--- | :--- | :--- |
@@ -483,7 +485,7 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
 - **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`, a
   `fetch` record's `url` (it can be `javascript:`), the path of a guest's write, which also chose its type (`fileswritten`'s `detail.paths`,
   `listGuestWrites()`, and of a committed one in `listFiles()`; a valid path holds `'`, `(`, `;`, `=` and more, so it can end
-  a single-quoted attribute), the result of `call()`, the message of a call rejected by a guest handler, and the arguments
+  a single-quoted attribute), a write's bytes as text (`content.text()`), the result of `call()`, the message of a call rejected by a guest handler, and the arguments
   of a host method you grant ([the whole list](API.md#guest-chosen-text), from the registry of guest values). The library
   validates and clamps its size and shape, not its content. Show it with `textContent`; never pass it to an HTML, URL (a
   link `href`), `eval`, template or `console` format-string sink, or the guest's text runs with the host page's authority.

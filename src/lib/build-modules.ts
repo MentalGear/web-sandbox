@@ -50,6 +50,7 @@ export const BUILD_MODULES = {
     'src/lib/files.ts': 'sealed',
     'src/lib/frame-documents.ts': 'sealed',
     'src/lib/frames.ts': 'data',
+    'src/lib/guest-bytes.ts': 'sealed',
     'src/lib/guest-values.ts': 'data',
     'src/lib/guest-writes.ts': 'sealed',
     'src/lib/host-passes.ts': 'data',

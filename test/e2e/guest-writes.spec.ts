@@ -59,7 +59,7 @@ async function hostView(sandbox: SandboxDriver, selector = 'web-sandbox') {
 }
 const contentOf = (sandbox: SandboxDriver, path: string) => sandbox.page.evaluate((path) => {
     const write = (document.querySelector('web-sandbox') as any).listGuestWrites().find((w: any) => w.path === path);
-    return write?.content ? Array.from(write.content as Uint8Array) : null;
+    return write?.content ? Array.from(write.content.bytes() as Uint8Array) : null;
 }, path);
 // Lists the pending writes and commits the values listed at `paths`, in one task; `ok` is the element's answer.
 const commit = (sandbox: SandboxDriver, paths: string[], options?: unknown) => sandbox.page.evaluate(({ paths, options }) => {

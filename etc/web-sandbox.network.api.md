@@ -105,10 +105,25 @@ export interface FileInfo {
 }
 
 // @public
+export const GUEST_IMAGE_TYPES: readonly ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
+
+// @public
 export const GUEST_WRITE_BYTES_PER_SECOND: number;
 
 // @public
 export const GUEST_WRITES_PER_SECOND = 100;
+
+// @public
+export interface GuestBytes {
+    bytes(): Uint8Array;
+    image(): Blob | null;
+    save(): void;
+    readonly size: number;
+    text(): string;
+}
+
+// @public
+export type GuestImageType = (typeof GUEST_IMAGE_TYPES)[number];
 
 // @public
 export type GuestWrite = {
@@ -116,7 +131,7 @@ export type GuestWrite = {
     readonly change: 'write';
     readonly type: string;
     readonly size: number;
-    readonly content: Uint8Array;
+    readonly content: GuestBytes;
 } | {
     readonly path: string;
     readonly change: 'remove';

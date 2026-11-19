@@ -452,6 +452,7 @@ the docs read) and the role its header comment gives.
 | `src/lib/files.ts` | every build | The host side of file delivery: path validation, the MIME table and the store that lives on the element |
 | `src/lib/frame-documents.ts` | every build | Builds the documents the sandbox is made of |
 | `src/lib/frames.ts` | none (a registry) | The frame table |
+| `src/lib/guest-bytes.ts` | every build | A guest write's content as the embedder gets it (design 02, "GuestBytes"; I9) |
 | `src/lib/guest-values.ts` | none (a registry) | Every value the public API hands the embedder, classified by who chose it (design 02, "One registry of guest values"; I10) |
 | `src/lib/guest-writes.ts` | every build | Guest writes, host side: the overlay of one environment |
 | `src/lib/host-passes.ts` | none (a registry) | The host realm's passes over guest content, as data |

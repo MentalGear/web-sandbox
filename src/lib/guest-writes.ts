@@ -49,7 +49,8 @@
  *
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
-import { CheckedFile, checkPath, describePath, fileError, FILE_TYPES, MAX_TOTAL_BYTES, type FileStore, type FileTypeRow } from './files';
+import { CheckedFile, checkPath, describePath, fileError, INERT_TYPES, MAX_TOTAL_BYTES, type FileStore } from './files';
+import { guestBytes, type GuestBytes } from './guest-bytes';
 import { mintUncodedError } from './minted-errors';
 import { createRateLimiter } from './rate-limit';
 
@@ -68,36 +69,27 @@ export const GUEST_WRITES_PER_SECOND = 100;
  */
 export const GUEST_WRITE_BYTES_PER_SECOND = MAX_TOTAL_BYTES;
 
-/**
- * The types commitGuestWrites() applies without `{ code: true }`: the types of FILE_TYPES's inert rows (files.ts), and
- * no other. Exact strings: `image/svg+xml` is a document that can carry script, and FALLBACK_TYPE, an extension the table
- * does not have, is not inert either.
- */
-export const INERT_TYPES: ReadonlySet<string> = inertTypes();
-
-function inertTypes(): ReadonlySet<string> {
-    const types = new Set<string>();
-    for (const row of Object.values(FILE_TYPES) as FileTypeRow[]) if (row.inert) types.add(row.type);
-    return types;
-}
+/** The types commitGuestWrites() applies without `{ code: true }` (files.ts, beside the table they come from). */
+export { INERT_TYPES };
 
 /**
  * One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size`
- * and a copy of the written bytes in `content`) or a removal. Each call reports fresh frozen objects, and a change reaches the
+ * and the written bytes in `content`, a {@link GuestBytes}) or a removal. Each call reports fresh frozen objects, and a change reaches the
  * files only when such an object is given to `commitGuestWrites()`, which knows the objects its element returned by identity.
  *
  * @remarks
- * The `path` and the `content` are the guest's: attacker text. The `type` is the library's for the path's extension
+ * The `path` and the `content` are the guest's: attacker text and attacker bytes. The `type` is the library's for the path's extension
  * (`application/octet-stream` for one it does not know), never a type the guest gave, so it always agrees with the name;
- * the guest still chooses it by choosing the path (`evil.svg` is `image/svg+xml`). Never make an object URL of `content` with the
- * write's `type` (or none) and open it: an SVG or HTML file is then a document of your origin. Show an image in the sandbox
- * view, or in an `<img>` from a `Blob` you typed `image/png` after checking its signature; offer anything else as a download.
+ * the guest still chooses it by choosing the path (`evil.svg` is `image/svg+xml`). Show an image the app made in the sandbox
+ * view, or in an `<img>` from `content.image()`, which types a `Blob` by the bytes' signature and is never SVG; offer
+ * anything else with `content.save()`, which saves the file under a name the library chose. Never make an object URL of
+ * `content.bytes()` with the write's `type` (or none) and open it: an SVG or HTML file is then a document of your origin.
  * Show a path with `textContent`, never
  * in an HTML, URL, `eval`, template or `console` format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,`
  * and `@`, so one written into a single-quoted attribute can end it and add one).
  */
 export type GuestWrite =
-    | { readonly path: string; readonly change: 'write'; readonly type: string; readonly size: number; readonly content: Uint8Array }
+    | { readonly path: string; readonly change: 'write'; readonly type: string; readonly size: number; readonly content: GuestBytes }
     | { readonly path: string; readonly change: 'remove' };
 
 /**
@@ -310,13 +302,14 @@ export function createGuestWrites({ store, built = store, minted = new WeakMap()
         for (const [path, { file }] of [...overlay]) if (file === null && !markable(path)) overlay.delete(path);
     };
 
-    // A frozen value of one entry, which the element knows by identity (I4). `content` is a copy: what the embedder
-    // does to it changes neither the entry nor what a commit stores.
+    // A frozen value of one entry, which the element knows by identity (I4). `content` reads the entry's bytes and hands
+    // out only copies and Blobs of them (guest-bytes.ts, I9): what the embedder does to what it gets changes neither the
+    // entry nor what a commit stores, which is the entry's own file.
     const mint = (entry: PendingWrite): GuestWrite => {
         const { path, file } = entry;
         const value: GuestWrite = Object.freeze(file === null
             ? { path, change: 'remove' as const }
-            : { path, change: 'write' as const, type: file.type, size: file.bytes.length, content: file.bytes.slice() });
+            : { path, change: 'write' as const, type: file.type, size: file.bytes.length, content: guestBytes(path, file.bytes) });
         minted.set(value, entry);
         return value;
     };

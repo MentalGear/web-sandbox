@@ -272,7 +272,7 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 *   **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`,
     a `fetch` record's `url` (it can be `javascript:`), the path of a guest's write, which also chose its type (`fileswritten`'s
     `detail.paths`, `listGuestWrites()`, and of a committed one in `listFiles()`; a valid path can end a single-quoted
-    attribute), the result of `call()`, the message of a call rejected by a guest handler, and the arguments of a host
+    attribute), a write's bytes as text (`content.text()`), the result of `call()`, the message of a call rejected by a guest handler, and the arguments of a host
     method you grant ([the whole list](docs/API.md#guest-chosen-text), from the registry of guest values). "Validated and clamped" bounds its size and shape; it does not make it safe to
     display. Show it with `textContent`, and never pass it to an HTML (`innerHTML`, `insertAdjacentHTML`), URL (a link
     `href`), `eval`, template or `console` format-string sink (as the first argument of a `console` method it is a
@@ -613,6 +613,14 @@ const code = writes.filter((w) => w.path === 'gen/app.js');
 sandbox.commitGuestWrites(report);                // true: now a file of the app's, from the next build on
 sandbox.commitGuestWrites(code, { code: true });  // code needs the flag; false if the guest wrote there since
 ```
+
+*   **A write's bytes have their ways out named** (`content`, a `GuestBytes`): `image()` answers a `Blob` typed by the
+    bytes' signature (PNG, JPEG, GIF, WebP or AVIF, `GUEST_IMAGE_TYPES`), or `null` for anything else, SVG and HTML
+    included, whatever the path says: show it in an `<img>` only. `save()` has the browser save the bytes as an
+    `application/octet-stream` blob under the library's name: the path's last segment, with `.download` added unless its
+    extension is an inert type (`report.html` is saved as `report.html.download`). `text()` decodes them as UTF-8, and
+    `bytes()` hands out a copy, the one raw way out: a `Blob` of it with the write's `type`, or none, is a page of your
+    origin when its URL is opened (an SVG or HTML file runs script there).
 
 *   **The host checks every write** as `start()` checks the app's files (paths, content, the 8 MiB / 1000-file cap with
     every pending write counted), and gives it the type of its path's extension: the guest names no type, so a write

@@ -959,7 +959,8 @@ export class WebSandbox extends ElementBase {
      * to the current environment; how long they live is stated once, at docs/API.md#guest-writes-lifetime.
      *
      * @returns One {@link GuestWrite} per path with a pending change, each a fresh frozen object: `{ path, change: 'write', type, size, content }`
-     * (`type` the library's for the path's extension, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
+     * (`type` the library's for the path's extension, `content` the bytes as a {@link GuestBytes}: `bytes()` a copy, `image()`
+     * and `save()` the safe ways to show and to download them) or `{ path, change: 'remove' }`. Empty while
      * `guestWrites` is off. Each value is what `commitGuestWrites()` takes: the element knows the values it returned,
      * by identity.
      */

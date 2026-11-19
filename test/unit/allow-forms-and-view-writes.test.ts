@@ -133,7 +133,7 @@ describe('R4-4: the strict view shows raster-image guest writes, minted by the v
             const { frame, transfer } = posted[0]!;
             expect(frame).toEqual({ type: 'VIEW_WRITE', id: expect.any(Number), path: 'gen/chart.png', mime: 'image/png', bytes: PNG });
             expect(transfer).toEqual([frame.bytes.buffer]);
-            expect(el.listGuestWrites()[0].content).toEqual(PNG); // the overlay keeps its own bytes
+            expect(el.listGuestWrites()[0].content.bytes()).toEqual(PNG); // the overlay keeps its own bytes
             expect(answers).toEqual([]);
             written(frame.id + 1); // not this write's
             await settle();

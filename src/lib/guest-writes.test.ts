@@ -33,7 +33,7 @@ function setup(files: Record<string, unknown> = {}) {
     const remove = (path: unknown) => writes.handle({ change: 'remove', path });
     // the overlay with each write's content as its length and a checksum: deep equality over megabytes is slow
     const digest = (bytes: Uint8Array) => { let h = 0; for (let i = 0; i < bytes.length; i++) h = (h * 31 + bytes[i]!) | 0; return h; };
-    const state = () => ({ store: store.list(), overlay: writes.list().map(w => (w.change === 'write' ? { ...w, content: [w.content.length, digest(w.content)] } : w)) });
+    const state = () => ({ store: store.list(), overlay: writes.list().map(w => (w.change === 'write' ? { ...w, content: [w.content.size, digest(w.content.bytes())] } : w)) });
     return { store, writes, minted, commitAt, write, remove, tick, state };
 }
 
@@ -95,9 +95,9 @@ describe('a write is checked by the store\'s own rules, and a refused one change
         write('b.bin', bytes);
         bytes.fill(9);
         const first = writes.list()[0] as any;
-        expect(Array.from(first.content)).toEqual([1, 2, 3]);
-        first.content.fill(7);
-        expect(Array.from((writes.list()[0] as any).content)).toEqual([1, 2, 3]);
+        expect(Array.from(first.content.bytes())).toEqual([1, 2, 3]);
+        first.content.bytes().fill(7);
+        expect(Array.from((writes.list()[0] as any).content.bytes())).toEqual([1, 2, 3]);
     });
 });
 

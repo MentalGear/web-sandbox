@@ -28,6 +28,8 @@ export type { FileContent, FileEntry, FileInfo, FileError, FileErrorCode, Sandbo
 export type { GuestWrite } from "./lib/guest-writes";
 export { GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND } from "./lib/guest-writes";
 export { MAX_LINKS } from "./lib/links";
+export type { GuestBytes, GuestImageType } from "./lib/guest-bytes";
+export { GUEST_IMAGE_TYPES } from "./lib/guest-bytes";
 
 export { SAFE_CAPABILITIES } from "./csp-directives";
 export type { SafeCapability } from "./csp-directives";

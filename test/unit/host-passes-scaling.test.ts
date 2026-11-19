@@ -6,6 +6,7 @@ import { FileStore, viewStylesheets, type ByteEdits, type FileSnapshotEntry } fr
 import { normaliseConfig } from '@src/lib/config-schema';
 import { readStart } from '@src/lib/app-start';
 import { createGuestWrites } from '@src/lib/guest-writes';
+import { guestBytes } from '@src/lib/guest-bytes';
 import { createBroker } from '@src/lib/rpc';
 import { toLogDetail } from '@src/lib/sandbox-log';
 import { toViolationDetail } from '@src/lib/violation';
@@ -130,6 +131,11 @@ const SHAPES: Record<HostPassId, readonly Shape[]> = {
             return () => writes.record(request);
         },
     }],
+    guestBytes: [
+        { name: "a large write's text(), every character two bytes of UTF-8", n: 128 * 1024, make: n => { const content = guestBytes('w.txt', new TextEncoder().encode(chars(n, 'é'))); return () => content.text(); } },
+        { name: "a large polyglot's image(): a PNG signature, then markup", n: 256 * 1024, make: n => { const bytes = new Uint8Array(n).fill(0x3c); bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); const content = guestBytes('w.png', bytes); return () => content.image(); } },
+        { name: "a large write's bytes()", n: 256 * 1024, make: n => { const content = guestBytes('w.bin', new Uint8Array(n).fill(1)); return () => content.bytes(); } },
+    ],
     rpcFrames: [{
         name: 'a request whose argument is a long list of objects', n: 2000,
         make: n => {

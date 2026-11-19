@@ -61,6 +61,7 @@ export const GUEST_VALUES = {
     AUTO_RESIZE_MAX_UPDATES_PER_SECOND: LIBRARY_CONSTANT,
     EXECUTION_TIMEOUT_GRACE_MS: LIBRARY_CONSTANT,
     FETCH_ERROR_CODES: NETWORK_CONSTANT,
+    GUEST_IMAGE_TYPES: LIBRARY_CONSTANT,
     GUEST_WRITE_BYTES_PER_SECOND: LIBRARY_CONSTANT,
     GUEST_WRITES_PER_SECOND: LIBRARY_CONSTANT,
     LOAD_TIMEOUT_MS: LIBRARY_CONSTANT,
@@ -85,6 +86,7 @@ export const GUEST_VALUES = {
     // ---- the library's closed sets: codes, states, capabilities
     FetchErrorCode: NETWORK_SET,
     FileErrorCode: LIBRARY_SET,
+    GuestImageType: LIBRARY_SET,
     RpcErrorCode: LIBRARY_SET,
     RpcLibraryCode: LIBRARY_SET,
     SafeCapability: LIBRARY_SET,
@@ -216,7 +218,17 @@ export const GUEST_VALUES = {
             change: { owner: 'library', why: "'write' or 'remove'" },
             type: { owner: 'library', why: "FILE_TYPES's for the path (I8): never a type the guest gave, though the guest chose the path" },
             size: { owner: 'library', why: 'counted by the library' },
-            content: { owner: 'guest', why: 'the bytes the guest wrote, a copy' },
+            content: { owner: 'guest', why: 'the bytes the guest wrote, as GuestBytes (below)' },
+        },
+    },
+    GuestBytes: {
+        builds: 'every',
+        members: {
+            size: { owner: 'library', why: 'counted by the library' },
+            bytes: { owner: 'guest', why: 'a copy of the bytes the guest wrote' },
+            text: { owner: 'guest', why: 'the bytes the guest wrote, decoded as UTF-8', text: { name: 'content.text()', phrase: "a guest write's `content.text()`" } },
+            image: { owner: 'guest', why: "the bytes the guest wrote, in a Blob whose type is the library's, read from their signature (GUEST_IMAGE_TYPES), or null" },
+            save: NOTHING,
         },
     },
     RpcError: {

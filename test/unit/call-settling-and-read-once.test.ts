@@ -313,7 +313,7 @@ describe('5:N-4 and 5:L-4 (class D): one diff of the guest-write state', () => {
             for (const [candidate] of Object.entries(registered)) guest.set(candidate, { type: typeForPath(candidate), built: true });
             let heard: string[] = [];
             el.addEventListener('fileswritten', (e: CustomEvent) => heard.push(...e.detail.paths));
-            const listed = () => JSON.stringify(el.listGuestWrites().map((entry: any) => (entry.content ? { ...entry, content: [...entry.content] } : entry)));
+            const listed = () => JSON.stringify(el.listGuestWrites().map((entry: any) => (entry.content ? { ...entry, content: [...entry.content.bytes()] } : entry)));
             for (let step = 0; step < 25; step++) {
                 const roll = next();
                 const target = pick();

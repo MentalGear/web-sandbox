@@ -765,7 +765,8 @@ The guest's pending writes and removals (see `guestWrites` and [Guest writes](#g
 to the current environment; how long they live is stated once, at [Guest writes lifetime](#guest-writes-lifetime).
 
 **Returns:** One `GuestWrite` per path with a pending change, each a fresh frozen object: `{ path, change: 'write', type, size, content }`
-(`type` the library's for the path's extension, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
+(`type` the library's for the path's extension, `content` the bytes as a `GuestBytes`: `bytes()` a copy, `image()`
+and `save()` the safe ways to show and to download them) or `{ path, change: 'remove' }`. Empty while
 `guestWrites` is off. Each value is what `commitGuestWrites()` takes: the element knows the values it returned,
 by identity.
 
@@ -879,6 +880,7 @@ among them is below: show it with `textContent`, never in an HTML, URL (such as 
 | a `fetch` record's `url` (it can be `javascript:`) | `FetchRecord.url` (the build with the network modes) |
 | a path `listFiles()` gives for a committed write | `FileInfo.path` |
 | the path of a guest's write (`listGuestWrites()`) | `GuestWrite.path` |
+| a guest write's `content.text()` | `GuestBytes.text` |
 | the message of a call the guest rejected | `RpcError.message` |
 <!-- generated:end -->
 
@@ -1337,7 +1339,7 @@ return what you registered. [ADR-004](ADR-004-files-as-blob-urls.md)
 
 ### Guest writes
 
-<!-- describes: api:GuestWrite sig:9404 -->
+<!-- describes: api:GuestWrite, api:GuestBytes, api:GUEST_IMAGE_TYPES sig:3747d6fbb144 -->
 With `guestWrites: true`, `sandboxFiles.write()` and `remove()` change the guest's own view once the element
 has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` with the message
 `this file has no URL` (the guest gets no URL for anything it wrote). A write is a path and bytes, never a type: its type
@@ -1352,7 +1354,7 @@ guest writes reaches the files, a policy or another environment until the host c
 request is a change of its own: a value commits only while its change is the one pending at its path, so a later write
 there (the same bytes included), a commit or a build leaves the value stale. Without `guestWrites`, both methods
 reject with `FILES_NOT_ALLOWED`, and so does the element for any request that reaches it. Treat written
-content as the guest's data, and so its path, which also chose its type: show them with `textContent`, never in an HTML, URL, template or `console`
+content as the guest's data (`content.text()` is the guest's text), and so its path, which also chose its type: show them with `textContent`, never in an HTML, URL, template or `console`
 format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,` and `@`, so one written into a
 single-quoted attribute can end it and add one). [ADR-004](ADR-004-files-as-blob-urls.md)
 
@@ -1361,21 +1363,37 @@ makes a new, empty overlay and discards the last one's pending writes. Only `ter
 ends the sandbox) keeps them: they stay listable and committable until the next build, and the element's removal
 discards them. This is the one statement of the rule; the other passages link here.
 
-**The bytes are the guest's too, and a URL made of them is a document of your origin.** Bytes the app wrote or returned
-(`GuestWrite.content`, a `Uint8Array` a method returns to `call()`) become a page of **your** origin when you make an
-object URL of them and it is opened: an SVG or HTML file there runs script with your page's storage and cookies. Never give
-`new Blob` or `URL.createObjectURL` the guest's `type`, or no type (Firefox sniffs a typeless blob). Show an image the app
-made inside the sandbox view (`render('<img src="path">')`), or in your page as a `Blob` you typed yourself as
-`image/png` after checking the file's signature, in an `<img>` only. Offer anything else as a download: an `<a download>`
-of an `application/octet-stream` blob, never `target="_blank"`, an `<iframe>`, an `<object>` or `location`. The
-[recipe](#images-the-app-makes) shows both.
+**The bytes are the guest's too, and a URL made of them is a document of your origin.** A write's `content` is a
+`GuestBytes`, with a named way out for each need, so that the type of a `Blob` made of the guest's bytes and the name of a
+file saved from them are the library's:
+
+- `content.image()` answers a `Blob` only for bytes that begin with the signature of one of `GUEST_IMAGE_TYPES` (PNG,
+  JPEG, GIF, WebP, AVIF), typed as that image whatever the path says, and `null` for anything else: never SVG, never HTML,
+  and `null` for HTML written to `x.png`. Bytes that hold markup or script after an image signature are still typed as
+  the image, which a browser only decodes. Put its URL in an `<img>` only.
+- `content.save()` has the browser save the bytes as an `application/octet-stream` blob, which no engine renders, under
+  a name the library chose: the last segment of the path when its extension is an inert type (the types that commit
+  without `{ code: true }`, below), otherwise that segment with `.download` added, so `invoice.pdf.exe` is saved as
+  `invoice.pdf.exe.download` and `report.html` as `report.html.download`, files that nothing opens by a double click.
+  You name nothing: Chromium and WebKit save a `File` under the link's `download` attribute, not under the `File`'s own
+  name, so a name handed to you would be yours to copy, and the natural copy is the guest's path. Nothing navigates; the
+  library revokes the blob's URL. Whether the browser asks the user first, or blocks repeated downloads, is the browser's.
+- `content.bytes()` is the raw way out, a fresh copy each call. `new Blob([content.bytes()], { type: write.type })`, or a
+  `Blob` with no type (Firefox sniffs a typeless blob), is a page of **your** origin when its object URL is opened: an
+  SVG or HTML file there runs script with your page's storage and cookies. That step is yours to avoid; never open such
+  a URL with `target="_blank"`, an `<iframe>`, an `<object>` or `location`. `content` has methods, so a write cannot be
+  structured-cloned or posted as it is (`DataCloneError`); post `content.bytes()`.
+
+Bytes a method returns to `call()` are a `Uint8Array` or an `ArrayBuffer` of the guest's, with none of these steps: the
+same rule holds for them. Show an image the app made inside the sandbox view (`render('<img src="path">')`), or in your
+page with `image()`; the [recipe](#images-the-app-makes) shows both ways out.
 
 **A committed write's type and its name agree; the name is the guest's.** `commitGuestWrites()` checks the type a file
 will be loaded as, which is the type its path's extension has: `evil.html` is `text/html` and needs `{ code: true }`, and
 only the extensions of inert types (images, fonts, audio, video, plain text, JSON, CSS) commit without it. The guest still
-chooses the name, and so the type. If you store or serve the bytes anywhere else (an export, a download named by the
-path), choose the name and the type yourself, and send `X-Content-Type-Options: nosniff` and
-`Content-Disposition: attachment`.
+chooses the name, and so the type. A download in the browser is `content.save()`, which names the file itself. If you
+store or serve the bytes anywhere else (an export, a server's response), choose the name and the type yourself, and
+send `X-Content-Type-Options: nosniff` and `Content-Disposition: attachment`.
 
 In strict mode the view shows the raster images the guest writes: a write whose type is `image/png`, `image/jpeg`,
 `image/gif`, `image/webp` or `image/avif` (as the files would give it, never SVG) can be named by path in `img`,
@@ -1975,9 +1993,11 @@ element's whole life.
   from `call()`) becomes a document of your origin when its object URL is opened. A `Blob` or a `File` from the guest is
   refused wherever it arrives, at any depth: a host method's arguments (`ARGS_NOT_TRANSFERABLE`, before the method runs),
   the result of `call()` (`RESULT_NOT_TRANSFERABLE`) and a log line's arguments (replaced by a string that names it). The
-  app must send its bytes (`Uint8Array`, `ArrayBuffer`), and your page decides what they are. Show images in the sandbox view, or in
-  an `<img>` from a `Blob` you typed `image/png` after checking its signature; offer anything else as a download of an
-  `application/octet-stream` blob ([Guest writes](#guest-writes)).
+  app must send its bytes (`Uint8Array`, `ArrayBuffer`), and your page decides what they are. A write's bytes have their
+  ways out named: show an image in the sandbox view, or in an `<img>` from `content.image()`, which types it by its
+  signature; offer anything else with `content.save()`, which saves it under the library's name
+  ([Guest writes](#guest-writes)). Bytes from `call()` have neither: type an image yourself after checking its signature,
+  and offer anything else as a download of an `application/octet-stream` blob under a name you chose.
 - **What a failure tells the app.** A throw or rejection reaches it as `HANDLER_ERROR`, with one of three texts:
   - your own words, as you wrote them: a thrown string, or the message of a plain `Error` your code made
     (`throw new Error(text)`). Put nothing in it you would not tell the app;
@@ -2045,20 +2065,21 @@ The view shows the **raster images the app wrote** (PNG, JPEG, GIF, WebP or AVIF
 `<canvas>`, so the pixels are made in the worker, or the host sends bytes with `call()` and the app writes them. The app's
 own images are fixed at the build; see [Guest writes](#guest-writes) for what the view shows.
 
-To show such an image **in your page** (outside the view), make the type yourself and check the bytes; offer anything else
-as a download. Never `new Blob([content], { type })` with the write's `type`, which the app chose by its path, and never open the URL in a tab or a frame:
+To show such an image **in your page** (outside the view), take it from `content.image()`, which types it by its
+signature and answers `null` for anything that is not a raster image; offer anything else with `content.save()`, which
+saves an `application/octet-stream` blob under a name the library chose. Never `new Blob([write.content.bytes()], { type })`
+with the write's `type`, which the app chose by its path, and never open the URL in a tab or a frame:
 
 ```js
-const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const write = sandbox.listGuestWrites().find((w) => w.path === 'progress.png' && w.change === 'write');
 if (write === undefined) return; // the app has written nothing yet
-if (PNG.every((byte, i) => write.content[i] === byte)) {
-    img.src = URL.createObjectURL(new Blob([write.content], { type: 'image/png' })); // an <img> only, never a link target
+const image = write.content.image(); // a Blob typed by the bytes' signature, or null; never SVG
+if (image !== null) {
+    img.src = URL.createObjectURL(image); // an <img> only, never a link target
     return;
 }
-// anything else the app made: a download, typed so that it cannot be shown as a page
-link.href = URL.createObjectURL(new Blob([write.content], { type: 'application/octet-stream' }));
-link.download = 'export.bin'; // a name you chose
+// anything else the app made: the browser saves it, under a name the library chose
+write.content.save();
 ```
 
 (The snippet is the body of a function you call when the app's `fileswritten` fires, hence the `return`s.)
@@ -2646,6 +2667,7 @@ Values:
 | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` | every build | At most this many height changes per second (and never more than one per animation frame). |
 | `EXECUTION_TIMEOUT_GRACE_MS` | every build | How long, in ms, the guest's event loop may still be busy at an `execute()` deadline (`workerExecutionTimeout`): the element pings the guest there, and a guest that has not answered within this time ends the sandbox. |
 | `FETCH_ERROR_CODES` | network | Every `FetchErrorCode`, as a value. |
+| `GUEST_IMAGE_TYPES` | every build | The types `GuestBytes`'s `image()` can answer a `Blob` of: the raster images, which a browser only decodes, and opened on their own are an image, never a document. |
 | `GUEST_WRITE_BYTES_PER_SECOND` | every build | Most bytes of written content recorded per environment in any one-second window (`guestWrites`); later writes are refused with `FILES_BUSY`. |
 | `GUEST_WRITES_PER_SECOND` | every build | Most guest write and remove requests handled per environment in any one-second window (`guestWrites`); later ones are refused with `FILES_BUSY`. |
 | `LOAD_TIMEOUT_MS` | every build | How long, in ms, a build may stay `loading` before the sandbox terminates; the reason names the host page's policy when the frame loaded and its startup script never checked in. |
@@ -2684,7 +2706,9 @@ Types:
 | `FileError` | every build | The shape of every refusal of the file methods: a plain `Error` with an own `code`. |
 | `FileErrorCode` | every build | Why a change to the files was refused: the `code` of a `FileError`. |
 | `FileInfo` | every build | One registered file, as `listFiles()` reports it. |
-| `GuestWrite` | every build | One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size` and a copy of the written bytes in `content`) or a removal. |
+| `GuestBytes` | every build | A guest write's bytes (`GuestWrite.content`), with the ways out the library names. |
+| `GuestImageType` | every build | One type of `GUEST_IMAGE_TYPES`. |
+| `GuestWrite` | every build | One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size` and the written bytes in `content`, a `GuestBytes`) or a removal. |
 | `HostMethod` | every build | A host method the guest calls with `bridge.call(name, ...args)`, given to `start()` in `SandboxGrants`. |
 | `NetworkModeEvents` | network | The events the network modes add to the element's (`WebSandboxEventMap`): in a build that has them, the element's event map holds these too. |
 | `NetworkModeMethods` | network | The methods the network modes add to the element (`WebSandbox`): in a build that has them, the element has these too, and in the default build it has none of them. |

@@ -66,7 +66,7 @@ async function routeBundleWith(page: Page, name: string, appJs: string) {
     });
 }
 const saved = (page: Page) => page.evaluate(() => JSON.parse((window as any).store.data.get('todos:todo-app') ?? 'null'));
-const writes = (page: Page) => page.evaluate(() => (window as any).app.sandbox.listGuestWrites().map((w: any) => ({ path: w.path, type: w.type, bytes: Array.from(w.content as Uint8Array).join(',') })));
+const writes = (page: Page) => page.evaluate(() => (window as any).app.sandbox.listGuestWrites().map((w: any) => ({ path: w.path, type: w.type, bytes: Array.from(w.content.bytes() as Uint8Array).join(',') })));
 
 /** The view's list as text, and the facts about its images. */
 const LIST = `Array.from(document.querySelectorAll('#list li')).map(li => (li.querySelector('input').checked ? '[x] ' : '[ ] ') + li.querySelector('span').textContent)`;

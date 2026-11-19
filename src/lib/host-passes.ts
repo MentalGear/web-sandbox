@@ -212,6 +212,15 @@ export const HOST_PASSES = {
         ],
         cost: 'linear in the write, which MAX_TOTAL_BYTES caps, at most GUEST_WRITES_PER_SECOND a second',
     },
+    guestBytes: {
+        does: "a listed write's content (GuestBytes, I9), run only when the embedder calls it: `bytes()` copies the bytes, `text()` decodes them (TextDecoder), `image()` compares their first bytes with GUEST_IMAGE_SIGNATURES and wraps them in a Blob of the library's type, `save()` names the file from the path's last segment and FILE_TYPES (savedName) and clicks the library's own link to an `application/octet-stream` blob (LIBRARY_SINKS)",
+        takes: ['writes'], modes: ALL, rule: 'pure',
+        units: [
+            'src/lib/guest-bytes.ts#guestBytes', 'src/lib/guest-bytes.ts#imageOf', 'src/lib/guest-bytes.ts#imageTypeOf', 'src/lib/guest-bytes.ts#beginsWith',
+            'src/lib/guest-bytes.ts#savedName', 'src/lib/guest-bytes.ts#saveAs', 'src/lib/files.ts#mimeTypeFor', 'src/lib/files.ts#fileTypeRow',
+        ],
+        cost: 'linear in the write, which MAX_TOTAL_BYTES caps (a copy, a decode, a Blob); the signature check reads at most 12 bytes, the name one path of MAX_PATH_LENGTH',
+    },
     rpcFrames: {
         does: "every frame on the guest's port is validated by the broker and measured as a snapshot (createSizeOf) before its value reaches the embedder's method or a reserved one; a probe's answer is a number",
         takes: ['calls'], modes: ALL, rule: 'pure',
@@ -274,7 +283,8 @@ export const hostPassRows = (): Array<HostPass & { readonly id: HostPassId }> =>
 export const sealedHostPasses = (): HostPassId[] => (Object.keys(HOST_PASSES) as HostPassId[]).filter(id => (HOST_PASSES[id].modes as readonly SandboxMode[]).includes('sealed'));
 
 /**
- * The library's own documents written to a markup sink of the host realm, which the scan of the passes admits: the unit
+ * The library's own documents written to a markup sink of the host realm, and the library's own link that saves a guest
+ * write's bytes (GuestBytes's `save()`), which the scan of the passes admits: the unit
  * that writes, the platform names it uses, and why no guest content is in what it writes. The call sites the view's
  * frame builders reach them through are held to that by test/unit/host-passes.test.ts.
  */
@@ -298,6 +308,10 @@ export const LIBRARY_SINKS = {
     'src/lib/bridge-frame.ts#createBridgeFrame': {
         names: ['createElement', 'setAttribute', 'cssText'],
         why: "strict mode's fetch bridge frame (fetchBridge): its iframe, flags and a constant style; its document is the library's",
+    },
+    'src/lib/guest-bytes.ts#saveAs': {
+        names: ['createElement', 'href'],
+        why: "GuestBytes's `save()`, when the embedder calls it: an `a` element never put in a document, its `href` an object URL of an `application/octet-stream` blob the library made, its `download` the library's name (savedName); clicked once, it starts a download, which no parser of the host realm reads and no directive of the host page's policy governs",
     },
     'src/lib/bridge-frame.ts#prepareBridgeFrame': {
         names: ['createElement', 'setAttribute', 'cssText'],

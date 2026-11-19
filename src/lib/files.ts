@@ -215,8 +215,8 @@ export interface FileTypeRow {
 
 /**
  * The one table of file types (I8): for each extension, the type a file gets from its path, and whether it is inert,
- * the one decision of which guest writes commit without `{ code: true }` (guest-writes.ts, INERT_TYPES, derived from
- * it). An inert type is one the browser only decodes or shows as text: a raster image, a font, audio, video, plain
+ * the one decision of which guest writes commit without `{ code: true }` and which saved files keep their name
+ * (INERT_TYPES, derived from it). An inert type is one the browser only decodes or shows as text: a raster image, a font, audio, video, plain
  * text, JSON or CSS. Every other type (JavaScript, HTML, SVG, XML, WebAssembly, Markdown, CSV, WebVTT) runs or is parsed
  * as a document somewhere, and so is code; so is FALLBACK_TYPE, the type of an extension the table does not have. A
  * guest write's type is always this table's for its path (CheckedFile.fromGuest): the guest gives bytes, never a type.
@@ -259,6 +259,19 @@ export const FILE_TYPES = {
     webm: { type: 'video/webm', inert: true },
     ogv: { type: 'video/ogg', inert: true },
 } as const satisfies Readonly<Record<string, FileTypeRow>>;
+
+/**
+ * The types commitGuestWrites() applies without `{ code: true }`, and the types whose files save() keeps the name of
+ * (guest-bytes.ts): the types of FILE_TYPES's inert rows, and no other. Exact strings: `image/svg+xml` is a document
+ * that can carry script, and FALLBACK_TYPE, an extension the table does not have, is not inert either.
+ */
+export const INERT_TYPES: ReadonlySet<string> = inertTypes();
+
+function inertTypes(): ReadonlySet<string> {
+    const types = new Set<string>();
+    for (const row of Object.values(FILE_TYPES) as FileTypeRow[]) if (row.inert) types.add(row.type);
+    return types;
+}
 
 /**
  * Whether a file of this type is JavaScript: a script load admits it (load-kinds.ts, the one table), it loads

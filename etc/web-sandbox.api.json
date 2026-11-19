@@ -649,6 +649,29 @@
         },
         {
           "kind": "Variable",
+          "canonicalReference": "web-sandbox!GUEST_IMAGE_TYPES:var",
+          "docComment": "/**\n * The types {@link GuestBytes}'s `image()` can answer a `Blob` of: the raster images, which a browser only decodes, and\n * opened on their own are an image, never a document. SVG is not one.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "GUEST_IMAGE_TYPES: "
+            },
+            {
+              "kind": "Content",
+              "text": "readonly ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif']"
+            }
+          ],
+          "fileUrlPath": "dist/lib/guest-bytes.d.ts",
+          "isReadonly": true,
+          "releaseTag": "Public",
+          "name": "GUEST_IMAGE_TYPES",
+          "variableTypeTokenRange": {
+            "startIndex": 1,
+            "endIndex": 2
+          }
+        },
+        {
+          "kind": "Variable",
           "canonicalReference": "web-sandbox!GUEST_WRITE_BYTES_PER_SECOND:var",
           "docComment": "/**\n * Most bytes of written content recorded per environment in any one-second window (`guestWrites`); later writes are\n * refused with `FILES_BUSY`. It equals the whole file quota, 8 MiB.\n */\n",
           "excerptTokens": [
@@ -698,9 +721,207 @@
           }
         },
         {
+          "kind": "Interface",
+          "canonicalReference": "web-sandbox!GuestBytes:interface",
+          "docComment": "/**\n * A guest write's bytes (`GuestWrite.content`), with the ways out the library names. The bytes are the guest's:\n * attacker data, whatever the path says they are.\n *\n * @remarks\n *\n * Each value is frozen and made by the element with the {@link GuestWrite} it belongs to. Show an image the app made with\n * `image()`, in an `<img>` only; offer anything else with `save()`. `bytes()` hands out the raw bytes, and a `Blob` of\n * them typed by the write's `type`, or by no type, is a document of your origin when its URL is opened (an SVG or HTML\n * file runs script there): that step is yours to avoid.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "export interface GuestBytes "
+            }
+          ],
+          "fileUrlPath": "dist/lib/guest-bytes.d.ts",
+          "releaseTag": "Public",
+          "name": "GuestBytes",
+          "preserveMemberOrder": false,
+          "members": [
+            {
+              "kind": "MethodSignature",
+              "canonicalReference": "web-sandbox!GuestBytes#bytes:member(1)",
+              "docComment": "/**\n * The raw bytes: a copy each call, which you may change without changing the write or what a commit stores.\n *\n * @returns A new `Uint8Array` of the bytes the guest wrote.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "bytes(): "
+                },
+                {
+                  "kind": "Reference",
+                  "text": "Uint8Array",
+                  "canonicalReference": "!Uint8Array:interface"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isOptional": false,
+              "returnTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              },
+              "releaseTag": "Public",
+              "overloadIndex": 1,
+              "parameters": [],
+              "name": "bytes"
+            },
+            {
+              "kind": "MethodSignature",
+              "canonicalReference": "web-sandbox!GuestBytes#image:member(1)",
+              "docComment": "/**\n * The bytes as an image, when they begin with the signature of one of {@link GUEST_IMAGE_TYPES}, whatever the path's\n * extension.\n *\n * @remarks\n *\n * Bytes that hold more after a signature (markup or script behind a PNG header) are still typed as the image, which a\n * browser only decodes. Never SVG.\n *\n * @returns A `Blob` of the bytes typed as the image the signature names, or `null` for bytes of any other kind.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "image(): "
+                },
+                {
+                  "kind": "Reference",
+                  "text": "Blob",
+                  "canonicalReference": "!Blob:interface"
+                },
+                {
+                  "kind": "Content",
+                  "text": " | null"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isOptional": false,
+              "returnTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 3
+              },
+              "releaseTag": "Public",
+              "overloadIndex": 1,
+              "parameters": [],
+              "name": "image"
+            },
+            {
+              "kind": "MethodSignature",
+              "canonicalReference": "web-sandbox!GuestBytes#save:member(1)",
+              "docComment": "/**\n * Has the browser save the bytes as a file, under a name the library chose: the last segment of the write's path when\n * its extension is one of an inert type, otherwise that segment with `.download` added (`report.html` is saved as\n * `report.html.download`, `invoice.pdf.exe` as `invoice.pdf.exe.download`).\n *\n * @remarks\n *\n * The library clicks a link of its own to an `application/octet-stream` blob, which a browser saves and does not\n * render, and revokes the blob's URL. Nothing navigates. Whether the browser asks the user, saves at once or blocks\n * repeated downloads is the browser's.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "save(): "
+                },
+                {
+                  "kind": "Content",
+                  "text": "void"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isOptional": false,
+              "returnTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              },
+              "releaseTag": "Public",
+              "overloadIndex": 1,
+              "parameters": [],
+              "name": "save"
+            },
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!GuestBytes#size:member",
+              "docComment": "/**\n * The number of bytes, as `bytes()` would hand them out.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "readonly size: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "number"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": true,
+              "isOptional": false,
+              "releaseTag": "Public",
+              "name": "size",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            },
+            {
+              "kind": "MethodSignature",
+              "canonicalReference": "web-sandbox!GuestBytes#text:member(1)",
+              "docComment": "/**\n * The bytes decoded as UTF-8, a malformed sequence as U+FFFD; a leading byte order mark is dropped.\n *\n * @returns The guest's text: attacker text, to show with `textContent`.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "text(): "
+                },
+                {
+                  "kind": "Content",
+                  "text": "string"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isOptional": false,
+              "returnTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              },
+              "releaseTag": "Public",
+              "overloadIndex": 1,
+              "parameters": [],
+              "name": "text"
+            }
+          ],
+          "extendsTokenRanges": []
+        },
+        {
+          "kind": "TypeAlias",
+          "canonicalReference": "web-sandbox!GuestImageType:type",
+          "docComment": "/**\n * One type of {@link GUEST_IMAGE_TYPES}.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "export type GuestImageType = "
+            },
+            {
+              "kind": "Content",
+              "text": "(typeof "
+            },
+            {
+              "kind": "Reference",
+              "text": "GUEST_IMAGE_TYPES",
+              "canonicalReference": "web-sandbox!GUEST_IMAGE_TYPES:var"
+            },
+            {
+              "kind": "Content",
+              "text": ")[number]"
+            },
+            {
+              "kind": "Content",
+              "text": ";"
+            }
+          ],
+          "fileUrlPath": "dist/lib/guest-bytes.d.ts",
+          "releaseTag": "Public",
+          "name": "GuestImageType",
+          "typeTokenRange": {
+            "startIndex": 1,
+            "endIndex": 4
+          }
+        },
+        {
           "kind": "TypeAlias",
           "canonicalReference": "web-sandbox!GuestWrite:type",
-          "docComment": "/**\n * One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size`\n * and a copy of the written bytes in `content`) or a removal. Each call reports fresh frozen objects, and a change reaches the\n * files only when such an object is given to `commitGuestWrites()`, which knows the objects its element returned by identity.\n *\n * @remarks\n *\n * The `path` and the `content` are the guest's: attacker text. The `type` is the library's for the path's extension\n * (`application/octet-stream` for one it does not know), never a type the guest gave, so it always agrees with the name;\n * the guest still chooses it by choosing the path (`evil.svg` is `image/svg+xml`). Never make an object URL of `content` with the\n * write's `type` (or none) and open it: an SVG or HTML file is then a document of your origin. Show an image in the sandbox\n * view, or in an `<img>` from a `Blob` you typed `image/png` after checking its signature; offer anything else as a download.\n * Show a path with `textContent`, never\n * in an HTML, URL, `eval`, template or `console` format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,`\n * and `@`, so one written into a single-quoted attribute can end it and add one).\n */\n",
+          "docComment": "/**\n * One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size`\n * and the written bytes in `content`, a {@link GuestBytes}) or a removal. Each call reports fresh frozen objects, and a change reaches the\n * files only when such an object is given to `commitGuestWrites()`, which knows the objects its element returned by identity.\n *\n * @remarks\n *\n * The `path` and the `content` are the guest's: attacker text and attacker bytes. The `type` is the library's for the path's extension\n * (`application/octet-stream` for one it does not know), never a type the guest gave, so it always agrees with the name;\n * the guest still chooses it by choosing the path (`evil.svg` is `image/svg+xml`). Show an image the app made in the sandbox\n * view, or in an `<img>` from `content.image()`, which types a `Blob` by the bytes' signature and is never SVG; offer\n * anything else with `content.save()`, which saves the file under a name the library chose. Never make an object URL of\n * `content.bytes()` with the write's `type` (or none) and open it: an SVG or HTML file is then a document of your origin.\n * Show a path with `textContent`, never\n * in an HTML, URL, `eval`, template or `console` format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,`\n * and `@`, so one written into a single-quoted attribute can end it and add one).\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -712,8 +933,8 @@
             },
             {
               "kind": "Reference",
-              "text": "Uint8Array",
-              "canonicalReference": "!Uint8Array:interface"
+              "text": "GuestBytes",
+              "canonicalReference": "web-sandbox!GuestBytes:interface"
             },
             {
               "kind": "Content",
@@ -3330,7 +3551,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#listGuestWrites:member(1)",
-              "docComment": "/**\n * The guest's pending writes and removals (see `guestWrites` and docs/API.md#guest-writes), sorted by path. They belong\n * to the current environment; how long they live is stated once, at docs/API.md#guest-writes-lifetime.\n *\n * @returns One {@link GuestWrite} per path with a pending change, each a fresh frozen object: `{ path, change: 'write', type, size, content }`\n * (`type` the library's for the path's extension, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while\n * `guestWrites` is off. Each value is what `commitGuestWrites()` takes: the element knows the values it returned,\n * by identity.\n */\n",
+              "docComment": "/**\n * The guest's pending writes and removals (see `guestWrites` and docs/API.md#guest-writes), sorted by path. They belong\n * to the current environment; how long they live is stated once, at docs/API.md#guest-writes-lifetime.\n *\n * @returns One {@link GuestWrite} per path with a pending change, each a fresh frozen object: `{ path, change: 'write', type, size, content }`\n * (`type` the library's for the path's extension, `content` the bytes as a {@link GuestBytes}: `bytes()` a copy, `image()`\n * and `save()` the safe ways to show and to download them) or `{ path, change: 'remove' }`. Empty while\n * `guestWrites` is off. Each value is what `commitGuestWrites()` takes: the element knows the values it returned,\n * by identity.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",

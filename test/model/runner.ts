@@ -122,7 +122,7 @@ function deepFrozen(value: unknown, seen = new WeakSet<object>()): boolean {
 
 /** listGuestWrites() as the model reads it: each written text as its token. */
 export function listingOf(entries: any[]): { path: string; change: string; text?: string }[] {
-    return entries.map(entry => ({ path: entry.path, change: entry.change, ...(entry.change === 'write' ? { text: tokenOf(new TextDecoder().decode(entry.content)) } : {}) }));
+    return entries.map(entry => ({ path: entry.path, change: entry.change, ...(entry.change === 'write' ? { text: tokenOf(entry.content.text()) } : {}) }));
 }
 
 /**
