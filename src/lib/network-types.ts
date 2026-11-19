@@ -124,7 +124,7 @@ export interface NetworkModeEvents {
      *
      * @remarks
      * Dispatched only with `fetchBridge` configured, so only in a build with the network modes. Without it
-     * `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. Bubbles.
+     * `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. Does not bubble.
      */
     fetch: CustomEvent<FetchRecord>;
 }

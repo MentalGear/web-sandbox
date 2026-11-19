@@ -32,19 +32,25 @@
  * - `violation`: what the guest's realm or its view reports, a claim of the guest's;
  * - `fileswritten`: the path the guest wrote;
  * - `fileschanged`: the paths a commit changed, which the guest's writes named;
- * - `fetch`: the URL the guest asked for. The network build's only; whether it bubbles is not design 01's to say (its
- *   table lists the default build's events), and it bubbles until the owner decides.
+ * - `fetch`: the URL the guest asked for. The network build's only.
  * `ready` carries nothing, and `terminated` the library's reason or the embedder's own.
+ *
+ * The table's type holds the rule: a row with `guestData: true` and `bubbles: true` does not compile.
  */
+type ElementEventBuilds = { readonly builds: 'every' | 'network' };
+type GuestDataEvent = ElementEventBuilds & { readonly guestData: true; readonly bubbles: false };
+type LibraryDataEvent = ElementEventBuilds & { readonly guestData: false; readonly bubbles: boolean };
+type ElementEventRow = GuestDataEvent | LibraryDataEvent;
+
 export const ELEMENT_EVENTS = Object.freeze({
     'ready': { bubbles: false, guestData: false, builds: 'every' },
     'terminated': { bubbles: false, guestData: false, builds: 'every' },
     'sandbox-log': { bubbles: false, guestData: true, builds: 'every' },
     'violation': { bubbles: false, guestData: true, builds: 'every' },
-    'fetch': { bubbles: true, guestData: true, builds: 'network' },
+    'fetch': { bubbles: false, guestData: true, builds: 'network' },
     'fileschanged': { bubbles: false, guestData: true, builds: 'every' },
     'fileswritten': { bubbles: false, guestData: true, builds: 'every' },
-} as const satisfies Readonly<Record<string, { readonly bubbles: boolean; readonly guestData: boolean; readonly builds: 'every' | 'network' }>>);
+} as const satisfies Readonly<Record<string, ElementEventRow>>);
 
 export type ElementEventType = keyof typeof ELEMENT_EVENTS;
 

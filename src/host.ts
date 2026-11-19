@@ -206,8 +206,8 @@ type GrantsAreTheSchemas = Holds<Same<Exclude<keyof SealedSandboxConfig, keyof S
  * @remarks
  * Every event is a `CustomEvent` dispatched on the element and none is `composed`. Listen on the element itself: the
  * events whose detail carries the guest's data (`sandbox-log`, `violation`, `fileswritten`, `fileschanged`) do not
- * bubble, so a bubbling listener on a shared ancestor or on `window` hears no app's data, nor does any other event but
- * the network build's `fetch`. A listener added for the capture phase on an ancestor still receives each of them: the
+ * bubble, nor does the network build's `fetch`, so a bubbling listener on a shared ancestor or on `window` hears no
+ * app's data. A listener added for the capture phase on an ancestor still receives each of them: the
  * capture phase runs down the whole path whatever `bubbles` says. The `detail` is frozen, deeply: every object and
  * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
  * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and

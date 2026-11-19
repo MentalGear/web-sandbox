@@ -35,18 +35,15 @@ afterEach(() => {
 });
 
 describe('an event that carries guest data does not bubble (design 01, I5)', () => {
-    it("every event of the table says whether it carries guest data; none that does bubbles, in the default build's events", () => {
+    it('every event of the table says whether it carries guest data; none that does bubbles, in either build', () => {
         for (const [type, row] of Object.entries(ELEMENT_EVENTS)) {
             expect(typeof row.guestData, type).toBe('boolean');
-            if (row.guestData && row.builds === 'every') expect(row.bubbles, `${type} carries guest data`).toBe(false);
+            if (row.guestData) expect(row.bubbles, `${type} carries guest data`).toBe(false);
         }
         // the three that design 01 lists, and the commit's paths
         const guestData = Object.entries(ELEMENT_EVENTS).filter(([, row]) => row.guestData).map(([type]) => type);
         expect(guestData.sort()).toEqual(['fetch', 'fileschanged', 'fileswritten', 'sandbox-log', 'violation']);
-        // the network build's `fetch` carries guest data (the URL the guest asked for) and bubbles: design 01's table lists
-        // the default build's events, and whether `fetch` bubbles waits for the owner; it is the one such event
-        const bubbling = Object.entries(ELEMENT_EVENTS).filter(([, row]) => row.guestData && row.bubbles).map(([type]) => type);
-        expect(bubbling).toEqual(['fetch']);
+        // `fetch` (the URL the guest asked for) is the network build's only
         expect(ELEMENT_EVENTS.fetch.builds).toBe('network');
     });
 
@@ -54,7 +51,7 @@ describe('an event that carries guest data does not bubble (design 01, I5)', () 
         const el = document.createElement('web-sandbox');
         document.body.appendChild(el);
         for (const [type, row] of Object.entries(ELEMENT_EVENTS) as [keyof typeof ELEMENT_EVENTS, (typeof ELEMENT_EVENTS)[keyof typeof ELEMENT_EVENTS]][]) {
-            if (!row.guestData || row.bubbles) continue;
+            if (!row.guestData) continue;
             const heard: string[] = [];
             const on = (where: string) => () => heard.push(where);
             const listeners: [EventTarget, string, boolean][] = [[el, 'element', false], [document.body, 'body, bubbling', false], [window, 'window, bubbling', false], [window, 'window, capture', true]];

@@ -31,7 +31,7 @@
         window.sandboxFetches = [];
         window.addEventListener('fetch', (event) => {
             window.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail });
-        });
+        }, true);
         // Every guest write the host recorded (backlog C5), as the host reports it
         window.sandboxWrites = [];
         window.addEventListener('fileswritten', (event) => {

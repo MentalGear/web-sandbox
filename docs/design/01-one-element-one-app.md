@@ -4,7 +4,7 @@
 `start(app, grants)` and `started` in both builds, the six members gone from both, `execute()` in the build with the
 network modes only, `APP_SURFACE` (I1, I3) and `CONFIG_SCHEMA`'s owners (I17) with their tests, an element with no app
 that builds nothing (the lifecycle's rows below), and the events that carry guest data not bubbling (`ELEMENT_EVENTS`,
-I5; the network build's `fetch` is not this design's table, and still bubbles). Not built yet: commits by identity
+I5; the network build's `fetch` is held to the same rule). Not built yet: commits by identity
 (1.7), which waits for the owner. The code as it is:
 [API.md](../API.md). [The folder's index](README.md) has the invariants (I1 to I5 and I17 are this file's) and what
 [review 1](REVIEW-1.md) and [review 2](REVIEW-2.md) changed here.

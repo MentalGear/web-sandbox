@@ -93,7 +93,7 @@ window.addEventListener('sandbox-log', (event: any) => { w.sandboxLogs.push((eve
 w.sandboxViolations = [];
 window.addEventListener('violation', (event: any) => { w.sandboxViolations.push({ sandbox: event.target.id || 'main', ...event.detail }); }, true);
 w.sandboxFetches = [];
-window.addEventListener('fetch', (event: any) => { w.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail }); });
+window.addEventListener('fetch', (event: any) => { w.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail }); }, true);
 w.sandboxWrites = [];
 // Each element the page shows is sized and heard the same way: this one, and each fresh one a spec starts in its place
 // (the fixture's startFresh() calls the hook before it inserts it).

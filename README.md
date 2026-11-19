@@ -484,7 +484,7 @@ sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.u
     `FETCH_TIMEOUT`, `FETCH_FAILED` (network error, CORS, the bridge's frame could not start, or teardown).
     `FETCH_BUSY`, `FETCH_TIMEOUT` and
     `FETCH_FAILED` may succeed if retried. HTTP error statuses resolve, as with `fetch`.
-*   **Every request is logged** as a `fetch` event on the element (it bubbles): `{ method, url, outcome, bytes,
+*   **Every request is logged** as a `fetch` event on the element (it does not bubble): `{ method, url, outcome, bytes,
     durationMs, … }`, `outcome` being `ok` (with `status`), `refused` (no request made; with `code`),
     `failed` (with `code`, and `status` when a response arrived) or `aborted`. Each outcome has its own fields:
     `FetchRecord` is a union keyed by `outcome`. Fields that come from the guest are validated or clamped first.

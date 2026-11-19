@@ -25,7 +25,7 @@ test.use({ build: 'network' });
 const ATTACKER = 'https://attacker.test';
 
 test.describe('1. a refused load is reported on the host', () => {
-    test('image and fetch: one event each, with directive, blockedURI and source position; it bubbles to window with the element as target', async ({ sandbox, page }) => {
+    test('image and fetch: one event each, with directive, blockedURI and source position; it does not bubble, with the element as target', async ({ sandbox, page }) => {
         expect(await sandbox.mount()).toBe('ready');
         const outcome = await sandbox.inGuest(`
             const img = await new Promise(res => { const i = new Image(); i.onload = () => res('loaded'); i.onerror = () => res('refused'); i.src = '${ATTACKER}/img'; });
