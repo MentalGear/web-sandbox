@@ -180,11 +180,14 @@ describe('docs/API.md lists the public surface', () => {
     it('every public method of the element, and no other', () => {
         // the element's private members, and the methods the network build installs on it (network-host.ts): none is public
         const isPrivate = new Set([...[...read('src/host.ts').matchAll(/^ {4}private (\w+)/gm)].map(match => match[1]!), ...networkMethodNames()]);
-        const callbacks = new Set(['constructor', 'connectedCallback', 'disconnectedCallback', 'adoptedCallback', 'state']);
-        const methods = Object.getOwnPropertyNames(WebSandbox.prototype).filter(name => !isPrivate.has(name) && !callbacks.has(name));
+        const callbacks = new Set(['constructor', 'connectedCallback', 'disconnectedCallback', 'adoptedCallback']);
+        const members = Object.getOwnPropertyNames(WebSandbox.prototype).filter(name => !isPrivate.has(name) && !callbacks.has(name));
+        // the element's properties are its getters (`state`, `started`), documented in the table of "The element"
+        const isProperty = (name: string) => Object.getOwnPropertyDescriptor(WebSandbox.prototype, name)!.get !== undefined;
+        const methods = members.filter(name => !isProperty(name));
         const documented = [...section('## Methods').matchAll(/^### `(\w+)\(/gm)].map(match => match[1]!);
         expect(sorted(documented)).toEqual(sorted(methods));
-        expect(rowKeys(section('## The element'))).toEqual(['state']);
+        expect(sorted(rowKeys(section('## The element')))).toEqual(sorted(members.filter(isProperty)));
     });
 
     it('every event the element dispatches, and no other', () => {

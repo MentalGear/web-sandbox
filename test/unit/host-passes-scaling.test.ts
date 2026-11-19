@@ -4,6 +4,7 @@ import { HOST_PASSES, type HostPassId } from '@src/lib/host-passes';
 import { dynamicImportAt } from '@src/lib/entry-imports';
 import { FileStore, viewStylesheets, type ByteEdits, type FileSnapshotEntry } from '@src/lib/files';
 import { normaliseConfig } from '@src/lib/config-schema';
+import { readStart } from '@src/lib/app-start';
 import { createGuestWrites } from '@src/lib/guest-writes';
 import { createBroker } from '@src/lib/rpc';
 import { toLogDetail } from '@src/lib/sandbox-log';
@@ -77,6 +78,18 @@ const SHAPES: Record<HostPassId, readonly Shape[]> = {
             return () => el.setConfig({ html });
         },
     }],
+    startReading: [
+        { name: "start()'s reading of a long `html`", n: VIEW_RENDER_MAX_LENGTH / 8, make: n => { const app = { html: chars(n) }; return () => readStart(app, undefined, { hostOrigin: HOST, hostSites: [HOST] }); } },
+        {
+            name: "start()'s reading of many methods with long names", n: 1000,
+            make: n => {
+                const methods: Record<string, () => void> = {};
+                for (let i = 0; i < n; i++) methods[`${'m'.repeat(200)}${i}`] = () => {};
+                return () => readStart({}, { methods }, { hostOrigin: HOST, hostSites: [HOST] });
+            },
+        },
+        { name: "start()'s reading of many files with long paths and their entry", n: 120, make: n => { const files = { ...manyFiles(n), 'app.js': 'x' }; return () => readStart({ entry: 'app.js', files }, undefined, { hostOrigin: HOST, hostSites: [HOST] }); } },
+    ],
     configSchema: [{ name: 'normaliseConfig() of a long `html`', n: VIEW_RENDER_MAX_LENGTH / 8, make: n => { const config = { html: chars(n) }; return () => normaliseConfig(config, { hostOrigin: HOST, hostSites: [HOST] }); } }],
     fileStore: [
         { name: 'registerFiles() of many files with long paths', n: 120, make: n => { const files = manyFiles(n); return () => new FileStore(() => {}).register(files); } },

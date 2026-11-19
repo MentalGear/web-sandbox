@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { mountTodoApp, pushAll } from '../../examples/sealed-app/host.js';
 
 /**
- * The host side of examples/sealed-app/ (docs/API.md#building-an-app-in-sealed-mode), run against stub elements: what it
- * registers, how it configures the sandbox, that its `save` method, the one the docs hold up as the validation example
- * for an exposed method, takes only what it expects, and that every mount makes an element of its own which stop() ends
+ * The host side of examples/sealed-app/ (docs/API.md#building-an-app-in-sealed-mode), run against stub elements: the app
+ * it starts (its files, markup and entry) and what it grants it, that its `save` method, the one the docs hold up as the
+ * validation example for a host method, takes only what it expects, and that every mount makes an element of its own which stop() ends
  * (BD6:LIM-2, BD6:CHL-3). The app itself runs in test/e2e/sealed-app.spec.ts, on three engines.
  */
 
@@ -19,8 +19,7 @@ interface Stub {
     element: HTMLElement;
     methods: Map<string, Method>;
     calls: unknown[][];
-    registered: Record<string, unknown>[];
-    configs: Record<string, unknown>[];
+    starts: { app: Record<string, unknown>; grants: Record<string, unknown> }[];
     log: string[];
 }
 
@@ -34,11 +33,12 @@ function stubElements() {
     vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
         if (tag !== 'web-sandbox') return real(tag);
         const element = real('div');
-        const stub: Stub = { element, methods: new Map(), calls: [], registered: [], configs: [], log: [] };
+        const stub: Stub = { element, methods: new Map(), calls: [], starts: [], log: [] };
         Object.assign(element, {
-            registerFiles: (files: Record<string, unknown>) => stub.registered.push(files),
-            expose: (name: string, fn: Method) => stub.methods.set(name, fn),
-            setConfig: (config: Record<string, unknown>) => stub.configs.push(config),
+            start: (app: Record<string, unknown>, grants: Record<string, unknown>) => {
+                stub.starts.push({ app, grants });
+                for (const [name, fn] of Object.entries((grants.methods ?? {}) as Record<string, Method>)) stub.methods.set(name, fn);
+            },
             terminate: () => void stub.log.push('terminate'),
             call: async (...args: unknown[]) => {
                 stub.calls.push(args);
@@ -81,13 +81,17 @@ async function mount(saved: string | null = null, appId = 'a', store = newStore(
 }
 
 describe("the example's host side", () => {
-    it('makes its own element in the container, registers the bundle, configures a sealed sandbox with guest writes, and hands the app its saved state', async () => {
-        const { registered, configs, calls, container, sandbox, element } = await mount(JSON.stringify([{ text: 'milk', done: true }]));
+    it('makes its own element in the container, starts the bundle once as a sealed app with guest writes, and hands the app its saved state', async () => {
+        const { starts, methods, calls, container, sandbox, element } = await mount(JSON.stringify([{ text: 'milk', done: true }]));
         expect(sandbox).toBe(element);
         expect(container.contains(element), 'the element is in the container').toBe(true);
+        expect(starts, 'one start(), the one call that sets the app up').toHaveLength(1);
+        const { app, grants } = starts[0]!;
         const files = readdirSync(BUNDLE).filter(name => name !== 'host.js' && name !== 'app.html');
-        expect(Object.keys(registered[0]!).sort(), 'every file of the bundle but the markup and this module is registered').toEqual(files.sort());
-        expect(configs).toEqual([{ entry: 'app.js', html: readFileSync(path.join(BUNDLE, 'app.html'), 'utf8'), guestWrites: true }]); // no mode: sealed; no origins, no fetchBridge
+        expect(Object.keys(app.files as object).sort(), "every file of the bundle but the markup and this module is the app's").toEqual(files.sort());
+        expect({ ...app, files: null }).toEqual({ entry: 'app.js', html: readFileSync(path.join(BUNDLE, 'app.html'), 'utf8'), files: null }); // the app's own content only
+        expect({ ...grants, methods: null }).toEqual({ guestWrites: true, methods: null }); // no mode: sealed; no origins, no fetchBridge
+        expect([...methods.keys()]).toEqual(['save']);
         expect(calls).toEqual([['load', [{ text: 'milk', done: true }]]]);
     });
 

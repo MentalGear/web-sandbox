@@ -6,9 +6,12 @@
 export { WebSandbox, defineWebSandbox, EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_MS, VIEW_LIVENESS_TIMEOUT_MS } from "./host";
 export type {
     CallLimits,
+    HostMethod,
+    SandboxApp,
     SandboxConfig,
     SandboxConfigByMode,
     SandboxConfigOptions,
+    SandboxGrants,
     SandboxState,
     SealedSandboxConfig,
     WebSandboxEventMap,

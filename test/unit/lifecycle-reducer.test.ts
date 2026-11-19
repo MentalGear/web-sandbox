@@ -656,7 +656,9 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
         // the element's class steps through `step`; the network modes' methods (network-host.ts), which are not in its
         // module, through the element's `_step`
         const stepped = new Set([...elementSource().matchAll(/(?:\bstep\((?:this|element), |this\._step\()\{ t: '(\w+)'/g)].map(match => match[1]!));
-        expect([...stepped].sort()).toEqual(['announced', 'build', 'connect', 'disconnect', 'filesChanged', 'frameLoad', 'loadDeadline', 'setConfig', 'terminate', 'viewReady']);
+        // `configured`: start(), which stores a configuration it validated whole and builds from it as the applyConfig
+        // effect's answer does
+        expect([...stepped].sort()).toEqual(['announced', 'build', 'configured', 'connect', 'disconnect', 'filesChanged', 'frameLoad', 'loadDeadline', 'setConfig', 'terminate', 'viewReady']);
         // removed, each a second path or a second store of the lifecycle (PRs B to D)
         expect(host).not.toMatch(/_endEnvironment|private initialize\(|function stop\(|_buildInputs|_configRefusal|_isCurrentConfig|_enterState|_enterReady|_finishBuild|_completeBuild|_frameLoaded|_expectAnnouncement|_guestWindow|notYet/);
         // the class itself never calls its `_step` (the network modes' methods' entry, and the tests': the platform's inputs by hand)

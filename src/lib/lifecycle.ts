@@ -196,8 +196,9 @@ export const LC_INPUTS = {
     // setConfig(): `same` is the host's comparison of the structured clone with the last usable copy (a clone that failed
     // is never the same). The rest of the no-op predicate is the reducer's (R1:R3-7).
     setConfig: { from: 'setConfig()', stamped: 'never', states: ANY_STATE, fields: { same: field<boolean>('boolean') } },
-    // The config was applied (the `applyConfig` effect): its refusal, or null, and the context of the build it starts.
-    configured: { from: 'the applyConfig effect', stamped: 'never', states: ANY_STATE, fields: { refusal: field<string | null>('string | null'), ctx: field<BuildContext>('BuildContext') } },
+    // The config was applied (the `applyConfig` effect; start(), which stores a config it validated whole): its refusal,
+    // or null, and the context of the build it starts.
+    configured: { from: 'the applyConfig effect, start()', stamped: 'never', states: ANY_STATE, fields: { refusal: field<string | null>('string | null'), ctx: field<BuildContext>('BuildContext') } },
     // registerFiles(), unregisterFiles() or commitGuestWrites() changed the store (its 'fileschanged' is the host's).
     filesChanged: { from: 'registerFiles(), unregisterFiles(), commitGuestWrites()', stamped: 'never', states: ANY_STATE, fields: {} },
     // The build effect returned what it prepared, or threw (the reason the host gives for what it threw), for the build of

@@ -32,9 +32,9 @@ import type { SandboxMode } from './config-schema';
 
 /** The guest content the host realm receives. */
 export const GUEST_CONTENT = {
-    html: "the config's `html`, given to setConfig() or load(): the initial view, or cooperative mode's guest document",
-    entry: 'the text of the registered file `entry` names (strict and sealed mode)',
-    files: 'the registered files: their paths, types and bytes (registerFiles(), unregisterFiles(), a commit of guest writes)',
+    html: "the config's `html`, given to start() as the app's, to setConfig() or to load(): the initial view, or cooperative mode's guest document",
+    entry: "the text of the file `entry` names (strict and sealed mode), one of start()'s app's files or a registered one",
+    files: "the files: their paths, types and bytes (start()'s app's files, registerFiles(), unregisterFiles(), a commit of guest writes)",
     writes: "the guest's writes and removals (`sandbox:write`): a path, a type and bytes",
     calls: "the guest's RPC frames: its requests and answers, with their values",
     lines: "the guest's log lines and uncaught errors",
@@ -61,6 +61,8 @@ export const GUEST_STATE = ['this._config.html', 'this._config.entry', 'this._co
 
 export const GUEST_ENTRIES: readonly GuestEntry[] = [
     { member: 'setConfig', takes: ['html'], holds: ['config'] },
+    { member: 'start', takes: ['html', 'entry', 'files'], holds: ['app', 'values'] },
+    { member: '_bind', takes: ['files'], holds: ['files', 'normalised', 'this._files'] },
     { member: '_configure', takes: ['html'], holds: ['this._configuring'] },
     { member: 'load', takes: ['html'], holds: ['html'] },
     { member: 'registerFiles', takes: ['files'], holds: ['files', 'this._files'] },
@@ -112,6 +114,17 @@ export const HOST_PASSES = {
         takes: ['html'], modes: ALL, rule: 'pure',
         units: ['src/host.ts#this.setConfig', 'src/host.ts#sameData'],
         cost: "linear in the config; `html` is one string, which strict and sealed mode cap at VIEW_RENDER_MAX_LENGTH",
+    },
+    startReading: {
+        does: "start()'s two arguments: each key checked against its argument's (no value read before), each value read once, the options copied one by one (structuredClone) for the config schema, the files handed to the file store as one batch, the entry looked up among them by its path and type, the methods' names and values checked; then the element stores what was read (_bind): no parse of `html`, of the entry or of a file here",
+        takes: ['html', 'entry', 'files'], modes: ALL, rule: 'pure',
+        units: [
+            'src/host.ts#this.start', 'src/host.ts#this._bind',
+            'src/lib/app-start.ts#readStart', 'src/lib/app-start.ts#readArgument', 'src/lib/app-start.ts#checkKey', 'src/lib/app-start.ts#readOptions', 'src/lib/app-start.ts#copied',
+            'src/lib/app-start.ts#readFiles', 'src/lib/app-start.ts#checkEntry', 'src/lib/app-start.ts#refusal',
+            'src/lib/csp/origin-kinds.ts#shown', 'src/lib/minted-errors.ts#mintUncodedError', 'src/lib/minted-errors.ts#failedText',
+        ],
+        cost: `linear in the arguments: their keys, each option's value as the config schema reads it, ${FILES_CAP}`,
     },
     configSchema: {
         does: "the config schema reads each option by its own rule: `html`'s reads its type and, in strict and sealed mode, its length, and refuses one longer than VIEW_RENDER_MAX_LENGTH before it is stored (htmlRefusal: setConfig() and load() alike)",

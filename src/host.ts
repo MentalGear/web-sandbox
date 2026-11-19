@@ -29,7 +29,9 @@ import { networkModes, type FetchHandler, type NetworkElement, type PreparedBuil
 import { buildWrapperDocument, setWrapperFrameIsolation, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, htmlRefusal, NO_HOST_PAGE, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
+import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, htmlRefusal, NO_HOST_PAGE, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type AppOptionName, type CallBudget, type EmbedderOptionName, type StoredConfig } from "./lib/config-schema";
+import { readStart, type StartValues } from "./lib/app-start";
+import type { Holds } from "./lib/utils";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
 import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from "./lib/environment";
@@ -102,6 +104,61 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
     /** Not in sealed mode: no capability reaches outside the view. Dropped at run time. */
     unsafeCapabilities?: never;
 }
+
+/**
+ * A host method the guest calls with `bridge.call(name, ...args)`, given to `start()` in {@link SandboxGrants}. Its
+ * arguments are the guest's data, so they are `unknown`: check each one's type and size before you use it.
+ *
+ * @remarks
+ * It runs with your page's rights. What it returns, a throw and a rejection reach the guest as for a method of
+ * `expose()`: the result copied, a failure as `HANDLER_ERROR` with your own words only.
+ */
+export type HostMethod = (...args: unknown[]) => unknown;
+
+/**
+ * The app `start()` runs: its own content, what its author wrote. It may come from data, such as a bundle you stored:
+ * a grant in it is refused, so it carries none by accident. Every option the embedder decides is in
+ * {@link SandboxGrants}, the second argument.
+ *
+ * @remarks
+ * `html` and `entry` are the options of the same names ({@link SandboxConfigOptions}). In strict and sealed mode an
+ * `entry` must name a JavaScript file of `files`; any other key, the grants' own included, is refused.
+ */
+export interface SandboxApp extends Readonly<Pick<SandboxConfigOptions, 'html' | 'entry'>> {
+    /**
+     * The app's files by path, validated as one batch and copied: as `registerFiles()` takes them, with the same paths,
+     * types, limits and refusals. The guest reads them through `sandboxFiles`, and its markup names them by path.
+     *
+     * @defaultValue none
+     */
+    readonly files?: Readonly<Record<string, FileEntry>>;
+}
+
+/**
+ * What the embedder allows the app `start()` runs: the host methods, and every option that is not the app's own
+ * ({@link SandboxApp}), for the modes this build has, keyed by `mode` as {@link SandboxConfig} is.
+ *
+ * @remarks
+ * A grant is whatever you pass as this argument. The two arguments keep an app read from data from carrying a grant by
+ * accident; nothing stops you from passing a stored manifest here, and then its author chooses the grants. Write them
+ * in your own code. A key of the app's, or one that is no option, is refused.
+ */
+export type SandboxGrants = {
+    [Mode in keyof SandboxConfigByMode]: Readonly<Omit<SandboxConfigByMode[Mode], keyof SandboxApp>> & {
+        /**
+         * The host methods the guest may call, by name: own enumerable keys, each a name of at most 256 characters that
+         * does not start with `sandbox:`, each value a function. Copied when `start()` is called: a name not listed
+         * here is `UNKNOWN_METHOD` to the guest.
+         */
+        readonly methods?: Readonly<Record<string, HostMethod>>;
+    };
+}[keyof SandboxConfigByMode];
+
+// The two types against the schema's classification (CONFIG_SCHEMA's `owner`; I17): written out for the API report, and
+// held to the value here, so that neither can drift from it.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : { differ: [A, B] }) : { differ: [A, B] };
+type AppOptionsAreTheSchemas = Holds<Same<Exclude<keyof SandboxApp, 'files'>, AppOptionName>>;
+type GrantsAreTheSchemas = Holds<Same<Exclude<keyof SealedSandboxConfig, keyof SandboxApp>, EmbedderOptionName>>;
 
 /**
  * The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.
@@ -627,6 +684,8 @@ export class WebSandbox extends ElementBase {
     // (_issue), or null outside one: _postRpc sends a call's frame only to the environment it was made in (R3:L-2).
     private _issuedIn: number | null = null;
     private _config: StoredConfig = defaultConfig();
+    // Whether start() bound an app (I1): set in the one step that stores what it validated (_bind), never cleared.
+    private _started = false;
     // The setConfig() argument being applied, as its structured clone or what refused cloning it: setConfig() holds it
     // for the executor's `applyConfig` effect (_configure), within its own call. Why the last argument could not be used
     // is the reducer's (`_lc.refused`): while set, every build is refused with it, as for an unknown mode.
@@ -712,6 +771,85 @@ export class WebSandbox extends ElementBase {
      */
     get state(): SandboxState {
         return this._lc.state;
+    }
+
+    /**
+     * Whether `start()` has given this element its app: `true` from its first success on, for the rest of the element's
+     * life. `state` cannot say it, since a new element and one with its app outside the document both read `'idle'`.
+     *
+     * @remarks
+     * A framework set-up does not branch on it to restart an element: an element that has an app may hold another app
+     * than the one you mean. Let the set-up own its element: create it, `start()` it and append it, and remove it in the
+     * clean-up, with the app and the grants as the set-up's dependencies.
+     */
+    get started(): boolean {
+        return this._started;
+    }
+
+    /**
+     * Gives the element its app, once: the app's own content and what you allow it, validated whole before anything is
+     * stored. It builds at once while the element is in the document, otherwise when it is inserted.
+     *
+     * @remarks
+     * - **Two arguments.** `app` is what the app's author wrote (`html`, `entry`, `files`) and may come from data;
+     *   `grants` is yours (the host methods, `guestWrites`, `capabilities` and every other option). Each refuses a key of
+     *   the other and any key it does not know, so an app read from data carries no grant by accident. A grant is
+     *   whatever you pass as the second argument: nothing stops you from passing a stored manifest there, which hands its
+     *   author the grants.
+     * - **All or nothing.** Every option is checked for its shape and type, the files as one batch by the rules of
+     *   `registerFiles()`, an `entry` against the files given (in strict and sealed mode it must name a JavaScript file
+     *   of them), and each method. A refusal throws and leaves the element as it was: without an app, so a corrected one
+     *   can be started on it. What needs a parse of the guest's code (an `import()` in the entry) still ends the build,
+     *   with its reason.
+     * - **Copied.** The options are copied (structured clone), the files into the element's own store, the methods into
+     *   a frozen record: changing your objects afterwards changes nothing.
+     * - **Once.** A second call throws, whatever the element's state, and changes nothing; `started` is `true` from the
+     *   first success on. Reading the arguments may run your code (a getter, a `Proxy`): of two calls that overlap this
+     *   way, the one that finishes validating first binds and the other throws.
+     * - **Its lifecycle.** `reset()` rebuilds the same app, with its files as they are now, committed writes included;
+     *   `terminate()` ends it, and a later `reset()` starts it again; removing the element ends its environment and
+     *   inserting it again builds the same app.
+     * - **The other members.** `setConfig()`, `load()`, `registerFiles()`, `unregisterFiles()`, `expose()` and
+     *   `unexpose()` still work on such an element, as they do on any; `start()` takes the place of all of them.
+     *
+     * @param app - The app: its markup, its entry and its files; see {@link SandboxApp}.
+     * @param grants - What the embedder allows it: its host methods and options; see {@link SandboxGrants}. None when
+     * left out.
+     * @throws A `TypeError` for a second call, an argument that is not an object, a key of the other argument or one
+     * neither takes, an option of the wrong shape or type, a mode or an option this build does not have (in the default
+     * build an option of the network modes, with the reason of the `networkModesOff` termination), an `entry` that names
+     * no JavaScript file of `files`, or a method that is not a function or has a name `expose()` refuses; a
+     * {@link FileError} with `code` `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED` for the files. Nothing is
+     * stored then.
+     */
+    start(app: SandboxApp, grants?: SandboxGrants): void {
+        if (this._started) throw alreadyStarted();
+        const values = readStart(app, grants, networkModes()?.readHostPage ?? NO_HOST_PAGE);
+        this._bind(values);
+        for (const message of values.warnings) this._warnOnce(message);
+        // the build of a configuration stored with no refusal (the reducer's `configured`), as setConfig()'s is
+        step(this, { t: 'configured', refusal: null, ctx: this._buildContext() });
+    }
+
+    // The binding (I1): the check that the element has no app and the store of what start() validated, one step with no
+    // code of the embedder's in it (no getter, no listener, no console), so that a start() the reading of the arguments
+    // ran finds the element bound, or is the one that bound it. What the other members set before is replaced whole: the
+    // configuration, the files and the host methods are the app's from here on.
+    private _bind({ normalised, files, methods }: StartValues) {
+        if (this._started) throw alreadyStarted();
+        this._started = true;
+        this._config = normalised.config;
+        this._fetchPolicy = normalised.fetchPolicy;
+        this._origins = normalised.origins;
+        this._callBudget = normalised.callBudget;
+        this._lastConfig = null;
+        this._files = files;
+        this._unexposeMethod!();
+        this._exposedNames.clear();
+        for (const [name, method] of Object.entries(methods)) {
+            this._broker.expose(name, method);
+            this._exposedNames.add(name);
+        }
     }
 
     // The lifecycle callbacks call module-level functions (connected, disconnected, adopted below), never a method
@@ -2226,6 +2364,11 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
             element.dispatchEvent(elementEvent('ready'));
         },
     };
+}
+
+// start() on an element that has its app (I1): another app is another element.
+function alreadyStarted(): TypeError {
+    return mintUncodedError(TypeError, '[Sandbox] start(): this element already runs its app; another app is another element.');
 }
 
 // A line of the element's own, said before the termination it announces (the executor dispatches it: `notices`).

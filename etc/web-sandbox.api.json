@@ -733,6 +733,32 @@
           }
         },
         {
+          "kind": "TypeAlias",
+          "canonicalReference": "web-sandbox!HostMethod:type",
+          "docComment": "/**\n * A host method the guest calls with `bridge.call(name, ...args)`, given to `start()` in {@link SandboxGrants}. Its\n * arguments are the guest's data, so they are `unknown`: check each one's type and size before you use it.\n *\n * @remarks\n *\n * It runs with your page's rights. What it returns, a throw and a rejection reach the guest as for a method of\n * `expose()`: the result copied, a failure as `HANDLER_ERROR` with your own words only.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "export type HostMethod = "
+            },
+            {
+              "kind": "Content",
+              "text": "(...args: unknown[]) => unknown"
+            },
+            {
+              "kind": "Content",
+              "text": ";"
+            }
+          ],
+          "fileUrlPath": "dist/host.d.ts",
+          "releaseTag": "Public",
+          "name": "HostMethod",
+          "typeTokenRange": {
+            "startIndex": 1,
+            "endIndex": 2
+          }
+        },
+        {
           "kind": "Variable",
           "canonicalReference": "web-sandbox!LOAD_TIMEOUT_MS:var",
           "docComment": "/**\n * How long, in ms, a build may stay `loading` before the sandbox terminates; the reason names the host page's policy\n * when the frame loaded and its startup script never checked in (BR:CB3). Counted in host ticks, so a stall of the host\n * page never counts.\n *\n * @remarks\n *\n * It bounds the wait for the guest's check-in, which comes before the guest's own subresources and scripts: a guest\n * page with slow images, or one that never finishes its document, is `ready`. Where no bootstrap runs (no\n * `allow-scripts`) it bounds the wait for the frame's one load, and the guest's subresources count. The value is\n * {@link VIEW_LIVENESS_TIMEOUT_MS}.\n */\n",
@@ -1036,6 +1062,110 @@
             "startIndex": 1,
             "endIndex": 4
           }
+        },
+        {
+          "kind": "Interface",
+          "canonicalReference": "web-sandbox!SandboxApp:interface",
+          "docComment": "/**\n * The app `start()` runs: its own content, what its author wrote. It may come from data, such as a bundle you stored:\n * a grant in it is refused, so it carries none by accident. Every option the embedder decides is in\n * {@link SandboxGrants}, the second argument.\n *\n * @remarks\n *\n * `html` and `entry` are the options of the same names ({@link SandboxConfigOptions}). In strict and sealed mode an\n * `entry` must name a JavaScript file of `files`; any other key, the grants' own included, is refused.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "export interface SandboxApp extends "
+            },
+            {
+              "kind": "Reference",
+              "text": "Readonly",
+              "canonicalReference": "!Readonly:type"
+            },
+            {
+              "kind": "Content",
+              "text": "<"
+            },
+            {
+              "kind": "Reference",
+              "text": "Pick",
+              "canonicalReference": "!Pick:type"
+            },
+            {
+              "kind": "Content",
+              "text": "<"
+            },
+            {
+              "kind": "Reference",
+              "text": "SandboxConfigOptions",
+              "canonicalReference": "web-sandbox!SandboxConfigOptions:interface"
+            },
+            {
+              "kind": "Content",
+              "text": ", 'html' | 'entry'>>"
+            },
+            {
+              "kind": "Content",
+              "text": " "
+            }
+          ],
+          "fileUrlPath": "dist/host.d.ts",
+          "releaseTag": "Public",
+          "name": "SandboxApp",
+          "preserveMemberOrder": false,
+          "members": [
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SandboxApp#files:member",
+              "docComment": "/**\n * The app's files by path, validated as one batch and copied: as `registerFiles()` takes them, with the same paths,\n * types, limits and refusals. The guest reads them through `sandboxFiles`, and its markup names them by path.\n *\n * @defaultValue none\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "readonly files?: "
+                },
+                {
+                  "kind": "Reference",
+                  "text": "Readonly",
+                  "canonicalReference": "!Readonly:type"
+                },
+                {
+                  "kind": "Content",
+                  "text": "<"
+                },
+                {
+                  "kind": "Reference",
+                  "text": "Record",
+                  "canonicalReference": "!Record:type"
+                },
+                {
+                  "kind": "Content",
+                  "text": "<string, "
+                },
+                {
+                  "kind": "Reference",
+                  "text": "FileEntry",
+                  "canonicalReference": "web-sandbox!FileEntry:type"
+                },
+                {
+                  "kind": "Content",
+                  "text": ">>"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": true,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "files",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 7
+              }
+            }
+          ],
+          "extendsTokenRanges": [
+            {
+              "startIndex": 1,
+              "endIndex": 7
+            }
+          ]
         },
         {
           "kind": "TypeAlias",
@@ -1931,6 +2061,113 @@
             }
           ],
           "extendsTokenRanges": []
+        },
+        {
+          "kind": "TypeAlias",
+          "canonicalReference": "web-sandbox!SandboxGrants:type",
+          "docComment": "/**\n * What the embedder allows the app `start()` runs: the host methods, and every option that is not the app's own\n * ({@link SandboxApp}), for the modes this build has, keyed by `mode` as {@link SandboxConfig} is.\n *\n * @remarks\n *\n * A grant is whatever you pass as this argument. The two arguments keep an app read from data from carrying a grant by\n * accident; nothing stops you from passing a stored manifest here, and then its author chooses the grants. Write them\n * in your own code. A key of the app's, or one that is no option, is refused.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "export type SandboxGrants = "
+            },
+            {
+              "kind": "Content",
+              "text": "{\n    [Mode in keyof "
+            },
+            {
+              "kind": "Reference",
+              "text": "SandboxConfigByMode",
+              "canonicalReference": "web-sandbox!SandboxConfigByMode:interface"
+            },
+            {
+              "kind": "Content",
+              "text": "]: "
+            },
+            {
+              "kind": "Reference",
+              "text": "Readonly",
+              "canonicalReference": "!Readonly:type"
+            },
+            {
+              "kind": "Content",
+              "text": "<"
+            },
+            {
+              "kind": "Reference",
+              "text": "Omit",
+              "canonicalReference": "!Omit:type"
+            },
+            {
+              "kind": "Content",
+              "text": "<"
+            },
+            {
+              "kind": "Reference",
+              "text": "SandboxConfigByMode",
+              "canonicalReference": "web-sandbox!SandboxConfigByMode:interface"
+            },
+            {
+              "kind": "Content",
+              "text": "[Mode], keyof "
+            },
+            {
+              "kind": "Reference",
+              "text": "SandboxApp",
+              "canonicalReference": "web-sandbox!SandboxApp:interface"
+            },
+            {
+              "kind": "Content",
+              "text": ">> & {\n        readonly methods?: "
+            },
+            {
+              "kind": "Reference",
+              "text": "Readonly",
+              "canonicalReference": "!Readonly:type"
+            },
+            {
+              "kind": "Content",
+              "text": "<"
+            },
+            {
+              "kind": "Reference",
+              "text": "Record",
+              "canonicalReference": "!Record:type"
+            },
+            {
+              "kind": "Content",
+              "text": "<string, "
+            },
+            {
+              "kind": "Reference",
+              "text": "HostMethod",
+              "canonicalReference": "web-sandbox!HostMethod:type"
+            },
+            {
+              "kind": "Content",
+              "text": ">>;\n    };\n}[keyof "
+            },
+            {
+              "kind": "Reference",
+              "text": "SandboxConfigByMode",
+              "canonicalReference": "web-sandbox!SandboxConfigByMode:interface"
+            },
+            {
+              "kind": "Content",
+              "text": "]"
+            },
+            {
+              "kind": "Content",
+              "text": ";"
+            }
+          ],
+          "fileUrlPath": "dist/host.d.ts",
+          "releaseTag": "Public",
+          "name": "SandboxGrants",
+          "typeTokenRange": {
+            "startIndex": 1,
+            "endIndex": 20
+          }
         },
         {
           "kind": "Interface",
@@ -3406,6 +3643,102 @@
               "isOptional": false,
               "isAbstract": false,
               "name": "setConfig"
+            },
+            {
+              "kind": "Method",
+              "canonicalReference": "web-sandbox!WebSandbox#start:member(1)",
+              "docComment": "/**\n * Gives the element its app, once: the app's own content and what you allow it, validated whole before anything is\n * stored. It builds at once while the element is in the document, otherwise when it is inserted.\n *\n * @remarks\n *\n * - **Two arguments.** `app` is what the app's author wrote (`html`, `entry`, `files`) and may come from data;\n *  `grants` is yours (the host methods, `guestWrites`, `capabilities` and every other option). Each refuses a key of\n *  the other and any key it does not know, so an app read from data carries no grant by accident. A grant is\n *  whatever you pass as the second argument: nothing stops you from passing a stored manifest there, which hands its\n *  author the grants.\n * - **All or nothing.** Every option is checked for its shape and type, the files as one batch by the rules of\n *  `registerFiles()`, an `entry` against the files given (in strict and sealed mode it must name a JavaScript file\n *  of them), and each method. A refusal throws and leaves the element as it was: without an app, so a corrected one\n *  can be started on it. What needs a parse of the guest's code (an `import()` in the entry) still ends the build,\n *  with its reason.\n * - **Copied.** The options are copied (structured clone), the files into the element's own store, the methods into\n *  a frozen record: changing your objects afterwards changes nothing.\n * - **Once.** A second call throws, whatever the element's state, and changes nothing; `started` is `true` from the\n *  first success on. Reading the arguments may run your code (a getter, a `Proxy`): of two calls that overlap this\n *  way, the one that finishes validating first binds and the other throws.\n * - **Its lifecycle.** `reset()` rebuilds the same app, with its files as they are now, committed writes included;\n *  `terminate()` ends it, and a later `reset()` starts it again; removing the element ends its environment and\n *  inserting it again builds the same app.\n * - **The other members.** `setConfig()`, `load()`, `registerFiles()`, `unregisterFiles()`, `expose()` and\n *  `unexpose()` still work on such an element, as they do on any; `start()` takes the place of all of them.\n *\n * @param app - The app: its markup, its entry and its files; see {@link SandboxApp}.\n *\n * @param grants - What the embedder allows it: its host methods and options; see {@link SandboxGrants}. None when\n * left out.\n *\n * @throws\n *\n * A `TypeError` for a second call, an argument that is not an object, a key of the other argument or one\n * neither takes, an option of the wrong shape or type, a mode or an option this build does not have (in the default\n * build an option of the network modes, with the reason of the `networkModesOff` termination), an `entry` that names\n * no JavaScript file of `files`, or a method that is not a function or has a name `expose()` refuses; a\n * {@link FileError} with `code` `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED` for the files. Nothing is\n * stored then.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "start(app: "
+                },
+                {
+                  "kind": "Reference",
+                  "text": "SandboxApp",
+                  "canonicalReference": "web-sandbox!SandboxApp:interface"
+                },
+                {
+                  "kind": "Content",
+                  "text": ", grants?: "
+                },
+                {
+                  "kind": "Reference",
+                  "text": "SandboxGrants",
+                  "canonicalReference": "web-sandbox!SandboxGrants:type"
+                },
+                {
+                  "kind": "Content",
+                  "text": "): "
+                },
+                {
+                  "kind": "Content",
+                  "text": "void"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isStatic": false,
+              "returnTypeTokenRange": {
+                "startIndex": 5,
+                "endIndex": 6
+              },
+              "releaseTag": "Public",
+              "isProtected": false,
+              "overloadIndex": 1,
+              "parameters": [
+                {
+                  "parameterName": "app",
+                  "parameterTypeTokenRange": {
+                    "startIndex": 1,
+                    "endIndex": 2
+                  },
+                  "isOptional": false
+                },
+                {
+                  "parameterName": "grants",
+                  "parameterTypeTokenRange": {
+                    "startIndex": 3,
+                    "endIndex": 4
+                  },
+                  "isOptional": true
+                }
+              ],
+              "isOptional": false,
+              "isAbstract": false,
+              "name": "start"
+            },
+            {
+              "kind": "Property",
+              "canonicalReference": "web-sandbox!WebSandbox#started:member",
+              "docComment": "/**\n * Whether `start()` has given this element its app: `true` from its first success on, for the rest of the element's\n * life. `state` cannot say it, since a new element and one with its app outside the document both read `'idle'`.\n *\n * @remarks\n *\n * A framework set-up does not branch on it to restart an element: an element that has an app may hold another app\n * than the one you mean. Let the set-up own its element: create it, `start()` it and append it, and remove it in the\n * clean-up, with the app and the grants as the set-up's dependencies.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "get started(): "
+                },
+                {
+                  "kind": "Content",
+                  "text": "boolean"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": true,
+              "isOptional": false,
+              "releaseTag": "Public",
+              "name": "started",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              },
+              "isStatic": false,
+              "isProtected": false,
+              "isAbstract": false
             },
             {
               "kind": "Property",

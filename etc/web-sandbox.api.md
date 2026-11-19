@@ -65,6 +65,9 @@ export type GuestWrite = {
 };
 
 // @public
+export type HostMethod = (...args: unknown[]) => unknown;
+
+// @public
 export const LOAD_TIMEOUT_MS = 5000;
 
 // @public
@@ -95,6 +98,11 @@ export const SAFE_CAPABILITIES: readonly ["allow-orientation-lock", "allow-scrip
 
 // @public
 export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
+
+// @public
+export interface SandboxApp extends Readonly<Pick<SandboxConfigOptions, 'html' | 'entry'>> {
+    readonly files?: Readonly<Record<string, FileEntry>>;
+}
 
 // @public
 export type SandboxConfig = SandboxConfigByMode[keyof SandboxConfigByMode];
@@ -137,6 +145,13 @@ export interface SandboxFiles {
     url(path: string): string;
     write(path: string, entry: unknown): Promise<void>;
 }
+
+// @public
+export type SandboxGrants = {
+    [Mode in keyof SandboxConfigByMode]: Readonly<Omit<SandboxConfigByMode[Mode], keyof SandboxApp>> & {
+        readonly methods?: Readonly<Record<string, HostMethod>>;
+    };
+}[keyof SandboxConfigByMode];
 
 // @public
 export interface SandboxLog {
@@ -222,6 +237,8 @@ export class WebSandbox extends HTMLElement {
     registerFiles(files: Record<string, FileEntry>): void;
     reset(): void;
     setConfig(config: SandboxConfig): void;
+    start(app: SandboxApp, grants?: SandboxGrants): void;
+    get started(): boolean;
     get state(): SandboxState;
     terminate(reason?: string): void;
     unexpose(names?: string | readonly string[]): void;
