@@ -27,8 +27,8 @@ only to refuse.
 mode keeps its network and is named with `mode: 'strict'`.
 
 ```js
-sandbox.setConfig({ entry: 'main.js' });                                              // sealed: no network
-sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['https://api.example'] } }); // the network
+sandbox.start({ entry: 'main.js', files });                                                       // sealed: no network
+other.start({ entry: 'main.js', files }, { mode: 'strict', fetchBridge: { allow: ['https://api.example'] } }); // the network
 ```
 
 1. **No network, by construction.** The view's policy comes from its own template, `sealedViewPolicy`, whose input has no
@@ -114,7 +114,7 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
   (`typeof fetch === 'undefined'`; feature-detect, do not catch a refusal); `sandboxFiles.read()` reads a file.
 - **What the app gives up**: every request, every string run as code (`eval`, `new Function`, a timer given a string:
   each throws the library's `EvalError`), `import()` and its phases (bundle the modules into the entry), an initial view
-  longer than one render (`htmlTooLong`: render the rest from the entry), and `execute()`. The only code of the host page it can run is the methods the host `expose()`s, so those
+  longer than one render (`htmlTooLong`: render the rest from the entry), and `execute()`. The only code of the host page it can run is the host methods of the grants, so those
   methods are the whole surface an attacker reaches: copy arguments with spread and validate each one. What else reaches
   the host page is the app's data and attacker text: its log lines (`sandbox-log`), the details of `violation` events,
   its guest writes (`fileswritten`) and the auto-resize height. None is a request or runs code, and an embedder that

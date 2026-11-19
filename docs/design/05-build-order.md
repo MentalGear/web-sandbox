@@ -1,6 +1,6 @@
 # 05 · The order of the work
 
-**Status: a plan, not started.** Each step ends with the repository's gates passing on both builds and three engines
+**Status: step 1 is under way: 1.0 to 1.5 are built (each row says so); the rest is a plan.** Each step ends with the repository's gates passing on both builds and three engines
 (CONTRIBUTING.md), and each brings the structural test of its invariant ([the folder's index](README.md)). The plan is
 the one after [review 1](REVIEW-1.md), the owner's [decisions on it](README.md#decided-after-review-1) and
 [review 2](REVIEW-2.md).
@@ -17,12 +17,12 @@ policy is deleted only after the served document passes, so that each deletion i
 
 | # | Work | Test it brings |
 | :--- | :--- | :--- |
-| 1.0 | every option of `CONFIG_SCHEMA` classified as the app's or the embedder's; `SandboxApp` and `SandboxGrants` derived | a key in the wrong argument throws (I17) |
-| 1.1 | `start()` added, delegating to today's internals; `HostMethod`; `started` | every way it throws leaves the element as new (I2); a getter of the app that calls `start()` (I1) |
-| 1.2 | the example app (`examples/sealed-app/`) moves to `start()` | `test/e2e/sealed-app.spec.ts` |
-| 1.3 | the e2e driver (`SandboxDriver`, `test/e2e/fixture.ts`) and the specs move | the suite, unchanged in what it asserts |
-| 1.4 | the playground and the devtools move | |
-| 1.5 | the six members and their reducer inputs are removed from both builds; `execute()` from the default build | `APP_SURFACE` (I1, I3); the lifecycle model's suite at its nightly size |
+| 1.0 | **built**: every option of `CONFIG_SCHEMA` classified as the app's or the embedder's; `SandboxApp` and `SandboxGrants` derived | a key in the wrong argument throws (I17) |
+| 1.1 | **built**: `start()` added, delegating to today's internals; `HostMethod`; `started` | every way it throws leaves the element as new (I2); a getter of the app that calls `start()` (I1) |
+| 1.2 | **built**: the example app (`examples/sealed-app/`) moves to `start()` | `test/e2e/sealed-app.spec.ts` |
+| 1.3 | **built**: the e2e driver (`SandboxDriver`, `test/e2e/fixture.ts`) and the specs move | the suite, unchanged in what it asserts |
+| 1.4 | **built**: the playground and the devtools move | |
+| 1.5 | **built**: the six members and their reducer inputs are removed from both builds; `execute()` from the default build (a method of the network modes, declared by `NetworkModeMethods`) | `APP_SURFACE` (I1, I3); the lifecycle model's suite at its nightly size |
 | 1.6 | an element with no app stays `'idle'` | a unit test and the lifecycle model's rule |
 | 1.7 | `commitGuestWrites(writes)` by identity of the current pending entry, all or none | a guest write, a commit, a `reset()` or a re-insertion after the list each leave the listed value uncommittable, and a list with one stale value commits nothing and answers `false` (I4) |
 | 1.8 | the three events stop bubbling | `ELEMENT_EVENTS` (I5) |

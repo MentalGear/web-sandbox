@@ -18,8 +18,8 @@ the reasons are the [ADRs](README.md#decisions).
 
 | Party | Trusted | What it holds or can do |
 | :--- | :--- | :--- |
-| The embedder: the host page, its origin, its scripts | yes | Owns the element, its configuration, the methods it `expose()`s, the fetch bridge's allowlist. |
-| Guest code and content: `html`, `load()`, registered files, `entry`, `execute()` code | **no**: the adversary | Anything a script can do in the realm it is given, and any markup or CSS the view will render. |
+| The embedder: the host page, its origin, its scripts | yes | Owns the element, the grants it gives an app (the host methods, the options), the fetch bridge's allowlist. |
+| Guest code and content: the app (`html`, `entry`, its files), `execute()` code | **no**: the adversary | Anything a script can do in the realm it is given, and any markup or CSS the view will render. |
 | The library's own code in the sandbox: the wrapper and the strict view (no guest code), worker mode's frame, and the bootstrap, prelude and broker that share a realm with guest code | yes, but see [boundary 4](#trust-boundaries) | The guest's end of every port, the budgets counted in the guest realm. |
 | The user | yes | Gestures in the view; the browser's own actions on what it shows (open in a new tab, drag, copy). |
 | The network: the origins the embedder lists (`origins`, `fetchBridge.allow`) | as far as the embedder trusts them | Receives what the guest sends them; the policy admits them. |
@@ -186,7 +186,7 @@ so nothing of it depends on the page's URL).
 
 ### What a sealed guest can reach, row by row
 
-<!-- describes: sealed-reach sig:5b10 -->
+<!-- describes: sealed-reach sig:cead -->
 The table above lists the channels found so far; this one closes the class by enumeration
 ([research 18](research/18_finding_classes/README.md#class-a-closed-by-enumeration)). In sealed mode guest code reaches the
 browser through two allowlists only: the worker's globals (`SEALED_WORKER_GLOBALS`, which has no `fetch`, `XMLHttpRequest` or
@@ -194,8 +194,8 @@ browser through two allowlists only: the worker's globals (`SEALED_WORKER_GLOBAL
 `sandboxFiles`, `sandboxView` and `sandboxFetch`, and the syntax that compiles: `import()` and its phases
 (`import.source()`, `import.defer()`), and each function kind's constructor) and what the view's renderer admits (its
 elements, attributes and load kinds; the view runs no guest script). Guest content reaches a third realm as data: the host
-page's own, where the element reads the config's `html`, the entry, the files (the app's, given to `start()`, and the
-registered ones) and the guest's frames. Each pass
+page's own, where the element reads the app's `html`, its entry, its files (given to `start()`, and the guest's writes
+it commits) and the guest's frames. Each pass
 of the host realm over guest content that a sealed build runs is a name too (`host:<row>`, the rows of `HOST_PASSES`,
 `src/lib/host-passes.ts`): library code over strings and bytes, which hands nothing of the guest's to a parser, a loader or
 a sink of the host realm, whose policy the browser would check against it (`hostPassRule`), and whose cost on the host
@@ -227,37 +227,37 @@ a key in its report endpoint's URL, makes no request, raises no violation, sends
 in an error's text; a host page served from a URL that is not potentially trustworthy and one on a loopback host give the
 sealed worker the same globals and members, every member they lead to compared, and an `isSecureContext` that reads
 false on both (`secureContext`); and the view's residuals are what the table says. `test/e2e/host-realm-passes.spec.ts`
-sends every way the guest styles markup and an absolute `<base>` through `setConfig({ html })`, `load()`, `reset()` and an
+sends every way the guest styles markup and an absolute `<base>` through `start({ html })`, `reset()` and an
 element's insertion, on the same host page, and the page's endpoint and its listener receive nothing.
 
 <!-- generated:begin sealed-reach -->
-737 names × 23 rows = 16951 cells.
+736 names × 23 rows = 16928 cells.
 
 | Row | None | Neutralised (by) | Remains (the residual, the surfaces that reach it) |
 | :--- | :--- | :--- | :--- |
-| `cspScript` | 707 | 30: `codeFromStringRefusal`, `entryImportRefusal`, `hostPassRule`, `strictWorkerAllowlist`, `webAssemblyRemoval` | 0 |
-| `cspWorker` | 737 | 0 | 0 |
-| `cspStyle` | 714 | 23: `adoptedSheets`, `cssomDeclaration`, `hostPassRule`, `styleEncoding` | 0 |
-| `cspBaseUri` | 695 | 42: `baseCheck`, `entryImportRefusal`, `hostPassRule`, `inertHref`, `rendererUrlDrop`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
-| `cspFetch` | 679 | 38: `createObjectUrlRemoval`, `entryImportRefusal`, `hostPassRule`, `inertHref`, `linkRelations`, `navigationCancel`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `svgLocalReferences`, `urlKeepRule` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): a registered file's load in the view (a `blob:` URL the view minted) is checked against the page's `img-src`, `font-src`, `media-src` or `style-src`: one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show |
-| `cspPolicyText` | 678 | 59: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssUrlDrop`, `cssomDeclaration`, `entryImportRefusal`, `hostPassRule`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `styleEncoding`, `urlKeepRule`, `viewPolicy`, `viewViolationRelay`, `violationFieldBlanking`, `violationStop`, `webAssemblyRemoval` | 0 |
-| `cspReporting` | 676 | 41: `codeFromStringRefusal`, `createObjectUrlRemoval`, `entryImportRefusal`, `hostPassRule`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `svgLocalReferences`, `urlKeepRule`, `webAssemblyRemoval` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice |
-| `trustedTypesRequirement` | 710 | 27: `codeFromStringRefusal`, `hostPassRule`, `strictWorkerAllowlist`, `trustedTypesPolicy` | 0 |
-| `trustedTypesDefault` | 720 | 17: `hostPassRule` | 0 |
-| `coep` | 724 | 13: `isolationRefusal` | 0 |
-| `referrer` | 685 | 52: `cssUrlDrop`, `entryImportRefusal`, `forcedNoReferrer`, `hostPassRule`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
-| `ancestorOrigins` | 737 | 0 | 0 |
-| `documentOrigin` | 709 | 28: `originCheck` | 0 |
-| `cookies` | 690 | 47: `cssUrlDrop`, `entryImportRefusal`, `forcedCrossorigin`, `hostPassRule`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
-| `serviceWorker` | 700 | 37: `cssUrlDrop`, `entryImportRefusal`, `hostPassRule`, `inertHref`, `originCheck`, `rendererUrlDrop`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
-| `hostRealmGlobals` | 719 | 18: `brokerCapture`, `logRelay` | 0 |
-| `permissionsPolicy` | 727 | 10: `autoplaySwitch`, `forcedMediaControls`, `isolationRefusal`, `noDelegation`, `viewEventList` | 0 |
-| `permissionState` | 731 | 6: `originCheck`, `secureContextRemoval` | 0 |
-| `secureContext` | 718 | 19: `secureContextRemoval` | 0 |
-| `uiSurfaces` | 723 | 14: `inertHref`, `navigationCancel`, `viewFocusRule` | 0 |
-| `autofill` | 723 | 10: `controlNames`, `forcedAutocompleteOff`, `valueModel` | 4: `userField` (from `form`, `viewApi`): a value written into the control the user is in (focused, and the one their latest press, key, composition or drop was on), with a trusted `input` event, is taken as what the user entered there: one suggestion of the browser's they pick for that field (Chromium 159 and Firefox 159 fill the chosen field so), or text an extension inserts where the user is typing (`execCommand('insertText')`); never a value of a field they are not in |
-| `eventDispatch` | 722 | 15: `teardownDetach` | 0 |
-| `thread` | 262 | 0 | 475: `viewRendering` (from `autoplay`, `disclosure`, `focusAttribute`, `form`, `hyperlink`, `linkHref`, `linkRelation`, `loadKind`, `loader`, `markup`, `mediaControls`, `presentation`, `referrerPolicyAttribute`, `styleAttribute`, `styleElement`, `svgReference`, `urlAttribute`, `viewApi`): what the guest renders and sets is applied in the view, on the host page's thread on Firefox, WebKit, Android WebView and Chromium's headless shell: an availability cost, bounded by the view's budgets and the repeated-overrun rule (docs/API.md, the view's cost to the host page); `hostPasses` (from `hostPass`): the element's own passes over guest content (HOST_PASSES: the config's `html`, the entry, the registered files, the guest's frames) run in the host page's realm, on its thread, on every engine: each linear in what it takes, which a cap of the library's bounds (VIEW_RENDER_MAX_LENGTH, MAX_TOTAL_BYTES, RPC_MAX_INBOUND_BYTES and the rest), so an availability cost of a build or a frame (BD7:LIM-2) |
+| `cspScript` | 707 | 29: `codeFromStringRefusal`, `entryImportRefusal`, `hostPassRule`, `strictWorkerAllowlist`, `webAssemblyRemoval` | 0 |
+| `cspWorker` | 736 | 0 | 0 |
+| `cspStyle` | 714 | 22: `adoptedSheets`, `cssomDeclaration`, `hostPassRule`, `styleEncoding` | 0 |
+| `cspBaseUri` | 695 | 41: `baseCheck`, `entryImportRefusal`, `hostPassRule`, `inertHref`, `rendererUrlDrop`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
+| `cspFetch` | 679 | 37: `createObjectUrlRemoval`, `entryImportRefusal`, `hostPassRule`, `inertHref`, `linkRelations`, `navigationCancel`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `svgLocalReferences`, `urlKeepRule` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): a registered file's load in the view (a `blob:` URL the view minted) is checked against the page's `img-src`, `font-src`, `media-src` or `style-src`: one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show |
+| `cspPolicyText` | 678 | 58: `adoptedSheets`, `codeFromStringRefusal`, `createObjectUrlRemoval`, `cssUrlDrop`, `cssomDeclaration`, `entryImportRefusal`, `hostPassRule`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `styleEncoding`, `urlKeepRule`, `viewPolicy`, `viewViolationRelay`, `violationFieldBlanking`, `violationStop`, `webAssemblyRemoval` | 0 |
+| `cspReporting` | 676 | 40: `codeFromStringRefusal`, `createObjectUrlRemoval`, `entryImportRefusal`, `hostPassRule`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `svgLocalReferences`, `urlKeepRule`, `webAssemblyRemoval` | 20: `blobLoads` (from `loadKind`, `styleAttribute`, `styleElement`, `urlAttribute`, `viewApi`): each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice |
+| `trustedTypesRequirement` | 710 | 26: `codeFromStringRefusal`, `hostPassRule`, `strictWorkerAllowlist`, `trustedTypesPolicy` | 0 |
+| `trustedTypesDefault` | 720 | 16: `hostPassRule` | 0 |
+| `coep` | 723 | 13: `isolationRefusal` | 0 |
+| `referrer` | 685 | 51: `cssUrlDrop`, `entryImportRefusal`, `forcedNoReferrer`, `hostPassRule`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
+| `ancestorOrigins` | 736 | 0 | 0 |
+| `documentOrigin` | 708 | 28: `originCheck` | 0 |
+| `cookies` | 690 | 46: `cssUrlDrop`, `entryImportRefusal`, `forcedCrossorigin`, `hostPassRule`, `inertHref`, `navigationCancel`, `rendererUrlDrop`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
+| `serviceWorker` | 700 | 36: `cssUrlDrop`, `entryImportRefusal`, `hostPassRule`, `inertHref`, `originCheck`, `rendererUrlDrop`, `sealedFetchRefusal`, `sealedWorkerAllowlist`, `strictWorkerAllowlist`, `urlKeepRule` | 0 |
+| `hostRealmGlobals` | 718 | 18: `brokerCapture`, `logRelay` | 0 |
+| `permissionsPolicy` | 726 | 10: `autoplaySwitch`, `forcedMediaControls`, `isolationRefusal`, `noDelegation`, `viewEventList` | 0 |
+| `permissionState` | 730 | 6: `originCheck`, `secureContextRemoval` | 0 |
+| `secureContext` | 717 | 19: `secureContextRemoval` | 0 |
+| `uiSurfaces` | 722 | 14: `inertHref`, `navigationCancel`, `viewFocusRule` | 0 |
+| `autofill` | 722 | 10: `controlNames`, `forcedAutocompleteOff`, `valueModel` | 4: `userField` (from `form`, `viewApi`): a value written into the control the user is in (focused, and the one their latest press, key, composition or drop was on), with a trusted `input` event, is taken as what the user entered there: one suggestion of the browser's they pick for that field (Chromium 159 and Firefox 159 fill the chosen field so), or text an extension inserts where the user is typing (`execCommand('insertText')`); never a value of a field they are not in |
+| `eventDispatch` | 721 | 15: `teardownDetach` | 0 |
+| `thread` | 262 | 0 | 474: `viewRendering` (from `autoplay`, `disclosure`, `focusAttribute`, `form`, `hyperlink`, `linkHref`, `linkRelation`, `loadKind`, `loader`, `markup`, `mediaControls`, `presentation`, `referrerPolicyAttribute`, `styleAttribute`, `styleElement`, `svgReference`, `urlAttribute`, `viewApi`): what the guest renders and sets is applied in the view, on the host page's thread on Firefox, WebKit, Android WebView and Chromium's headless shell: an availability cost, bounded by the view's budgets and the repeated-overrun rule (docs/API.md, the view's cost to the host page); `hostPasses` (from `hostPass`): the element's own passes over guest content (HOST_PASSES: the config's `html`, the entry, the registered files, the guest's frames) run in the host page's realm, on its thread, on every engine: each linear in what it takes, which a cap of the library's bounds (VIEW_RENDER_MAX_LENGTH, MAX_TOTAL_BYTES, RPC_MAX_INBOUND_BYTES and the rest), so an availability cost of a build or a frame (BD7:LIM-2) |
 <!-- generated:end -->
 
 The chokepoints the cells name, each a declaration or a statement of the code:
@@ -361,7 +361,7 @@ forge or suppress them, and they differ per engine. Treat them as claims.
 
 ### Lifecycle integrity
 
-<!-- describes: lifecycle:states, lifecycle:inputs sig:204e6fd0 -->
+<!-- describes: lifecycle:states, lifecycle:inputs sig:204ee850 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
@@ -453,7 +453,7 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
 - **Browser extensions**, which can read and change any frame. What one writes into a field of the view reaches a
   strict or sealed guest only as the `autofill` row says: from the field the user is in, while they are in it.
 - **UI spoofing inside the element's box**, and what the user chooses to do with what the view shows.
-- **Denial of service by the embedder's own configuration**: an `expose()`d method that does heavy work per call, a
+- **Denial of service by the embedder's own configuration**: a host method of the grants that does heavy work per call, a
   generous `callLimits` or `fetchBridge`.
 
 **What the embedder must configure or do.**

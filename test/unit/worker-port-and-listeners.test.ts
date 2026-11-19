@@ -499,7 +499,7 @@ describe('the docs say what the code does', () => {
     it('I-1: API.md says an aborted record of a torn-down environment can arrive after reset(), while the next build loads', () => {
         const api = read('docs/API.md').replace(/\s+/g, ' ');
         expect(api).toContain("an `'aborted'` record of a torn-down environment can arrive after the call that tore it down, while the next build is loading");
-        expect(api).toContain('(by `reset()`, `load()`, `setConfig()`, `terminate()` or removal)');
+        expect(api).toContain('(by `reset()`, `terminate()` or removal)');
     });
 
     it("I-2: API.md's events table qualifies the fetch event by fetchBridge", () => {

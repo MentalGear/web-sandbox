@@ -329,8 +329,8 @@ declare global {
 export interface SandboxConfigOptions {
     /**
      * Whether the guest policy allows `'unsafe-eval'` (strings run as code, WebAssembly too), and in a build with the
-     * network modes whether `execute()` runs code. For testing: each element that enables it warns once. Only a literal `true`
-     * enables it. Sealed mode refuses it ({@link SealedSandboxConfig}).
+     * network modes whether `execute()` runs code. For testing: each element that enables it warns once. A value that
+     * is not a boolean makes `start()` throw. Sealed mode refuses `true` ({@link SealedSandboxConfig}).
      *
      * @remarks
      * The host page's policy still applies: the guest's realm inherits it, so a string it refuses fails, and the page's
@@ -341,8 +341,8 @@ export interface SandboxConfigOptions {
      */
     scriptUnsafe?: boolean;
     /**
-     * Sandbox flags that keep the guest inside the frame, from {@link SAFE_CAPABILITIES}. An entry that is not one is
-     * dropped with a warning. Worker mode always adds `allow-scripts`; the view of strict and sealed mode always has
+     * Sandbox flags that keep the guest inside the frame, from {@link SAFE_CAPABILITIES}. An entry that is not one, or a
+     * value that is not a list, makes `start()` throw. Worker mode always adds `allow-scripts`; the view of strict and sealed mode always has
      * `allow-scripts` and `allow-forms`, so listing either there changes nothing.
      *
      * @defaultValue `[]`
@@ -365,9 +365,8 @@ export interface SandboxConfigOptions {
      */
     entry?: string;
     /**
-     * Strict and sealed mode only: whether CSS animations and transitions run in the view. Only a literal `true` keeps them; left
-     * out, `false` or any other value (with one warning when it is not a boolean) removes them. Ignored with a warning
-     * in other modes.
+     * Strict and sealed mode only: whether CSS animations and transitions run in the view. Left out or `false` removes
+     * them; there, a value that is not a boolean makes `start()` throw. Ignored with a warning in other modes.
      *
      * @remarks
      * While `true`, animations run on the host page's main thread wherever the browser runs the view there, and the
@@ -380,9 +379,9 @@ export interface SandboxConfigOptions {
      */
     allowAnimations?: boolean;
     /**
-     * Strict and sealed mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Only a literal
-     * `true` keeps `autoplay`; left out, `false` or any other value (with one warning when it is not a boolean) removes
-     * it, and media then plays only when the user starts it. Ignored with a warning in other modes.
+     * Strict and sealed mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Left
+     * out or `false` removes `autoplay`, and media then plays only when the user starts it; there, a value that is not a
+     * boolean makes `start()` throw. Ignored with a warning in other modes.
      *
      * @remarks
      * With `true`, playing media costs the host page's main thread where the view shares it, outside the view's time
@@ -395,15 +394,15 @@ export interface SandboxConfigOptions {
      * A deadline in ms for each `execute()`, in worker and strict mode (a build with the network modes). At the
      * deadline the guest's event loop must be free: the element pings the guest, and if no answer arrives within
      * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).
-     * Anything but a finite number above 0 is off, with a warning unless it is `0`. Not read in cooperative mode, nor in
-     * sealed mode, which runs no `execute()` (ignored silently; `watchdogTimeout` bounds a sealed app that loops).
+     * `0` is off; anything but `0` or a finite number above 0 makes `start()` throw. Not read in cooperative mode, nor
+     * in sealed mode, which runs no `execute()` (ignored silently; `watchdogTimeout` bounds a sealed app that loops).
      *
      * @defaultValue `0` (off)
      */
     workerExecutionTimeout?: number;
     /**
-     * Terminates a guest that stops answering for this long, in ms; anything but a finite number above 0 is off, with a
-     * warning unless it is `0`. It starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.
+     * Terminates a guest that stops answering for this long, in ms; `0` is off, and anything but `0` or a finite number
+     * above 0 makes `start()` throw. It starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.
      * In cooperative mode it bounds a looping guest only where the browser runs the frame in its own process.
      *
      * @defaultValue `0` (off)
@@ -412,8 +411,8 @@ export interface SandboxConfigOptions {
     /**
      * Whether the element's height follows the guest's content height, from `ready` on; the height is validated,
      * clamped to {@link AUTO_RESIZE_MAX_HEIGHT} and changes at most {@link AUTO_RESIZE_MAX_UPDATES_PER_SECOND} times a
-     * second. Only a literal `true` enables it. Strict, sealed and cooperative mode; in worker mode it does nothing, with one
-     * warning.
+     * second. A value that is not a boolean makes `start()` throw, except in worker mode, where it does nothing (`true`
+     * with one warning). Strict, sealed and cooperative mode.
      *
      * @defaultValue `false`
      */
@@ -448,7 +447,7 @@ export interface SandboxConfigOptions {
     /**
      * Whether the guest's `sandboxFiles.write()` and `remove()` are recorded as pending changes of the environment,
      * announced as `fileswritten`, listed by `listGuestWrites()` and applied only by
-     * `commitGuestWrites()`. Only a literal `true` enables it.
+     * `commitGuestWrites()`. A value that is not a boolean makes `start()` throw.
      *
      * @defaultValue `false`
      */
@@ -456,8 +455,8 @@ export interface SandboxConfigOptions {
     /**
      * The per-second budget of the calls the guest makes, per environment and in every mode. A call past it is refused
      * with `BUSY` by the guest's `bridge` before sending, and by the element if it arrives anyway. A field left out takes
-     * its default; one that is not a finite number of at least 1 takes it with one warning. There is no way to turn
-     * the budget off.
+     * its default; one that is not a finite number of at least 1, or a `callLimits` that is not an object, makes
+     * `start()` throw. There is no way to turn the budget off.
      *
      * @defaultValue `{ maxPerSecond: 1000, maxBytesPerSecond: 67108864 }`
      */

@@ -27,7 +27,7 @@ embedder also allows direct connections.
    answer-on-arrival-port rule that keeps frame generations apart. A dedicated frame type would have duplicated all of
    that. What a frame type gives for free — no collision with exposed names — is made true by construction instead: names
    starting with `sandbox:` live in a registry of their own, written only by `exposeReserved()`, and `expose()` never
-   registers such a name (the element also warns). So no embedder or guest method can replace the bridge, and the bridge
+   registers such a name (the element's `start()` refuses a host method of such a name). So no embedder or guest method can replace the bridge, and the bridge
    never answers to a name someone else exposed. **The method is bound to its build**: every build registers it again,
    closed over that build's bridge, as `sandbox:write` is over its overlay. A request is always handled by the bridge of the
    environment it arrived in, which teardown closed, so a request that runs after a rebuild is refused there
@@ -89,7 +89,7 @@ embedder also allows direct connections.
      either). `Content-Length` is never trusted. A response's status text and headers together are at most
      `MAX_RESPONSE_HEAD` (262144) characters, checked by the frame before it posts them; past it, `FETCH_TOO_LARGE`.
    - **Time and lifetime**: one `AbortController` per request, fired by the per-call timeout (10 s by default, at most 120 s;
-     covers the body too) and by teardown — `reset()`, `load()`, `setConfig()`, `terminate()` and removal abort every request
+     covers the body too) and by teardown — `reset()`, `terminate()` and removal abort every request
      of that environment, and remove its frame, closing the upstream connection.
    - **Whole responses only.** No streaming. If it is ever needed, it uses one dedicated port per request so closing that port
      is the cancel; chunks never go on the broker port.
@@ -178,7 +178,7 @@ Firefox and WebKit against the recorder's two listeners outside the browser and 
   counted stream; end to end, the upstream connection closes long before the end);
 - `reset()` during a slow response, and the timeout, close the upstream connection;
 - the host origin, and every spelling of a loopback host, are refused unless listed, with one text to the guest;
-- the reserved name cannot be taken by `expose()` on either side; with the bridge off `sandboxFetch` is still published and rejects
+- the reserved name cannot be taken by a host method or by `bridge.expose()`; with the bridge off `sandboxFetch` is still published and rejects
   `FETCH_NOT_ALLOWED` (a direct call to the reserved method is refused the same way), without a request;
 - the guest policy is unchanged: a direct `fetch` and `WebSocket` to the listed origin are still refused and reported as
   violations.

@@ -92,18 +92,19 @@ describe('a guest-written path is attacker text: a valid path can end a single-q
 describe("the docs' openExternal example opens only an address the host holds, and never one the app gives (BD4:NEW-2, BD5:NEW-1)", () => {
     // The first example let the app give an address and checked its scheme and origin (BD4:NEW-2); an address that passes
     // still carries the app's data in its path, query and fragment to a server (BD5:NEW-1). So the app names a key, and the
-    // host's table holds the addresses. The snippet is taken from docs/API.md and run with a stub for `sandbox` and `window`.
+    // host's table holds the addresses. The snippet is taken from docs/API.md and run with a stub for `sandbox` (whose
+    // start() takes the method in its grants), `app` and `window`.
     const snippet = (() => {
-        const block = [...read('docs/API.md').matchAll(/```js\n([^]*?)```/g)].map(match => match[1]!).find(code => code.includes("sandbox.expose('openExternal'"));
+        const block = [...read('docs/API.md').matchAll(/```js\n([^]*?)```/g)].map(match => match[1]!).find(code => code.includes('methods: { openExternal }'));
         expect(block, 'the openExternal example is a js block of docs/API.md').toBeDefined();
         return block!;
     })();
 
     function run(code = snippet) {
         let handler: ((text: unknown) => void) | undefined;
-        const sandbox = { expose: (name: string, fn: (text: unknown) => void) => { expect(name).toBe('openExternal'); handler = fn; } };
+        const sandbox = { start: (_app: unknown, grants: { methods: Record<string, (text: unknown) => void> }) => { expect(Object.keys(grants.methods)).toEqual(['openExternal']); handler = grants.methods.openExternal; } };
         const open = vi.fn();
-        new Function('sandbox', 'window', code.replace(/^\/\/ in the worker:.*$/m, ''))(sandbox, { open });
+        new Function('sandbox', 'app', 'window', code.replace(/^\/\/ in the worker:.*$/m, ''))(sandbox, {}, { open });
         return { call: (text: unknown) => { try { handler!(text); return 'opened'; } catch (error) { return (error as Error).message; } }, open };
     }
 
@@ -146,7 +147,7 @@ describe("the docs' openExternal example opens only an address the host holds, a
         for (const key of table.keys()) call(`${key}`);
         for (const [href] of open.mock.calls) expect(String(href)).not.toContain('SECRET');
         // a source scan: the parameter is only a key into the table
-        const parameter = /sandbox\.expose\('openExternal', \((\w+)\)/.exec(snippet)![1]!;
+        const parameter = /const openExternal = \((\w+)\) =>/.exec(snippet)![1]!;
         const openCall = /window\.open\([^)]*\)/.exec(snippet)![0];
         expect(openCall).not.toContain(parameter);
         expect(snippet).not.toMatch(/new URL\(/);
@@ -155,7 +156,8 @@ describe("the docs' openExternal example opens only an address the host holds, a
 
     it('the scan sees the form it forbids: the first example (an address from the app, checked) fails the same tests', () => {
         const old = `const OPENABLE = new Set(['https://example.com']);
-sandbox.expose('openExternal', (text) => { const url = new URL(text); if (!OPENABLE.has(url.origin)) throw new Error('openExternal: address not allowed'); window.open(url.href, '_blank', 'noopener'); });`;
+const openExternal = (text) => { const url = new URL(text); if (!OPENABLE.has(url.origin)) throw new Error('openExternal: address not allowed'); window.open(url.href, '_blank', 'noopener'); };
+sandbox.start(app, { methods: { openExternal } });`;
         const { call, open } = run(old);
         expect(call('https://example.com/docs?n=SECRET')).toBe('opened');
         expect([...open.mock.calls].some(([href]) => !ADDRESSES.has(href as string))).toBe(true);

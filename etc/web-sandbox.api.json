@@ -394,7 +394,7 @@
         {
           "kind": "TypeAlias",
           "canonicalReference": "web-sandbox!FileContent:type",
-          "docComment": "/**\n * A file's content for `registerFiles()`: a string is stored as UTF-8, a `Uint8Array` is copied.\n */\n",
+          "docComment": "/**\n * A file's content in the app's files ({@link SandboxApp}): a string is stored as UTF-8, a `Uint8Array` is copied.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -425,7 +425,7 @@
         {
           "kind": "TypeAlias",
           "canonicalReference": "web-sandbox!FileEntry:type",
-          "docComment": "/**\n * One `registerFiles()` entry: the content, typed by its path's extension, or `{ content, type }` with an\n * explicit MIME type.\n */\n",
+          "docComment": "/**\n * One entry of the app's files ({@link SandboxApp}): the content, typed by its path's extension, or `{ content, type }` with an\n * explicit MIME type.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -525,7 +525,7 @@
         {
           "kind": "TypeAlias",
           "canonicalReference": "web-sandbox!FileErrorCode:type",
-          "docComment": "/**\n * Why a change to the files was refused: the `code` of a {@link FileError}. The strings are API and, for guest writes,\n * wire protocol. They are not {@link RpcErrorCode} values: `registerFiles()`,\n * `unregisterFiles()` and `commitGuestWrites()` refuse the host's own caller, and a guest\n * write is refused by the host's library method.\n * - `INVALID_PATH`: a path is not valid, or a list of paths is not an array.\n * - `INVALID_FILE`: the batch is not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a\n *  valid type (for a guest write: not a write or a remove).\n * - `FILES_QUOTA_EXCEEDED`: the store after the change would exceed 1000 files or 8 MiB. A JavaScript file counts its\n *  registered bytes plus what its module rewrite adds, and a stylesheet its bytes plus what its references add.\n * - `FILES_NOT_ALLOWED`: an opt-in is missing, either a guest write while `guestWrites` is off or a commit of a file\n *  whose type is not inert without `{ code: true }`.\n * - `FILES_BUSY`: a guest write past the per-environment rate ({@link GUEST_WRITES_PER_SECOND},\n *  {@link GUEST_WRITE_BYTES_PER_SECOND}). Retryable.\n *\n * In the guest, every failed lookup is `NOT_FOUND`, which is not in this set.\n */\n",
+          "docComment": "/**\n * Why a change to the files was refused: the `code` of a {@link FileError}. The strings are API and, for guest writes,\n * wire protocol. They are not {@link RpcErrorCode} values: `start()` and `commitGuestWrites()` refuse the host's own\n * caller, and a guest\n * write is refused by the host's library method.\n * - `INVALID_PATH`: a path is not valid, or a list of paths is not an array.\n * - `INVALID_FILE`: the batch is not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a\n *  valid type (for a guest write: not a write or a remove).\n * - `FILES_QUOTA_EXCEEDED`: the store after the change would exceed 1000 files or 8 MiB. A JavaScript file counts its\n *  registered bytes plus what its module rewrite adds, and a stylesheet its bytes plus what its references add.\n * - `FILES_NOT_ALLOWED`: an opt-in is missing, either a guest write while `guestWrites` is off or a commit of a file\n *  whose type is not inert without `{ code: true }`.\n * - `FILES_BUSY`: a guest write past the per-environment rate ({@link GUEST_WRITES_PER_SECOND},\n *  {@link GUEST_WRITE_BYTES_PER_SECOND}). Retryable.\n *\n * In the guest, every failed lookup is `NOT_FOUND`, which is not in this set.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -1271,7 +1271,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#allowAnimations:member",
-              "docComment": "/**\n * Strict and sealed mode only: whether CSS animations and transitions run in the view. Only a literal `true` keeps them; left\n * out, `false` or any other value (with one warning when it is not a boolean) removes them. Ignored with a warning\n * in other modes.\n *\n * @remarks\n *\n * While `true`, animations run on the host page's main thread wherever the browser runs the view there, and the\n * view's time budget does not bound them: a guest can keep the page busy for as long as they run. `false` removes\n * them (elements show their end state), which keeps the default configuration inside the documented bound on every\n * engine. While `false`, a host page whose `style-src` refuses inline styles must allow the view's stylesheet by\n * its hash (docs/API.md#host-page-policy).\n *\n * @defaultValue `false`\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only: whether CSS animations and transitions run in the view. Left out or `false` removes\n * them; there, a value that is not a boolean makes `start()` throw. Ignored with a warning in other modes.\n *\n * @remarks\n *\n * While `true`, animations run on the host page's main thread wherever the browser runs the view there, and the\n * view's time budget does not bound them: a guest can keep the page busy for as long as they run. `false` removes\n * them (elements show their end state), which keeps the default configuration inside the documented bound on every\n * engine. While `false`, a host page whose `style-src` refuses inline styles must allow the view's stylesheet by\n * its hash (docs/API.md#host-page-policy).\n *\n * @defaultValue `false`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1298,7 +1298,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#allowAutoplay:member",
-              "docComment": "/**\n * Strict and sealed mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Only a literal\n * `true` keeps `autoplay`; left out, `false` or any other value (with one warning when it is not a boolean) removes\n * it, and media then plays only when the user starts it. Ignored with a warning in other modes.\n *\n * @remarks\n *\n * With `true`, playing media costs the host page's main thread where the view shares it, outside the view's time\n * budget.\n *\n * @defaultValue `false`\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Left\n * out or `false` removes `autoplay`, and media then plays only when the user starts it; there, a value that is not a\n * boolean makes `start()` throw. Ignored with a warning in other modes.\n *\n * @remarks\n *\n * With `true`, playing media costs the host page's main thread where the view shares it, outside the view's time\n * budget.\n *\n * @defaultValue `false`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1325,7 +1325,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#autoResize:member",
-              "docComment": "/**\n * Whether the element's height follows the guest's content height, from `ready` on; the height is validated,\n * clamped to {@link AUTO_RESIZE_MAX_HEIGHT} and changes at most {@link AUTO_RESIZE_MAX_UPDATES_PER_SECOND} times a\n * second. Only a literal `true` enables it. Strict, sealed and cooperative mode; in worker mode it does nothing, with one\n * warning.\n *\n * @defaultValue `false`\n */\n",
+              "docComment": "/**\n * Whether the element's height follows the guest's content height, from `ready` on; the height is validated,\n * clamped to {@link AUTO_RESIZE_MAX_HEIGHT} and changes at most {@link AUTO_RESIZE_MAX_UPDATES_PER_SECOND} times a\n * second. A value that is not a boolean makes `start()` throw, except in worker mode, where it does nothing (`true`\n * with one warning). Strict, sealed and cooperative mode.\n *\n * @defaultValue `false`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1352,7 +1352,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#callLimits:member",
-              "docComment": "/**\n * The per-second budget of the calls the guest makes, per environment and in every mode. A call past it is refused\n * with `BUSY` by the guest's `bridge` before sending, and by the element if it arrives anyway. A field left out takes\n * its default; one that is not a finite number of at least 1 takes it with one warning. There is no way to turn\n * the budget off.\n *\n * @defaultValue `{ maxPerSecond: 1000, maxBytesPerSecond: 67108864 }`\n */\n",
+              "docComment": "/**\n * The per-second budget of the calls the guest makes, per environment and in every mode. A call past it is refused\n * with `BUSY` by the guest's `bridge` before sending, and by the element if it arrives anyway. A field left out takes\n * its default; one that is not a finite number of at least 1, or a `callLimits` that is not an object, makes\n * `start()` throw. There is no way to turn the budget off.\n *\n * @defaultValue `{ maxPerSecond: 1000, maxBytesPerSecond: 67108864 }`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1380,7 +1380,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#capabilities:member",
-              "docComment": "/**\n * Sandbox flags that keep the guest inside the frame, from {@link SAFE_CAPABILITIES}. An entry that is not one is\n * dropped with a warning. Worker mode always adds `allow-scripts`; the view of strict and sealed mode always has\n * `allow-scripts` and `allow-forms`, so listing either there changes nothing.\n *\n * @defaultValue `[]`\n */\n",
+              "docComment": "/**\n * Sandbox flags that keep the guest inside the frame, from {@link SAFE_CAPABILITIES}. An entry that is not one, or a\n * value that is not a list, makes `start()` throw. Worker mode always adds `allow-scripts`; the view of strict and sealed mode always has\n * `allow-scripts` and `allow-forms`, so listing either there changes nothing.\n *\n * @defaultValue `[]`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1439,7 +1439,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#guestWrites:member",
-              "docComment": "/**\n * Whether the guest's `sandboxFiles.write()` and `remove()` are recorded as pending changes of the environment,\n * announced as `fileswritten`, listed by `listGuestWrites()` and applied only by\n * `commitGuestWrites()`. Only a literal `true` enables it.\n *\n * @defaultValue `false`\n */\n",
+              "docComment": "/**\n * Whether the guest's `sandboxFiles.write()` and `remove()` are recorded as pending changes of the environment,\n * announced as `fileswritten`, listed by `listGuestWrites()` and applied only by\n * `commitGuestWrites()`. A value that is not a boolean makes `start()` throw.\n *\n * @defaultValue `false`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1520,7 +1520,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#scriptUnsafe:member",
-              "docComment": "/**\n * Whether the guest policy allows `'unsafe-eval'` (strings run as code, WebAssembly too), and in a build with the\n * network modes whether `execute()` runs code. For testing: each element that enables it warns once. Only a literal `true`\n * enables it. Sealed mode refuses it ({@link SealedSandboxConfig}).\n *\n * @remarks\n *\n * The host page's policy still applies: the guest's realm inherits it, so a string it refuses fails, and the page's\n * policy reports the refusal to the guest's realm (its text) and to the page's report endpoint (a sample of the\n * string). Without it, strict mode's worker refuses every string itself, before the browser sees it.\n *\n * @defaultValue `false`\n */\n",
+              "docComment": "/**\n * Whether the guest policy allows `'unsafe-eval'` (strings run as code, WebAssembly too), and in a build with the\n * network modes whether `execute()` runs code. For testing: each element that enables it warns once. A value that\n * is not a boolean makes `start()` throw. Sealed mode refuses `true` ({@link SealedSandboxConfig}).\n *\n * @remarks\n *\n * The host page's policy still applies: the guest's realm inherits it, so a string it refuses fails, and the page's\n * policy reports the refusal to the guest's realm (its text) and to the page's report endpoint (a sample of the\n * string). Without it, strict mode's worker refuses every string itself, before the browser sees it.\n *\n * @defaultValue `false`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1547,7 +1547,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#watchdogTimeout:member",
-              "docComment": "/**\n * Terminates a guest that stops answering for this long, in ms; anything but a finite number above 0 is off, with a\n * warning unless it is `0`. It starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.\n * In cooperative mode it bounds a looping guest only where the browser runs the frame in its own process.\n *\n * @defaultValue `0` (off)\n */\n",
+              "docComment": "/**\n * Terminates a guest that stops answering for this long, in ms; `0` is off, and anything but `0` or a finite number\n * above 0 makes `start()` throw. It starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.\n * In cooperative mode it bounds a looping guest only where the browser runs the frame in its own process.\n *\n * @defaultValue `0` (off)\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1574,7 +1574,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#workerExecutionTimeout:member",
-              "docComment": "/**\n * A deadline in ms for each `execute()`, in worker and strict mode (a build with the network modes). At the\n * deadline the guest's event loop must be free: the element pings the guest, and if no answer arrives within\n * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).\n * Anything but a finite number above 0 is off, with a warning unless it is `0`. Not read in cooperative mode, nor in\n * sealed mode, which runs no `execute()` (ignored silently; `watchdogTimeout` bounds a sealed app that loops).\n *\n * @defaultValue `0` (off)\n */\n",
+              "docComment": "/**\n * A deadline in ms for each `execute()`, in worker and strict mode (a build with the network modes). At the\n * deadline the guest's event loop must be free: the element pings the guest, and if no answer arrives within\n * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).\n * `0` is off; anything but `0` or a finite number above 0 makes `start()` throw. Not read in cooperative mode, nor\n * in sealed mode, which runs no `execute()` (ignored silently; `watchdogTimeout` bounds a sealed app that loops).\n *\n * @defaultValue `0` (off)\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",

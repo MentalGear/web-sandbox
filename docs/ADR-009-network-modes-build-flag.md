@@ -70,8 +70,8 @@ WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib   # the network build: every mode
 8. **Each test runs against its build, and the wrong pairing fails.** A unit test's build is its imports: a file that
    tests a network mode imports `@src/network`, and any other file's element is the default build's, where a network
    config is refused. An e2e test names its build (`test.use({ build })`, default `'default'`); the fixture tells every
-   page of the test, the harness pages load that build's entry, and `setConfig()` of every element on the page throws on
-   a config that is the other build's to test (`pairWithBuild`, `test/e2e/fixture.ts`). Each test still runs once.
+   page of the test, the harness pages load that build's entry, and `start()` of every element on the page throws on
+   grants that are the other build's to test (`pairWithBuild`, `test/e2e/fixture.ts`). Each test still runs once.
 
 ## Alternatives considered
 

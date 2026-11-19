@@ -114,7 +114,7 @@ with its network options left empty: the sealed path never reaches the code that
   written or left out, is refused whole, with its reason, and so is one that sets `scriptUnsafe: true`; the network
   options' rules never run in sealed mode (`readIn`, `src/lib/config-schema.ts`). Those two rules are
   the only ones that read the host page (its origin and its site, from `src/lib/host-site.ts`, through `readHostPage` in
-  `src/host.ts`, which `normaliseConfig` calls only when such a rule asks), so a sealed `setConfig()` reads nothing of it.
+  `src/host.ts`, which `normaliseConfig` calls only when such a rule asks), so a sealed `start()` reads nothing of it.
 - **The build.** `_prepareBuild` turns to sealed mode's own path, `_prepareSealedFrame`, before anything of the network
   is asked: no `_reach` (the host page's policy is applied to nothing), no bridge frame, no request gate and no list for one. The view
   and its worker are strict mode's (`_prepareViewFrame`), under `sealedViewPolicy`, whose input has no field an origin
@@ -162,7 +162,7 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 
 ## Two builds: the network modes behind a flag
 
-<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eaec27526fa -->
+<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eaee5b78ed4 -->
 
 The package is built two ways, chosen by one flag that is off by default ([ADR-009](docs/ADR-009-network-modes-build-flag.md);
 `NETWORK_MODES_FLAG`, `src/lib/build-flag.ts`):
@@ -184,16 +184,16 @@ The package is built two ways, chosen by one flag that is off by default ([ADR-0
 - **One element, and a seam.** The element's class (`src/host.ts`) has sealed mode's build path and everything every
   mode shares. What the network modes add are methods of the element (`NetworkMethods`, `src/lib/network-host.ts`: the
   builds of cooperative and worker mode and of strict mode's network, the fetch bridge's start, the guest frame's
-  announcement, `execute()`'s frame and deadline) and four values (`src/lib/network-modes.ts`: the config rules of
+  announcement, `execute()` itself, its frame and its deadline) and four values (`src/lib/network-modes.ts`: the config rules of
   `origins` and `fetchBridge`, the reader of the host page, the detail of an `origins` refusal, the bridge frame's part
   of the hashed bootstrap). The network build's entry installs the methods on the element's prototype and fills the
   slot as it is imported (`src/lib/network-install.ts`); the class calls seven of the methods, each only where the build
   has it (one accessor, null while the slot is empty; the lifecycle's effect looks the method up on the class's
   prototype). In the default build nothing fills the slot and the element has none of the methods.
 - **The config.** The schema declares every option, the network ones too (their defaults and modes). In the default
-  build a config that names a network mode or option is refused before any option is read
-  (`networkModesOffRefusal`, `src/lib/config-schema.ts`), with a reason that names the flag (`start()` throws it,
-  `setConfig()` ends the sandbox with it), and no rule of a network option exists to run in any mode.
+  build grants that name a network mode or option are refused before any option is read
+  (`networkModesOffRefusal`, `src/lib/config-schema.ts`): `start()` throws, with a message that names the flag, and no
+  rule of a network option exists to run in any mode.
 - **The bootstrap.** The hashed script is the view's and, in the network build, the fetch bridge frame's too; the
   default build's has the view alone, so each build has its own `viewScriptHash()`.
 - **What is shared stays shared.** The functions stringified into the guest's worker and the view, the broker, the
@@ -291,7 +291,7 @@ How a field is bounded:
 
 ## The lifecycle: one reducer, one executor
 
-<!-- describes: lifecycle:states, lifecycle:inputs, lifecycle:effects, lifecycle:transitions sig:204e6fd096ff4b6e -->
+<!-- describes: lifecycle:states, lifecycle:inputs, lifecycle:effects, lifecycle:transitions sig:204ee8507ef5f3fc -->
 
 The element's `state` is not kept by the code that reacts to the DOM. Every platform callback, timer, embedder call and
 build result is an **input** to one pure function, `reduce(state, input)`, which returns the next state and a list of
@@ -312,30 +312,30 @@ environment is gone, with a reason). See [ADR-003](docs/ADR-003-lifecycle-and-li
 <!-- generated:begin lifecycle-states -->
 | State | Inputs that can arrive in it |
 | :--- | :--- |
-| `idle` | `connect`, `disconnect`, `build`, `setConfig`, `configured`, `filesChanged`, `terminate`, `dispatchStarted`, `dispatchEnded` |
-| `loading` | `connect`, `disconnect`, `build`, `setConfig`, `configured`, `filesChanged`, `built`, `buildFailed`, `terminate`, `loadDeadline`, `frameLoad`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
-| `ready` | `connect`, `disconnect`, `build`, `setConfig`, `configured`, `filesChanged`, `terminate`, `loadDeadline`, `frameLoad`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
-| `terminated` | `connect`, `disconnect`, `build`, `setConfig`, `configured`, `filesChanged`, `buildTerminationDue`, `terminate`, `dispatchStarted`, `dispatchEnded` |
+| `idle` | `connect`, `disconnect`, `start`, `build`, `terminate`, `dispatchStarted`, `dispatchEnded` |
+| `loading` | `connect`, `disconnect`, `start`, `build`, `built`, `buildFailed`, `terminate`, `loadDeadline`, `frameLoad`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
+| `ready` | `connect`, `disconnect`, `start`, `build`, `terminate`, `loadDeadline`, `frameLoad`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
+| `terminated` | `connect`, `disconnect`, `start`, `build`, `buildTerminationDue`, `terminate`, `dispatchStarted`, `dispatchEnded` |
 <!-- generated:end -->
 
 <!-- generated:begin lifecycle-diagram -->
 ```mermaid
 stateDiagram-v2
     [*] --> idle
-    idle --> idle: build, configured, connect, disconnect, dispatchEnded, dispatchStarted, filesChanged, setConfig, terminate
-    idle --> loading: build, configured, connect
-    idle --> terminated: build, configured, connect, terminate
-    loading --> loading: announced, build, built, configured, connect, dispatchEnded, dispatchStarted, filesChanged, frameLoad, setConfig, terminate
+    idle --> idle: build, connect, disconnect, dispatchEnded, dispatchStarted, start, terminate
+    idle --> loading: build, connect
+    idle --> terminated: build, connect, terminate
+    loading --> loading: announced, build, built, connect, dispatchEnded, dispatchStarted, frameLoad, start, terminate
     loading --> ready: announced, frameLoad, viewReady
-    loading --> terminated: announced, build, buildFailed, configured, connect, frameLoad, loadDeadline, terminate
-    loading --> idle: build, configured, connect, disconnect
-    ready --> terminated: announced, build, configured, connect, frameLoad, terminate
-    ready --> idle: build, configured, connect, disconnect
-    ready --> loading: build, configured, connect
-    ready --> ready: dispatchEnded, dispatchStarted, filesChanged, frameLoad, loadDeadline, setConfig, terminate, viewReady
-    terminated --> idle: build, configured, connect, disconnect
-    terminated --> loading: build, configured, connect
-    terminated --> terminated: build, buildTerminationDue, configured, connect, dispatchEnded, dispatchStarted, filesChanged, setConfig, terminate
+    loading --> terminated: announced, build, buildFailed, connect, frameLoad, loadDeadline, terminate
+    loading --> idle: build, connect, disconnect
+    ready --> terminated: announced, build, connect, frameLoad, terminate
+    ready --> idle: build, connect, disconnect
+    ready --> loading: build, connect
+    ready --> ready: dispatchEnded, dispatchStarted, frameLoad, loadDeadline, start, terminate, viewReady
+    terminated --> idle: build, connect, disconnect
+    terminated --> loading: build, connect
+    terminated --> terminated: build, buildTerminationDue, connect, dispatchEnded, dispatchStarted, start, terminate
 ```
 <!-- generated:end -->
 
@@ -344,10 +344,8 @@ stateDiagram-v2
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `connect` | connectedCallback | — | any | any | `ctx: BuildContext` |
 | `disconnect` | disconnectedCallback, adoptedCallback | — | any | any | — |
-| `build` | reset(), load() | — | any | any | `why: 'reset' \| 'load'`, `ctx: BuildContext` |
-| `setConfig` | setConfig() | — | any | any | `same: boolean` |
-| `configured` | the applyConfig effect, start() | — | any | any | `refusal: string \| null`, `ctx: BuildContext` |
-| `filesChanged` | registerFiles(), unregisterFiles(), commitGuestWrites() | — | any | any | — |
+| `start` | start() | — | any | any | — |
+| `build` | reset(), start() | — | any | any | `ctx: BuildContext` |
 | `built` | the build effect | always | `loading` | any | `prepared: unknown` |
 | `buildFailed` | the build or attach effect | always | `loading` | any | `reason: string` |
 | `buildTerminationDue` | the task effect | always | `terminated` | any | — |
@@ -365,7 +363,6 @@ stateDiagram-v2
 | :--- | :--- | :--- |
 | `teardown` | host.ts, `_teardown` without its generation and pending-termination lines, which are the reducer's | — |
 | `discardWrites` | the guest writes' overlay is dropped | — |
-| `applyConfig` | stores the clone (normaliseConfig), and answers with its refusal: then `configured` | — |
 | `build` | prepares the build; then `built`, or `buildFailed` if it threw | — |
 | `attach` | the prepared build becomes the element's | `prepared: unknown` |
 | `startLoadDeadline` | arms the load deadline (LOAD_TIMEOUT_MS) | — |
@@ -418,6 +415,7 @@ the docs read) and the role its header comment gives.
 | `src/network.ts` | network | Public entry point of the package built with the network modes |
 | `src/sealed.ts` | every build | The public API of sealed mode: what every build of the package exports |
 | `src/lib/app-start.ts` | every build | The reading of `start(app, grants)`'s two arguments (design 01, "start(app, grants)"; I2, I17) |
+| `src/lib/app-surface.ts` | none (a registry) | Every public member of the element, classified by what it does with the element's one app (design 01; I1, I3) |
 | `src/lib/auto-resize.ts` | every build | Content auto-sizing, host side |
 | `src/lib/bridge-frame.ts` | network | The fetch bridge's frame, host side |
 | `src/lib/build-flag.ts` | every build | The build flag of the network modes |

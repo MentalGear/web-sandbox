@@ -145,14 +145,14 @@ creates the render port, spawns the worker from a `blob:` URL (`worker-src blob:
 ### API
 
 ```js
-sandbox.registerFiles({ 'main.js': `sandboxView.render('<button id="go">Go</button>');
-    sandboxView.on('click', 'go', (e) => sandboxView.render('<p>clicked ' + e.target.id + '</p>'));` });
-sandbox.setConfig({ mode: 'strict', entry: 'main.js' });
+const files = { 'main.js': `sandboxView.render('<button id="go">Go</button>');
+    sandboxView.on('click', 'go', (e) => sandboxView.render('<p>clicked ' + e.target.id + '</p>'));` };
+sandbox.start({ entry: 'main.js', files }, { mode: 'strict' });
 ```
 
-- `mode: 'strict'`, `entry` (a registered JavaScript path; the worker runs it first, as a classic script); `html` / `load()`
-  is the initial view; `execute()` runs in the worker (needs `scriptUnsafe`); `call()` and `expose()` talk to the worker's
-  `bridge`; `watchdogTimeout` and `workerExecutionTimeout` watch the worker.
+- `mode: 'strict'`, `entry` (the path of a JavaScript file of the app's; the worker runs it first, as a classic script);
+  `html` is the initial view; `execute()` runs in the worker (needs `scriptUnsafe`); `call()` and the host methods talk to
+  the worker's `bridge`; `watchdogTimeout` and `workerExecutionTimeout` watch the worker.
 - In the worker, `sandboxView.render(html, into?)` replaces the view's body, or the children of the element whose id is
   `into`; at most `VIEW_RENDER_MAX_LENGTH` (256 Ki) characters; latest wins per target. `sandboxView.text(id, text)` makes a
   string an element's only content, assigned and never parsed, so a guest escapes nothing; `sandboxView.set(id, { value?,
@@ -336,7 +336,7 @@ every engine, WebKit included, with the same fields. `fetch` and `XMLHttpRequest
 the gate refuses every `WebSocket`, a listed origin's too, and `origins.connect` keeps no `wss://` entry: a handshake
 carries the cookies the browser attaches by site, which nothing strips, so strict mode has no cookie carrier at all
 (`STRICT_COOKIE_CARRIERS`, `src/lib/cookie-facts.ts`); a streamed `fetch()` response, or a socket the host page opens
-and relays through `expose()`, takes its place. The originals
+and relays through a host method, takes its place. The originals
 cannot be reached: every copy on the global object's prototype chain is removed (a worker's `fetch` lives on
 `WorkerGlobalScope.prototype`), and each prototype's `constructor` names the gated constructor. The browser's policy stays
 underneath: what the gate admits it still checks, and a redirect it refuses is reported per engine.

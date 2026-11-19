@@ -1,8 +1,9 @@
 # Design: one app per element, the hand-offs, and the served document
 
-**Status: a design, not built.** Nothing in this folder describes the code as it is. The code as it is: [API.md](../API.md),
-[THREAT-MODEL.md](../THREAT-MODEL.md), [ARCHITECTURE.md](../../ARCHITECTURE.md). The one part that is built is named as
-such where it appears (the view's value model for form controls, [04](04-forms-and-autofill.md)).
+**Status: a design, partly built.** The code as it is: [API.md](../API.md), [THREAT-MODEL.md](../THREAT-MODEL.md),
+[ARCHITECTURE.md](../../ARCHITECTURE.md). What is built is named as such where it appears: the view's value model for
+form controls ([04](04-forms-and-autofill.md)), and of step 1 the rows [05](05-build-order.md) marks built
+(`start(app, grants)`, one app per element).
 
 **Decided by the owner.** Sealed mode alone is the default build (D9, [ADR-009](../ADR-009-network-modes-build-flag.md)).
 Sealed mode's document becomes a static file the embedder serves, with its policy in a `<meta>` tag and no `srcdoc`
@@ -55,7 +56,7 @@ I17 and I18 came from it, and review 2 cites all eighteen.
 
 | # | Invariant | Rung | Where | Structural test (planned unless marked built) |
 | :--- | :--- | :--- | :--- | :--- |
-| I1 | An element holds at most one app for its whole life | impossible to build: no member binds a second, and the check that the element has no app and the storing of the validated values are one step, with no code of the embedder's between them | [01](01-one-element-one-app.md) | `APP_SURFACE` (`src/lib/app-surface.ts`): every member of the element in the API report is classified as binding, acting on the bound app, or neither; exactly one binds. A unit test: a getter of the app that calls `start()` |
+| I1 | An element holds at most one app for its whole life | impossible to build: no member binds a second, and the check that the element has no app and the storing of the validated values are one step, with no code of the embedder's between them | [01](01-one-element-one-app.md) | `APP_SURFACE` (`src/lib/app-surface.ts`): every member of the element in the API report is classified as binding, acting on the bound app, or neither; exactly one binds. A unit test: a getter of the app that calls `start()` (built: `test/unit/app-surface.test.ts`, `test/unit/start.test.ts`) |
 | I2 | Nothing of an app is stored unless all of it was valid by the rules the host page can decide without parsing guest text | impossible to build: validation returns the values that are stored | [01](01-one-element-one-app.md) | a unit test over every way `start()` throws: the element equals a new one |
 | I3 | A host method is reachable only by the app it was given with, in the document the embedder's `documentUrl` serves | impossible to build on the element; **a documented limit** for the host that answers `documentUrl`, which is trusted with the app ([03](03-served-document.md#who-is-trusted-with-the-app)); against a page that frames the host page it rests on the browser keeping a frame in a closed shadow root out of `window.frames` ([03](03-served-document.md#the-shape)) | [01](01-one-element-one-app.md) | `APP_SURFACE`; the lifecycle model with no input that changes methods; an e2e spec: a cross-site page that frames the host page finds no frame; a `<base>` in the host page does not move `documentUrl` |
 | I4 | A commit stores only bytes the embedder was handed, and only while they are still what is pending | impossible to build: a commit takes the write values the library minted, and a value commits only if its entry is its path's current pending entry, by identity | [01](01-one-element-one-app.md) | a unit test: a guest write, a commit, a `reset()` or a re-insertion after the list each leave the listed value uncommittable |

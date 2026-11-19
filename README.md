@@ -71,7 +71,7 @@ The whole picture, on one page, with the realms, channels, frames and lifecycle 
 *   **`src/host.ts`**: The core implementation of the `<web-sandbox>` custom element. It handles frame creation, configuration, and communication.
 *   **`src/lib/origin.ts`**, **`src/lib/csp/origins.ts`**, **`src/lib/csp/csp-generator.ts`**: The guest policy: the one origin parser (shared with `fetchBridge.allow`), `origins` parsed at the boundary, and one policy template per mode.
 *   **`src/lib/frame-documents.ts`**: Builds the wrapper, guest and fetch bridge frame documents (see Security Mitigations).
-*   **`src/lib/rpc.ts`**: The broker behind `expose()` and `call()`; the host and the guest run the same code.
+*   **`src/lib/rpc.ts`**: The broker behind the host methods, `bridge.expose()` and `call()`; the host and the guest run the same code.
 *   **`src/lib/files.ts`**, **`src/lib/in-sandbox-files.ts`**: Registered files: the host's store, and the guest's `sandboxFiles`.
 *   **`src/lib/markup-references.ts`**: Resolves guest markup references (`<script src="app.js">`) to registered files before the guest is built.
 *   **`src/lib/module-specifiers.ts`**, **`src/lib/import-map.ts`**: The module graph: relative imports in registered modules rewritten to virtual URLs (with the bundled es-module-lexer), and the guest's own import maps merged into the one the bootstrap registers.
@@ -89,16 +89,21 @@ The whole picture, on one page, with the realms, channels, frames and lifecycle 
 ```js
 import { defineWebSandbox } from 'web-sandbox';   // or './src/index.ts' from a checkout
 
-defineWebSandbox();                 // registers <web-sandbox>; pass a name to use your own tag
-const sandbox = document.querySelector('web-sandbox');
-sandbox.load('<h1>Hello</h1>');     // sealed mode, the default: shown, no script in it runs, no network
+defineWebSandbox();                             // registers <web-sandbox>; pass a name to use your own tag
+const sandbox = document.createElement('web-sandbox');
+sandbox.start({ html: '<h1>Hello</h1>' });      // the app, once: sealed mode, the default, shows it, runs no script in it
+document.body.append(sandbox);                  // it builds once it is in the document
 ```
 
+An element runs one app, given once with `start(app, grants)`: the app's own content (`html`, `entry`, `files`) as the
+first argument, and what you allow it (its host methods, `guestWrites`, the other options) as the second. A second
+`start()` on the element throws; another app is another element ([API](docs/API.md#startapp-grants)).
+
 **Need the network? Build the package with the network modes, and use `mode: 'strict'`.** Sealed mode has no `origins`
-and no `fetchBridge`, and the package as built by default has no other mode: there a config that names either option, or
-a mode other than sealed, is refused, and the sandbox terminates with a reason that names the build flag,
-`WEB_SANDBOX_NETWORK_MODES=1` ([Modes](#modes)). In a build with the network modes a config that names either option
-without `mode: 'strict'` is refused with the reason ``origins and fetchBridge open the network, which sealed mode (the
+and no `fetchBridge`, and the package as built by default has no other mode: there grants that name either option, or
+a mode other than sealed, make `start()` throw, with a message that names the build flag,
+`WEB_SANDBOX_NETWORK_MODES=1` ([Modes](#modes)). In a build with the network modes grants that name either option
+without `mode: 'strict'` make it throw with ``origins and fetchBridge open the network, which sealed mode (the
 default) does not have: set `mode: 'strict'` ``. An embed written when strict mode
 was the default: [Migrating to sealed as the default](docs/API.md#migrating-to-sealed-as-the-default).
 
@@ -136,14 +141,14 @@ mode (the default) or strict mode.
 **Two builds.** `bun run build:lib` writes the default build: sealed mode alone. Strict, cooperative and worker mode,
 with `origins` and `fetchBridge`, are the **network modes**, and are in the package only when it is built with the flag
 `WEB_SANDBOX_NETWORK_MODES=1` (`WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib`). The default build's bundle holds none
-of their code and its types none of their configurations; given a config that names one of those modes or options it
-applies nothing and terminates with a reason that names the flag. Everything below about those modes describes the
+of their code and its types none of their configurations, and its element has no `execute()`; given grants that name
+one of those modes or options, `start()` throws, with a message that names the flag, and stores nothing. Everything below about those modes describes the
 network build ([API](docs/API.md#builds), [ADR-009](docs/ADR-009-network-modes-build-flag.md)).
 
-In sealed and strict mode `html` (and `load()`) is the initial view: its `<script>` elements and `on…` handlers never
+In sealed and strict mode `html` is the initial view: its `<script>` elements and `on…` handlers never
 run, and the element says so once (`sealed mode (the default) runs no script in html; …`, or `strict mode …`). Put the
-code in a registered file named by `entry`, or choose `mode: 'cooperative'`. `mode: 'iframe'` is not a mode: it starts
-nothing, and the `terminated` reason names `'cooperative'`.
+code in a file of the app's named by `entry`, or choose `mode: 'cooperative'`. `mode: 'iframe'` is not a mode: `start()`
+throws, and its message names `'cooperative'`.
 
 **The guest reaches nothing by default.** Sealed mode has no network at all: guest code makes no request, and makes
 the browser send none for it, not even a report to your page's Content-Security-Policy endpoint (it runs no string as
@@ -154,9 +159,8 @@ may load each kind from in `origins` (`connect`, `images`, `styles`, `fonts`, `m
 its policy is fixed:
 
 ```js
-sandbox.setConfig({ // in a build with the network modes
-    mode: 'strict', // the network options need it: without a mode the config is sealed, and refused
-    entry: 'main.js',
+sandbox.start({ entry: 'main.js', files }, { // in a build with the network modes
+    mode: 'strict', // the network options need it: without a mode the grants are sealed, and refused
     origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] },
     hostContentSecurityPolicy: false, // your page's Content-Security-Policy as text, or false if it sends none (below)
 });
@@ -170,7 +174,7 @@ warning, and so is a `wss://` entry without its `https://` twin. Strict mode tak
 **Strict mode opens no WebSocket**: a handshake carries the cookies the browser attaches, so a `wss://` entry is dropped
 with a warning there and `new WebSocket()` throws a `SecurityError`, reported as a `violation`. For realtime data, read
 a streamed `fetch()` response as it arrives (`response.body.getReader()`), or open the socket in your page and relay
-it to the guest with `expose()` ([API](docs/API.md#strict-no-websocket)).
+it to the guest through a host method ([API](docs/API.md#strict-no-websocket)).
 
 **Strict mode's view loads without credentials, so your `images` and `media` origins must answer with CORS.** Every
 `<img>`, `<video>`, `<audio>` and `<link>` the view keeps gets `crossorigin="anonymous"`, so each load is a CORS request
@@ -179,7 +183,7 @@ load that fails is reported as a `violation`. What no attribute reaches is dropp
 and every network URL in CSS (`url()`, `@import`, `image-set()`, `@font-face`, in style attributes, `<style>` and
 registered stylesheets). Register the stylesheets, fonts and posters the guest shows; nothing loads from `styles` or
 `fonts` in strict mode ([API](docs/API.md#the-views-loads)). For a server you cannot give CORS, fetch the asset in
-your page and register it as a file (`registerFiles()`): the view shows it from a `blob:` URL.
+your page and give it as a file of the app's: the view shows it from a `blob:` URL.
 
 **Your page's `connect-src` applies to `origins.connect` and `fetchBridge.allow`, the same on every engine.** An origin
 it does not admit by scheme and host (`'self'` admits nothing) is dropped with a warning. The library takes the policy
@@ -196,11 +200,12 @@ and limit. The sections below walk through each feature.
 
 ## Lifecycle
 
-`sandbox.state` tells where the sandbox is: `idle` (not in the document), `loading` (a frame is
+`sandbox.state` tells where the sandbox is: `idle` (not in the document, or no app yet), `loading` (a frame is
 being built), `ready` (the guest's startup script checked in; its document may still be loading) or `terminated`. There is no "running" state: nothing the
 guest reports could make it truthful. `workerExecutionTimeout` checks that the event loop is free at each
-`execute()`'s deadline ([API](docs/API.md#executecode)).
-A config or build the element cannot use ends in `terminated` with a reason; `setConfig()` never throws.
+`execute()`'s deadline ([API](docs/API.md#executecode)). `sandbox.started` says whether the element has its app.
+An app or grants that `start()` cannot use make it throw, and store nothing; a build that fails ends in `terminated`
+with a reason.
 
 ```js
 sandbox.addEventListener('ready', () => { /* state is 'ready' */ });
@@ -213,12 +218,11 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 ```
 
 *   **`terminate(reason?)`** removes the frame now and fires `terminated` with `{ reason }`. Calling
-    it again while terminated does nothing. The sandbox stays terminated until `reset()`, `load()` or
-    `setConfig()`.
-*   **`reset()`** builds a fresh environment with the current config, from any state. Guest methods
-    are gone, host methods stay; pending calls reject with `TERMINATED`.
+    it again while terminated does nothing. The sandbox stays terminated until `reset()`.
+*   **`reset()`** builds a fresh environment of the same app, from any state, with its files as they are now
+    (committed writes included). Guest methods are gone, host methods stay; pending calls reject with `TERMINATED`.
 *   **Removing the element** tears the sandbox down the same way, without a `terminated` event, and
-    leaves it `idle`. Inserting it again builds a fresh one. Moved into another window's document, it builds
+    leaves it `idle`. Inserting it again builds the same app again. Moved into another window's document, it builds
     nothing there (one warning) until it is back.
 *   **`ready` is the guest's check-in**, not its load: slow images never delay it. In strict mode it is the view's
     check-in, on the port only its bootstrap holds; in worker mode it comes once the worker runs. A cooperative frame
@@ -228,9 +232,9 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     `LOAD_TIMEOUT_MS` (5 s of host time) ends with `the sandbox did not finish loading`, or, when its frame loaded and
     its startup script never ran, with a reason that names the host page's policy. A guest that reloads or
     rewrites its own document ends its environment (`the guest frame announced itself again …`).
-*   **A build that is refused** (a config that cannot be used, an unknown mode, an entry that is not registered) sets
-    `state` to `terminated` at once and dispatches `terminated` in a task, like `ready`, so a listener added right
-    after the call hears it. `setConfig()` with the configuration the environment already stands on changes nothing.
+*   **A build that is refused** (an entry that calls `import()`, one the files no longer hold, a host page that is
+    cross-origin isolated) sets `state` to `terminated` at once and dispatches `terminated` in a task, like `ready`, so
+    a listener added right after the call hears it.
 *   **Events** are dispatched on the element. `sandbox-log` (guest `console` output and errors) bubbles,
     so a listener on `window` hears every sandbox on the page and `event.target` says which one. Its detail
     is `{ type: 'LOG', level, args, source }` (type `SandboxLog`): `level` is `log`, `info`, `warn` or
@@ -263,7 +267,7 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 *   **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`,
     a `fetch` record's `url` (it can be `javascript:`), the path and type of a guest's write (`fileswritten`'s
     `detail.paths`, `listGuestWrites()`; a valid path can end a single-quoted attribute), the message of a call rejected by
-    a guest handler, and the arguments of a method you `expose()`. "Validated and clamped" bounds its size and shape; it does not make it safe to
+    a guest handler, and the arguments of a host method you grant. "Validated and clamped" bounds its size and shape; it does not make it safe to
     display. Show it with `textContent`, and never pass it to an HTML (`innerHTML`, `insertAdjacentHTML`), URL (a link
     `href`), `eval`, template or `console` format-string sink (as the first argument of a `console` method it is a
     format string, `%c` styles the line and `%s` takes the next argument: put a fixed text first, as the examples do).
@@ -287,7 +291,7 @@ that loops forever spins its worker until `terminate()` (the host page stays res
 `terminate()` is how the host stops a guest at will.
 
 ```js
-sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
+sandbox.start({ entry: 'main.js', files }, { watchdogTimeout: 2000 });
 ```
 
 Why it is built this way: [ADR-003](docs/ADR-003-lifecycle-and-liveness.md).
@@ -298,7 +302,7 @@ With `autoResize: true` (sealed, strict and cooperative mode, off by default) th
 content, growing and shrinking with it, a frame or two after the content changes.
 
 ```js
-sandbox.setConfig({ entry: 'main.js', autoResize: true });
+sandbox.start({ entry: 'main.js', files }, { autoResize: true });
 ```
 
 *   **How**: the guest bootstrap watches the guest's root element with a `ResizeObserver` and reports its
@@ -313,8 +317,7 @@ sandbox.setConfig({ entry: 'main.js', autoResize: true });
     (`AUTO_RESIZE_MAX_HEIGHT`), and writes at most once per animation frame and at most 30 times a second
     (`AUTO_RESIZE_MAX_UPDATES_PER_SECOND`), always ending at the newest report. So a guest whose height
     oscillates costs the host page a bounded number of relayouts. Off, nothing a guest does changes the element.
-*   **Lifecycle**: the height stays across `reset()`, `load()` and `setConfig()` until the new guest
-    reports; a config without `autoResize` gives the height back to your CSS. Like the bridge, it needs the
+*   **Lifecycle**: the height stays across `reset()` until the new guest reports. Like the bridge, it needs the
     bootstrap to run (`allow-scripts`, inline `script-src`). In worker mode it does nothing, with one warning.
 
 ## Capabilities
@@ -335,7 +338,7 @@ is not checked against `form-action` in Chromium. Strict mode's view always has 
 script runs there, and it cancels every submit.
 
 ```js
-sandbox.setConfig({
+sandbox.start({ html }, {
     mode: 'cooperative',
     capabilities: ['allow-scripts'],
     unsafeCapabilities: ['allow-popups', 'fullscreen'], // explicit opt-in, warns
@@ -352,7 +355,7 @@ reason: a guest that holds the pointer lock can hide the cursor and capture rela
 `allow-same-origin` and the `allow-top-navigation*` flags are never accepted.
 
 **`scriptUnsafe` is for testing.** It adds `'unsafe-eval'` to the guest policy, so guest code can run
-strings as code (`eval`, `new Function`), and it enables `execute()`. The e2e suite and most playground
+strings as code (`eval`, `new Function`), and in the build with the network modes it enables `execute()`. The e2e suite and most playground
 presets turn it on; content you do not trust should run without it. Enabling it logs one warning per
 element. Sealed mode, the default, refuses it: your page's policy, which the sandbox inherits, checks every string
 run as code and reports a refusal to the guest (with your policy's text) and to your report endpoint (with the
@@ -360,33 +363,36 @@ string). Without it, the worker of strict and sealed mode refuses every string i
 
 ## Calling between host and guest
 
-The host and the guest can call each other's functions and await the result. Each side publishes
-functions with `expose(name, fn)` and calls the other side's with `call(method, ...args)`, which
+The host and the guest can call each other's functions and await the result. The host gives its functions with
+`start()`'s grants (`methods`), the guest publishes its own with `bridge.expose(name, fn)`, and each side calls the
+other side's with `call(method, ...args)`, which
 returns a promise for the handler's return value; if the handler throws, the promise rejects with
 `HANDLER_ERROR`. A guest handler's message crosses as written (it is attacker text). A host method's message crosses
 only when it is your own words: a thrown string or the message of a plain `Error` your code made. An error of the
-library's that your method lets through (a `registerFiles()` refusal, the refusal of your own `call()`) crosses as its
+library's that your method lets through (a `commitGuestWrites()` refusal, the refusal of your own `call()`) crosses as its
 code and a fixed text, never its message, which quotes your data or another app's answer. Any other throw (the
 `SyntaxError` of a `JSON.parse` of your data, a `TypeError`, a subclass of `Error`) reaches the guest as
 `the method failed (<name>)`, because an engine's message quotes the data it was handling
-([details](docs/API.md#app-to-host)). On the host these
-are methods of the element; in the guest they live on the global `bridge`.
+([details](docs/API.md#app-to-host)). On the host `call()` is a method of the element; in the guest `expose()` and
+`call()` live on the global `bridge`.
 
 ```js
-sandbox.expose('ping', () => 'pong');                       // host method, callable by the guest
-sandbox.registerFiles({ 'main.js': `
+const files = { 'main.js': `
     bridge.expose('sum', (a, b) => a + b);                  // guest method, callable by the host
     bridge.call('ping').then(reply => console.log(reply));  // logs "pong"
-` });
-sandbox.setConfig({ entry: 'main.js' });                    // sealed mode, the default, runs the entry in its worker
+` };
+sandbox.start({ entry: 'main.js', files },                  // sealed mode, the default, runs the entry in its worker
+    { methods: { ping: () => 'pong' } });                   // host method, callable by the guest
+document.body.append(sandbox);
 
 const total = await sandbox.call('sum', 1, 2);              // 3, once the sandbox is ready
 ```
 
 In cooperative mode the same code can sit in a `<script>` of the guest's markup.
 
-*   **Only exposed methods can be called.** Any other name, built-in ones like `toString` or
-    `__proto__` included, rejects with `unknown method`. Exposing a name again replaces its handler.
+*   **Only listed methods can be called.** Any other name, built-in ones like `toString` or
+    `__proto__` included, rejects with `unknown method`. The host's are the grants' `methods`, copied when `start()`
+    is called; in the guest, exposing a name again replaces its handler.
 *   **Values are copied, not shared.** Arguments and results are copied the way `structuredClone`
     copies, so they must be cloneable data; a function or a DOM node fails that one call at once. A typed
     array or `DataView` carries its own bytes only: `heap.subarray(a, b)` arrives over a buffer of `b - a`
@@ -397,14 +403,13 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
 *   **Every call times out** after 30 seconds by default. `callWithTimeout(ms, method, ...args)`
     sets a different limit for one call; `0` turns it off. A call made while loading that times out
     before the guest is ready never runs.
-*   **Host methods belong to the element**, so they survive `reset()`, `load()` and `setConfig()`, until
-    `unexpose()` removes them (before another app runs on the element). Guest
+*   **Host methods belong to the app**, on its one element, so they survive `reset()`, `terminate()` and removal. Guest
     methods belong to one frame: a new frame starts with none until its own code exposes them.
 *   **A host method's failure tells the guest only what you wrote.** The message of a plain `Error` your code made or a
     thrown string reaches the guest; an error of the library's that the method lets through arrives as its code and a
     fixed text of the library's; any other throw (an engine's `TypeError`, a `JSON.parse` error) arrives as
     `the method failed (<name>)`. Each text the guest does not receive goes to your console.
-*   **A reset settles every pending call.** When `reset()`, `load()` or `setConfig()` recreates the
+*   **A reset settles every pending call.** When `reset()` recreates the
     frame, the element is removed, or the sandbox is terminated, pending calls reject; calls made
     after termination reject at once.
 *   **Every rejection has a `code`; branch on it, not on the message.** `TIMEOUT`, `TERMINATED`, `SEND_FAILED`
@@ -424,7 +429,7 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
     measure counts what a clone delivers: a `File`'s name, a `Blob`'s type, a sparse array's `length`).
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never
     evaluates code. A worker-mode guest has no markup, though, so it can only expose methods
-    through `execute()`, which does need `scriptUnsafe`.
+    through `execute()`, which does need `scriptUnsafe` (and the build with the network modes).
 
 Why it is built this way: [ADR-002](docs/ADR-002-host-guest-broker.md).
 
@@ -436,15 +441,14 @@ frame of the library's, with an opaque origin of its own, makes it. The guest po
 and `WebSocket` stay refused unless `origins.connect` lists them (and in strict mode `WebSocket` stays refused).
 
 ```js
-// strict mode: the guest's code is a registered file, named by `entry`
-sandbox.registerFiles({ 'main.js': `
+// strict mode: the guest's code is a file of the app's, named by `entry`
+const files = { 'main.js': `
     sandboxFetch('https://api.example/items', { headers: { accept: 'application/json' } })
         .then(response => response.json())
         .then(items => console.log(items.length));
-` });
-sandbox.setConfig({
+` };
+sandbox.start({ entry: 'main.js', files }, {
     mode: 'strict', // sealed mode, the default, has no fetchBridge: naming it there is refused
-    entry: 'main.js',
     fetchBridge: { allow: ['https://api.example'], maxBytes: 1024 * 1024, timeoutMs: 10000 },
     hostContentSecurityPolicy: false, // your page's policy as text, or false if it sends none
 });
@@ -468,7 +472,7 @@ sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.u
 *   **Bounded.** The response body is capped at `maxBytes` (1 MiB by default, at most 32 MiB): a larger
     `Content-Length` is refused unread, and an undeclared body is abandoned as soon as it passes the cap.
     Each request has `timeoutMs` (10 s by default, body included) and at most `maxConcurrent` (4) run at
-    once. `reset()`, `load()`, `setConfig()`, `terminate()` and removal abort every request in flight.
+    once. `reset()`, `terminate()` and removal abort every request in flight.
     Whole responses only: no streaming, no `AbortSignal`; bodies are strings, `ArrayBuffer`s or typed arrays.
 *   **Refusals have a code**, on the rejection's `code` (type `FetchErrorCode`): `FETCH_NOT_ALLOWED`
     (URL, origin, method, header or body), `FETCH_BUSY`, `FETCH_REDIRECT`, `FETCH_TOO_LARGE`,
@@ -494,44 +498,41 @@ sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.u
 *   `sandboxFetch` is a separate global; `fetch` itself is untouched (assign `globalThis.fetch = sandboxFetch`
     in the guest if you want that). It works in every mode but sealed, where it rejects with `FETCH_NOT_ALLOWED` and
     sends nothing. The name `sandbox:fetch`, like every
-    method name starting with `sandbox:`, is reserved: the host's `expose()` refuses it with a warning, and the guest's
+    method name starting with `sandbox:`, is reserved: `start()` refuses a host method of that name, and the guest's
     `bridge.expose()` ignores it (no method is published, and nothing is logged).
 
 Why it is built this way: [ADR-006](docs/ADR-006-fetch-bridge.md).
 
 ## Files
 
-The host registers files on the element; the guest reads them through the global `sandboxFiles`.
+The app's files go to `start()` with it; the guest reads them through the global `sandboxFiles`.
 
 ```js
-sandbox.registerFiles({
+const files = {
     'app.js': 'import { greet } from "./lib/greet.js"; greet();',  // modules import by relative path
     'lib/greet.js': 'export const greet = () => console.log("hello");',
     'data.json': '{ "answer": 42 }',
     'logo.png': pngBytes,                                    // a Uint8Array
     'notes': { content: 'plain text', type: 'text/plain' },  // explicit type
-});
-sandbox.registerFiles({
     'css/site.css': '@import "base.css"; body { background: url(../logo.png); }',  // stylesheets too
     'css/base.css': 'p { margin: 0; }',
-});
-sandbox.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
-sandbox.load(`
+};
+const html = `
     <script type="module" src="app.js"></script>             <!-- markup names files by path -->
     <link rel="stylesheet" href="css/site.css">
     <img src="logo.png" srcset="logo.png 1x">
     <script>
         sandboxFiles.text('data.json').then(JSON.parse);     // code reads them through sandboxFiles
         const url = sandboxFiles.url('logo.png');            // a blob: URL made in the guest
-    </script>`);
+    </script>`;
+sandbox.start({ html, files }, { mode: 'cooperative', capabilities: ['allow-scripts'] });
 ```
 
-*   **Files belong to the element.** They survive `reset()`, `load()`, `setConfig()` and `terminate()`.
-    Each new environment gets a snapshot of them; a running guest never changes, so a file you register
-    or remove reaches the guest at the next `reset()`, `load()` or `setConfig()`.
-*   **Host API**: `registerFiles(files)` adds or replaces (a string is stored as UTF-8, a `Uint8Array`
-    is copied); `unregisterFiles(paths?)` removes the given paths, or all of them; `listFiles()` returns
-    `{ path, type, size }`. `fileschanged` fires with `{ paths }` when a call changed something.
+*   **Files belong to the app.** They are validated as one batch and copied when `start()` is called, and survive
+    `reset()`, `terminate()` and removal. Each new environment gets a snapshot of them; a running guest never
+    changes. They change only by the app's own writes you commit (below), which reach the guest at the next build.
+*   **Host API**: the app's `files` (a string is stored as UTF-8, a `Uint8Array` is copied); `listFiles()` returns
+    `{ path, type, size }`. `fileschanged` fires with `{ paths }` when a commit changed something.
 *   **Guest API**: `sandboxFiles.list()`, `url(path)`, `read(path)` (a `Uint8Array`) and `text(path)`.
     It always exists: with no files, `list()` is empty and every lookup fails with `NOT_FOUND`. In
     worker mode the worker has its own.
@@ -593,18 +594,18 @@ sandbox.load(`
 Off by default. With `guestWrites: true` the guest can write and remove files; the host decides what is kept.
 
 ```js
-sandbox.setConfig({ guestWrites: true, /* … */ });
+sandbox.start(app, { guestWrites: true, /* … */ });
 // in the guest
 await sandboxFiles.write('out/report.json', JSON.stringify(result));  // a string, Blob, ArrayBuffer or typed array
 await sandboxFiles.remove('draft.txt');
 // on the host
 sandbox.addEventListener('fileswritten', (e) => console.log('fileswritten', e.detail.paths));
 sandbox.listGuestWrites();                        // [{ path, change: 'write', type, size, content }, …]
-sandbox.commitGuestWrites(['out/report.json']);   // now a registered file, from the next build on
+sandbox.commitGuestWrites(['out/report.json']);   // now a file of the app's, from the next build on
 sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the flag
 ```
 
-*   **The host checks every write** as `registerFiles()` would (paths, types, the 8 MiB / 1000-file cap with
+*   **The host checks every write** as `start()` checks the app's files (paths, types, the 8 MiB / 1000-file cap with
     every pending write counted) and at most 100 writes and 8 MiB in any one second; a refusal has the same codes,
     plus `FILES_BUSY` past the rate and `FILES_NOT_ALLOWED` when writes are off.
 *   **The guest sees its own writes** in `list()`, `read()` and `text()` once the host accepted them, but
@@ -613,8 +614,8 @@ sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the fl
     `OffscreenCanvas`) can be named by path in an `<img>` of the next render, without a rebuild. The view makes the URL
     from the bytes the host holds, and only decodes it; a later write replaces it, a removal ends it. Nothing else the
     guest writes loads anywhere.
-*   **Nothing is kept unless you commit it.** Pending writes belong to the environment: `reset()`, `load()`,
-    `setConfig()` and removing the element discard them; `terminate()` keeps them so you can still inspect and
+*   **Nothing is kept unless you commit it.** Pending writes belong to the environment: `reset()` and removing the
+    element discard them; `terminate()` keeps them so you can still inspect and
     commit them. `commitGuestWrites(paths)` takes an explicit list.
 *   **Code needs `{ code: true }`.** Only images, fonts, audio, video, `text/plain`, `application/json` and
     `text/css` commit without it; JavaScript, HTML, SVG, XML, WebAssembly and anything else is refused with
@@ -633,12 +634,12 @@ for it, except what names `origins` or `fetchBridge`, which sealed mode refuses
 ([ADR-008](docs/ADR-008-sealed-mode.md)).
 
 ```js
-sandbox.registerFiles({
+const files = {
     'main.js': `sandboxView.render('<button id="go">Go</button><p id="out"></p>');
                 sandboxView.on('click', 'go', () => sandboxView.render('clicked', 'out'));`,
     'logo.png': pngBytes,
-});
-sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
+};
+sandbox.start({ entry: 'main.js', files }, { mode: 'strict', watchdogTimeout: 2000 });
 ```
 
 *   **Guest API (in the worker)**: `sandboxView.render(html, into?)` replaces the view's body, or the children of
@@ -656,11 +657,11 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     rectangle (`rect`), or cancel a wheel's scrolling (`preventDefault`). So drag-and-drop within the view, gestures,
     custom sliders and virtual lists are guest code in the worker; native drag-and-drop with data from outside the view
     is not available. `bridge`, `sandboxFiles` and `sandboxFetch` work as in worker mode.
-*   **Host API**: `entry` names a registered JavaScript file the worker runs first (a classic script, in a
+*   **Host API**: `entry` names a JavaScript file of the app's the worker runs first (a classic script, in a
     function scope of its own: its top-level declarations stay local, so assign `globalThis.x` to share; `this`
-    is the global object); `html` and `load()` set the initial view (without an `entry` the worker runs only the
+    is the global object); `html` sets the initial view (without an `entry` the worker runs only the
     library's own code: the view shows the cleaned `html`, and nothing of the guest's runs); `execute()` runs in the worker (needs
-    `scriptUnsafe`); `call()`/`expose()` talk to the worker. An entry that fails to start ends the sandbox
+    `scriptUnsafe`); `call()` and the host methods talk to the worker. An entry that fails to start ends the sandbox
     (`the guest entry failed to start`).
 *   **What it guarantees**, on Chromium, Firefox and WebKit: no guest script runs in any document — the renderer
     keeps only allowlisted elements and attributes (no handlers, frames, `object`/`embed`, `meta`, `base`,
@@ -683,7 +684,7 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     coalesces the continuous ones, holds them while the worker has not taken the last ones, and charges their cost to
     its time budget; links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
     the browser's own link actions (copy, open in a new tab, drag) carry no guest URL (open external URLs through
-    a method you `expose()`); the watchdog stops a looping guest on every
+    a host method of the grants); the watchdog stops a looping guest on every
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
     directive apart, and cannot be forged; the view renders no `blob:` content but registered files and raster-image
     guest writes, decoded only (the worker's own source URL is revoked once its script ran).

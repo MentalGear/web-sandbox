@@ -573,8 +573,9 @@ code. Each code fix names its class and extends that class's chokepoint and stru
 a finding").
 
 *Channels and lifecycle*
-- [ ] BD1:CHL-1: an embedder `console.warn` hook inside `setConfig()`'s `applyConfig` effect is outside the executor's
-  generation check; a `terminate()` from there is undone.
+- [x] BD1:CHL-1: an embedder `console.warn` hook inside `setConfig()`'s `applyConfig` effect is outside the executor's
+  generation check; a `terminate()` from there is undone. Done: the element has no `setConfig()` and the reducer no
+  `applyConfig` effect (design 01, step 1.5); `start()` binds in a step with no effect and builds through `build`.
 - [ ] BD1:CHL-1, second site: the same class at the log cap line (`src/host.ts`, the warning at the cap).
 - [x] BD1:CHL-3: L1 ("a guest cannot outlive `terminate()` or `reset()`") is asserted for cooperative and worker mode
   only; not for strict mode, and not for the element's removal (the property holds). **[tests]** Done: L1 is every mode
@@ -607,8 +608,9 @@ a finding").
 *Docs*
 - [ ] BD1:DOC-1 (BD3:DOC-10: still switched off, `gh api repos/MentalGear/web-sandbox/private-vulnerability-reporting` answers `enabled: false`): the owner enables private vulnerability reporting (repository Settings, Code security), or SECURITY.md gives a private address. SECURITY.md keeps
   the route and says `main` is what is supported. **[owner]**
-- [ ] BD1:DOC-2: `load(html)` does not validate; its TSDoc says a non-string is dropped with a warning, and
-  `load(() => 1)` terminates strict mode (embedder-only). Code, or the TSDoc.
+- [x] BD1:DOC-2: `load(html)` does not validate; its TSDoc says a non-string is dropped with a warning, and
+  `load(() => 1)` terminates strict mode (embedder-only). Code, or the TSDoc. Done: the element has no `load()`; the
+  app's `html` is validated by `start()`, which throws for a value that is not a string (design 01, step 1.5).
 - [x] BD1:DOC-3: three code comments (`violation.ts`, `in-sandbox-script.ts`, `auto-resize.ts`) say the guest can reach the
   port, against the threat model; `auto-resize.ts` says "cooperative mode only". **[comments]**
 - [x] BD1:DOC-4: THREAT-MODEL's "`ready` only follows the guest's check-in" against the no-script cooperative `ready`;
@@ -667,8 +669,9 @@ a finding").
 - [ ] BD1:NEW-5: silent config typos (`watchdogTimout`, `unsafeCapablities`); `fetchBridge` without `allow` warns not.
 - [x] BD1:NEW-6: a looping `entry` spins the worker until `terminate()` with the watchdog off by default; the quickstart
   does not say so. **[docs]**
-- [ ] BD1:NEW-7: `registerFiles()` after a refused entry does not revive the sandbox (as documented); the message does
-  not say to `reset()`.
+- [x] BD1:NEW-7: `registerFiles()` after a refused entry does not revive the sandbox (as documented); the message does
+  not say to `reset()`. Done: the element has no `registerFiles()`, and `start()` throws for an entry that names no
+  JavaScript file of the app's (design 01, step 1.5).
 - [x] BD1:NEW-8: the README fetch-bridge example has no `entry` or `mode`, so it does not run in the default strict
   mode. **[docs]**
 - [x] BD1:NEW-9: `import 'web-sandbox'` fails while the package is private (D1); `bun run dev` hardcodes port 4444.

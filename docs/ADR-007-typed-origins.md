@@ -16,14 +16,14 @@ bad states unrepresentable, with one chokepoint; a list of removals is the oppos
 **The policy is a fixed template per mode. The embedder lists exact origins per kind of load, and nothing else.**
 
 ```js
-sandbox.setConfig({ mode: 'strict', origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] } });
+sandbox.start(app, { mode: 'strict', origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] } });
 ```
 
 1. **`origins: SandboxOrigins`.** Its keys are kinds of load, not directives: `connect` (connect-src), `images` (img-src),
    `styles` (style-src), `fonts` (font-src), `media` (media-src), `scripts` (script-src). Each value is a list of exact
    origins.
 2. **One origin parser** (`src/lib/origin.ts`, `parseOrigin`), shared with `fetchBridge.allow`
-   ([ADR-006](ADR-006-fetch-bridge.md)), reads every entry at the boundary, once, in `setConfig()`. It returns a branded
+   ([ADR-006](ADR-006-fetch-bridge.md)), reads every entry at the boundary, once, in `start()`. It returns a branded
    `Origin` or null; the parsed policy (`OriginPolicy`, `src/lib/csp/origins.ts`) is frozen. An entry that is not an origin
    is dropped with one warning; dropping only narrows (a kind with nothing left is `'none'`). A non-object `origins` or a
    kind that is not a list refuses the config (`the configuration could not be used`), as any unreadable config does (S26).
@@ -54,7 +54,7 @@ sandbox.setConfig({ mode: 'strict', origins: { connect: ['https://api.example.co
    (`mode: 'cooperative'`) and `WorkerSandboxConfig` (`mode: 'worker'`), the last two with `origins?: SandboxOrigins`.
    `scripts` in strict mode is a compile error, and dropped with a warning at run time (a config from JSON). A config
    without `mode` is a sealed config, so one that names `origins` is a compile error, and refused at run time; `origins`
-   is parsed for the mode the config has, so `scripts` is dropped with the strict warning. `setConfig(config: SandboxConfig)` takes the union directly (every option is optional, so `Partial<>`
+   is parsed for the mode the config has, so `scripts` is dropped with the strict warning. `start()`'s grants (`SandboxGrants`) are the union, less the app's options (every option is optional, so `Partial<>`
    is not needed). A config whose mode is chosen at run time type-checks when its `origins` is a `StrictSandboxOrigins`:
    TypeScript then checks it against each mode. The playground's presets are typed that way (`PresetRules`), since the
    playground and the specs run a preset in any mode.
