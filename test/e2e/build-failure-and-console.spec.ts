@@ -15,7 +15,7 @@ test.use({ build: 'network' });
  */
 
 test('an origins kind given a string instead of a list: start() throws the reason and the element stays without an app; a usable config starts it', async ({ sandbox, page }) => {
-    expect(await startAs(page, { mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: "x; script-src *" } })).toEqual({ refused: 'origins.images must be a list of origins' });
+    expect(await startAs(page, { mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: "x; script-src *" } })).toEqual({ refused: '[Sandbox] start(): origins.images must be a list of origins.' });
     expect(await page.evaluate(() => [document.querySelectorAll('web-sandbox').length, (document.querySelector('web-sandbox') as any).started])).toEqual([1, false]);
     expect(await sandbox.terminations()).toEqual([]);
     expect(await sandbox.mount()).toBe('ready');
