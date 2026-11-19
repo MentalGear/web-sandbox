@@ -30,7 +30,7 @@ for (const mode of MODES) {
             const report = await page.evaluate(async (mode) => {
                 const el = document.createElement('web-sandbox') as any;
                 const seen: string[] = [el.state];
-                el.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true, mode }); // detached: config only
+                el.start({}, { capabilities: ['allow-scripts'], scriptUnsafe: true, mode }); // detached: the app is stored only
                 seen.push(el.state);
                 const framesWhileDetached = el.shadowRoot.querySelectorAll('iframe').length;
                 const atReady = new Promise(resolve => el.addEventListener('ready', () => resolve(el.state), { once: true }));

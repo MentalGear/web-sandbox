@@ -416,8 +416,8 @@ test.describe('M-6: the default call budget leaves the host page its share', () 
     ] as const) {
         test(`${name}`, async ({ sandbox, page, browserName }) => {
             test.setTimeout(60000);
-            await mountEntry(sandbox, 'void 0');
             await sandbox.exposeHost('noop', '() => 1');
+            await mountEntry(sandbox, 'void 0');
             await page.waitForTimeout(300);
             // windows of 2 s: whole periods of the bursts (one a second)
             const share = await busyShare(page, () => sandbox.run(code), { windows: 2, ms: 2000 });

@@ -16,7 +16,7 @@ import { makerCode, makerUrl, SEALED_MAKERS, type Maker, type MakerScheme } from
  * Sealed mode makes no request, on any engine (docs/research/24_sealed_mode, step 3). Every request maker a sealed guest can
  * reach (sealed-makers.ts, the one enumeration, tied to the library's own lists by test/unit/sealed-makers.test.ts) is aimed
  * at a listener outside the browser, an HTTPS server that also answers WebSocket handshakes and a plain-HTTP one, whose
- * site holds a SameSite=None cookie in the jar. A sealed sandbox configured as an embedder does (setConfig() itself: no
+ * site holds a SameSite=None cookie in the jar. A sealed sandbox configured as an embedder does (start() itself: no
  * baseline, no scriptUnsafe, no hostContentSecurityPolicy) runs them all: the worker's makers from its entry, the view's
  * markup, `set({ css })` values and a registered stylesheet, and the clicks that would follow a link, a ping or a form.
  *
@@ -117,8 +117,8 @@ bridge.expose('results', () => work.then(() => results));`;
 /** The registered stylesheet the view links: every stylesheet maker's rules. */
 const stylesheet = (origins: Record<MakerScheme, string>) => byRealm('stylesheet').map(maker => makerCode(maker, makerUrl(maker, origins))).join('\n');
 
-/** Applies `config` exactly as given (setConfig() itself: no baseline) and resolves with 'ready' or 'terminated'. */
-const apply = (page: Page, config: SandboxConfig) => page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
+/** Starts `config` exactly as given (start() itself, on a fresh element: no baseline) and resolves with 'ready' or 'terminated'. */
+const apply = (page: Page, config: SandboxConfig) => page.evaluate((c) => startFresh(c), config as any);
 
 /** Runs every maker in a sandbox of `config`, with the clicks that would follow; resolves with what the worker's makers saw. */
 async function runMakers(sandbox: { registerFiles: (files: Record<string, string>) => Promise<string>; call: <T>(method: string) => Promise<T> }, page: Page, browserName: string, listener: Listener, config: SandboxConfig) {

@@ -439,12 +439,12 @@ test.describe('teardown', () => {
             expect(host.pageErrors, covering('eventDispatch', 'nor an uncaught exception')).toEqual([]);
             expect(await page.evaluate(() => (window as any).removedElement.shadowRoot.querySelectorAll('iframe').length), covering('eventDispatch', 'the removed element holds no frame')).toBe(0);
             // a new element on the same page builds afterwards: the removal left no state behind
-            // (a config of the test's build: a cooperative one without scripts, or on the default build the default, sealed)
-            const next = await page.evaluate((config) => new Promise<string>(resolve => {
+            // (grants of the test's build: a cooperative app without scripts, or on the default build the default, sealed)
+            const next = await page.evaluate((grants) => new Promise<string>(resolve => {
                 const element = document.createElement('web-sandbox') as any;
                 element.addEventListener('ready', () => resolve('ready'), { once: true });
                 element.addEventListener('terminated', () => resolve('terminated'), { once: true });
-                element.setConfig(config);
+                element.start({}, grants);
                 document.body.appendChild(element);
             }), buildOfMode(mode) === 'network' ? { mode: 'cooperative' } : {});
             expect(next, covering('eventDispatch', 'and a new element builds on the same page')).toBe('ready');

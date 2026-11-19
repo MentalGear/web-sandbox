@@ -225,11 +225,12 @@ test.describe('hostContentSecurityPolicy', () => {
         expect(await guestRequests(sandbox, recorder.allowed)).toMatchObject({ fetch: 'ok', bridge: 'ok' });
     });
 
-    test('a value that is neither is ignored with a warning, as if it were left out: the lists are dropped', async ({ sandbox, page }) => {
+    test('a value that is neither is refused by start(); left out, the lists are dropped with a warning', async ({ sandbox, page }) => {
         const { warnings } = watch(page);
         await openHost(page);
-        expect(await mountConnect(sandbox, 'strict', { origins: { connect: [recorder.allowed] }, hostContentSecurityPolicy: 5 })).toBe('ready');
-        expect(warnings.filter(text => text.startsWith('[Sandbox] hostContentSecurityPolicy must be a string or false'))).toHaveLength(1);
+        await expect(mountConnect(sandbox, 'strict', { origins: { connect: [recorder.allowed] }, hostContentSecurityPolicy: 5 })).rejects.toThrow('[Sandbox] start(): hostContentSecurityPolicy must be a string or false, not a value of type number.');
+        // what the embedder is left with once it takes the value out: as if it were never given
+        expect(await mountConnect(sandbox, 'strict', { origins: { connect: [recorder.allowed] }, hostContentSecurityPolicy: undefined })).toBe('ready');
         expect(warnings.filter(text => /hostContentSecurityPolicy was not given/.test(text))).toHaveLength(1);
         expect(await guestConnectSrc(page)).toBe("'none'");
     });

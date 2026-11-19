@@ -394,9 +394,9 @@ test('PD7: the playground ignores a RESET_COMPLETE posted by the guest (it reloa
     await page.goto(`${ORIGIN}/playground/index.html`);
     await page.waitForFunction(() => !!(window as any).SandboxControl);
     const ready = await page.evaluate(() => new Promise<string>((resolve) => {
-        const el = (window as any).SandboxControl.sandboxElement;
+        // a fresh direct sandbox, started by the playground (its 'ready' comes after the call returns)
+        const el = (window as any).SandboxControl.start({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, html: '<p>pd7</p>' });
         el.addEventListener('ready', () => resolve('ready'), { once: true });
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, html: '<p>pd7</p>' });
         setTimeout(() => resolve('timeout'), 8000);
     }));
     expect(ready).toBe('ready');

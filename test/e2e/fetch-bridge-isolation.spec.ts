@@ -157,7 +157,7 @@ async function openWithPolicy(page: Page, csp: string | null) {
 
 async function configure(sandbox: SandboxDriver, config: object): Promise<{ type: string; reason: string | null }[]> {
     await sandbox.page.evaluate(() => { (window as any).sandboxEvents.length = 0; });
-    await sandbox.page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
+    await sandbox.page.evaluate((c) => startFresh(c), config as any);
     return sandbox.page.evaluate(() => [...(window as any).sandboxEvents]);
 }
 

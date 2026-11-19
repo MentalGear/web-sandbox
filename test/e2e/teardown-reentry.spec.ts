@@ -38,7 +38,7 @@ for (const trigger of ['host terminate()', 'guest-forged second announcement'] a
             w.reentered = 0;
             w.thrown = [] as string[];
             let forged = false;
-            el.expose('shouldForge', () => (forged ? false : (forged = true)));
+            sandboxCollectMethod('shouldForge', () => (forged ? false : (forged = true))); // the app's host method, given with the mount below
             const listener = () => {
                 if (w.reentered === 0 && el.state === 'terminated') {
                     w.reentered++;

@@ -300,17 +300,20 @@ test('off by default: sandboxFetch, and calling the reserved method directly, ar
     expect(await sandbox.fetches()).toEqual([]);
 });
 
-test('the reserved name cannot be taken: expose() refuses it on the host and in the guest, and the bridge keeps working', async ({ sandbox, page }) => {
-    const warnings: string[] = [];
-    page.on('console', m => { if (m.type() === 'warning' && m.text().includes('reserved')) warnings.push(m.text()); });
-    await sandbox.exposeHost('sandbox:fetch', '() => ({ status: 200, statusText: "", headers: [], body: new Uint8Array(0), url: "forged" })');
+test('the reserved name cannot be taken: start() refuses it among the host methods, expose() refuses it in the guest, and the bridge keeps working', async ({ sandbox, page }) => {
+    // on the host: a grant of a method by that name is refused whole, and the element stays without an app
+    expect(await page.evaluate(() => {
+        const element = document.createElement('web-sandbox') as any;
+        const forged = () => ({ status: 200, statusText: '', headers: [], body: new Uint8Array(0), url: 'forged' });
+        try { element.start({}, { mode: 'cooperative', methods: { 'sandbox:fetch': forged } }); } catch (error) { return [(error as Error).message, element.started]; }
+        return ['not refused', element.started];
+    })).toEqual(['[Sandbox] start(): method names starting with "sandbox:" are reserved for the library; "sandbox:fetch" is one.', false]);
     expect(await sandbox.mount(bridgeTo(recorder.allowed))).toBe('ready');
     await sandbox.exposeGuest('sandbox:fetch', '() => "guest"');
 
     expect(await sandbox.inGuest(fetchInGuest(`${recorder.blocked}/taken`))).toMatchObject({ code: 'FETCH_NOT_ALLOWED' });
     expect(await sandbox.inGuest(fetchInGuest(`${recorder.allowed}/still-bridged`))).toMatchObject({ status: 200, text: 'ok' });
     expect(await sandbox.callOutcome('sandbox:fetch')).toMatchObject({ status: 'rejected', code: 'UNKNOWN_METHOD' });
-    expect(warnings).toHaveLength(1);
 });
 
 test('at most maxConcurrent requests are in flight; one more is refused with FETCH_BUSY', async ({ sandbox }) => {

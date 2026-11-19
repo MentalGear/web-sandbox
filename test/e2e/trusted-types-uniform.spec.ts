@@ -31,10 +31,10 @@ async function openWithPolicy(page: Page, csp: string) {
     await page.waitForFunction(() => (window as any).harnessReady === true);
 }
 
-/** setConfig() and the events from then on, once it settled. */
+/** start() on a fresh element (startFresh()) and the events from then on, once it settled. */
 async function configure(sandbox: SandboxDriver, config: object): Promise<HostEvent[]> {
     await sandbox.page.evaluate(() => { (window as any).sandboxEvents.length = 0; });
-    await sandbox.page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
+    await sandbox.page.evaluate((c) => startFresh(c), config as any);
     await sandbox.page.waitForTimeout(300);
     return sandbox.page.evaluate(() => [...(window as any).sandboxEvents]);
 }

@@ -1,4 +1,4 @@
-import { test, expect, buildOfMode } from './fixture';
+import { test, expect, startAs, buildOfMode } from './fixture';
 import { VIEW_MODES } from './view-modes';
 
 // The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
@@ -6,26 +6,18 @@ test.use({ build: 'network' });
 
 /**
  * The build's failures and the console (BL:B8 and the follow-up of AR), in real browsers:
- *   - every build failure is a termination: a config the build cannot use ends the sandbox with a reason, the
- *     state and the event agree, and a usable config starts it again;
+ *   - a config start() cannot use is refused with its reason, before anything is stored or built, and a usable config
+ *     starts;
  *   - backlog B8: console.info is relayed like log, warn and error; execute() and call() follow one rule while
  *     the element is not in the document.
  * The workerExecutionTimeout budget (B8) is asserted in test/e2e/worker-timeout.spec.ts. Evidence: the element's
  * state and events and its 'sandbox-log' details, read on the host page.
  */
 
-test('an origins kind given a string instead of a list: setConfig() does not throw, the sandbox terminates with the reason and no frame; a usable config starts it again', async ({ sandbox, page }) => {
-    const outcome = await page.evaluate(() => new Promise<unknown>(resolve => {
-        const s = document.querySelector('web-sandbox') as any;
-        let thrown: unknown = null;
-        s.addEventListener('terminated', (e: CustomEvent) => resolve({ reason: e.detail.reason, state: s.state, frames: s.shadowRoot.querySelectorAll('iframe').length, thrown }), { once: true });
-        try {
-            s.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: "x; script-src *" } });
-        } catch (error) {
-            thrown = String(error);
-        }
-    }));
-    expect(outcome).toEqual({ reason: 'the configuration could not be used (TypeError: origins.images is not a list)', state: 'terminated', frames: 0, thrown: null });
+test('an origins kind given a string instead of a list: start() throws the reason and the element stays without an app; a usable config starts it', async ({ sandbox, page }) => {
+    expect(await startAs(page, { mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: "x; script-src *" } })).toEqual({ refused: 'origins.images must be a list of origins' });
+    expect(await page.evaluate(() => [document.querySelectorAll('web-sandbox').length, (document.querySelector('web-sandbox') as any).started])).toEqual([1, false]);
+    expect(await sandbox.terminations()).toEqual([]);
     expect(await sandbox.mount()).toBe('ready');
 });
 
@@ -54,7 +46,7 @@ test('not in the document: call() rejects at once with TERMINATED and execute() 
     const report = await page.evaluate(async () => {
         const s = document.createElement('web-sandbox') as any;
         s.id = 'detached';
-        s.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
+        s.start({}, { mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
         const early = await Promise.race([
             s.call('anything').then(() => 'resolved', (e: any) => e.code),
             new Promise(resolve => setTimeout(() => resolve('still pending'), 200)),

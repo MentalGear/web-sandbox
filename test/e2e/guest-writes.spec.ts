@@ -16,7 +16,7 @@ test.use({ build: 'network' });
  * strict mode. Each test names the guarantee it proves:
  *   1. off (the default), a write is refused by both routes (sandboxFiles and a forged bridge call), and no raw
  *      frame records anything; the store, the overlay and the events stay empty (positive control: on)
- *   2. a write is refused with registerFiles()'s own codes, by both routes, and a refused write changes nothing
+ *   2. a write is refused with the file store's own codes (start()'s for an app's files), by both routes, and a refused write changes nothing
  *   3. the cap is the store's: at the cap a write passes, one byte or one file past it is refused, a removal
  *      frees space; past the rate, FILES_BUSY
  *   4. the guest reads its own acknowledged writes byte-exact, typed by the store; url() never names one
@@ -159,7 +159,7 @@ for (const mode of MODES) {
             expect(await hostView(sandbox)).toEqual({ files: [], writes: [{ path: 'real.txt', change: 'write', type: 'text/plain', size: 1 }], events: [['real.txt']] });
         });
 
-        test("2. every refusal carries registerFiles()'s own code, by both routes, and changes nothing on either side", async ({ sandbox }) => {
+        test("2. every refusal carries the file store's own code, by both routes, and changes nothing on either side", async ({ sandbox }) => {
             await sandbox.registerFiles({ 'kept.txt': 'kept' });
             expect(await sandbox.mount(writesOn(mode))).toBe('ready');
             const result = await inGuest(sandbox, `
@@ -188,7 +188,7 @@ for (const mode of MODES) {
 
         test('3. the cap is the store\'s: at the cap a write passes, one byte past it is FILES_QUOTA_EXCEEDED, a removal frees the space; the file count likewise', async ({ sandbox, page }) => {
             const PAD = 1000;
-            await page.evaluate(({ size }) => (document.querySelector('web-sandbox') as any).registerFiles({ 'fill.bin': new Uint8Array(size) }), { size: MAX_TOTAL_BYTES - PAD });
+            expect(await page.evaluate(({ size }) => sandboxCollectFiles({ 'fill.bin': new Uint8Array(size) }), { size: MAX_TOTAL_BYTES - PAD })).toBe('ok');
             expect(await sandbox.mount(writesOn(mode))).toBe('ready');
             const bytes = await inGuest(sandbox, `return {
                 under: await outcome(() => sandboxFiles.write('a.bin', new Uint8Array(${PAD - 1}))),
@@ -213,15 +213,14 @@ for (const mode of MODES) {
             expect(freed).toEqual({ remove: { ok: true, value: null }, big: { ok: true, value: null }, list: ['a.bin', 'b.bin', 'c.bin'] });
             expect((await hostView(sandbox)).files).toEqual(['fill.bin']); // the store itself is untouched
 
-            // the count: the store holds MAX_FILES - 1, the guest may add one file, not two; replacing one is fine
-            await page.evaluate((n) => {
-                const el = document.querySelector('web-sandbox') as any;
-                el.unregisterFiles();
+            // the count, on a second element: the store holds MAX_FILES - 1, the guest may add one file, not two; replacing one is fine
+            await sandbox.forgetFiles();
+            expect(await page.evaluate((n) => {
                 const files: Record<string, string> = {};
                 for (let i = 0; i < n; i++) files[`f/${i}.txt`] = '';
-                el.registerFiles(files);
-            }, MAX_FILES - 1);
-            expect(await sandbox.reset()).toBe('ready');
+                return sandboxCollectFiles(files);
+            }, MAX_FILES - 1)).toBe('ok');
+            expect(await sandbox.mount(writesOn(mode))).toBe('ready');
             expect(await inGuest(sandbox, `return [
                 await outcome(() => sandboxFiles.write('one.txt', '')),
                 await outcome(() => sandboxFiles.write('two.txt', '')),
@@ -478,9 +477,11 @@ test.describe('9. writing adds no egress', () => {
             expect(recorder.paths('allowed')).toEqual([]);
             expect(recorder.paths('blocked')).toEqual([]);
 
+            // strict mode runs a registered file only as the entry, which is another app's: an element of its own, given
+            // the written file as this one lists it
+            if (mode === 'strict') expect(await sandbox.collectWrites()).toEqual(['page.html', 'run.js', 'style.css']);
             expect(await commit(sandbox, ['run.js'], { code: true })).toEqual({ ok: true, changed: [['run.js']] });
             if (mode === 'strict') {
-                // strict mode runs a registered file only as the entry
                 expect(await sandbox.mount(writesOn(mode, { ...policy, entry: 'run.js' }))).toBe('ready');
             } else {
                 expect(await sandbox.reset()).toBe('ready');

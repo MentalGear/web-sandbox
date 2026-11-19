@@ -146,7 +146,7 @@ test.describe('CB3: calls while loading, and the load deadline', () => {
         const html = `<script>globalThis.__counted = 0; bridge.expose('count', () => ++__counted); bridge.expose('counted', () => __counted);</script>`;
         const outcome = await page.evaluate(({ html, config }) => new Promise<any>((resolve) => {
             const el = document.querySelector('web-sandbox') as any;
-            el.setConfig({ ...config, html });
+            el.start(...sandboxSplit({ ...config, html }));
             const settled = (outcome: string) => ({ outcome, state: el.state });
             const timedOut = el.callWithTimeout(50, 'count').then(() => settled('resolved'), (e: any) => settled(e.code));
             const waiting = el.call('counted');

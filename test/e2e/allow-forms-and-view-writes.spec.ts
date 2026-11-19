@@ -65,9 +65,10 @@ test.describe('R2-2: in cooperative mode a form submits only with unsafeCapabili
         return { flags: await flagsOf(sandbox), submitted: (await sandbox.logs()).includes('R22 submit v') };
     };
 
-    test("capabilities: ['allow-forms'] is dropped: no frame has the flag, and no submission starts (WebKit still dispatches the submit event, a platform behaviour: research 15, P4)", async ({ sandbox, browserName }) => {
+    test("capabilities: ['allow-forms'] is refused by start(); without it no frame has the flag, and no submission starts (WebKit still dispatches the submit event, a platform behaviour: research 15, P4)", async ({ sandbox, browserName }) => {
+        await expect(fires(sandbox, { capabilities: ['allow-scripts', 'allow-forms' as any] })).rejects.toThrow('[Sandbox] start(): "allow-forms" is not allowed in "capabilities".');
         // ledger: form-submit-event
-        expect(await fires(sandbox, { capabilities: ['allow-scripts', 'allow-forms' as any] })).toEqual({ flags: ['allow-scripts', 'allow-scripts'], submitted: browserName === 'webkit' });
+        expect(await fires(sandbox, { capabilities: ['allow-scripts'] })).toEqual({ flags: ['allow-scripts', 'allow-scripts'], submitted: browserName === 'webkit' });
     });
 
     test("unsafeCapabilities: ['allow-forms'] grants it on both frames and the submission starts on every engine (the positive control)", async ({ sandbox }) => {

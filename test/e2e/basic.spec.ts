@@ -23,8 +23,8 @@ test('renders loaded guest markup and runs its inline scripts', async ({ sandbox
 
 test('queues execute() calls made before the sandbox is ready', async ({ sandbox, page }) => {
     await page.evaluate(() => {
-        const s = document.querySelector('web-sandbox') as any;
-        s.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
+        const s = document.querySelector('web-sandbox') as any; // the harness's element, in the document, with no app yet
+        s.start({}, { mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
         s.execute('console.log("queued ran")');
     });
 

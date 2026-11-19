@@ -148,9 +148,9 @@ test.describe('sealed mode: the host page\'s policy can never be checked by the 
         }
         await host.page.waitForTimeout(2000);
         expect((await host.hits()).reports).toEqual([]);
-        // scriptUnsafe, which would hand strings to the platform: refused in sealed mode, with its reason
+        // scriptUnsafe, which would hand strings to the platform: refused in sealed mode, with its reason (start() throws it)
         await sandbox.registerFiles({ 'main.js': "sandboxView.render('<p>x</p>');" });
-        expect((await host.configure({ entry: 'main.js', scriptUnsafe: true })).at(-1), covering('cspPolicyText', 'sealed mode refuses scriptUnsafe')).toEqual({ type: 'terminated', reason: reasonText('sealedScriptUnsafe') });
+        await expect(host.configure({ entry: 'main.js', scriptUnsafe: true }), covering('cspPolicyText', 'sealed mode refuses scriptUnsafe')).rejects.toThrow(`[Sandbox] start(): ${reasonText('sealedScriptUnsafe')}.`);
         // positive control: the same entry without the import() builds
         expect((await host.configure({ entry: 'main.js' })).at(-1)).toEqual({ type: 'ready', reason: null });
     });

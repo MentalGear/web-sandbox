@@ -13,7 +13,7 @@ import { CROSSING_TEXTS, type LibraryErrorCode } from '@src/lib/minted-errors';
  *   3. a host method that lets the refusal of its own call() propagate (arguments clone cannot carry: a function, a
  *      symbol, a getter that throws) gives the app the code's fixed text, never the engine's (BD6:LIM-1);
  *   4. a host method that lets any other library error propagate, whose message quotes the host's data or another app's
- *      text (a registerFiles() or unregisterFiles() refusal of the host's path, a relayed call to another element whose
+ *      text (a start() refusal of the host's path in an app's files, a relayed call to another element whose
  *      app threw, or lacks the name, or never answers), gives the app the code and a fixed text; the embedder's own
  *      words still cross as written (BD7:CHL-2).
  * unit tests: test/unit/rpc-what-crosses.test.ts; the property test over the posted snapshot: test/unit/structural.test.ts.
@@ -70,12 +70,11 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
         // the other app's element, ready before the first app starts
         const other = document.createElement('web-sandbox') as any;
         other.id = 'other';
-        document.body.appendChild(other);
-        other.registerFiles({ 'main.js': otherEntry });
         const otherSettled = await new Promise(resolve => {
             other.addEventListener('ready', () => resolve('ready'), { once: true });
             other.addEventListener('terminated', () => resolve('terminated'), { once: true });
-            other.setConfig({ entry: 'main.js' });
+            other.start({ entry: 'main.js', files: { 'main.js': otherEntry } });
+            document.body.appendChild(other);
         });
         const buffer = new Uint8Array(64);
         buffer.set(new TextEncoder().encode(`PUB${secret}-token=abc123`));
@@ -128,21 +127,24 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
             relayGetterJson: () => s.call('apply', { get x() { return JSON.parse(secret); } }),
             relayGetterNull: () => s.call('apply', { get x() { return (null as any)[secret]; } }),
             // a library error whose message quotes the host's data or another app's text (BD7:CHL-2)
-            registerFilesPath: () => s.registerFiles({ [`HOSTFOLDER-${secret}/..`]: 'x' }),
-            registerFilesType: () => s.registerFiles({ [`HOSTFOLDER-${secret}/notes.txt`]: { content: 'x', type: 'not a type' } }),
-            unregisterFiles: () => s.unregisterFiles([`HOSTFOLDER-${secret}/..`]),
+            startFilesPath: () => document.createElement('web-sandbox').start({ files: { [`HOSTFOLDER-${secret}/..`]: 'x' } }),
+            startFilesType: () => document.createElement('web-sandbox').start({ files: { [`HOSTFOLDER-${secret}/notes.txt`]: { content: 'x', type: 'not a type' } } }),
             relayOtherApp: () => other.call('fail'),
             relayUnknownName: () => other.call(`HOSTMETHOD-${secret}-unknown`),
             relayTimeout: () => other.callWithTimeout(300, `HOSTMETHOD-${secret}-hang`),
         };
-        s.registerFiles({ 'main.js': entry });
-        s.expose('labels', () => Object.keys(cases));
-        s.expose('failureLabels', () => Object.keys(failures));
-        s.expose('get', (label: string) => cases[label]!());
-        s.expose('fail', (label: string) => failures[label]!());
-        s.expose('echo', (view: Uint8Array, nested: { nested: DataView[] }) => ({ byteLength: view.byteLength, bufferLength: view.buffer.byteLength, text: new TextDecoder().decode(view), nested: [nested.nested[0]!.byteLength, nested.nested[0]!.buffer.byteLength] }));
-        const fromApp = new Promise(resolve => s.expose('report', (value: unknown) => resolve(value)));
-        const settled = await whenSettled(x => x.setConfig({ entry: 'main.js' }));
+        let report!: (value: unknown) => void;
+        const fromApp = new Promise(resolve => (report = resolve));
+        const methods = {
+            labels: () => Object.keys(cases),
+            failureLabels: () => Object.keys(failures),
+            get: (label: string) => cases[label]!(),
+            fail: (label: string) => failures[label]!(),
+            echo: (view: Uint8Array, nested: { nested: DataView[] }) => ({ byteLength: view.byteLength, bufferLength: view.buffer.byteLength, text: new TextDecoder().decode(view), nested: [nested.nested[0]!.byteLength, nested.nested[0]!.buffer.byteLength] }),
+            report: (value: unknown) => report(value),
+        };
+        // the harness's element, which has no app yet, takes this one
+        const settled = await whenSettled(x => x.start({ entry: 'main.js', files: { 'main.js': entry } }, { methods }));
         const takes: Record<string, unknown> = {};
         for (const label of ['subarray', 'nested', 'mapKeyAndValue', 'twoViewsOneBuffer', 'wasmHeap', 'sharedMemory']) {
             try { takes[label] = await s.call('take', cases[label]!()); } catch (e: any) { takes[label] = { error: e.code, message: e.message }; }
@@ -212,7 +214,7 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
     // a library error whose message quotes the host's path, its method name or the other app's text: the code and a
     // fixed text (BD7:CHL-2)
     const LIBRARY: Record<string, LibraryErrorCode> = {
-        registerFilesPath: 'INVALID_PATH', registerFilesType: 'INVALID_FILE', unregisterFiles: 'INVALID_PATH',
+        startFilesPath: 'INVALID_PATH', startFilesType: 'INVALID_FILE',
         relayOtherApp: 'HANDLER_ERROR', relayUnknownName: 'UNKNOWN_METHOD', relayTimeout: 'TIMEOUT',
     };
     for (const [label, code] of Object.entries(LIBRARY)) expect(failures[label], label).toEqual({ error: 'HANDLER_ERROR', message: fixed(code) });

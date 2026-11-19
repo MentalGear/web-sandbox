@@ -43,10 +43,10 @@ async function openWithPolicy(page: Page, policy: { csp?: string; coep?: string;
     await page.waitForFunction(() => (window as any).harnessReady === true);
 }
 
-/** setConfig() and the events from then on, once it settled. */
+/** start() on a fresh element (startFresh()) and the events from then on, once it settled. */
 async function configure(sandbox: SandboxDriver, config: object): Promise<HostEvent[]> {
     await sandbox.page.evaluate(() => { (window as any).sandboxEvents.length = 0; });
-    await sandbox.page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
+    await sandbox.page.evaluate((c) => startFresh(c), config as any);
     await sandbox.page.waitForTimeout(300); // a termination right after 'ready' (the old strict path) would show here
     return sandbox.page.evaluate(() => [...(window as any).sandboxEvents]);
 }
@@ -221,13 +221,13 @@ test.describe('host page policy', () => {
         test.skip(!(await page.evaluate(() => 'trustedTypes' in window)), 'no Trusted Types in this engine');
         for (const config of [COOPERATIVE, {}]) {
             const label = JSON.stringify(config);
+            // each config is a fresh element's app (startFresh()); the hook resets whichever element is building then
             await page.evaluate((c) => {
                 const w = window as any;
                 w.sandboxEvents.length = 0;
-                const element = document.querySelector('web-sandbox') as any;
                 let resets = 0;
-                w.ttDefaultHook = () => { resets++; element.reset(); };
-                element.setConfig(c);
+                w.ttDefaultHook = () => { resets++; (document.querySelector('web-sandbox') as any).reset(); };
+                void startFresh(c);
                 w.lm2Resets = () => resets;
             }, config as any);
             await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents), { message: label }).toEqual([{ type: 'ready', reason: null }]);

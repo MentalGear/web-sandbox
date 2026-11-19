@@ -219,8 +219,8 @@ async function busyCount(sandbox: SandboxDriver, calls: number): Promise<{ busy:
 }
 
 test('B7: 300 calls to a host method that never settles: 256 run, 44 are refused at once with BUSY; the next environment has its own count', async ({ sandbox }) => {
-    expect(await sandbox.mount()).toBe('ready');
     await sandbox.exposeHost('never', '() => new Promise(() => {})');
+    expect(await sandbox.mount()).toBe('ready');
     expect(await busyCount(sandbox, 300)).toMatchObject({ busy: 44, other: [] });
     expect(await sandbox.reset()).toBe('ready');
     expect(await busyCount(sandbox, 256)).toMatchObject({ busy: 0, other: [] });
@@ -229,7 +229,6 @@ test('B7: 300 calls to a host method that never settles: 256 run, 44 are refused
 // ---- B8 ------------------------------------------------------------------------------------------------
 
 test('B8 (documented): an own "__proto__" key survives structured clone into host code; reading it is safe, merging it with Object.assign sets a prototype', async ({ sandbox, page }) => {
-    expect(await sandbox.mount()).toBe('ready');
     await sandbox.exposeHost('take', `(arg) => {
         const assigned = Object.assign({}, arg);
         const spread = { ...arg };
@@ -242,6 +241,7 @@ test('B8 (documented): an own "__proto__" key survives structured clone into hos
         };
         return true;
     }`);
+    expect(await sandbox.mount()).toBe('ready');
     await sandbox.inGuest(`return bridge.call('take', JSON.parse('{"__proto__": {"polluted": 1}, "a": 1}'))`);
     expect(await page.evaluate(() => (window as any).b8)).toEqual({ own: true, argPrototypeIsObject: true, assignedChangedPrototype: true, spreadKeepsOwnKey: true, polluted: false });
 });

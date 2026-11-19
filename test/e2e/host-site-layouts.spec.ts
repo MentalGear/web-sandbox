@@ -218,7 +218,7 @@ test.describe("the host page's site in each layout: no guest request carries the
                     const element = document.querySelector('web-sandbox') as any;
                     element.addEventListener('ready', () => resolve('ready'), { once: true });
                     element.addEventListener('terminated', (event: any) => resolve(`terminated ${event.detail?.reason}`), { once: true });
-                    element.setConfig(config);
+                    element.start({}, config); // the harness's element, which has no app yet: every key of this config is a grant
                 }), config);
                 expect(state).toBe('ready');
                 const kept = await frame.evaluate(() => (document.querySelector('web-sandbox') as any)._origins);

@@ -124,8 +124,8 @@ test.describe('R3-3: byte budgets on log lines and RPC messages', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         test.use({ build: buildOfMode(mode) });
         test('a 64 MiB typed array logged by the guest crosses as a few bytes; an RPC call past the budget is refused in the guest', async ({ sandbox }) => {
-            expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');
             await sandbox.exposeHost('sink', '(...args) => args.length');
+            expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');
             const outcome = await sandbox.inGuest(`
                 console.log('R33', new Uint8Array(64 * 1024 * 1024));
                 try { await bridge.call('sink', new Uint8Array(34 * 1024 * 1024)); return 'sent'; } catch (error) { return error.code; }`);
@@ -242,12 +242,12 @@ test.describe("R2-2 (cooperative-mode limit, measured): a modifier click opens a
         expect(await measure(sandbox, FORM(recorder.blocked), FORMS, synthesized(`document.getElementById('b').click()`), false)).toEqual({ opened: 0, heard: [] });
     });
 
-    test("R2-2 decided: capabilities: ['allow-forms'] is dropped, so the user's Ctrl+click submits nothing on any engine (the opt-in above is the positive control)", async ({ sandbox }) => {
-        await sandbox.page.evaluate(() => { (window as any).__warnings = []; const warn = console.warn; console.warn = (...args: unknown[]) => { (window as any).__warnings.push(String(args[0])); warn(...args); }; });
-        const dropped: MountConfig = { capabilities: ['allow-scripts', 'allow-forms' as any] };
-        expect(await measure(sandbox, FORM_BUTTON_FIRST(recorder.blocked), dropped, usersCtrlClick, false)).toEqual({ opened: 0, heard: [] });
-        const warnings: string[] = await sandbox.page.evaluate(() => (window as any).__warnings);
-        expect(warnings.filter(w => w.includes('"allow-forms" is not allowed in "capabilities"')).length).toBeGreaterThan(0);
+    test("R2-2 decided: capabilities: ['allow-forms'] is refused, and without it the user's Ctrl+click submits nothing on any engine (the opt-in above is the positive control)", async ({ sandbox }) => {
+        const refused: MountConfig = { capabilities: ['allow-scripts', 'allow-forms' as any] };
+        await expect(measure(sandbox, FORM_BUTTON_FIRST(recorder.blocked), refused, usersCtrlClick, false)).rejects.toThrow('[Sandbox] start(): "allow-forms" is not allowed in "capabilities".');
+        // the config the embedder is left with once it takes the capability out
+        const without: MountConfig = { capabilities: ['allow-scripts'] };
+        expect(await measure(sandbox, FORM_BUTTON_FIRST(recorder.blocked), without, usersCtrlClick, false)).toEqual({ opened: 0, heard: [] });
     });
 });
 

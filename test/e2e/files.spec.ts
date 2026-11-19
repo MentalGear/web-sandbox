@@ -190,8 +190,8 @@ test.describe('2. containment', () => {
         for (const path of bad) {
             expect(await sandbox.registerFiles({ 'new.js': 'void 0', [path]: 'x' })).toBe('INVALID_PATH');
         }
-        expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).listFiles())).toEqual([{ path: 'keep.js', type: 'text/javascript', size: 6 }]);
         expect(await sandbox.mount()).toBe('ready');
+        expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).listFiles())).toEqual([{ path: 'keep.js', type: 'text/javascript', size: 6 }]);
         expect(await inGuest(sandbox, 'return sandboxFiles.list();')).toEqual(['keep.js']);
     });
 });
@@ -215,14 +215,7 @@ test.describe('3. isolation between sandboxes and from the host page', () => {
         expect(a.uuid).toBe(false);
 
         // a second sandbox with files of its own
-        expect(await page.evaluate(() => new Promise(resolve => {
-            const second = document.createElement('web-sandbox') as any;
-            second.id = 'second';
-            second.addEventListener('ready', () => resolve('ready'), { once: true });
-            second.registerFiles({ 'other.txt': 'B-own' });
-            second.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
-            document.body.appendChild(second);
-        }))).toBe('ready');
+        expect(await sandbox.mountSecond({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true }, { 'other.txt': 'B-own' })).toBe('ready');
         await page.evaluate((url) => (document.querySelector('#second') as any).execute(`
             const shape = (e) => ({ isError: e instanceof Error, code: e && e.code, keys: e && typeof e === 'object' ? Object.keys(e) : null, message: e && e.message });
             (async () => {
@@ -331,7 +324,7 @@ test.describe('4. files add no egress', () => {
 });
 
 test.describe('5. lifecycle: files belong to the element, a guest sees the snapshot of its build', () => {
-    test('files survive reset(), load() and setConfig(); registering while ready changes nothing until the next build; unregistering takes effect at the next build', async ({ sandbox, page }) => {
+    test('files survive reset() and a termination; a second element started with other files lists only its own', async ({ sandbox, page }) => {
         expect(await sandbox.registerFiles({ 'a.js': '1', 'b.txt': 'b' })).toBe('ok');
         expect(await sandbox.mount()).toBe('ready');
         const list = () => inGuest(sandbox, 'return sandboxFiles.list();');
@@ -339,37 +332,19 @@ test.describe('5. lifecycle: files belong to the element, a guest sees the snaps
 
         expect(await sandbox.reset()).toBe('ready');
         expect(await list()).toEqual(['a.js', 'b.txt']);
-        expect(await sandbox.load('<p>new markup</p>')).toBe('ready');
-        expect(await list()).toEqual(['a.js', 'b.txt']);
-        expect(await sandbox.mount({ origins: { connect: [] } })).toBe('ready');
-        expect(await list()).toEqual(['a.js', 'b.txt']);
-
-        // while ready: the running guest keeps its snapshot
-        const events = await page.evaluate(() => {
-            const s = document.querySelector('web-sandbox') as any;
-            const seen: unknown[] = [];
-            s.addEventListener('fileschanged', (e: CustomEvent) => seen.push(e.detail));
-            s.registerFiles({ 'c.txt': 'c' });
-            s.unregisterFiles(['a.js']);
-            return seen;
-        });
-        expect(events).toEqual([{ paths: ['c.txt'] }, { paths: ['a.js'] }]);
-        expect(await inGuest(sandbox, `return { list: sandboxFiles.list(), c: await sandboxFiles.text('c.txt').then(() => 'found', shape), a: await sandboxFiles.text('a.js') };`))
-            .toEqual({ list: ['a.js', 'b.txt'], c: NOT_FOUND, a: '1' });
-
-        // the next build sees the store as it is now
-        expect(await sandbox.reset()).toBe('ready');
-        expect(await inGuest(sandbox, `let a; try { sandboxFiles.url('a.js'); a = 'found'; } catch (e) { a = shape(e); } return { list: sandboxFiles.list(), a, c: await sandboxFiles.text('c.txt') };`))
-            .toEqual({ list: ['b.txt', 'c.txt'], a: NOT_FOUND, c: 'c' });
 
         // a terminated sandbox keeps its files for the next build too
         await page.evaluate(() => (document.querySelector('web-sandbox') as any).terminate('test'));
         expect(await sandbox.reset()).toBe('ready');
-        expect(await list()).toEqual(['b.txt', 'c.txt']);
+        expect(await list()).toEqual(['a.js', 'b.txt']);
 
-        // with every file gone, the API is still there: an empty list, and every lookup NOT_FOUND
-        await page.evaluate(() => (document.querySelector('web-sandbox') as any).unregisterFiles());
-        expect(await sandbox.reset()).toBe('ready');
+        // another app is another element: its files are the ones it was started with, and nothing of the first's
+        expect(await page.evaluate(() => startFresh({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, hostContentSecurityPolicy: false }, { files: { 'c.txt': 'c' } }))).toBe('ready');
+        expect(await inGuest(sandbox, `let a; try { sandboxFiles.url('a.js'); a = 'found'; } catch (e) { a = shape(e); } return { list: sandboxFiles.list(), a, c: await sandboxFiles.text('c.txt') };`))
+            .toEqual({ list: ['c.txt'], a: NOT_FOUND, c: 'c' });
+
+        // with no file at all, the API is still there: an empty list, and every lookup NOT_FOUND
+        expect(await page.evaluate(() => startFresh({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, hostContentSecurityPolicy: false }, { files: {} }))).toBe('ready');
         expect(await inGuest(sandbox, `let b; try { sandboxFiles.url('b.txt'); b = 'found'; } catch (e) { b = shape(e); } return { list: sandboxFiles.list(), b, read: await sandboxFiles.read('b.txt').then(() => 'found', shape) };`))
             .toEqual({ list: [], b: NOT_FOUND, read: NOT_FOUND });
     });
@@ -434,26 +409,25 @@ test.describe('7. size: the cap is what every engine loads', () => {
                 const fnv = (bytes: Uint8Array) => { let h = 0x811c9dc5; for (const b of bytes) { h ^= b; h = Math.imul(h, 0x01000193) >>> 0; } return h; };
                 const small = fill(4096, 7);
                 const big = fill(total - small.length, 11);
-                const s = document.querySelector('web-sandbox') as any;
+                // the files the next mount starts with (the fixture's collection, validated as start() validates them)
                 const started = performance.now();
-                s.registerFiles({ 'big.bin': big, 'small.bin': small });
+                const registered = sandboxCollectFiles({ 'big.bin': big, 'small.bin': small });
                 const registerMs = Math.round(performance.now() - started);
-                let overCode: unknown = 'no refusal';
-                try { s.registerFiles({ 'one-more.bin': new Uint8Array(1) }); } catch (e: any) { overCode = e.code; }
-                let growCode: unknown = 'no refusal';
-                try { s.registerFiles({ 'small.bin': fill(small.length + 1, 7) }); } catch (e: any) { growCode = e.code; }
-                return { hashes: { big: fnv(big), small: fnv(small) }, overCode, growCode, registerMs, files: s.listFiles() };
+                const overCode = sandboxCollectFiles({ 'one-more.bin': new Uint8Array(1) });
+                const growCode = sandboxCollectFiles({ 'small.bin': fill(small.length + 1, 7) });
+                return { hashes: { big: fnv(big), small: fnv(small) }, registered, overCode, growCode, registerMs };
             }, MAX_TOTAL_BYTES);
+            expect(host.registered).toBe('ok');
             expect(host.overCode).toBe('FILES_QUOTA_EXCEEDED');
             expect(host.growCode).toBe('FILES_QUOTA_EXCEEDED');
-            expect(host.files).toEqual([
-                { path: 'big.bin', type: 'application/octet-stream', size: MAX_TOTAL_BYTES - 4096 },
-                { path: 'small.bin', type: 'application/octet-stream', size: 4096 },
-            ]);
 
             const started = Date.now();
             expect(await sandbox.mount({ mode })).toBe('ready');
             const readyMs = Date.now() - started;
+            expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).listFiles())).toEqual([
+                { path: 'big.bin', type: 'application/octet-stream', size: MAX_TOTAL_BYTES - 4096 },
+                { path: 'small.bin', type: 'application/octet-stream', size: 4096 },
+            ]);
             const guest = await inGuest(sandbox, `
                 const fnv = (bytes) => { let h = 0x811c9dc5; for (const b of bytes) { h ^= b; h = Math.imul(h, 0x01000193) >>> 0; } return h; };
                 const big = await sandboxFiles.read('big.bin');

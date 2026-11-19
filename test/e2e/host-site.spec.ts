@@ -56,13 +56,12 @@ import { defineWebSandbox } from ${JSON.stringify(library)};
 
 defineWebSandbox();
 const realm = { selfOrigin: self.origin, locationOrigin: location.origin, href: location.href };
-top.__mount = (config, code) => new Promise((resolve) => {
+top.__mount = ({ html, entry, ...grants }, code) => new Promise((resolve) => {
     const el = document.createElement('web-sandbox');
     el.style.cssText = 'display:block;width:300px;height:120px';
-    el.registerFiles({ 'main.js': 'void 0' });
     el.addEventListener('ready', () => { el.execute(code); resolve({ state: 'ready', realm }); }, { once: true });
     el.addEventListener('terminated', (e) => resolve({ state: 'terminated ' + e.detail.reason, realm }), { once: true });
-    el.setConfig(config);
+    el.start({ html, entry, files: { 'main.js': 'void 0' } }, grants);
     document.body.append(el);
 });
 top.__ready = true;

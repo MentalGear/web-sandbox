@@ -247,7 +247,7 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
                 const warnings: string[] = [];
                 page.on('console', message => { if (message.type() === 'warning') warnings.push(message.text()); });
                 await sandbox.registerFiles({ ...FILES, 'main.js': `sandboxView.render('<link rel="stylesheet" href="anim.css"><p class="linked">k</p><p style="animation: spin 1s infinite !important">m</p>');` });
-                const settled = await page.evaluate((c) => whenSettled(s => s.setConfig(c)), { mode, entry: 'main.js', allowAnimations: false } as any);
+                const settled = await page.evaluate((c) => startFresh(c), { mode, entry: 'main.js', allowAnimations: false } as any);
                 expect(settled).toBe('ready');
                 await waitInView(page, browserName, `document.querySelector('.linked')`);
                 await page.waitForTimeout(500);

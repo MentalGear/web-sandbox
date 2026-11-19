@@ -16,8 +16,8 @@ import { clickInSandbox, inView, waitInView } from './strict-view';
  *   3. user -> app -> host: typing and Enter, and a checkbox, reach the host's `save` as validated data, and the app's
  *      image follows its state (a new write the host can list);
  *   4. the stored state loads into the next mount (the host is the app's only storage);
- *   5. another app on the same element (the library supports it; the recipe does not), after `unexpose()` and `unregisterFiles()`, reaches none of the first app's methods
- *      and files, and cannot tell a removed method from one that never existed;
+ *   5. another app is another element: the first app's element refuses a second start(), and an app on a new element
+ *      beside it reaches none of the first app's methods and files, which it is told about as of names that never existed;
  *   6. a second, hostile bundle mounted through the same host.js after stop() is handed none of the first app's state or
  *      files, and its save leaves the first app's key alone (the state is keyed by the embedder's app id);
  *   7. the app stops adding at the host's limit, and a save the host refuses is shown, not lost silently;
@@ -141,10 +141,10 @@ test.describe('the sealed app of the docs', () => {
         await expect.poll(() => inView(page, browserName, `[...${LIST}, document.getElementById('count').textContent]`)).toEqual(['[x] milk', '[ ] eggs', '1 open']);
     });
 
-    // Methods and files belong to the element, not to the app (BD5:DOC-3): after unexpose() and unregisterFiles(), another
-    // app on the same element reaches neither the first app's `save` nor its files, and what it is told about `save` is
-    // exactly what an app on a new element, where `save` never existed, is told.
-    test("another app on the same element, after unexpose() and unregisterFiles(): the first app's method and files are gone, as on a new element", async ({ sandbox, page, browserName }) => {
+    // Methods and files belong to the element (BD5:DOC-3), and an element runs one app: the first app's element refuses
+    // another app, and another app on a new element beside it reaches neither the first app's `save` nor its files, and is
+    // told about `save` exactly what it is told about a name no one exposed.
+    test("another app is another element: the first app's refuses a second start(), and the new one reaches none of the first app's method and files", async ({ sandbox, page, browserName }) => {
         void sandbox; // the fixture opens the harness page
         await mountApp(page, [{ text: 'milk', done: false }]);
         await waitInView(page, browserName, `document.getElementById('text-0')?.textContent === 'milk'`);
@@ -160,27 +160,30 @@ test.describe('the sealed app of the docs', () => {
                 await bridge.call('report', out);
             })();`;
             const run = (element: any) => new Promise(resolve => {
-                element.expose('report', resolve);
-                element.registerFiles({ 'b.js': appB });
-                element.setConfig({ entry: 'b.js' });
+                element.start({ entry: 'b.js', files: { 'b.js': appB } }, { methods: { report: resolve } });
+                document.body.appendChild(element);
             });
             const same = (window as any).app.sandbox as any;
-            same.unexpose();
-            same.unregisterFiles();
-            const onSame = await run(same);
+            let refused = 'not refused';
+            try { same.start({ entry: 'b.js', files: { 'b.js': appB } }, { methods: { report: () => {} } }); } catch (error) { refused = `${(error as Error).name}: ${(error as Error).message}`; }
             const fresh = document.createElement('web-sandbox') as any;
             fresh.id = 'fresh';
-            document.body.appendChild(fresh);
             const onFresh = await run(fresh);
-            return { onSame, onFresh, files: same.listFiles().map((file: { path: string }) => file.path) };
+            return {
+                refused,
+                onFresh,
+                files: same.listFiles().map((file: { path: string }) => file.path),
+                freshFiles: fresh.listFiles().map((file: { path: string }) => file.path),
+            };
         });
-        expect(probe.onSame).toEqual({
+        expect(probe.refused).toMatch(/^TypeError: .*already runs its app/);
+        expect(probe.onFresh).toEqual({
             save: { code: 'UNKNOWN_METHOD', message: 'unknown method: save' },
-            'never-exposed': { code: 'UNKNOWN_METHOD', message: 'unknown method: never-exposed' },
+            'never-exposed': { code: 'UNKNOWN_METHOD', message: 'unknown method: never-exposed' }, // the first app's method reads as one that never existed
             file: 'NOT_FOUND',
         });
-        expect(probe.onSame).toEqual(probe.onFresh); // a removed method reads as one that never existed
-        expect(probe.files).toEqual(['b.js']);
+        expect(probe.files).toEqual(['app.css', 'app.js', 'logo.png']); // the first app's element keeps its own files
+        expect(probe.freshFiles).toEqual(['b.js']);
         expect(await saved(page)).toEqual([{ text: 'milk', done: false }]); // the first app's state, untouched
     });
 
@@ -189,6 +192,7 @@ test.describe('the sealed app of the docs', () => {
         void sandbox; // the fixture opens the harness page
         await mountApp(page, [{ text: 'call bank, PIN 4711', done: false }]);
         await waitInView(page, browserName, `document.getElementById('text-0')?.textContent === 'call bank, PIN 4711'`);
+        await waitInView(page, browserName, `document.getElementById('badge').querySelector('img')?.naturalWidth === 60`); // its progress.png is pending
         // B reports what it was handed through its own `save`, the only way out the recipe gives it
         const hostile = `(async () => {
             bridge.expose('load', async (saved) => {
@@ -201,12 +205,14 @@ test.describe('the sealed app of the docs', () => {
         const first = await page.evaluate(async ({ bundle }) => {
             const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
             const app = (window as any).app;
-            app.sandbox.registerFiles({ 'state.json': '{"secret":"first app"}' }); // what the first app committed
+            // what the first app committed: its own write, now one of its element's files
+            app.sandbox.commitGuestWrites(app.sandbox.listGuestWrites().map((write: { path: string }) => write.path));
+            const committed = app.sandbox.listFiles().map((file: { path: string }) => file.path);
             app.stop();
             (window as any).app = await mountTodoApp(document.getElementById('apps'), { bundle, appId: 'bundle-b', store: (window as any).store });
-            return { distinct: (window as any).app.sandbox !== app.sandbox, firstConnected: app.sandbox.isConnected };
+            return { committed, distinct: (window as any).app.sandbox !== app.sandbox, firstConnected: app.sandbox.isConnected };
         }, { bundle: '/bundle-b' });
-        expect(first).toEqual({ distinct: true, firstConnected: false });
+        expect(first).toEqual({ committed: ['app.css', 'app.js', 'logo.png', 'progress.png'], distinct: true, firstConnected: false });
         await expect.poll(() => page.evaluate(() => (window as any).store.data.has('todos:bundle-b'))).toBe(true);
         const keys = await page.evaluate(() => Object.fromEntries((window as any).store.data));
         expect(JSON.parse(JSON.parse(keys['todos:bundle-b'])[0].text)).toEqual({ state: [], files: ['app.css', 'app.js', 'logo.png'], stateJson: 'NOT_FOUND' }); // none of the first app's state or files
@@ -250,22 +256,30 @@ test.describe('the sealed app of the docs', () => {
 
     test("a host method of the first app that calls the sandbox after stop() reaches nothing: the next app is sent none of its data", async ({ sandbox, page, browserName }) => {
         void sandbox; // the fixture opens the harness page
-        await routeBundleWith(page, 'bundle-a', `bridge.expose('load', () => {}); bridge.expose('start', () => { bridge.call('late'); });`);
+        await routeBundleWith(page, 'bundle-a', `bridge.expose('load', () => {}); bridge.expose('start', () => { bridge.call('save', [{ text: 'by A', done: false }]); });`);
         await routeBundleWith(page, 'bundle-b', RECORDER);
         const outcome = await page.evaluate(async () => {
             const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
             const container = document.getElementById('apps') ?? document.body.appendChild(Object.assign(document.createElement('div'), { id: 'apps' }));
-            const store = { data: new Map<string, string>(), getItem(key: string) { return this.data.get(key) ?? null; }, setItem(key: string, value: string) { this.data.set(key, value); } };
-            (window as any).store = store;
-            const a = await mountTodoApp(container, { bundle: '/bundle-a', appId: 'a', store });
-            // a method the embedder added to the app: it waits, then calls the app with the app's private data
+            // the first app's host method, `save`, runs into the embedder's store, which waits, then calls the app with the
+            // app's private data
             let release!: () => void;
             const gate = new Promise<void>((resolve) => (release = resolve));
-            const lateOutcome = new Promise<string>((resolve) => a.sandbox.expose('late', async () => {
-                await gate;
-                resolve(await a.sandbox.call('push', [{ text: 'A-PRIVATE', done: false }]).then(() => 'delivered', (e: any) => `refused: ${e?.code}`));
-            }));
-            await a.sandbox.call('start'); // the app calls `late`, which is now running and waiting
+            let resolveLate!: (outcome: string) => void;
+            const lateOutcome = new Promise<string>((resolve) => (resolveLate = resolve));
+            let a: any;
+            const store = {
+                data: new Map<string, string>(),
+                getItem(key: string) { return this.data.get(key) ?? null; },
+                async setItem(key: string, value: string) {
+                    if (key !== 'todos:a') return void this.data.set(key, value);
+                    await gate;
+                    resolveLate(await a.sandbox.call('push', [{ text: 'A-PRIVATE', done: false }]).then(() => 'delivered', (e: any) => `refused: ${e?.code}`));
+                },
+            };
+            (window as any).store = store;
+            a = await mountTodoApp(container, { bundle: '/bundle-a', appId: 'a', store });
+            await a.sandbox.call('start'); // the app calls `save`, which is now running and waiting in the store
             a.stop();
             const b = await mountTodoApp(container, { bundle: '/bundle-b', appId: 'bundle-b', store });
             (window as any).app = b;

@@ -176,7 +176,7 @@ test('the watchdog stops when the element is removed or terminated: it never ter
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
     test.use({ build: buildOfMode(mode) });
-    test('an endless loop at the entry\'s top level is terminated within the budget on every engine; the host stays responsive; a fixed entry recovers on reset()', async ({ sandbox, page }) => {
+    test('an endless loop at the entry\'s top level is terminated within the budget on every engine; the host stays responsive; a fixed entry recovers on a new element', async ({ sandbox, page }) => {
         await sandbox.registerFiles({ 'main.js': 'while (true) {}' });
         await page.evaluate(() => {
             const s = document.querySelector('web-sandbox') as any;
@@ -198,8 +198,9 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         expect(termination.elapsed).toBeLessThan(DEADLINE);
         expect(await lag(page)).toBeLessThan(quiet + 500); // the guest's loop adds no stall: 500 ms over the machine's own
 
+        // the fixed entry is another app, so another element (reset() would start the same entry again)
         await sandbox.registerFiles({ 'main.js': 'bridge.expose("sum", (a, b) => a + b);' });
-        expect(await sandbox.reset()).toBe('ready');
+        expect(await sandbox.mount({ mode, entry: 'main.js', watchdogTimeout: BUDGET })).toBe('ready');
         expect(await sandbox.call('sum', 1, 2)).toBe(3);
     });
 

@@ -202,11 +202,17 @@ test('worker mode: autoResize has no effect, with one warning per instance', asy
     await recordWrites(page);
 
     expect(await sandbox.mount({ mode: 'worker', autoResize: true })).toBe('ready');
+    expect(await sandbox.reset()).toBe('ready');
+    expect(await sandbox.inGuest(`return typeof document`)).toBe('undefined');
+    await page.waitForTimeout(300);
+    expect(warnings).toHaveLength(1);
+    // a second element is another instance: it warns once of its own
     expect(await sandbox.mount({ mode: 'worker', autoResize: true })).toBe('ready');
     expect(await sandbox.inGuest(`return typeof document`)).toBe('undefined');
     await page.waitForTimeout(300);
 
     expect(await writes(page)).toEqual([]);
-    expect(warnings).toHaveLength(1);
+    expect(warnings).toHaveLength(2);
     expect(warnings[0]).toContain('worker mode');
+    expect(warnings[1]).toBe(warnings[0]);
 });

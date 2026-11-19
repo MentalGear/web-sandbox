@@ -1,4 +1,4 @@
-import { test, expect, ORIGIN, type CallOutcome } from './fixture';
+import { test, expect, ORIGIN, startAs, type CallOutcome } from './fixture';
 import type { Page } from '@playwright/test';
 import type { SandboxConfig } from '@src/host';
 import { inFrames, inView, waitInView } from './strict-view';
@@ -8,7 +8,7 @@ test.use({ build: 'network', otherBuildConfigs: true });
 
 /**
  * Sealed mode is the default (ADR-008; T8 of docs/research/24_sealed_mode); strict mode is named. These specs apply
- * configs as an embedder writes them, through setConfig() itself, never over BASELINE_CONFIG (which names cooperative
+ * configs as an embedder writes them, through start() itself on a fresh element, never over BASELINE_CONFIG (which names cooperative
  * mode, the mode the other specs were written for). Each property of the default is held for strict mode too, named.
  * Evidence from outside the library (strict-view.ts): which frames exist, which scripts each document holds and what ran
  * in it, the view's policy; the warning as the host page's console shows it. Positive control: the same html in
@@ -24,10 +24,9 @@ const VIEW_CONFIGS = [
     { name: 'strict, named', config: { mode: 'strict' }, warning: "[Sandbox] strict mode runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`." },
 ] as const;
 
-/** Applies `config` exactly as given (no baseline) and resolves with 'ready' or 'terminated'. */
-const apply = (page: Page, config: SandboxConfig) => page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
+/** Starts `config` exactly as given (no baseline) on a fresh element and resolves with 'ready' or 'terminated'. */
+const apply = (page: Page, config: SandboxConfig) => page.evaluate((c) => startFresh(c), config as any);
 const reset = (page: Page) => page.evaluate(() => whenSettled(s => s.reset()));
-const load = (page: Page, html: string) => page.evaluate((markup) => whenSettled(s => s.load(markup)), html);
 
 /** Every script-run marker on the page, as "path:marker", read from outside. */
 async function markers(page: Page, browserName: string): Promise<string[]> {
@@ -64,7 +63,7 @@ test.describe('sealed is the default mode; strict is named', () => {
         // the default's policy, told apart from strict mode's: a registered JSON file adds blob: to connect-src in strict
         // mode only (sealed mode reads files with sandboxFiles.read(), which makes no request)
         expect(await sandbox.registerFiles({ 'data.json': '{}' })).toBe('ok');
-        expect(await reset(page)).toBe('ready');
+        expect(await apply(page, {})).toBe('ready');
         await expect.poll(() => inView(page, browserName, CONNECT_SRC)).toBe("connect-src 'none'");
         expect(await apply(page, { mode: 'strict' })).toBe('ready');
         await expect.poll(() => inView(page, browserName, CONNECT_SRC)).toBe('connect-src blob:');
@@ -85,54 +84,59 @@ test.describe('sealed is the default mode; strict is named', () => {
             expect((outcome as CallOutcome & { code?: unknown }).code).toBe('UNKNOWN_METHOD');
         });
 
-        test(`${name}: a <script> in html runs in no document, and warns once across setConfig(), reset() and load(); in cooperative mode the same html runs and does not warn (positive control)`, async ({ sandbox, page, browserName }) => {
+        test(`${name}: a <script> in html runs in no document, and warns once per element, across its start() and reset(); in cooperative mode the same html runs and does not warn (positive control)`, async ({ sandbox, page, browserName }) => {
             void sandbox;
             const warnings = scriptWarnings(page);
             const html = `<script>${M('inline')}</script><svg><script>${M('svg')}</script></svg><p id="p">p</p>`;
             expect(await apply(page, { ...config, html } as SandboxConfig)).toBe('ready');
             await waitInView(page, browserName, `!!document.getElementById('p')`);
             expect(await reset(page)).toBe('ready');
-            expect(await load(page, html)).toBe('ready');
+            await waitInView(page, browserName, `!!document.getElementById('p')`);
+            await page.waitForTimeout(500);
+            expect(await markers(page, browserName)).toEqual([]);
+            expect(warnings).toEqual([warning]);
+            // the same app on a second element: it warns once of its own
+            expect(await apply(page, { ...config, html } as SandboxConfig)).toBe('ready');
             await waitInView(page, browserName, `!!document.getElementById('p')`);
             await page.waitForTimeout(500);
             expect(await markers(page, browserName)).toEqual([]);
             expect(await inView(page, browserName, `document.scripts.length`)).toBe(1);
-            expect(warnings).toEqual([warning]);
+            expect(warnings).toEqual([warning, warning]);
 
             expect(await apply(page, { mode: 'cooperative', capabilities: ['allow-scripts'], html })).toBe('ready');
             await expect.poll(() => markers(page, browserName)).toEqual(['main/wrapper/view:inline', 'main/wrapper/view:svg']);
-            expect(warnings).toEqual([warning]);
+            expect(warnings).toEqual([warning, warning]);
         });
 
-        test(`${name}: an on* handler in html runs in no document, and warns once; in cooperative mode the same html runs (positive control)`, async ({ sandbox, page, browserName }) => {
+        test(`${name}: an on* handler in html runs in no document, and warns once per element; in cooperative mode the same html runs (positive control)`, async ({ sandbox, page, browserName }) => {
             void sandbox;
             const warnings = scriptWarnings(page);
             const html = `<details id="d" open ontoggle="${M('ontoggle')}"><summary>s</summary>details</details>`;
             expect(await apply(page, { ...config, html } as SandboxConfig)).toBe('ready');
             await waitInView(page, browserName, `!!document.getElementById('d')`);
-            expect(await load(page, html.replace('ontoggle', 'ONTOGGLE'))).toBe('ready');
+            await page.waitForTimeout(500);
+            expect(await markers(page, browserName)).toEqual([]);
+            expect(warnings).toEqual([warning]);
+            // the handler in capitals, on a second element: it runs nowhere either, and that element warns once of its own
+            expect(await apply(page, { ...config, html: html.replace('ontoggle', 'ONTOGGLE') } as SandboxConfig)).toBe('ready');
             await waitInView(page, browserName, `!!document.getElementById('d')`);
             await page.waitForTimeout(500);
             expect(await markers(page, browserName)).toEqual([]);
             expect(await inView(page, browserName, `document.getElementById('d').getAttributeNames()`)).toEqual(['id', 'open']);
-            expect(warnings).toEqual([warning]);
+            expect(warnings).toEqual([warning, warning]);
 
             expect(await apply(page, { mode: 'cooperative', capabilities: ['allow-scripts'], html })).toBe('ready');
             await expect.poll(() => markers(page, browserName)).toEqual(['main/wrapper/view:ontoggle']);
-            expect(warnings).toEqual([warning]);
+            expect(warnings).toEqual([warning, warning]);
         });
     }
 
-    test("mode 'iframe' starts nothing: terminated with the reason naming its new name", async ({ sandbox, page }) => {
+    test("mode 'iframe' starts nothing: start() throws the reason naming its new name", async ({ sandbox, page }) => {
         void sandbox;
-        const reason = await page.evaluate(() => new Promise<string>(resolve => {
-            const s = document.querySelector('web-sandbox') as any;
-            s.addEventListener('terminated', (e: CustomEvent) => resolve(e.detail.reason), { once: true });
-            s.setConfig({ mode: 'iframe', capabilities: ['allow-scripts'] });
-        }));
-        expect(reason).toBe(`unknown mode: not strict, sealed, cooperative or worker ('iframe' was renamed 'cooperative')`);
-        expect(await sandbox.state()).toBe('terminated');
-        expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).shadowRoot.querySelectorAll('iframe').length)).toBe(0);
+        expect(await startAs(page, { mode: 'iframe', capabilities: ['allow-scripts'] })).toEqual({ refused: `[Sandbox] start(): unknown mode: not strict, sealed, cooperative or worker ('iframe' was renamed 'cooperative').` });
+        // the refused element was never inserted: the page's one element is the harness's
+        expect(await page.evaluate(() => [document.querySelectorAll('web-sandbox').length, (document.querySelector('web-sandbox') as any).started])).toEqual([1, false]);
+        expect(await sandbox.terminations()).toEqual([]);
     });
 });
 

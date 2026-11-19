@@ -115,11 +115,11 @@ test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the ho
 });
 
 test.describe('L-1 (L): queued calls are posted only when the build is ready', () => {
-    // The owner's repro: a call made at once after setConfig() with a large view (as costly as one render may be: about
+    // The owner's repro: a call made at once after start() with a large view (as costly as one render may be: about
     // VIEW_RENDER_MAX_LENGTH characters of elements, the most `html` takes, BD7:LIM-3). When its timeout falls between the
     // wrapper's load and the view's check-in (the window the large view widens), the call times out and must not run:
     // the queue is flushed at `ready`, not at the load. The window's place differs per run and engine, so the call
-    // is made with several timeouts, one build each, and every call that timed out before its build's `ready` is checked;
+    // is made with several timeouts, one element each, and every call that timed out before its build's `ready` is checked;
     // a call that timed out after `ready` had been posted may run (it is not in the queue).
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         test.use({ build: buildOfMode(mode) });
@@ -129,11 +129,12 @@ test.describe('L-1 (L): queued calls are posted only when the build is ready', (
             const cases: { timeout: number; outcome: string; beforeReady: boolean }[] = [];
             for (const timeout of [5, 20, 40, 60, 80, 100, 130, 160, 200, 300]) {
                 cases.push(await page.evaluate(async ({ timeout, mode }) => {
-                    const el = document.querySelector('web-sandbox') as any;
                     const html = '<i></i>'.repeat(37440) + '<p>' + timeout + '</p>'; // 262 090 characters at most: within VIEW_RENDER_MAX_LENGTH
+                    // a fresh element, started and inserted: its build begins on insertion, and dispatches nothing inside it
+                    void startFresh({ mode, entry: 'main.js', html });
+                    const el = document.querySelector('web-sandbox') as any;
                     let readyAt = Infinity;
                     const ready = new Promise(resolve => el.addEventListener('ready', () => { readyAt = performance.now(); resolve(null); }, { once: true }));
-                    el.setConfig({ mode, entry: 'main.js', html });
                     let settledAt = 0;
                     const outcome = await el.callWithTimeout(timeout, 'm', 'ran ' + timeout).then(() => 'resolved', (e: any) => e.code).finally(() => { settledAt = performance.now(); });
                     await ready;
@@ -186,16 +187,14 @@ test.describe('N-4 (D): the view shows what the guest sees', () => {
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         test.use({ build: buildOfMode(mode) });
-        test('a registered image the host unregistered after the build, then removed by the guest, names nothing in the view; another registered image still shows (positive control)', async ({ sandbox, page, browserName }) => {
+        test('a registered image removed by the guest names nothing in the view; another registered image still shows (positive control)', async ({ sandbox, page, browserName }) => {
             expect(await sandbox.registerFiles({ 'pic.png': { base64: png(3, 5) }, 'kept.png': { base64: png(7, 4) } })).toBe('ok');
             expect(await sandbox.mount({ mode, guestWrites: true, scriptUnsafe: true })).toBe('ready');
-            await page.evaluate(() => (document.querySelector('web-sandbox') as any).unregisterFiles(['pic.png']));
             const removed = await sandbox.inGuest(`await sandboxFiles.remove('pic.png'); sandboxView.render('<img id="pic" src="pic.png"><img id="kept" src="kept.png"><p id="done">done</p>'); return sandboxFiles.list();`);
             expect(removed).toEqual(['kept.png']);
             await waitInView(page, browserName, `!!document.getElementById('done')`, 8000);
             expect((await waitInView<{ size: string }>(page, browserName, image('kept'), 8000)).size).toBe('7x4');
             expect(await waitInView(page, browserName, image('pic'), 8000)).toEqual({ size: '0x0', src: null }); // a path that names nothing is dropped (the URL rule)
-            expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).listGuestWrites())).toEqual([]);
         });
     });
 });

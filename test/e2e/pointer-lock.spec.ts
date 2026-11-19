@@ -10,15 +10,15 @@ const flagsOf = (page: import('@playwright/test').Page) => page.evaluate(() => {
     return { outer: frame.getAttribute('sandbox'), inner: new DOMParser().parseFromString(frame.srcdoc, 'text/html').querySelector('iframe')?.getAttribute('sandbox') ?? null };
 });
 
-test('allow-pointer-lock in "capabilities" is dropped with a warning, in cooperative and strict mode', async ({ sandbox, page }) => {
-    const warnings: string[] = [];
-    page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
-
-    await sandbox.mount({ mode: 'cooperative', capabilities: ['allow-scripts', 'allow-pointer-lock' as any] });
+test('allow-pointer-lock in "capabilities" is refused by start(), in cooperative and strict mode; without it no frame has the flag', async ({ sandbox, page }) => {
+    const REFUSED = '[Sandbox] start(): "allow-pointer-lock" is not allowed in "capabilities".';
+    await expect(sandbox.mount({ mode: 'cooperative', capabilities: ['allow-scripts', 'allow-pointer-lock' as any] })).rejects.toThrow(REFUSED);
+    await expect(sandbox.mount({ mode: 'strict', capabilities: ['allow-pointer-lock' as any] })).rejects.toThrow(REFUSED);
+    // the configs the embedder is left with once it takes the capability out
+    await sandbox.mount({ mode: 'cooperative', capabilities: ['allow-scripts'] });
     expect(await flagsOf(page)).toEqual({ outer: 'allow-scripts', inner: 'allow-scripts' });
-    await sandbox.mount({ mode: 'strict', capabilities: ['allow-pointer-lock' as any] });
+    await sandbox.mount({ mode: 'strict', capabilities: [] });
     expect(await flagsOf(page)).toEqual({ outer: 'allow-scripts allow-forms', inner: 'allow-scripts allow-forms' });
-    expect(warnings.filter(w => w.includes('"allow-pointer-lock" is not allowed in "capabilities"')).length).toBeGreaterThanOrEqual(1);
 });
 
 test('unsafeCapabilities grants allow-pointer-lock in cooperative mode, and warns; strict mode drops it', async ({ sandbox, page }) => {

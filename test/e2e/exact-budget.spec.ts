@@ -128,9 +128,9 @@ for (const [mode, config] of Object.entries(MODES)) {
 
         test('a call to a host method: past RPC_MAX_BYTES by a File name or a sparse array, or by a Blob or File type past BLOB_TYPE_MAX_LENGTH, the guest\'s own broker refuses it; a type at the limit and a small File are delivered', async ({ sandbox }) => {
             test.setTimeout(60000);
-            expect(await sandbox.mount(config)).toBe('ready');
             await sandbox.exposeHost('sink', '(...args) => args.length');
             await sandbox.exposeHost('nameOf', '(file) => [file.name, file.type, file.lastModified]');
+            expect(await sandbox.mount(config)).toBe('ready');
             const outcome = await sandbox.inGuest(`
                 const refused = async (...args) => { try { await bridge.call('sink', ...args); return 'sent'; } catch (error) { return error.code; } };
                 const sparse = []; sparse.length = 2 ** 23; sparse[5] = 1; // 64 MiB at 8 bytes a slot
@@ -150,8 +150,8 @@ for (const [mode, config] of Object.entries(MODES)) {
         // and the library has nothing longer to refuse (ledger: blob-type-emptied); Firefox and WebKit keep it whole,
         // and the type limit refuses it. Either way the library never turns a long type into '' itself.
         test('a Blob type of 65 536 characters: refused where the engine keeps it, and where the engine emptied it first, what the guest holds is sent', async ({ sandbox, browserName }) => {
-            expect(await sandbox.mount(config)).toBe('ready');
             await sandbox.exposeHost('typeOf', '(blob) => blob.type.length');
+            expect(await sandbox.mount(config)).toBe('ready');
             const outcome = await sandbox.inGuest(`
                 const blob = new Blob([], { type: 'a/' + 'b'.repeat(65534) });
                 try { return [blob.type.length, await bridge.call('typeOf', blob)]; } catch (error) { return [blob.type.length, error.code]; }`, 30000);

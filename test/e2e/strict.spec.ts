@@ -1,4 +1,4 @@
-import { test, expect, type SandboxDriver, type MountConfig, buildOfMode } from './fixture';
+import { test, expect, startAs, type SandboxDriver, type MountConfig, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inFrames, inView, waitInView } from './strict-view';
 import type { SandboxConfig } from '@src/host';
@@ -486,15 +486,13 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
             expect(await sandbox.state()).toBe('ready');
         });
 
-        test('an entry that is not a registered JavaScript file ends the build with a reason', async ({ sandbox }) => {
+        test('an entry that is not a registered JavaScript file is refused by start() with a reason, and builds nothing', async ({ sandbox, page }) => {
             await sandbox.registerFiles({ 'data.json': '{}' });
-            expect(await sandbox.mount(inMode(mode, { entry: 'missing.js' }))).toBe('terminated');
-            expect(await sandbox.mount(inMode(mode, { entry: 'data.json' }))).toBe('terminated');
-            expect(await sandbox.page.evaluate((mode) => new Promise(resolve => {
-                const s = document.querySelector('web-sandbox') as any;
-                s.addEventListener('terminated', (e: CustomEvent) => resolve(e.detail.reason), { once: true });
-                s.setConfig({ mode, entry: 'nope.js' });
-            }), mode)).toBe('the guest entry is not a registered JavaScript file');
+            await expect(sandbox.mount(inMode(mode, { entry: 'missing.js' }))).rejects.toThrow(`[Sandbox] start(): "entry" names no file of the app's files.`);
+            await expect(sandbox.mount(inMode(mode, { entry: 'data.json' }))).rejects.toThrow('[Sandbox] start(): "entry" names a file of the type application/json, which is not JavaScript.');
+            expect(await startAs(page, { mode, entry: 'nope.js' }, { files: {} })).toEqual({ refused: `[Sandbox] start(): "entry" names no file of the app's files.` });
+            // nothing was inserted: the page's one element is the harness's, which never started
+            expect(await page.evaluate(() => [document.querySelectorAll('web-sandbox').length, (document.querySelector('web-sandbox') as any).started])).toEqual([1, false]);
         });
     });
 });
