@@ -49,8 +49,8 @@ export const canaryUrl = (key, scheme) => `${scheme}://${key}.canary.invalid/ws-
 /** A guest's URL for the same kind: a marker in the path, and leak.invalid as its host. */
 export const guestUrl = (key, scheme) => `${scheme}://leak.invalid/GUEST-SECRET-${key}`;
 
-/** What each kind does, in C or in the worker: `(url, track) => Promise<outcome>`; `track(el)` keeps an element to remove. */
-function kinds() {
+/** (Exported for Q8.) What each kind does, in C or in the worker: `(url, track) => Promise<outcome>`; `track(el)` keeps an element to remove. */
+export function kinds() {
     const isDoc = typeof document !== 'undefined';
     const mint = (parts, type) => URL.createObjectURL(new Blob(parts, { type }));
     const el = (tag, props, parent) => { const e = document.createElement(tag); Object.assign(e, props); (parent || document.body).append(e); return e; };

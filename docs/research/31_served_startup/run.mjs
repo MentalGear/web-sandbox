@@ -25,6 +25,8 @@ const PLAN = [
     ['q5', 'q5-framed-host.mjs', []],
     ['q6', 'q6-refused-canaries.mjs', []],
     ['q7', 'q7-view-first.mjs', []],
+    ['q8a', 'q8-check-timing.mjs', ['A']],
+    ['q8b', 'q8-check-timing.mjs', ['B']],
 ];
 const args = process.argv.slice(2);
 const onlyQ = args.filter((a) => PLAN.some(([q]) => q === a));

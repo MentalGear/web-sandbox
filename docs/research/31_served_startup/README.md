@@ -22,9 +22,11 @@ builds the file exactly as drawn and measures:
   unseen, and does a guest's URL get reported under them?
 - **Q7, the view speaks first** (03's "To be measured" under "Who receives the first port"): is `event.source ===
   frame.contentWindow[0]` a reliable test, what does each forgery get, and what does the order cost?
+- **Q8, the check's timing**: why did the fixture's check refuse clean starts on Firefox, and does a check that
+  attributes every event by what it carries, with no fixed wait, refuse none?
 
 **Measured on headless Playwright 1.65.1 on a shared 4-core VM** (Chromium 159.0.8154.6 headless shell, Firefox 159.0,
-WebKit 27.2), 2026-11-18, from `80701b0` (Q1 to Q5), and 2026-11-19, from `7494042` (Q6 and Q7); no library code. Plain HTML served on loopback by
+WebKit 27.2), 2026-11-18, from `80701b0` (Q1 to Q5), and 2026-11-19, from `7494042` (Q6 and Q7) and `8aa2722` (Q8); no library code. Plain HTML served on loopback by
 [`server.mjs`](server.mjs) (research 28's recording server, with arrival times). `localhost` and `127.0.0.1` are two
 sites. Raw output is in [`results/`](results/README.md).
 
@@ -113,6 +115,16 @@ sites. Raw output is in [`results/`](results/README.md).
   order costs the same as Q1's (93 / 120 / 288 ms against 93 / 121 / 286 to the verdict). Another site framing F
   receives only `{ version, verdicts }`. Q5 is unchanged: the closed shadow root keeps a framing page out; in the light
   DOM its page took the port and the content.
+- **(Q8) Firefox's refused clean starts come from attributing events by time**: Firefox dispatches the worker's refused
+  `import()` and `importScripts()` events in C's document, and when one lands in C's twin window the twin counts three
+  events and the check declares a duplicate (1 of 200 idle, 2 of 200 loaded starts; Chromium and WebKit 0 of 400). A check
+  that attributes every event by what it carries (each refused canary by its own URL, no fixed wait, an answer as soon as
+  every expected `<meta>` event is in) refused none of 400 clean starts on Chromium and Firefox and none of 200 idle on
+  WebKit, and answered in about half the time; it refused 5 of 200 loaded WebKit starts through the one fixed time it
+  kept (a 600 ms cut on its admitted worker canary's answer). It saw six headers and the `<meta>`'s exact text enforced
+  in every start, with a duplicate test on one canary that raises one event per load on all three engines, and no false
+  positive. A second policy's event for a load came before or with the `<meta>`'s, or within 4 ms after under the same
+  text; nothing bounds that order by construction.
 
 ## Method
 
@@ -686,17 +698,142 @@ The order changes nothing in Q5's result: what stands between a framing page and
 refused by the host page for `C.policy`: C's own policy check was not clean, while its message was accepted as coming
 from `frame.contentWindow[0]`; which part of the check failed was not recorded. In an earlier run of the same probe
 (its output replaced by this one, after the sibling forger of (a) was moved after insertion), Firefox refused 1 and 2 of
-its 50 race starts, for reasons not recorded; in this run, none. The comparison held in every one of them. Whether the
-fixture's check (Q1's two fixed 30 ms waits) is the cause was not isolated; Q6 measured Firefox's canary events arriving
-up to 165 ms after issue.
+its 50 race starts, for reasons not recorded; in this run, none. The comparison held in every one of them. Q8 isolates
+the cause: the fixture's twin canary counts every event of C's document in its window, and Firefox dispatches the
+worker's refused script loads in C's document.
+
+## Q8. Why the fixture's check refused clean starts on Firefox, and a check by content ([`q8-check-timing.mjs`](q8-check-timing.mjs), [`check-content.mjs`](check-content.mjs), [`tables-q8.mjs`](tables-q8.mjs))
+
+**Method.** Two views of the check, on the clean file, framed as in Q1, each start in a fresh element:
+- **the fixture's check** (`fixedScript`): Q1's C unchanged except for three timestamps the check records (when its
+  canaries were issued, when the last of them settled, when the twin canary was issued). Its windows: the canaries'
+  (issue to settled), the 30 ms wait, the twin's (the twin's issue to the end of its own 30 ms), and after;
+- **the check by content** (`contentScript`): no gates, no fixed wait, no window. C and its worker issue at once the
+  refused canaries of Q6 (in C: image, sheet, `fetch`, script, `FontFace`, `<audio>`, `<iframe>`, `<object>` in `http:`
+  and `https:`, and a `data:` worker; in the worker: `fetch`, `importScripts`, `import()` in both schemes) and Q3's
+  admitted loads (`blob:` image, sheet, worker; the refused `fetch(blob:)` and `eval`, in both realms). The worker posts
+  each of its events to C as it arrives. Every event is attributed by what it carries: a refused canary by its own host
+  and scheme in `blockedURI` (the 23 "expected" canaries), anything else by directive and scheme. It decides as soon as
+  each expected canary has raised **at least one** event with the `<meta>`'s text and disposition, every admitted load
+  has settled and the worker has started, or at a 3 s timeout. Not clean: any event with another policy text or
+  disposition, whenever it arrived; an admitted load that did not do what the `<meta>` makes it do; or a
+  duplicate-test canary (`fetch` `http:` in C and in the worker) with other than exactly one event. After answering,
+  C keeps listening 300 ms and reports every event with its time and whether it came before or after the verdict.
+
+Phase A ran both checks alternating, 200 starts each idle and 200 each under CPU load (four `node -e "for(;;){}"`
+processes for the duration, killed afterwards; none was left alive, checked by PID). Phase B ran the check by content
+50 starts idle and 50 loaded under each of eight headers. Another agent ran the e2e suite on the machine at the same
+time; the load average is recorded per start.
+
+### The cause
+
+**On Firefox, the worker's refused `import()` and `importScripts()` events are dispatched in C's document, not the
+worker's, at whatever time the worker reaches them; when that falls inside C's twin window, C counts three events for
+its twin instead of one and declares a duplicate.** Every refused start had exactly that record, and no other condition
+failed:
+
+| Firefox | Starts | Refused | Condition | The events in C's twin window |
+| :--- | ---: | ---: | :--- | :--- |
+| idle (load 0.7–1.3) | 200 | **1** | C: "twin raised 3" | the twin's `connect-src blob` and two `script-src-elem blob` (the worker's `import()` and `importScripts`), at 43–45 ms; the twin issued at 41 ms |
+| loaded (load 1.2–4.5) | 200 | **2** | C: "twin raised 3", both | the same pair, at 43–45 ms, the twin issued at 42 ms |
+
+The worker's check runs concurrently with C's; on Firefox its two refused script loads are not in the worker's event
+list at all (the worker's own records show only its `fetch`, `eval` and twin). C's `script-src-elem blob` events (its own
+`import()` and the worker's two) arrived between 53 ms before and 54 ms after C's twin was issued over the 400 starts;
+8 of 1200 arrived after it: 6 inside the twin window (the 3 refused starts) and 2 after the window had closed.
+On Chromium and WebKit the worker's events are dispatched in the worker, so no foreign-realm event can enter C's twin
+window: Chromium 0 of 400 refused (idle load 2.0–2.8, loaded 2.2–4.4), WebKit 0 of 400 (idle 0.4–5.5, loaded 0.9–8.4). The fixed waits are not themselves
+the cause: the twin counts *every* event of C's document in its window, and Firefox delivers events of another realm
+there. No shorter wait was needed to show it.
+
+### The check by content
+
+**What identifies each canary**, from the event alone (Q6's baseline and phase B's runs with no header):
+- each refused network canary, on all three engines: its `blockedURI` (one host per kind and scheme; a frame's and an
+  object's reduced to that origin). It raised one `<meta>` event per load on all three in every start; the check does
+  not care in which document it arrives (Firefox files the worker's script loads in C);
+- the `data:` worker in C: `worker-src` with `data` (one per start when only C makes one);
+- the refused `fetch(blob:)` and `eval`: `connect-src blob` and `script-src eval`, but C's and the worker's look alike,
+  and WebKit raises no `eval` event at all, so neither is an expected canary: they are read by their outcome (refused);
+- the admitted `blob:` loads raise nothing under the `<meta>`; they are read by their outcome (loaded, applied, ran), and
+  any event of theirs is another policy's.
+
+**Is "at least one" enough?** Yes for deciding that the `<meta>` is in force, since what is expected is a refusal by the
+`<meta>`'s text; the count matters only for a header that repeats the `<meta>`'s text exactly (2b), and there only on a
+canary whose count is constant. `fetch` `http:` (C) and `fetch` `http:` (worker) raised exactly one event per load on
+all three engines (Q6 and every start below); Firefox's `@font-face` (two) is not in the set.
+
+**2a. Refusals and time to the verdict on the clean file** (median and range in ms; "check" is from the canaries'
+issue to the decision; "insertion" from the frame's insertion to the verdict at the host page; the fixture's includes
+its 2 to 4 ms of gates, the content check has none):
+
+| | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| fixture's check, idle: refused / check / insertion | 0 of 200 / 71 (68–85) / 89.7 (84–103) | **1** of 200 / 71 (69–78) / 117 (110–183) | 0 of 200 / 90 (83–399) / 147 (103–763) |
+| check by content, idle | **0** of 200 / 28 (23–42) / 40.8 (34–71) | **0** of 200 / 45 (39–79) / 75 (66–141) | **0** of 200 / 55 (20–233) / 108 (36–503) |
+| fixture's check, loaded | 0 of 200 / 76 (70–98) / 97.5 (86–131) | **2** of 200 / 72 (69–93) / 131 (116–226) | 0 of 200 / 96 (85–474) / 236 (168–2290) |
+| check by content, loaded | **0** of 200 / 40.5 (26–98) / 54.9 (36–113) | **0** of 200 / 65 (50–140) / 107 (82–193) | **5** of 200 / 134.5 (79–2100) / 269.5 (155–2750) |
+| load average | idle 2.0–2.8, loaded 2.2–4.4 | idle 0.7–1.3, loaded 1.2–4.5 | idle 0.4–5.5, loaded 0.9–8.4 |
+
+**The check by content's own refusals: WebKit, 5 of 200 loaded starts, all "off: `worker-blob`: constructed, no event"**:
+the admitted `blob:` worker canary is read through Q6's `kinds()`, which gives up on the worker's message after 600 ms.
+In those five starts the whole check took 0.8 to 2.1 s (load average 2.1 to 7.9): the worker had not answered in 600 ms,
+the check had its every expected event, and decided "not clean". That 600 ms is the one fixed time left in this check
+besides its overall timeout. A form of the check without it (`workerNoCut`: the outcome waits for the worker's message
+or error, bounded only by the 3 s timeout) ran alternating with the original under load on WebKit, 100 starts each
+(phase L, load 3.2–7.1): **neither refused any start**, so the cut's failure did not recur and the comparison shows
+nothing about the fix (void as evidence). WebKit's first two phase-A runs closed the browser after 180 and 242 starts
+("Target page, context or browser has been closed"; no busy processes were running); the WebKit rows above are four
+runs of 50 + 50 starts each, one after another, each with a fresh browser.
+
+**2b. The `<meta>`'s exact text, enforced, in a header** (Q3's twin case), 50 starts idle and 50 loaded per engine, and
+the same with no header:
+
+| | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| no header: not clean (false positives) | 0 of 100 | 0 of 100 | 0 of 100 |
+| no header: duplicate-test counts at the end | `fetch` `http:` 1, worker `fetch` `http:` 1, in 100 of 100 | the same | the same |
+| the header: seen (misses) | 100 of 100 (0 missed), by "fetch http x2, w-fetch http x2" at the verdict | the same | the same |
+| the header: the two events of one load, apart by at most | 3.1 ms | 3 ms | 4 ms |
+
+So the check tells the header from the `<meta>` alone by the count on one canary, with no time window. That rests on
+the second event of the duplicate-test canary being in by the time the last expected event is; it was in every start,
+but by a margin the data do not bound (below).
+
+**2c. Under headers the check should see**, 50 starts idle and 50 loaded per engine: was each seen when "every expected
+`<meta>` event is in", and how far apart are the `<meta>`'s event and the header's for one load? (Only canaries named by
+their URL are counted per load.)
+
+| Header | Seen at the verdict (of 100) | Header's event after the verdict | One load's two events: header minus `<meta>`, ms (Chromium / Firefox / WebKit) |
+| :--- | :--- | :--- | :--- |
+| `RO font-src blob:` | 100 / 100 / 100 | 0 / 0 / 0 | −0.2..0 / −1..0 / −1..0 |
+| `RO img-src blob:` | 100 / 100 / 100 | 0 / 0 / 0 | −0.1..0 / −1..0 / −2..0 |
+| `CSP font-src blob:` (enforced) | 100 / 100 / 100 | 0 / 0 / 0 | −0.9..0 / −1..0 / 0..0 |
+| `CSP frame-src 'none'` (enforced) | 100 / 100 / 100 | 0 / 0 / 0 | −0.7..0 / −1..0 / −1..0 |
+| `RO default-src 'self' blob: 'unsafe-inline' 'unsafe-eval'` | 100 / 100 / 100 | 0 / 0 / 0 | −4.1..0 / −2..0 / −4..0 |
+| `RO` the `<meta>`'s exact text | 100 / 100 / 100 | 0 / 0 / 0 | −4.8..0 / −2..0 / −3..0 |
+| `CSP` the `<meta>`'s exact text (2b) | 100 / 100 / 100 | the second event of a load after the verdict: 0 / 0 / 1 (stamped 1 ms after, on a canary other than the duplicate test) | second minus first 0..3.1 / 0..3 / 0..4 |
+
+"After the verdict" is read from the order of arrival in C for events of another text, and from the time stamps for the
+two identical events of 2b (WebKit's clock moves in 1 ms steps). Under every header the second policy's event for a load
+came **before or with** the `<meta>`'s (header minus `<meta>` ≤ 0) under a different text, and up to 4 ms after under
+the same text. The verdict saw every header in every start, because each of these headers refuses several canaries and
+the last expected event came several ms after the header's first. **Not constructed**: a header that refuses only the
+canary whose `<meta>` event arrives last; there the header's event would precede or accompany it in the cases measured,
+but a margin of zero is not a bound. A marker canary issued after the last expected event was not built or measured.
+
+**Other records.** One loaded WebKit start under `RO default-src 'self' …` also had its `blob:` worker canary end
+"constructed, no event": the check reported it as "off", along with the header. The check by content as run in phase A's
+first three WebKit runs, in phase B and on Chromium and Firefox was the committed text without the `workerNoCut` branch
+(added for phase L; off, it changes nothing but the script's hash).
 
 ## What this means for the design
 
 Read against [03](../../design/03-served-document.md) as revised after review 2 (`docs/design/REVIEW-2.md`, both at
 `claude/amazing-ride-wbmowi`, `5b0fac5`). For each part: whether the measurement supports it as written, supports it with a change,
-or contradicts it, and the rung its guarantee then stands on. The last two rows read the two "To be measured" paragraphs
-of 03 as revised after this research (`7494042`): under "What the policy check provokes" (Q6) and "Who receives the
-first port" (Q7). Facts as measured on the three engines named above; the choices are the owner's.
+or contradicts it, and the rung its guarantee then stands on. Two rows read the two "To be measured" paragraphs of 03
+as revised after this research (`7494042`): under "What the policy check provokes" (Q6) and "Who receives the first
+port" (Q7); the last row reads I18's decision against Q8. Facts as measured on the three engines named above; the choices are the owner's.
 
 | Part of 03 | Verdict | Rung | Why |
 | :--- | :--- | :--- | :--- |
@@ -716,6 +853,7 @@ first port" (Q7). Facts as measured on the three engines named above; the choice
 | What "serve it unchanged" excludes | **supported** | a documented limit | each excluded case either ends the build through the check (report-only, and an enforced header that lets the bootstrap run) or stops C (an enforced header that refuses the bootstrap, a refused framing, a wrong type), on all three (Q1, Q3). The kinds of header the check does not see (above) pass, and the check of the file names them |
 | **"To be measured": a refused canary per directive, to lift the five from the renderer's rules to the check** | **supported, with changes** | a check, at start-up, with a residual that is a documented limit; the renderer's rules stay behind it | Q6: a refused canary (one fixed URL per kind on a reserved name, in `http:` and `https:`) raised exactly the `<meta>`'s event and, under every header Q3 missed that reports a guest's URL, a second one, for `font-src`, `media-src`, `frame-src`, `object-src` on all three engines and `form-action` on Firefox and WebKit; `worker-src` through a `data:` worker. **The changes**: (1) **two** URLs per kind, `http:` and `https:` (one scheme leaves `https: blob:`-style headers unseen); (2) the list cannot give every directive a refused canary: `manifest-src` has none (no engine fetched a manifest in C, so there is also no load to report), and **on Chromium the refused form ended the view** (C replaced by an error page), so `form-action` keeps no canary there and stays behind the renderer's form rules; a network `worker-src` canary fails before the policy (the `data:` one serves); (3) **the residual**: a header that admits both canary URLs but not a guest's, measured as one that names the canaries' host (`*.canary.invalid`), is unseen on Chromium and Firefox and then reported a guest's full URL (`font-src`, `media-src`, `form-action`) or origin (`frame-src`, `object-src`); `*` and scheme sources report nothing of the guest's. That residual is constructed (an embedder's header naming a reserved library host), and on Chromium every `form-action` header is in it; both remain closed only by the renderer's rules. (4) Each refused canary's events are expected exactly (a constant count per engine: Firefox raises two for `@font-face`), so the check can wait for that count with a timeout instead of fixed waits: they added 63 / 95 / 24 ms at the median and the last arrived at most 99 / 165 / 203 ms after issue (Chromium / Firefox / WebKit; Firefox and WebKit under load). A list `POLICY_DIRECTIVES` with, per directive, its admitted canary, its refused canary or the reason it has none, fits these facts; the reasons measured are "no load of that kind is made in a framed document" (`manifest-src`), "the refusal ends the view" (`form-action` on Chromium) and "fails before the policy" (a network worker) |
 | **"To be measured": the view speaks first** | **supported, with changes** | impossible to reach, for any document that is not at index 0 of the element's frame; a documented limit for one that is | Q7: `event.source === frame.contentWindow[0]` held for C in every start and was false for every forger elsewhere (a frame of the host page, F itself, F's second frame, a framing page), on all three engines; the order costs the same as Q1's; no message was missed with the listener added before insertion, the host page busy or not. **The changes**: (1) the comparison must run inside `try`, with a throw read as "not the view": the read throws `SecurityError` while F is not loaded and when F has no frames (not `undefined`), and `TypeError` without a frame; (2) `event.source.parent === frame.contentWindow` must not stand in for it (true for F's second frame); (3) where to post the port: `event.source` follows the browsing context, so a reloaded C still receives it, but a frame replaced at index 0 is reached only by a fresh `frame.contentWindow[0]`; posting to `event.source` sends to the context that spoke or nowhere. **What it does not change**: a document at index 0 that speaks is accepted. An SPA fallback's widget that announced itself received the port and the content, and so did a framing page's document in the light DOM (Q5). A silent widget received nothing, where Q1's order gave it the port. So "a document that does not announce itself as the view receives no port at all" holds; "the element posts nothing at the frame's load" holds; the check of the file and the closed shadow root remain what keeps a speaking impostor away. What another site framing F receives is `{ version, verdicts }` only |
+| **I18's decision**, so that the check never ends a healthy sandbox (the fixture's form: fixed waits, and a twin canary counted in a time window) | **contradicted for the fixture's form; supported, with one change, for a check by content** | a check, at start-up; attributing by content makes the window failure impossible to build, and what is left to time is the overall timeout and one canary's outcome | Q8: the fixture's check refused 1 of 200 idle and 2 of 200 loaded clean starts on Firefox (0 of 400 on Chromium and on WebKit), every one as "twin raised 3": Firefox dispatches the worker's refused `import()` and `importScripts()` events in C's document, and the twin counts every event of C's document in its window. A check that attributes every event by what it carries (a refused canary by its own URL; at least one `<meta>` event per expected canary; any event of another text or disposition is another policy whenever it arrives; the duplicate test on `fetch` `http:` in C and in the worker, one event per load on all three) refused none of 400 clean starts on Chromium and Firefox and none of 200 idle on WebKit, and answered sooner (median 28 / 45 / 55 ms from the canaries' issue, idle, against 71 / 71 / 90). It saw all six headers and the `<meta>`'s exact text enforced in every one of 100 starts per engine, with no false positive in 100 with no header. **The change**: it refused 5 of 200 loaded WebKit starts through the one fixed time it kept, the admitted `blob:` worker's 600 ms outcome cut, in starts that took 0.8 to 2.1 s; a form without the cut was run but the failure did not recur, so the fix is not shown. **Not bounded**: "answer when every expected event is in" relied on a second policy's event for a load arriving before or with the `<meta>`'s (different text; up to 4 ms after with the same text, the case the duplicate canary decides); no construction makes that order hold, and a header refusing only the last canary was not tried |
 
 ## Not measured
 
@@ -729,7 +867,11 @@ first port" (Q7). Facts as measured on the three engines named above; the choice
   URLs like `*`; a guest's `data:` font or media under `* blob:` (Q3 found such blocked URIs reduced to the scheme);
   `form-action` on Chromium in isolation from F's `frame-src` (which of the two ended C's navigation).
 - Q7: C announcing itself before F's `load` (it never did in 150 starts per engine; not forced); a widget of the SPA
-  page at another index than 0; the cause of Firefox's three refusals by C's own check.
+  page at another index than 0. (Firefox's refusals by C's own check: isolated in Q8.)
+- Q8: a header that refuses only the canary whose `<meta>` event arrives last (not constructed); a marker canary issued
+  after the last expected event (not built); whether removing the admitted `blob:` worker's 600 ms cut removes WebKit's
+  refusals under load (the failure did not recur in the 100 starts of phase L); phase L on Chromium and Firefox; Safari
+  and a shipping browser.
 - The host page's `fetch()` of `documentUrl` under a host policy (`connect-src`) and whether a server answers that fetch
   as it answers the navigation (a server can vary its response by `Sec-Fetch-Dest`).
 - The library itself: no bundle was loaded; the guest step's URLs reached the browser directly, not through the
@@ -752,6 +894,7 @@ bun docs/research/31_served_startup/summarize.mjs docs/research/31_served_startu
 bun docs/research/31_served_startup/tables.mjs <set>                             # Q3's tables
 bun docs/research/31_served_startup/compare-ways.mjs <set>                       # Q4's twelve ways against research 28
 bun docs/research/31_served_startup/tables-q6.mjs <set>                          # Q6's tables (verdicts read from the raw events)
+bun docs/research/31_served_startup/tables-q8.mjs <set>                          # Q8's records: refusals, causes, times, pairs
 ```
 
 Q6 and Q7 are in `run.mjs`'s plan (`q6`, `q7`); `Q6_CASES=0,1,31 bun …/q6-refused-canaries.mjs <engine>` runs a subset of
