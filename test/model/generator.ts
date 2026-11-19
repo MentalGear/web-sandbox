@@ -251,7 +251,7 @@ export function generate(seed: number): Sequence {
                 cmds.push({ op: 'settle' });
                 if (mode === 'worker') cmds.push({ op: 'execute', code: 'agent' });
                 for (let i = 0; i < 3; i++) cmds.push({ op: 'call', method: 'act', spec: genGuestSpec(rng) });
-                cmds.push({ op: 'call', method: 'act', spec: { k: 'write', path: rng.pick(WRITE_PATHS), text: 'v1' } }, { op: 'wait', ms: 80 }, { op: 'listWrites' }, { op: 'commit', paths: WRITE_PATHS.slice(), code: rng.chance(0.5) });
+                cmds.push({ op: 'call', method: 'act', spec: genWrite(rng, rng.pick(WRITE_PATHS)) }, { op: 'wait', ms: 80 }, { op: 'listWrites' }, { op: 'commit', paths: WRITE_PATHS.slice(), code: rng.chance(0.5) });
             } else {
                 cmds.push(...entryRewritten(rng, mode));
             }

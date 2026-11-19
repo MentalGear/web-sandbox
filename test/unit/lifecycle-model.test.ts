@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Divergence, ENTRY_NOT_REGISTERED_REASON, LifecycleModel, type Cmd, type ConfigDesc, type Observation } from '../model/lifecycle-model';
+import { AGENT_PATH, Divergence, ENTRY_NOT_REGISTERED_REASON, ENTRY_TEXTS, LifecycleModel, type Cmd, type ConfigDesc, type Observation } from '../model/lifecycle-model';
 import { generate, mulberry32, shrink } from '../model/generator';
 
 /**
@@ -270,5 +270,25 @@ describe('the generator', () => {
         const culprit = sequence.cmds[Math.floor(sequence.cmds.length / 2)]!;
         const minimal = await shrink(sequence, async (candidate) => candidate.cmds.includes(culprit), 200);
         expect(minimal.cmds).toEqual([culprit]);
+    });
+});
+
+describe('the generator', () => {
+    // What an entry of another text does when it runs is not the model's to predict (ENTRY_TEXTS): a write over the
+    // entry with a plain text would end the next build with "the guest entry failed to start", which the model forbids.
+    it('writes over the entry only one of the entry texts, in every command, argument getter and listener plan', () => {
+        const texts: string[] = [];
+        const collect = (cmd: Cmd | undefined) => {
+            if (!cmd || cmd.op !== 'call') return;
+            if (cmd.spec.k === 'write' && cmd.spec.path === AGENT_PATH) texts.push(cmd.spec.text);
+            collect(cmd.getter);
+        };
+        for (let seed = 1; seed <= 2000; seed++) {
+            const sequence = generate(seed);
+            for (const cmd of sequence.cmds) collect(cmd);
+            for (const plan of sequence.plans) collect(plan.action);
+        }
+        expect(texts.length).toBeGreaterThan(100);
+        expect([...new Set(texts)].filter(text => !ENTRY_TEXTS.includes(text))).toEqual([]);
     });
 });
