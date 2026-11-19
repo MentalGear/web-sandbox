@@ -28,6 +28,7 @@ export const BUILD_MODULES = {
     'src/network.ts': 'network',
     'src/sealed.ts': 'sealed',
     'src/lib/app-start.ts': 'sealed',
+    'src/lib/app-surface.ts': 'data',
     'src/lib/auto-resize.ts': 'sealed',
     'src/lib/bridge-frame.ts': 'network',
     'src/lib/build-flag.ts': 'sealed',

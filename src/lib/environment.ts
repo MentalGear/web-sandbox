@@ -10,7 +10,7 @@
  *
  * A release can run embedder code before it returns: a frame's removal fires the host window's `focus` on Firefox, and a
  * focused guest's `pagehide` handler calls `parent.parent.focus()` on every engine. A listener that calls reset(),
- * load() or setConfig() builds a whole new environment from inside the old teardown. Because the fields already say "no
+ * start() builds a whole new environment from inside the old teardown. Because the fields already say "no
  * environment", that build fills fields the outer teardown never touches again, and the outer teardown releases the old
  * environment's resources only. A field written by a release instead (`this._iframe = null` after `remove()`) would
  * overwrite the nested build's, orphan its frame and close its bridge.

@@ -19,7 +19,7 @@ import { scalingRatio, type ScalingSize } from './scaling';
 
 /**
  * Every pass of the host realm over guest content (HOST_PASSES, src/lib/host-passes.ts) costs time linear in what it
- * takes (class E-cpu; BD7:LIM-2: the entry scan was quadratic on crafted entries, 128 KiB took 13 s inside setConfig()).
+ * takes (class E-cpu; BD7:LIM-2: the entry scan was quadratic on crafted entries, 128 KiB took 13 s inside a build).
  * Each row has its adversarial shapes here, each timed at a small size and at 8 times it with scalingRatio (bound 24:
  * linear takes about 8, quadratic about 64); a row without shapes fails, so a new pass cannot ship untimed.
  */
@@ -69,15 +69,6 @@ const SHAPES: Record<HostPassId, readonly Shape[]> = {
         { name: 'lines of `import//import`', n: 16384, make: n => { const text = 'import//import\n'.repeat(n / 15); return () => dynamicImportAt(text); } },
         { name: 'lines of `//import`', n: 16384, make: n => { const text = '//import\n'.repeat(n / 9); return () => dynamicImportAt(text); } },
     ],
-    configCopy: [{
-        name: 'setConfig() again with the same `html` (the copy and the comparison)', n: VIEW_RENDER_MAX_LENGTH / 8,
-        make: n => {
-            const html = `<p>${chars(n - 7)}</p>`;
-            const el = element;
-            el.setConfig({ html });
-            return () => el.setConfig({ html });
-        },
-    }],
     startReading: [
         { name: "start()'s reading of a long `html`", n: VIEW_RENDER_MAX_LENGTH / 8, make: n => { const app = { html: chars(n) }; return () => readStart(app, undefined, { hostOrigin: HOST, hostSites: [HOST] }); } },
         {
@@ -92,7 +83,7 @@ const SHAPES: Record<HostPassId, readonly Shape[]> = {
     ],
     configSchema: [{ name: 'normaliseConfig() of a long `html`', n: VIEW_RENDER_MAX_LENGTH / 8, make: n => { const config = { html: chars(n) }; return () => normaliseConfig(config, { hostOrigin: HOST, hostSites: [HOST] }); } }],
     fileStore: [
-        { name: 'registerFiles() of many files with long paths', n: 120, make: n => { const files = manyFiles(n); return () => new FileStore(() => {}).register(files); } },
+        { name: 'the store of many files with long paths', n: 120, make: n => { const files = manyFiles(n); return () => new FileStore(() => {}).register(files); } },
         { name: 'a large binary file', n: 512 * 1024, make: n => { const bytes = new Uint8Array(n).fill(7); return () => new FileStore(() => {}).register({ 'a.bin': bytes }); } },
         {
             name: 'snapshot() of a chain of stylesheets that import each other', n: 120,

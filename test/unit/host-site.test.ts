@@ -391,9 +391,11 @@ describe('host-side code reads the host page only through host-site.ts', () => {
 
     it('the element hands the config the host page from host-site.ts, read when a rule of the config asks, and from nowhere else', () => {
         const host = readFileSync(path.join(ROOT, 'src/host.ts'), 'utf8');
-        expect(host.match(/normaliseConfig\(/g)).toHaveLength(1);
+        expect(host.match(/readStart\(/g)).toHaveLength(1);
         // the reader is the network modes' (network-config.ts), handed over through the seam; a build without them reads nothing
-        expect(host).toContain('normaliseConfig(copy, networkModes()?.readHostPage ?? NO_HOST_PAGE)');
+        expect(host).toContain('readStart(app, grants, networkModes()?.readHostPage ?? NO_HOST_PAGE)');
+        // and start()'s reading hands it to the config schema, which asks it only for a rule that reads the host page
+        expect(readFileSync(path.join(ROOT, 'src/lib/app-start.ts'), 'utf8')).toContain("normaliseConfig(copy, hostPage, 'start')");
         expect(readFileSync(path.join(ROOT, 'src/lib/network-config.ts'), 'utf8')).toContain('export const readHostPage = (): NormaliseContext => ({ hostOrigin: hostPageOrigin(), hostSites: hostSiteOrigins() });');
         const callers = hostSide().filter(file => file !== 'src/lib/host-site.ts' && /\bhostSiteOrigins\(/.test(readFileSync(path.join(ROOT, file), 'utf8')));
         expect(callers).toEqual(['src/lib/network-config.ts']);

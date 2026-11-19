@@ -162,15 +162,15 @@ describe('C-1: every RPC frame is built from bounded parts at the sender, and ch
         expect(await outcome(call)).toMatchObject({ code: 'RESULT_NOT_TRANSFERABLE' });
     });
 
-    it("expose() ignores a name longer than 256 characters; the element's expose() says so at once", () => {
+    it("expose() ignores a name longer than 256 characters; the element's start() says so at once", () => {
         const { broker, frames } = capturedBroker();
         broker.expose('n'.repeat(257), () => 1);
         broker.handleMessage(request(1, 'n'.repeat(257)));
         expect(frames[0].code).toBe('UNKNOWN_METHOD');
         defineWebSandbox();
-        const el = document.createElement('web-sandbox') as any;
-        expect(() => el.expose('n'.repeat(257), () => 1)).toThrow(TypeError);
-        expect(() => el.expose('n'.repeat(256), () => 1)).not.toThrow();
+        const methods = (length: number) => ({ methods: { ['n'.repeat(length)]: () => 1 } });
+        expect(() => (document.createElement('web-sandbox') as any).start({}, methods(257))).toThrow(TypeError);
+        expect(() => (document.createElement('web-sandbox') as any).start({}, methods(256))).not.toThrow();
     });
 
     // By construction: every RPC frame anything in src/ posts is made by one of the builders inside createBroker, from

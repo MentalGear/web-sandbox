@@ -8,6 +8,8 @@
  * feeds every observation here; test/unit/lifecycle-model.test.ts checks the model itself on the round reports' traces.
  *
  * The rules of S64 that the model holds the element to:
+ * - one app per element (design 01, I1): a start() that succeeds binds it for the element's life, a second start() and
+ *   one whose arguments are unusable throw and change nothing;
  * - `ready` is the only flush point: a call made while `loading` that settles before `ready` (its timeout) never runs;
  * - one "no repeat" rule for every `terminated`: a build started while a `terminated` is dispatched and refused with that
  *   very reason ends `terminated` without another event;
@@ -28,21 +30,25 @@ export type State = 'idle' | 'loading' | 'ready' | 'terminated';
 /** A raw option value as the generator writes it: JSON has no NaN or Infinity, so those are tokens. */
 export type Raw = number | string | boolean | null;
 
-/** A config as a descriptor; the runner turns it into the object setConfig() gets (configOf). */
+/**
+ * The options of an app and its grants as a descriptor; the runner turns it into start()'s two arguments
+ * (startArgumentsOf). `valid` names the kind of every option's value, not whether start() takes it: a non-boolean switch,
+ * a timeout that is no delay or a bogus call limit makes start() throw (startRefused).
+ */
 export type ConfigDesc =
     | {
           kind: 'valid';
           mode: Mode;
-          scriptUnsafe: Raw; // only a literal true enables it
-          guestWrites: Raw; // only a literal true enables it
+          scriptUnsafe: Raw; // only a literal true enables it; any other non-boolean makes start() throw
+          guestWrites: Raw; // the same
           watchdog: Raw | undefined;
           execTimeout: Raw | undefined;
-          entry?: 'agent.js' | 'bad.js' | 'missing.js';
+          entry?: 'agent.js' | 'bad.js' | 'import.js' | 'missing.js';
           html: 'agent' | 'plain' | 'none';
           noScripts?: boolean; // cooperative mode without allow-scripts: no bootstrap
           fetch: boolean;
           limits: 'none' | 'tinyBytes' | 'fewCalls' | 'bogus';
-          variant: number; // distinguishes otherwise equal configs, so "the same config again" is a deliberate step
+          variant: number; // distinguishes otherwise equal configs
       }
     | { kind: 'unknownMode'; mode: string | number }
     | { kind: 'unusable'; why: 'function' | 'notObject' | 'origins' | 'originsList' };
@@ -68,15 +74,9 @@ export type Cmd =
     | { op: 'insert' } // into the defining document (a move when it is already there; back from a foreign one)
     | { op: 'remove' }
     | { op: 'foreign' } // into a document of another window (an iframe's)
-    | { op: 'setConfig'; cfg: ConfigDesc }
-    | { op: 'setConfigEqual' } // the last setConfig() argument again, as a fresh copy
-    | { op: 'load'; agent: boolean }
+    | { op: 'start'; cfg: ConfigDesc; methods: 'echo' | 'throw' | null } // the app's files are START_FILES
     | { op: 'reset' }
     | { op: 'terminate'; reason: Raw | undefined }
-    | { op: 'register'; files: Record<string, string> }
-    | { op: 'registerBad' }
-    | { op: 'unregister'; paths?: string[] }
-    | { op: 'expose'; variant: 'echo' | 'throw' }
     | { op: 'call'; method: 'act' | 'missing' | 'long'; spec: GuestSpec; timeout?: Raw; arg?: ArgKind; getter?: Cmd }
     | { op: 'execute'; code: 'agent' | 'mark' | 'busy' | 'nonstring' }
     | { op: 'listWrites' }
@@ -102,7 +102,8 @@ export interface Sequence {
 // ---- documented texts and numbers --------------------------------------------------------------------------------
 
 export const DEFAULT_TERMINATE_REASON = 'terminated by the host';
-export const CONFIG_REFUSED = 'the configuration could not be used';
+export const ENTRY_NOT_REGISTERED_REASON = 'the guest entry is not a registered JavaScript file';
+export const ENTRY_IMPORT_REASON = 'the guest entry calls import() or a phase of it (import.source()), which loads nothing in strict and sealed mode: bundle its modules into the entry';
 export const WATCHDOG_REASON = 'the guest stopped responding (watchdog)';
 export const EXECUTION_TIMEOUT_REASON = 'the executed code ran longer than workerExecutionTimeout';
 export const ENTRY_FAILED_REASON = 'the guest entry failed to start';
@@ -116,8 +117,11 @@ export const TINY_BYTES_BUDGET = 64; // below that: every guest call is ARGS_NOT
 export const FEW_CALLS_BUDGET = 3;
 export const AGENT_PATH = 'agent.js';
 export const BAD_ENTRY_PATH = 'bad.js';
+export const IMPORT_ENTRY_PATH = 'import.js';
+/** The app's files every start() gives, as tokens (the runner's fileContent): the agent, an entry that throws, one that calls import(), data. */
+export const START_FILES: Readonly<Record<string, string>> = Object.freeze({ [AGENT_PATH]: 'AGENT', [BAD_ENTRY_PATH]: 'BAD', [IMPORT_ENTRY_PATH]: 'IMPORT', 'data.txt': 'data' });
 
-/** What setConfig() receives for a raw token. */
+/** What start() receives for a raw token. */
 export function rawValue(raw: Raw | undefined): unknown {
     if (raw === 'NaN') return NaN;
     if (raw === 'Infinity') return Infinity;
@@ -143,19 +147,23 @@ export function isInertPath(path: string): boolean {
     return INERT_EXTENSIONS.includes(path.split('.').pop() ?? '');
 }
 
-/**
- * The reason a refused config gives: the error's name, and for an `origins` of the wrong type the library's fixed text
- * that names the option (BD3:NEW-3). Written out here, not imported, so the model stays an oracle independent of src/.
- */
-export function refusalOf(desc: ConfigDesc): string | null {
-    if (desc.kind !== 'unusable') return null;
-    const detail = { function: 'DataCloneError', notObject: 'TypeError', origins: 'TypeError: origins is not an object', originsList: 'TypeError: origins.images is not a list' }[desc.why];
-    return `${CONFIG_REFUSED} (${detail})`;
-}
+const isSwitch = (raw: Raw) => typeof raw === 'boolean';
+const isDelay = (raw: Raw | undefined) => raw === undefined || rawValue(raw) === 0 || positiveTimeout(raw) > 0;
 
-export function unknownModeReason(mode: string | number): string {
-    // the reason names the problem, never the configured value (BD5:DOC-2)
-    return `unknown mode: not strict, sealed, cooperative or worker${mode === 'iframe' ? " ('iframe' was renamed 'cooperative')" : ''}`;
+/**
+ * Whether start() throws for the descriptor, as docs/API.md says (start(app, grants), Configuration): every value of
+ * the wrong type or shape is refused before anything is stored, and so is a mode the build does not know, an `entry`
+ * that names no file of the app's, and an argument that is not an object or cannot be copied. Written out here, not
+ * imported, so the model stays an oracle independent of src/. What needs a parse of guest text (an entry that calls
+ * import()) is not start()'s to decide: the build refuses it.
+ */
+export function startRefused(desc: ConfigDesc): boolean {
+    if (desc.kind !== 'valid') return true;
+    if (!isSwitch(desc.scriptUnsafe) || !isSwitch(desc.guestWrites)) return true;
+    if (!isDelay(desc.watchdog)) return true;
+    if (desc.mode !== 'cooperative' && !isDelay(desc.execTimeout)) return true; // cooperative mode ignores it
+    if (desc.limits === 'bogus') return true;
+    return desc.mode === 'strict' && desc.entry === 'missing.js';
 }
 
 // ---- the model -------------------------------------------------------------------------------------------------
@@ -196,7 +204,6 @@ export interface CallRecord {
     concurrentPath: boolean; // another write to the same path was in flight
     announcedBefore: number;
     settled: boolean;
-    exposes: number; // host expose() calls before it
     applied: 0 | 1 | 'uncertain' | null; // a guest write's change, applied at its fileswritten
 }
 
@@ -231,7 +238,7 @@ export interface Settlement {
 
 export class Divergence extends Error {}
 
-export const OPS = ['insert', 'remove', 'foreign', 'setConfig', 'setConfigEqual', 'load', 'reset', 'terminate', 'register', 'registerBad', 'unregister', 'expose', 'call', 'callWithTimeout', 'execute', 'listWrites', 'commit', 'guest'] as const;
+export const OPS = ['insert', 'remove', 'foreign', 'start', 'reset', 'terminate', 'call', 'callWithTimeout', 'execute', 'listWrites', 'commit', 'guest'] as const;
 export const STATES: State[] = ['idle', 'loading', 'ready', 'terminated'];
 
 /** The operation a command counts as for coverage. */
@@ -246,13 +253,8 @@ export function opName(cmd: Cmd): string {
 export class LifecycleModel {
     where: Where = 'none';
     state: State = 'idle';
-    cfg: ConfigDesc | null = null; // null: never configured (the defaults: strict mode, no html)
-    loadedHtml: 'agent' | 'plain' | null = null; // load() since the last setConfig()
-    refusal: string | null = null;
-    lastDesc: ConfigDesc | null = null;
-    lastCopy: string | null = null;
-    lastInputs = -1;
-    inputs = 0;
+    started = false; // a start() succeeded: the element has its app, for the rest of its life
+    cfg: ConfigDesc | null = null; // null: no app (the defaults: sealed mode, which the model reads as strict, no html)
     files: Record<string, string> = {};
     gen = 0;
     env: Env | null = null;
@@ -263,7 +265,6 @@ export class LifecycleModel {
     writesEnv: Env | null = null;
     announced = new Map<string, number>(); // fileswritten per path, for the overlay
     hostMethods = new Map<string, 'echo' | 'throw'>();
-    exposes = 0;
     calls = new Map<number, CallRecord>();
     nextCall = 1;
     mustNotRun = new Set<string>(); // "[env:N] mark id" lines that must never appear (R5:L-1)
@@ -292,13 +293,13 @@ export class LifecycleModel {
         return !!cfg && cfg.kind === 'valid' && cfg.scriptUnsafe === true;
     }
 
+    // The refusals of a build the element decides from the app as it stands: an entry the files do not hold (a commit
+    // can remove it), and an entry that calls import().
     private buildRefusal(): string | null {
-        if (this.refusal !== null) return this.refusal;
         const cfg = this.cfg;
-        if (cfg && cfg.kind === 'unknownMode') return unknownModeReason(cfg.mode);
-        if (cfg && cfg.kind === 'valid' && cfg.mode === 'strict' && cfg.entry) {
-            if (!(cfg.entry in this.files) || !cfg.entry.endsWith('.js')) return 'the guest entry is not a registered JavaScript file';
-        }
+        if (!cfg || cfg.kind !== 'valid' || cfg.mode !== 'strict' || !cfg.entry) return null;
+        if (!(cfg.entry in this.files) || !cfg.entry.endsWith('.js')) return ENTRY_NOT_REGISTERED_REASON;
+        if (cfg.entry === IMPORT_ENTRY_PATH) return ENTRY_IMPORT_REASON;
         return null;
     }
 
@@ -306,7 +307,7 @@ export class LifecycleModel {
         const cfg = this.cfg;
         const valid = cfg && cfg.kind === 'valid' ? cfg : null;
         const mode = valid ? valid.mode : 'strict';
-        const html = this.loadedHtml ?? (valid ? valid.html : 'none');
+        const html = valid ? valid.html : 'none';
         const entry = valid && mode === 'strict' ? valid.entry : undefined;
         return {
             id: this.nextEnv++,
@@ -377,10 +378,6 @@ export class LifecycleModel {
         if (frame) frame.expected.push({ type: 'terminated', reason });
     }
 
-    private configKey(desc: ConfigDesc): string {
-        return JSON.stringify(desc);
-    }
-
     // ---- operations: begin() applies the transition before the runner performs it, end() checks what happened
 
     // An undecided path (interleaved guest requests) takes what listGuestWrites() shows, the truth (API.md, Guest writes);
@@ -418,35 +415,23 @@ export class LifecycleModel {
                 this.where = 'foreign';
                 this.stop();
                 break;
-            case 'setConfig':
-            case 'setConfigEqual': {
-                const desc = cmd.op === 'setConfig' ? cmd.cfg : this.lastDesc;
-                if (!desc) break; // nothing set yet: the runner skips it too
-                this.lastDesc = desc;
-                const cloneable = !(desc.kind === 'unusable' && desc.why === 'function');
-                const current = this.lastCopy !== null && this.lastInputs === this.inputs && this.refusal === null && (this.state === 'ready' || this.state === 'loading');
-                if (cloneable && current && this.configKey(desc) === this.lastCopy) {
-                    this.coverage.add(`setConfig-noop|${this.state}|${this.mode}`);
+            case 'start':
+                // a second start() throws, whatever the state, and so does one whose app or grants are unusable: neither
+                // changes anything
+                if (this.started) {
+                    this.coverage.add(`start-again|${this.state}|${this.mode}`);
+                    frame.expectThrow = 'TypeError';
                     break;
                 }
-                this.inputs++;
-                const refused = refusalOf(desc);
-                if (refused !== null) {
-                    this.refusal = refused;
-                    this.lastCopy = null; // the previous config stays
-                } else {
-                    this.cfg = desc;
-                    this.loadedHtml = null;
-                    this.refusal = null;
-                    this.lastCopy = this.configKey(desc);
-                    this.lastInputs = this.inputs;
+                if (startRefused(cmd.cfg)) {
+                    this.coverage.add(`start-refused|${this.state}|${this.mode}`);
+                    frame.expectThrow = 'TypeError';
+                    break;
                 }
-                this.initialize(now);
-                break;
-            }
-            case 'load':
-                this.inputs++;
-                this.loadedHtml = cmd.agent ? 'agent' : 'plain';
+                this.started = true;
+                this.cfg = cmd.cfg;
+                this.files = { ...START_FILES };
+                if (cmd.methods) this.hostMethods.set('hostEcho', cmd.methods);
                 this.initialize(now);
                 break;
             case 'reset':
@@ -458,31 +443,6 @@ export class LifecycleModel {
                 this.terminate(reason, frame);
                 break;
             }
-            case 'register': {
-                const changed = Object.entries(cmd.files).filter(([path, text]) => this.files[path] !== text).map(([path]) => path);
-                for (const path of changed) this.files[path] = cmd.files[path]!;
-                if (changed.length) {
-                    this.inputs++;
-                    frame.expected.push({ type: 'fileschanged', paths: changed });
-                }
-                break;
-            }
-            case 'registerBad':
-                frame.expectThrow = 'INVALID_PATH';
-                break;
-            case 'unregister': {
-                const removed = (cmd.paths ?? Object.keys(this.files)).filter(path => path in this.files);
-                for (const path of removed) delete this.files[path];
-                if (removed.length) {
-                    this.inputs++;
-                    frame.expected.push({ type: 'fileschanged', paths: removed });
-                }
-                break;
-            }
-            case 'expose':
-                this.exposes++;
-                this.hostMethods.set('hostEcho', cmd.variant);
-                break;
             case 'call':
                 this.beginCall(cmd, frame, now);
                 break;
@@ -524,7 +484,6 @@ export class LifecycleModel {
             concurrentPath: false,
             announcedBefore: 0,
             settled: false,
-            exposes: this.exposes,
             applied: null,
         };
         frame.callId = record.id;
@@ -568,10 +527,7 @@ export class LifecycleModel {
                 changed.push(path);
             }
         }
-        if (changed.length) {
-            this.inputs++;
-            frame.expected.push({ type: 'fileschanged', paths: changed });
-        }
+        if (changed.length) frame.expected.push({ type: 'fileschanged', paths: changed });
     }
 
     /** After the runner performed the command: what it threw, how many warnings, the element's state. */
@@ -783,9 +739,7 @@ export class LifecycleModel {
             const allowed = env.tinyBytes
                 ? ['code:ARGS_NOT_TRANSFERABLE']
                 : [...(env.fewCalls ? ['code:BUSY'] : []), this.hostMethods.get('hostEcho') === 'echo' ? `echo:${env.id}` : this.hostMethods.get('hostEcho') === 'throw' ? 'code:HANDLER_ERROR' : 'code:UNKNOWN_METHOD'];
-            // a host method exposed again while the call was in flight: either handler may answer
-            const reexposed = this.exposes !== record.exposes && (String(value).startsWith('echo:') || String(value) === 'code:HANDLER_ERROR');
-            if (!allowed.includes(String(value)) && !reexposed) this.fail(`${where}: the guest's call to the host got ${String(value)}, expected one of ${allowed}`);
+            if (!allowed.includes(String(value))) this.fail(`${where}: the guest's call to the host got ${String(value)}, expected one of ${allowed}`);
             if (env.tinyBytes && value !== 'code:ARGS_NOT_TRANSFERABLE') this.fail(`${where}: a guest call under a byte budget below one call got ${String(value)}, expected ARGS_NOT_TRANSFERABLE`);
             this.coverage.add(`guest-call:${String(value).split(':')[0] === 'code' ? String(value) : 'ok'}|${this.mode}`);
         }

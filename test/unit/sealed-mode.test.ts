@@ -136,9 +136,9 @@ describe('T2: the schema: no network option reaches sealed mode', () => {
         expect(invariant.holds({ ...strict }, []), 'strict mode keeps its network').toBe(true);
     });
 
-    it('the reason is the registry\'s, decided by the config, and its text is the one docs/API.md lists', () => {
+    it('the reason is the registry\'s, start()\'s message, and its text is the one docs/API.md lists', () => {
         expect(reasonText('sealedNetwork')).toBe(REASON);
-        expect(TERMINATION_REASONS.sealedNetwork.decidedBy).toBe('config');
+        expect(TERMINATION_REASONS.sealedNetwork.decidedBy).toBe('start');
     });
 
     it('a network option left undefined names nothing; outside sealed mode both are taken', () => {
@@ -170,7 +170,7 @@ describe('T2: the schema: no network option reaches sealed mode', () => {
         }
         // strict mode keeps it, for testing
         expect(normaliseConfig({ mode: 'strict', scriptUnsafe: true }, context).value!.config.scriptUnsafe).toBe(true);
-        expect(TERMINATION_REASONS.sealedScriptUnsafe.decidedBy).toBe('config');
+        expect(TERMINATION_REASONS.sealedScriptUnsafe.decidedBy).toBe('start');
     });
 
     it("no option of a sealed config reads a value of the host page: the host page's origin is never asked", () => {

@@ -488,24 +488,15 @@ describe("R3-2: a build's 'terminated' comes in a task: a listener added right a
     });
 });
 
-describe('R3-9: expose() with a handler that is not a function, or a name that is not a string, throws a TypeError', () => {
-    it('throws; a function under a string name is exposed (positive control)', async () => {
-        const el = await mountElement({ mode: 'cooperative' });
-        expect(() => el.expose('m', 42)).toThrow(TypeError);
-        expect(() => el.expose(7, () => 1)).toThrow(TypeError);
-        expect(() => el.expose('m', () => 1)).not.toThrow();
-    });
-});
-
 describe("R3-4: cooperative mode without allow-scripts says once what has no effect", () => {
-    it('scripts in html, the watchdog, autoResize, the fetch bridge, guest writes, execute() and exposed methods are named, once', async () => {
+    it('scripts in html, the watchdog, autoResize, the fetch bridge, guest writes, execute() and the host methods are named, once', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const config = { mode: 'cooperative', html: '<script>x()</script>', watchdogTimeout: 1000, autoResize: true, fetchBridge: { allow: [] }, guestWrites: true, scriptUnsafe: true };
         const el = await mountElement(config, { methods: { m: () => 1 } });
         el.reset();
         const said = warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('without "allow-scripts"'));
         expect(said).toHaveLength(1);
-        for (const name of ['scripts and handlers in html', 'watchdogTimeout', 'autoResize', 'fetchBridge', 'guestWrites', 'execute()', 'expose()']) expect(said[0]).toContain(name);
+        for (const name of ['scripts and handlers in html', 'watchdogTimeout', 'autoResize', 'fetchBridge', 'guestWrites', 'execute()', 'the host methods of the grants']) expect(said[0]).toContain(name);
         warn.mockClear();
         await mountElement({ ...config, capabilities: ['allow-scripts'] }, { methods: { m: () => 1 } }); // positive control, another element: nothing to say
         expect(warn.mock.calls.filter(call => String(call[0]).includes('without "allow-scripts"'))).toEqual([]);

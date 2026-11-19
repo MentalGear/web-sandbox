@@ -381,7 +381,7 @@ describe('T5: the call graph of the sealed build path reaches no network code', 
         expect(readersIn('src/lib/network-config.ts')).toEqual(['readHostPage']);
         expect(readersIn('src/lib/network-host.ts')).toEqual(['this._startFetchBridge']);
         // the class hands the config the reader the seam holds, which a build without the network modes does not have
-        expect(member('_applyConfig')).toContain('normaliseConfig(copy, networkModes()?.readHostPage ?? NO_HOST_PAGE)');
+        expect(member('start')).toContain('readStart(app, grants, networkModes()?.readHostPage ?? NO_HOST_PAGE)');
     });
 
     it("the host page is asked (host()) only by the rules of the network options, which are the network modes' (network-config.ts) and which sealed mode never runs (readIn)", () => {

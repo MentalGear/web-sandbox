@@ -54,10 +54,10 @@ async function snapshot(el: any) {
         started: el.started,
         files: el.listFiles(),
         config: structuredClone(el._config),
-        lifecycle: { gen: el._lc.gen, inputs: el._lc.inputs, refused: el._lc.refused, build: el._lc.build },
+        lifecycle: { gen: el._lc.gen, build: el._lc.build },
         frames: el.shadowRoot.querySelectorAll('iframe').length,
         warned: [...el._warned],
-        exposed: [...el._exposedNames],
+        hasMethods: el._hasMethods,
         save: await guestCall(el, 'save'),
     };
 }
@@ -225,7 +225,7 @@ describe('start(): what it stores', () => {
         expect(await guestCall(el, 'load')).toEqual({ code: 'UNKNOWN_METHOD' });
     });
 
-    it("an option outside its modes, or a notice, is said once the app is bound, as setConfig() says it", () => {
+    it("an option outside its modes, or a notice, is said once the app is bound", () => {
         const el = newElement();
         el.start(app(), { unsafeCapabilities: ['allow-popups'] as never });
         expect(warn.mock.calls.map((args: unknown[]) => String(args[0]))).toContain('[Sandbox] unsafeCapabilities are not available in sealed mode and were dropped: allow-popups.');
@@ -387,25 +387,6 @@ describe("start(): the app's lifecycle", () => {
         expect(el.state).toBe('loading');
         expect(el._strictInit.html).toBe('<p>back</p>');
         expect(appFiles(el)).toEqual(['app.css', 'app.js']);
-        expect(await guestCall(el, 'save')).toEqual({ ok: 'saved' });
-    });
-
-    it('a refusal of an earlier setConfig() does not stand in the way of the app start() binds', () => {
-        const el = newElement();
-        document.body.append(el);
-        el.setConfig({ mode: 'strict' } as never); // refused in this build: the sandbox terminates
-        expect(el.state).toBe('terminated');
-        el.start(app());
-        expect(el.state).toBe('loading');
-    });
-
-    it('what the other members set before is replaced whole: the files and the host methods are the app\'s', async () => {
-        const el = newElement();
-        el.registerFiles({ 'old.js': '' });
-        el.expose('old', () => 'old');
-        el.start(app(), { methods: { save } });
-        expect(appFiles(el)).toEqual(['app.css', 'app.js']);
-        expect(await guestCall(el, 'old')).toEqual({ code: 'UNKNOWN_METHOD' });
         expect(await guestCall(el, 'save')).toEqual({ ok: 'saved' });
     });
 });

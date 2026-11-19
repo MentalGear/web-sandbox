@@ -125,7 +125,7 @@ describe('html longer than one render is refused at configuration, by start() (B
         for (const config of [{ html: FITS }, { mode: 'strict', html: FITS }, { mode: 'cooperative', html: LONG }, { mode: 'worker', html: LONG }]) {
             expect(normaliseConfig(config, host).refusal, `${config.mode} ${config.html.length}`).toBeNull();
         }
-        expect(TERMINATION_REASONS.htmlTooLong.decidedBy).toBe('config');
+        expect(TERMINATION_REASONS.htmlTooLong.decidedBy).toBe('start');
     });
 
     it('start() keeps nothing of it: it throws the reason, and the view never gets it; html that fits builds', async () => {

@@ -3,7 +3,7 @@
  * store that lives on the element. Host-only: nothing here is stringified into the guest. The guest
  * side is src/lib/in-sandbox-files.ts, which receives a snapshot of this store as one literal.
  *
- * Files are part of the environment. The store survives reset(), load(), setConfig() and terminate();
+ * Files are part of the app (start()). The store survives reset(), terminate() and the element's removal;
  * every environment build takes a snapshot of it, and nothing reaches a guest that is already running.
  */
 
@@ -20,10 +20,10 @@ export const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 export const MAX_FILES = 1000;
 export const MAX_PATH_LENGTH = 256;
 
-/** A file's content for `registerFiles()`: a string is stored as UTF-8, a `Uint8Array` is copied. */
+/** A file's content in the app's files ({@link SandboxApp}): a string is stored as UTF-8, a `Uint8Array` is copied. */
 export type FileContent = string | Uint8Array;
 /**
- * One `registerFiles()` entry: the content, typed by its path's extension, or `{ content, type }` with an
+ * One entry of the app's files ({@link SandboxApp}): the content, typed by its path's extension, or `{ content, type }` with an
  * explicit MIME type.
  */
 export type FileEntry = FileContent | { content: FileContent; type: string };
@@ -40,8 +40,8 @@ export interface FileInfo {
 
 /**
  * Why a change to the files was refused: the `code` of a {@link FileError}. The strings are API and, for guest writes,
- * wire protocol. They are not {@link RpcErrorCode} values: `registerFiles()`,
- * `unregisterFiles()` and `commitGuestWrites()` refuse the host's own caller, and a guest
+ * wire protocol. They are not {@link RpcErrorCode} values: `start()` and `commitGuestWrites()` refuse the host's own
+ * caller, and a guest
  * write is refused by the host's library method.
  * - `INVALID_PATH`: a path is not valid, or a list of paths is not an array.
  * - `INVALID_FILE`: the batch is not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a
@@ -398,9 +398,9 @@ export class FileStore {
      */
     register(files: unknown): string[] {
         if (files === null || typeof files !== 'object' || Array.isArray(files)) {
-            throw fileError('INVALID_FILE', 'registerFiles() expects an object mapping paths to file contents.');
+            throw fileError('INVALID_FILE', 'register() expects an object mapping paths to file contents.');
         }
-        return this.apply({ put: new Map(Object.entries(files)) }, 'registerFiles()');
+        return this.apply({ put: new Map(Object.entries(files)) }, 'register()');
     }
 
     /**
@@ -409,9 +409,9 @@ export class FileStore {
      * `paths` is not an array of valid paths.
      */
     unregister(paths?: unknown): string[] {
-        if (paths === undefined) return this.apply({ remove: [...this._files.keys()] }, 'unregisterFiles()');
-        if (!Array.isArray(paths)) throw fileError('INVALID_PATH', 'unregisterFiles() expects an array of paths.');
-        return this.apply({ remove: paths }, 'unregisterFiles()');
+        if (paths === undefined) return this.apply({ remove: [...this._files.keys()] }, 'unregister()');
+        if (!Array.isArray(paths)) throw fileError('INVALID_PATH', 'unregister() expects an array of paths.');
+        return this.apply({ remove: paths }, 'unregister()');
     }
 
     /**

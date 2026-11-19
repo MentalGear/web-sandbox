@@ -178,12 +178,14 @@ describe('the bundle: `bun scripts/build-lib.ts` writes the default build from s
             expect(declares(networkBundle, name), name).toBe(true);
         }
         // nor the methods the network build installs on the element, nor the functions stringified for its realms alone
-        // (the class calls the seam's by name; none is declared, and no other is named at all)
+        // (the class calls the seam's by name; none is declared, and no other is named at all, or, for a public member,
+        // whose name is also a word of the library's texts (`execute()` in the bootstrap's lines), called)
         const declaresMethod = (text: string, name: string) => new RegExp(`\\n\\s+${name}\\([^)]*\\) \\{`).test(text);
+        const named = (name: string) => (name.startsWith('_') ? new RegExp(`\\b${name}\\(`) : new RegExp(`\\.${name}\\(`));
         for (const name of networkMethodNames()) {
             expect(declaresMethod(defaultBundle, name), name).toBe(false);
             expect(declaresMethod(networkBundle, name), name).toBe(true);
-            if (!(NETWORK_ELEMENT_METHODS as readonly string[]).includes(name)) expect(new RegExp(`\\b${name}\\(`).test(defaultBundle), name).toBe(false);
+            if (!(NETWORK_ELEMENT_METHODS as readonly string[]).includes(name)) expect(named(name).test(defaultBundle), name).toBe(false);
         }
         for (const name of ['inSandboxImportMap', 'inSandboxMarkup', 'requestGate']) {
             expect(declares(defaultBundle, name), name).toBe(false);
@@ -251,7 +253,7 @@ describe('the refusal: the default build takes no config of a network mode or op
         expect(REASON).toContain(`${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on}`);
         expect(REASON).toContain(NETWORK_MODES_FLAG.command);
         for (const name of [...NETWORK_MODES_FLAG.modes, ...NETWORK_MODES_FLAG.options]) expect(REASON, name).toContain(name);
-        expect(TERMINATION_REASONS.networkModesOff.decidedBy).toBe('config');
+        expect(TERMINATION_REASONS.networkModesOff.decidedBy).toBe('start');
     });
 
     it.each(NETWORK_MODES_FLAG.modes)('mode %s is refused whole, with that reason, whatever else the config says', (mode) => {
@@ -320,7 +322,7 @@ describe('the refusal: the default build takes no config of a network mode or op
         // build never gives (a network option is refused with `networkModesOff` before sealed mode's rule reads it: above)
         const naming: string[] = [];
         for (const [id, { text, decidedBy }] of Object.entries(TERMINATION_REASONS)) {
-            if (decidedBy === 'config' && namesNetworkMode(text)) naming.push(id);
+            if (decidedBy === 'start' && namesNetworkMode(text)) naming.push(id);
         }
         expect(naming.sort()).toEqual([...Object.keys(given), 'sealedNetwork'].sort());
     });
@@ -328,11 +330,11 @@ describe('the refusal: the default build takes no config of a network mode or op
     it("the warning for a mode that is none says the build has sealed mode alone, and that 'sealed' or no mode starts the sandbox", () => {
         const { warnings } = refusalOf({ mode: 'banana' });
         expect(warnings).toEqual([
-            `[Sandbox] mode "banana" is not one of strict, sealed, cooperative, worker; this build has sealed mode alone (${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on} builds the others): the sandbox will not start until setConfig() names 'sealed', or no mode.`,
+            `[Sandbox] mode "banana" is not one of strict, sealed, cooperative, worker; this build has sealed mode alone (${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on} builds the others): the sandbox starts only with 'sealed', or no mode.`,
         ]);
     });
 
-    it('the element: the config is refused before anything of it is applied, the sandbox terminates with the reason, and a sealed config builds again', async () => {
+    it('the element: start() throws with the reason before anything of the app is stored, and the element then binds a sealed app', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         vi.spyOn(console, 'info').mockImplementation(() => {});
         defineWebSandbox();
@@ -340,28 +342,24 @@ describe('the refusal: the default build takes no config of a network mode or op
         document.body.appendChild(el);
         const reasons: string[] = [];
         el.addEventListener('terminated', (event: CustomEvent) => reasons.push(event.detail.reason));
-        el.setConfig({ html: '<p>kept</p>' });
-        expect(el.state).toBe('loading');
-        for (const config of [{ mode: 'strict' }, { mode: 'cooperative', html: '<script>x()</script>' }, { mode: 'worker' }, { origins: {} }, { mode: 'sealed', fetchBridge: { allow: [] } }]) {
-            el.setConfig(config);
-            expect(el.state, JSON.stringify(config)).toBe('terminated');
-            expect(el.shadowRoot.querySelector('iframe'), JSON.stringify(config)).toBeNull();
-            expect([el._config.mode, el._config.html, el._fetchPolicy], JSON.stringify(config)).toEqual(['sealed', '<p>kept</p>', null]);
-            await new Promise(resolve => setTimeout(resolve, 0));
+        const before = [el._config.mode, el._config.html, el._fetchPolicy];
+        for (const [app, grants] of [[{ html: '<p>kept</p>' }, { mode: 'strict' }], [{ html: '<script>x()</script>' }, { mode: 'cooperative' }], [{}, { mode: 'worker' }], [{}, { origins: {} }], [{}, { mode: 'sealed', fetchBridge: { allow: [] } }]]) {
+            expect(() => el.start(app, grants), JSON.stringify(grants)).toThrow(REASON);
+            expect(el.started, JSON.stringify(grants)).toBe(false);
+            expect([el._config.mode, el._config.html, el._fetchPolicy], JSON.stringify(grants)).toEqual(before);
         }
-        expect(reasons).toEqual(Array(5).fill(REASON));
-        el.setConfig({ html: '<p>again</p>' });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(reasons).toEqual([]); // a refusal of start() is its throw: no termination
+        el.start({ html: '<p>again</p>' });
         expect(el.state).toBe('loading');
+        expect(el._config.html).toBe('<p>again</p>');
         expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(1);
     });
 
-    it('execute() runs nothing: scriptUnsafe is never on in the default build', () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    it('the element has no execute(): the network build installs it, and nothing installs it here', () => {
         defineWebSandbox();
         const el = document.createElement('web-sandbox') as any;
-        document.body.appendChild(el);
-        el.execute('1');
-        expect(warn.mock.calls.map(call => String(call[0]))).toEqual(['[Sandbox] execute() blocked: scriptUnsafe is false. Enable it in config to run arbitrary code.']);
-        expect(el._queue).toEqual([]);
+        expect('execute' in el).toBe(false);
+        expect(Object.getOwnPropertyNames(WebSandbox.prototype)).not.toContain('execute');
     });
 });

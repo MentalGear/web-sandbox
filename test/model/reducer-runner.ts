@@ -5,8 +5,9 @@
  * event, eventEnd). test/unit/lifecycle-reducer.test.ts runs thousands of sequences through it (S65).
  *
  * The fake element mirrors host.ts's adapter, reduced to what the lifecycle sees:
- * - setConfig() clones the argument and applies it with the real config schema (normaliseConfig), so a refusal, an
- *   unknown mode and a strict entry are decided by the element's own rules; the files are a map of paths;
+ * - start() reads its two arguments with the element's own reading (app-start.ts, readStart), so what it refuses is
+ *   decided by the element's own rules, and a second start() throws; the files are a map of paths, and a build refuses
+ *   a strict entry they do not hold, or one that calls import(), as host.ts's _buildRefusal does;
  * - a build makes a fake frame whose guest checks in after a few ms of fake time (a seeded delay): the strict view's
  *   VIEW_READY after it got its ports at the wrapper's load, the bootstrap's announcement in cooperative and worker
  *   mode, the wrapper's load alone without a bootstrap. One build in 40 has a guest that never checks in, so the load
@@ -27,13 +28,15 @@
  * same `state`, the same pending build termination, no 'terminated' still being dispatched, and the generation changed
  * exactly when the model's did (the element counts two teardowns for a refused build, the model one).
  */
-import { refusalDetail } from '../../src/lib/csp/origins';
 import { admits, isStale, reduce, step, type BuildContext, type Generation, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice, INITIAL_LIFECYCLE } from '../../src/lib/lifecycle';
-import { ConfigRefusal, defaultConfig, hasStrictView, normaliseConfig, unknownModeReason, type StoredConfig } from '../../src/lib/config-schema';
+import { readStart } from '../../src/lib/app-start';
+import { defaultConfig, hasStrictView, unknownModeReason, type StoredConfig } from '../../src/lib/config-schema';
+import { dynamicImportAt } from '../../src/lib/entry-imports';
 import { isJavaScriptType, mimeTypeFor } from '../../src/lib/files';
-import { CONFIG_REFUSED, DEFAULT_TERMINATE_REASON, LifecycleModel, type Cmd, type ConfigDesc, type Sequence } from './lifecycle-model';
+import { reasonText } from '../../src/lib/reasons';
+import { DEFAULT_TERMINATE_REASON, LifecycleModel, START_FILES, type Cmd, type ConfigDesc, type Sequence } from './lifecycle-model';
 import { Rng } from './generator';
-import { configOf } from './runner';
+import { fileContent, startArgumentsOf } from './runner';
 
 export const ORIGIN = 'https://host.example';
 const BUILD_FAILED = 'the environment could not be built';
@@ -120,8 +123,6 @@ export class FakeElement implements LifecycleHost {
     private seq = 0;
     private frames = 0;
     private deadline: Task | null = null;
-    private lastKey: string | null = null; // the last usable setConfig() argument, as data (host.ts: `_lastConfig.copy`)
-    private pendingCopy: { copy: unknown; error: unknown; key: string } | null = null;
     private warnedForeign = false;
     private lastSilent = false;
     lastBuildAt = 0;
@@ -203,23 +204,6 @@ export class FakeElement implements LifecycleHost {
         this.log.push('discardWrites');
     }
 
-    applyConfig(): string | null {
-        const pending = this.pendingCopy!;
-        this.pendingCopy = null;
-        const refuse = (error: unknown) => {
-            this.lastKey = null;
-            if (error instanceof ConfigRefusal) return error.reason;
-            return `${CONFIG_REFUSED} (${errorName(error)}${refusalDetail(error)})`;
-        };
-        if (pending.error !== null) return refuse(pending.error);
-        const { value, warnings, refusal } = normaliseConfig(pending.copy, { hostOrigin: ORIGIN, hostSites: [ORIGIN] });
-        this.warns += warnings.length;
-        if (value === null) return refuse(refusal);
-        this.config = value.config;
-        this.lastKey = pending.key;
-        return null;
-    }
-
     buildContext(): BuildContext {
         const mode = this.config.mode as unknown;
         const strict = hasStrictView(mode);
@@ -231,8 +215,8 @@ export class FakeElement implements LifecycleHost {
     private entryRefusal(): string | null {
         const entry = this.config.entry;
         if (!hasStrictView(this.config.mode) || typeof entry !== 'string' || entry === '') return null;
-        if (entry in this.files && isJavaScriptType(mimeTypeFor(entry))) return null;
-        return 'the guest entry is not a registered JavaScript file';
+        if (!(entry in this.files) || !isJavaScriptType(mimeTypeFor(entry))) return reasonText('entryNotRegistered');
+        return dynamicImportAt(fileContent(this.files[entry]!)) >= 0 ? reasonText('entryImport') : null;
     }
 
     // host.ts, `_prepareBuild`: a frame the element does not hold yet
@@ -344,55 +328,24 @@ export class FakeElement implements LifecycleHost {
 
     // ---- the public API and the DOM, as host.ts's adapter will step them
 
-    setConfig(config: unknown, key: string) {
-        let copy: unknown = null;
-        let error: unknown = null;
-        try {
-            copy = structuredClone(config);
-        } catch (caught) {
-            error = caught;
-        }
-        this.pendingCopy = { copy, error, key };
-        this.step({ t: 'setConfig', same: error === null && this.lastKey !== null && key === this.lastKey });
-    }
-
-    load(html: string) {
-        this.config = { ...this.config, html };
-        this.step({ t: 'build', why: 'load', ctx: this.buildContext() });
+    // host.ts, start(): the arguments read whole first (a refusal throws and stores nothing), a second call throws; the
+    // app is stored and bound (`start`), the warnings said, then it builds as reset() does
+    start(app: unknown, grants: unknown) {
+        if (this.lc.started) throw new TypeError('[Sandbox] start(): this element already runs its app');
+        const values = readStart(app, grants, { hostOrigin: ORIGIN, hostSites: [ORIGIN] });
+        this.config = values.normalised.config;
+        this.files = { ...START_FILES };
+        this.step({ t: 'start' });
+        this.warns += values.warnings.length;
+        this.step({ t: 'build', ctx: this.buildContext() });
     }
 
     reset() {
-        this.step({ t: 'build', why: 'reset', ctx: this.buildContext() });
+        this.step({ t: 'build', ctx: this.buildContext() });
     }
 
     terminate(reason?: unknown) {
         this.step({ t: 'terminate', reason: typeof reason === 'string' && reason.trim() !== '' ? reason : DEFAULT_TERMINATE_REASON });
-    }
-
-    registerFiles(files: Record<string, string>) {
-        const changed: string[] = [];
-        for (const [path, text] of Object.entries(files)) {
-            if (this.files[path] === text) continue;
-            this.files[path] = text;
-            changed.push(path);
-        }
-        this.filesChanged(changed);
-    }
-
-    unregisterFiles(paths?: string[]) {
-        const removed: string[] = [];
-        for (const path of paths ?? Object.keys(this.files)) {
-            if (!(path in this.files)) continue;
-            delete this.files[path];
-            removed.push(path);
-        }
-        this.filesChanged(removed);
-    }
-
-    private filesChanged(paths: string[]) {
-        if (paths.length === 0) return;
-        this.step({ t: 'filesChanged' });
-        this.dispatch('fileschanged', deepFreeze({ paths }));
     }
 
     // A frame's load inside the embedder's own DOM call, before the element's lifecycle reactions (Chromium, WebKit).
@@ -422,8 +375,6 @@ export class FakeElement implements LifecycleHost {
         this.step({ t: 'disconnect' });
     }
 }
-
-const html = (agent: boolean) => (agent ? '<script>agent</script>' : '<p>plain</p>');
 
 /** One sequence against the reducer; every observation goes to a fresh lifecycle model. */
 export function runReducerSequence(sequence: Sequence, options: ReducerRunOptions = {}): ReducerRunResult {
@@ -483,21 +434,15 @@ export function runReducerSequence(sequence: Sequence, options: ReducerRunOption
             case 'insert': inDomOperation(() => el.insertInto('own')); return;
             case 'remove': inDomOperation(() => el.remove()); return;
             case 'foreign': inDomOperation(() => el.insertInto('foreign')); return;
-            case 'setConfig': el.setConfig(configOf(cmd.cfg, ORIGIN), JSON.stringify(cmd.cfg)); return;
-            case 'setConfigEqual': el.setConfig(configOf(model.lastDesc!, ORIGIN), JSON.stringify(model.lastDesc)); return;
-            case 'load': el.load(html(cmd.agent)); return;
+            case 'start': el.start(...startArgumentsOf(cmd.cfg, ORIGIN, cmd.methods)); return;
             case 'reset': el.reset(); return;
             case 'terminate': el.terminate(cmd.reason); return;
-            case 'register': el.registerFiles(cmd.files); return;
-            case 'registerBad': throw Object.assign(new Error('the path is outside the store'), { code: 'INVALID_PATH' });
-            case 'unregister': el.unregisterFiles(cmd.paths); return;
-            default: return; // expose(): host methods are not the lifecycle's
+            default: return;
         }
     }
 
     function runOp(cmd: Cmd) {
         if (failure !== null || NEEDS_A_GUEST.has(cmd.op)) return;
-        if (cmd.op === 'setConfigEqual' && !model.lastDesc) return;
         let frame: ReturnType<LifecycleModel['begin']>;
         try {
             frame = model.begin(cmd, el.now);

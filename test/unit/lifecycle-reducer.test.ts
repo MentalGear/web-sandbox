@@ -8,7 +8,7 @@ import { INITIAL_LIFECYCLE, admits, isStale, reduce, runEffects, step, type Buil
 import { reasonText, TERMINATION_REASONS } from '../../src/lib/reasons';
 import { generate, shrink } from '../model/generator';
 import { elementSource } from './element-source';
-import { DEFAULT_TERMINATE_REASON, ENTRY_FAILED_REASON, unknownModeReason, type Sequence } from '../model/lifecycle-model';
+import { DEFAULT_TERMINATE_REASON, ENTRY_FAILED_REASON, ENTRY_IMPORT_REASON, type Sequence } from '../model/lifecycle-model';
 import { forTheReducer, runReducerSequence, validConfig, type ReducerRunOptions } from '../model/reducer-runner';
 
 /**
@@ -28,7 +28,7 @@ const FIRST_SEED = Number(process.env.WEB_SANDBOX_REDUCER_SEED ?? 1);
 
 // ---- the reducer's properties, for one step --------------------------------------------------------------------------
 
-const RESOURCE_EFFECTS = new Set<Effect['k']>(['teardown', 'discardWrites', 'applyConfig', 'build', 'startLoadDeadline', 'stopLoadDeadline', 'sendInitView', 'openChannel', 'closePort', 'checkView', 'flush', 'startWatchdogs', 'startAutoResize']);
+const RESOURCE_EFFECTS = new Set<Effect['k']>(['teardown', 'discardWrites', 'build', 'startLoadDeadline', 'stopLoadDeadline', 'sendInitView', 'openChannel', 'closePort', 'checkView', 'flush', 'startWatchdogs', 'startAutoResize']);
 const isDispatch = (effect: Effect) => effect.k === 'dispatch' || effect.k === 'notice';
 const isReady = (effect: Effect) => effect.k === 'dispatch' && effect.event === 'ready';
 
@@ -91,13 +91,17 @@ describe('the reducer against the lifecycle model', () => {
         const ms = Math.round(performance.now() - started);
         console.log(`MEASURED reducer oracle: ${RUNS} sequences, ${steps} steps, ${ms} ms; ${JSON.stringify(totals)}`);
         // what the runs must have reached for the agreement to mean something
-        for (const input of ['connect', 'disconnect', 'build', 'setConfig', 'configured', 'filesChanged', 'built', 'buildTerminationDue', 'terminate', 'loadDeadline', 'frameLoad', 'announced', 'viewReady', 'dispatchStarted', 'dispatchEnded'] as const) {
+        for (const input of ['connect', 'disconnect', 'start', 'build', 'built', 'buildTerminationDue', 'terminate', 'loadDeadline', 'frameLoad', 'announced', 'viewReady', 'dispatchStarted', 'dispatchEnded'] as const) {
             expect(totals[`input:${input}`] ?? 0, input).toBeGreaterThan(0);
         }
         for (const stale of ['frameLoad', 'announced', 'viewReady', 'loadDeadline', 'buildTerminationDue']) expect(totals[`stale:${stale}`] ?? 0, `stale ${stale}`).toBeGreaterThan(0);
-        for (const key of ['event:terminated-refusal', 'event:terminated-self', 'event:ready']) {
+        for (const key of ['event:terminated-self', 'event:ready']) {
             for (const mode of ['strict', 'cooperative', 'worker']) expect(coverage.has(`${key}|${mode}`), `${key}|${mode}`).toBe(true);
         }
+        // a refused build: start() refuses every unusable app itself, so what is left to refuse is a strict entry (one that
+        // calls import()), which only strict mode runs
+        expect(coverage.has('event:terminated-refusal|strict'), 'event:terminated-refusal|strict').toBe(true);
+        for (const key of ['start-again', 'start-refused']) expect([...coverage].some(seen => seen.startsWith(`${key}|`)), key).toBe(true);
     }, 120_000);
 });
 
@@ -106,15 +110,15 @@ describe("the reducer's properties on fuzzed inputs", () => {
         { buildsHere: true, blocked: null, strict: true, announces: false },
         { buildsHere: true, blocked: null, strict: false, announces: true },
         { buildsHere: true, blocked: null, strict: false, announces: false },
-        { buildsHere: true, blocked: 'unknown mode: not strict, sealed, cooperative or worker', strict: false, announces: false },
+        { buildsHere: true, blocked: ENTRY_IMPORT_REASON, strict: true, announces: false },
         { buildsHere: false, blocked: null, strict: true, announces: false },
     ];
     function inputsFor(state: LcState): LcInput[] {
         // the current generation, and two that are not: made here only, as no code of the library's makes one
         const gens = [state.gen, (state.gen - 1) as Generation, (state.gen + 1) as Generation];
-        const inputs: LcInput[] = [{ t: 'disconnect' }, { t: 'filesChanged' }, { t: 'setConfig', same: true }, { t: 'setConfig', same: false }, { t: 'terminate', reason: 'bye' }, { t: 'dispatchStarted', reason: 'bye' }];
+        const inputs: LcInput[] = [{ t: 'disconnect' }, { t: 'start' }, { t: 'terminate', reason: 'bye' }, { t: 'dispatchStarted', reason: 'bye' }];
         if (state.dispatching.length > 0) inputs.push({ t: 'dispatchEnded' });
-        for (const ctx of contexts) inputs.push({ t: 'connect', ctx }, { t: 'build', why: 'reset', ctx }, { t: 'build', why: 'load', ctx }, { t: 'configured', refusal: null, ctx }, { t: 'configured', refusal: 'refused', ctx });
+        for (const ctx of contexts) inputs.push({ t: 'connect', ctx }, { t: 'build', ctx });
         for (const gen of gens) {
             inputs.push({ t: 'buildTerminationDue', gen }, { t: 'loadDeadline', gen }, { t: 'viewReady', gen, height: 100, stillStyleRefused: false });
             inputs.push({ t: 'built', gen, prepared: {} }, { t: 'buildFailed', gen, reason: 'x' });
@@ -176,7 +180,6 @@ class RecordingHost implements LifecycleHost {
     events: string[] = [];
     tasks: LcInput[] = [];
     ctx: BuildContext = COOPERATIVE;
-    refusal: string | null = null;
     buildThrows = false;
     onBuild: (() => void) | null = null;
     onEvent: ((event: string) => void) | null = null;
@@ -187,8 +190,6 @@ class RecordingHost implements LifecycleHost {
     }
     teardown() { this.log.push('teardown'); }
     discardWrites() { this.log.push('discardWrites'); }
-    applyConfig() { this.log.push('applyConfig'); return this.refusal; }
-    buildContext() { return this.ctx; }
     build() {
         this.log.push('build');
         const prepared = { build: this.log.filter(line => line === 'build').length }; // which build, counted from 1
@@ -233,13 +234,16 @@ function readyHost(): RecordingHost {
 }
 
 const sequence = (mode: Sequence['mode'], cmds: Sequence['cmds'], plans: Sequence['plans'] = []): Sequence => ({ seed: 7, mode, plans, cmds });
-const PROLOGUE: Sequence['cmds'] = [{ op: 'register', files: { 'agent.js': 'AGENT', 'bad.js': 'BAD', 'data.txt': 'data' } }];
+// start() of an app of the mode, with the host method; in strict mode an app whose entry calls import() is one every
+// build refuses, with its reason
+const START = (mode: Sequence['mode'], extra: Parameters<typeof validConfig>[1] = {}): Sequence['cmds'][number] => ({ op: 'start', cfg: validConfig(mode, extra), methods: 'echo' });
+const REFUSED_APP = START('strict', { entry: 'import.js' });
 
 describe('class L, finding by finding', () => {
     describe("round 4, L-1: `ready` from inside the embedder's appendChild() or remove()", () => {
         // A cooperative build without a bootstrap completes at the wrapper's load. The element is moved while it loads, and
         // the frame fires its load inside the move, before the element's lifecycle reactions (Chromium, WebKit).
-        const moved = sequence('cooperative', [...PROLOGUE, { op: 'setConfig', cfg: validConfig('cooperative', { noScripts: true, html: 'plain' }) }, { op: 'insert' }, { op: 'insert' }, { op: 'settle' }]);
+        const moved = sequence('cooperative', [START('cooperative', { noScripts: true, html: 'plain' }), { op: 'insert' }, { op: 'insert' }, { op: 'settle' }]);
         it('before the fix: a load handled in the load event completes the build inside the move', () => {
             const result = runReducerSequence(moved, { syncFrameLoad: true, silentGuests: 0 });
             expect(result.divergence).toMatch(/ready dispatched (inside a DOM operation|synchronously)/);
@@ -269,7 +273,7 @@ describe('class L, finding by finding', () => {
         });
         it('before the fix: without a stop between notices, the guest line reaches the next environment and the termination ends it', () => {
             const host = readyHost();
-            host.onEvent = (event) => { if (event.startsWith('notice [Sandbox]')) host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE }); };
+            host.onEvent = (event) => { if (event.startsWith('notice [Sandbox]')) host.step({ t: 'build', ctx: COOPERATIVE }); };
             const output = reduce(host.lc, { t: 'terminate', reason: ENTRY_FAILED_REASON, gen: host.lc.gen, notices });
             for (const effect of output.effects) { // the effects run as one list, with no stop between them, which `runEffects` (src/lib/lifecycle.ts) adds
                 if (effect.k === 'notice') host.notice(effect.notice);
@@ -279,7 +283,7 @@ describe('class L, finding by finding', () => {
         });
         it("after it: the executor stops at the listener's teardown; the new build stands, nothing more is dispatched", () => {
             const host = readyHost();
-            host.onEvent = (event) => { if (event.startsWith('notice [Sandbox]')) host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE }); };
+            host.onEvent = (event) => { if (event.startsWith('notice [Sandbox]')) host.step({ t: 'build', ctx: COOPERATIVE }); };
             host.step({ t: 'terminate', reason: ENTRY_FAILED_REASON, gen: host.lc.gen, notices });
             expect(host.events).toEqual([`notice [Sandbox] ${ENTRY_FAILED_REASON}`]);
             expect(host.lc.state).toBe('loading');
@@ -287,25 +291,10 @@ describe('class L, finding by finding', () => {
     });
 
     describe("round 4, L-3: the no-repeat rule holds for every `terminated`, not only a build's", () => {
-        const reason = unknownModeReason('Strict');
-        const terminated = (terminateWith: string) => sequence('strict', [...PROLOGUE, { op: 'setConfig', cfg: validConfig('strict') }, { op: 'insert' }, { op: 'settle' }, { op: 'terminate', reason: terminateWith }, { op: 'settle' }], [
-            { event: 'terminated', action: { op: 'setConfig', cfg: { kind: 'unknownMode', mode: 'Strict' } }, times: 1 },
-        ]);
-        it('terminate(reason) whose listener sets a config refused with that very reason: one `terminated`, no second one in a task', () => {
-            const result = runReducerSequence(terminated(reason), { silentGuests: 0 });
-            expect(result.ok, result.divergence).toBe(true);
-            expect(result.stats['event:terminated']).toBe(1);
-            expect(result.stats['input:buildTerminationDue'] ?? 0).toBe(0);
-        });
-        it('a refusal with another reason is dispatched, in a task of its own', () => {
-            const result = runReducerSequence(terminated('bye'), { silentGuests: 0 });
-            expect(result.ok, result.divergence).toBe(true);
-            expect(result.stats['event:terminated']).toBe(2);
-            expect(result.stats['input:buildTerminationDue']).toBe(1);
-        });
+        const reason = ENTRY_IMPORT_REASON;
         it('the rule is on the answer, for terminate() as for a build: `within` is the innermost reason being dispatched', () => {
             const host = readyHost();
-            host.onEvent = (event) => { if (event === `terminated ${reason}`) host.step({ t: 'build', why: 'reset', ctx: { ...STRICT, blocked: reason } }); };
+            host.onEvent = (event) => { if (event === `terminated ${reason}`) host.step({ t: 'build', ctx: { ...STRICT, blocked: reason } }); };
             host.step({ t: 'terminate', reason });
             expect(host.lc.within).toBe(reason);
             expect(host.lc.state).toBe('terminated');
@@ -326,7 +315,7 @@ describe('class L, finding by finding', () => {
         });
         it('in a run of each mode, every flush is the one right before its `ready`', () => {
             for (const mode of ['strict', 'cooperative', 'worker'] as const) {
-                const result = runReducerSequence(sequence(mode, [...PROLOGUE, { op: 'setConfig', cfg: validConfig(mode) }, { op: 'insert' }, { op: 'settle' }, { op: 'reset' }, { op: 'settle' }]), { silentGuests: 0 });
+                const result = runReducerSequence(sequence(mode, [START(mode), { op: 'insert' }, { op: 'settle' }, { op: 'reset' }, { op: 'settle' }]), { silentGuests: 0 });
                 expect(result.ok, result.divergence).toBe(true);
                 const flushes = result.log.flatMap((line, index) => (line === 'flush' ? [index] : []));
                 expect(flushes.length, mode).toBe(2);
@@ -336,22 +325,17 @@ describe('class L, finding by finding', () => {
         });
     });
 
-    describe('CB5: a `terminated` listener that rebuilds a refused config', () => {
-        const refused = (plan: Sequence['plans'][number]) => sequence('strict', [...PROLOGUE, { op: 'setConfig', cfg: { kind: 'unknownMode', mode: 'Strict' } }, { op: 'insert' }, { op: 'settle' }], [plan]);
+    describe('CB5: a `terminated` listener that rebuilds a refused build', () => {
+        const refused = (plan: Sequence['plans'][number]) => sequence('strict', [REFUSED_APP, { op: 'insert' }, { op: 'settle' }], [plan]);
         it('reset() from its listener gets the same answer, not dispatched again: one event and one warning, no recursion', () => {
             const result = runReducerSequence(refused({ event: 'terminated', action: { op: 'reset' }, times: 2 }), { silentGuests: 0 });
             expect(result.ok, result.divergence).toBe(true);
             expect(result.stats['event:terminated']).toBe(1);
             expect(result.log.filter(line => line.startsWith('warn [Sandbox] terminated:'))).toHaveLength(1);
         });
-        it('control: a listener that sets a usable config builds normally', () => {
-            const result = runReducerSequence(refused({ event: 'terminated', action: { op: 'setConfig', cfg: validConfig('strict') }, times: 1 }), { silentGuests: 0 });
-            expect(result.ok, result.divergence).toBe(true);
-            expect(result.stats['event:ready']).toBe(1);
-        });
     });
 
-    describe("round 1, R3-2: a refused build's `terminated` comes in a task, not inside setConfig() or reset()", () => {
+    describe("round 1, R3-2: a refused build's `terminated` comes in a task, not inside start() or reset()", () => {
         it('the refusal is a task, with the state `terminated` at once', () => {
             const host = new RecordingHost();
             const output = reduce(host.lc, { t: 'connect', ctx: { ...STRICT, blocked: 'refused' } });
@@ -360,17 +344,17 @@ describe('class L, finding by finding', () => {
             expect(output.effects.some(isDispatch)).toBe(false);
             expect(output.effects.at(-1)).toEqual({ k: 'task', input: { t: 'buildTerminationDue', gen: output.state.gen } });
         });
-        it('a listener added right after setConfig() hears it, from a task', () => {
+        it('a listener added right after start() hears it, from a task', () => {
             const heard: unknown[] = [];
-            const result = runReducerSequence(sequence('strict', [...PROLOGUE, { op: 'insert' }, { op: 'settle' }, { op: 'setConfig', cfg: { kind: 'unknownMode', mode: 7 } }, { op: 'settle' }]), {
+            const result = runReducerSequence(sequence('strict', [{ op: 'insert' }, { op: 'settle' }, REFUSED_APP, { op: 'settle' }]), {
                 silentGuests: 0,
                 listen: (type, detail) => { if (type === 'terminated') heard.push(detail); },
             });
             expect(result.ok, result.divergence).toBe(true);
-            expect(heard).toEqual([{ reason: unknownModeReason(7) }]);
+            expect(heard).toEqual([{ reason: ENTRY_IMPORT_REASON }]);
         });
-        it('and not at all if another build started meanwhile', () => {
-            const result = runReducerSequence(sequence('strict', [...PROLOGUE, { op: 'insert' }, { op: 'settle' }, { op: 'setConfig', cfg: { kind: 'unknownMode', mode: 7 } }, { op: 'setConfig', cfg: validConfig('strict') }, { op: 'settle' }]), { silentGuests: 0 });
+        it('and not at all if the environment ended meanwhile (the element was removed)', () => {
+            const result = runReducerSequence(sequence('strict', [{ op: 'insert' }, { op: 'settle' }, REFUSED_APP, { op: 'remove' }, { op: 'settle' }]), { silentGuests: 0 });
             expect(result.ok, result.divergence).toBe(true);
             expect(result.stats['event:terminated'] ?? 0).toBe(0);
             expect(result.stats['stale:buildTerminationDue']).toBe(1);
@@ -420,7 +404,7 @@ describe("the reducer describes today's host.ts", () => {
         // the view's size warning, through a console.warn the page patched, resets and then throws
         host.checkView = () => {
             host.checkView = () => {};
-            host.step({ t: 'build', why: 'reset', ctx: STRICT });
+            host.step({ t: 'build', ctx: STRICT });
             throw new Error('the hook threw');
         };
         host.step({ t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false });
@@ -443,7 +427,7 @@ describe("the reducer describes today's host.ts", () => {
     // nested one; test/unit/lifecycle-reentry.test.ts has the element's half.
     it('LM-2: a build re-entered from inside the build effect (a host page Trusted Types default policy calling reset()): only the nested build is attached, with one deadline', () => {
         const host = new RecordingHost();
-        host.onBuild = () => host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE });
+        host.onBuild = () => host.step({ t: 'build', ctx: COOPERATIVE });
         host.step({ t: 'connect', ctx: COOPERATIVE });
         // the outer build prepared first and the nested one second; only the nested one, prepared second, is attached
         expect(host.log.filter(line => line.startsWith('attach') || line === 'startLoadDeadline')).toEqual(['attach {"build":2}', 'startLoadDeadline']);
@@ -458,7 +442,7 @@ describe("the reducer describes today's host.ts", () => {
     it('LM-2: if the outer build then throws, its failure is stale: the nested build stands, nothing is dispatched', () => {
         const host = new RecordingHost();
         host.onBuild = () => {
-            host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE }); // the nested build succeeds
+            host.step({ t: 'build', ctx: COOPERATIVE }); // the nested build succeeds
             host.buildThrows = true; // the outer one throws once the nested one returned
         };
         host.step({ t: 'connect', ctx: COOPERATIVE });
@@ -473,7 +457,7 @@ describe("the reducer describes today's host.ts", () => {
         host.warn = (text) => {
             warn(text);
             host.warn = warn;
-            host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE });
+            host.step({ t: 'build', ctx: COOPERATIVE });
         };
         host.step({ t: 'terminate', reason: 'bye' });
         // the termination's teardown and dispatch belong to an environment that is gone: the new build stands, attached
@@ -522,19 +506,6 @@ describe("the reducer describes today's host.ts", () => {
         expect(reduce(host.lc, { t: 'loadDeadline', gen: host.lc.gen }).effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: reasonText('startupBlocked') });
     });
 
-    it('setConfig(): the same config again rebuilds nothing while the environment stands and nothing a build reads changed (R3-7)', () => {
-        const host = new RecordingHost();
-        host.step({ t: 'connect', ctx: COOPERATIVE });
-        host.step({ t: 'setConfig', same: false });
-        expect(host.lc.lastInputs).toBe(host.lc.inputs);
-        expect(reduce(host.lc, { t: 'setConfig', same: true }).effects).toEqual([]);
-        const changed = reduce(host.lc, { t: 'filesChanged' }).state;
-        expect(reduce(changed, { t: 'setConfig', same: true }).effects).toEqual([{ k: 'applyConfig' }]);
-        host.refusal = 'the configuration could not be used (TypeError)';
-        host.step({ t: 'setConfig', same: false });
-        expect(host.lc.lastInputs).toBeNull();
-        expect(reduce(host.lc, { t: 'setConfig', same: true }).effects).toEqual([{ k: 'applyConfig' }]);
-    });
 });
 
 // ---- class L in host.ts, by its source (S65 step 2) ------------------------------------------------------------------
@@ -656,9 +627,8 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
         // the element's class steps through `step`; the network modes' methods (network-host.ts), which are not in its
         // module, through the element's `_step`
         const stepped = new Set([...elementSource().matchAll(/(?:\bstep\((?:this|element), |this\._step\()\{ t: '(\w+)'/g)].map(match => match[1]!));
-        // `configured`: start(), which stores a configuration it validated whole and builds from it as the applyConfig
-        // effect's answer does
-        expect([...stepped].sort()).toEqual(['announced', 'build', 'configured', 'connect', 'disconnect', 'filesChanged', 'frameLoad', 'loadDeadline', 'setConfig', 'terminate', 'viewReady']);
+        // `start`: start(), which binds the app it validated whole, then builds from it as reset() does
+        expect([...stepped].sort()).toEqual(['announced', 'build', 'connect', 'disconnect', 'frameLoad', 'loadDeadline', 'start', 'terminate', 'viewReady']);
         // removed, each a second path or a second store of the lifecycle (PRs B to D)
         expect(host).not.toMatch(/_endEnvironment|private initialize\(|function stop\(|_buildInputs|_configRefusal|_isCurrentConfig|_enterState|_enterReady|_finishBuild|_completeBuild|_frameLoaded|_expectAnnouncement|_guestWindow|notYet/);
         // the class itself never calls its `_step` (the network modes' methods' entry, and the tests': the platform's inputs by hand)

@@ -10,7 +10,7 @@
  *
  * Data only, imported by tests and the docs.
  */
-import { EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_MS, SAME_DATA_MAX_PAIRS, VIEW_LIVENESS_TIMEOUT_MS } from '../host';
+import { EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_MS, VIEW_LIVENESS_TIMEOUT_MS } from '../host';
 import { AUTO_RESIZE_MAX_HEIGHT, AUTO_RESIZE_MAX_UPDATES_PER_SECOND } from './auto-resize';
 import { GUEST_CALL_BYTES_PER_SECOND, GUEST_CALLS_PER_SECOND } from './config-schema';
 import { UNCAUGHT_CHARACTERS_PER_SECOND, UNCAUGHT_PER_SECOND } from './egress';
@@ -77,7 +77,7 @@ export const LIMITS = {
     VIOLATION_MAX_STRING: { value: VIOLATION_MAX_STRING, unit: 'characters', label: null, enforced: 'in-sandbox-script.ts and the view, before posting; violation.ts, toViolationDetail, again on receipt', exported: false },
     AUTO_RESIZE_MAX_HEIGHT: { value: AUTO_RESIZE_MAX_HEIGHT, unit: 'px', label: 'Auto-size: tallest height (px)', enforced: 'auto-resize.ts, the host', exported: true },
     AUTO_RESIZE_MAX_UPDATES_PER_SECOND: { value: AUTO_RESIZE_MAX_UPDATES_PER_SECOND, unit: 'count', label: 'Auto-size: height changes per second (and at most one per frame)', enforced: 'auto-resize.ts, the host', exported: true },
-    VIEW_RENDER_MAX_LENGTH: { value: VIEW_RENDER_MAX_LENGTH, unit: 'characters', label: 'Strict: characters per `sandboxView.render()`, `text()` or `set()` value, and of `html` (the initial view)', enforced: `${PRELUDE}; config-schema.ts, htmlRefusal (html, at setConfig() and load())`, exported: true },
+    VIEW_RENDER_MAX_LENGTH: { value: VIEW_RENDER_MAX_LENGTH, unit: 'characters', label: 'Strict: characters per `sandboxView.render()`, `text()` or `set()` value, and of `html` (the initial view)', enforced: `${PRELUDE}; config-schema.ts, htmlRefusal (html, at start())`, exported: true },
     VIEW_TARGET_MAX_LENGTH: { value: VIEW_TARGET_MAX_LENGTH, unit: 'characters', label: 'Strict: characters of a render or event target id', enforced: PRELUDE, exported: false },
     VIEW_MAX_ELEMENTS: { value: VIEW_MAX_ELEMENTS, unit: 'count', label: 'Strict: elements in the view', enforced: `${VIEW}, sanitizeRender`, exported: false },
     VIEW_MAX_CHARACTERS: { value: VIEW_MAX_CHARACTERS, unit: 'characters', label: 'Strict: characters in the view (its body\'s serialization)', enforced: VIEW, exported: false },
@@ -113,7 +113,6 @@ export const LIMITS = {
     MAX_HEADER_VALUE: { value: MAX_HEADER_VALUE, unit: 'characters', label: 'Fetch: characters of a request header value', enforced: 'fetch-bridge.ts, the request check', exported: false },
     MAX_URL: { value: MAX_URL, unit: 'characters', label: 'Fetch: characters of a URL, as written and as parsed', enforced: 'fetch-bridge.ts, the request check', exported: false },
     MAX_RESPONSE_HEAD: { value: MAX_RESPONSE_HEAD, unit: 'characters', label: "Fetch: characters of a response's status text and headers, together", enforced: "in-bridge-frame.ts, the bridge's frame, before it posts the head", exported: false },
-    SAME_DATA_MAX_PAIRS: { value: SAME_DATA_MAX_PAIRS, unit: 'count', label: 'Pairs of objects `setConfig()` compares with the configuration the environment was built from (and 64 levels deep); past it the configurations count as different, which only costs a rebuild', enforced: 'host.ts, sameData: the comparison of a configuration with the one the environment was built from, which answers "changed" past it', exported: false },
     GUEST_WRITES_PER_SECOND: { value: GUEST_WRITES_PER_SECOND, unit: 'count', label: 'Guest writes: requests per second, per environment', enforced: 'guest-writes.ts, the host', exported: true },
     GUEST_WRITE_BYTES_PER_SECOND: { value: GUEST_WRITE_BYTES_PER_SECOND, unit: 'bytes', label: 'Guest writes: bytes per second, per environment', enforced: 'guest-writes.ts, the host', exported: true },
 } as const satisfies Record<string, LimitRow>;

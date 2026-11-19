@@ -151,7 +151,7 @@ export interface FetchPolicy {
  *   `FETCH_TOO_LARGE` for a response body, `FETCH_TIMEOUT` or `FETCH_FAILED`). `status` is present once a response's
  *   status was read (not for a redirect, which is refused first). It is not proof that a request left the page: the browser's `fetch` also rejects some requests before
  *   sending them (the host page's own `connect-src`, mixed content, local-network blocking).
- * - `'aborted'`: the environment was torn down (by `reset()`, `load()`, `setConfig()`, `terminate()` or removal) before
+ * - `'aborted'`: the environment was torn down (by `reset()`, `terminate()` or removal) before
  *   the record was made, whatever the request had settled on. `code` is `FETCH_FAILED`; `status` and `bytes` are as
  *   measured.
  *

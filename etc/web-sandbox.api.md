@@ -229,20 +229,13 @@ export class WebSandbox extends HTMLElement {
     }): void;
     connectedCallback(): void;
     disconnectedCallback(): void;
-    execute(code: string): void;
-    expose(name: string, fn: (...args: any[]) => unknown): void;
     listFiles(): FileInfo[];
     listGuestWrites(): GuestWrite[];
-    load(html: string): void;
-    registerFiles(files: Record<string, FileEntry>): void;
     reset(): void;
-    setConfig(config: SandboxConfig): void;
     start(app: SandboxApp, grants?: SandboxGrants): void;
     get started(): boolean;
     get state(): SandboxState;
     terminate(reason?: string): void;
-    unexpose(names?: string | readonly string[]): void;
-    unregisterFiles(paths?: string[]): void;
 }
 
 // @public

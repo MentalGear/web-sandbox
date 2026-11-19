@@ -6,8 +6,8 @@
  *
  * The exploration is breadth first from INITIAL_LIFECYCLE, over every admitted input with each field drawn from a small
  * set of values by its declared type (samplesOf). States are compared by what the reducer reads of them: the generation
- * only as the generation a pending termination belongs to is or is not the current one, the input count only as the
- * last usable config's is or is not the current one, and a guest frame's window by which of two it is. A dispatch stack
+ * only as the generation a pending termination belongs to is or is not the current one, and a guest frame's window by
+ * which of two it is. A dispatch stack
  * deeper than two adds no behaviour (only its top and whether it is empty are read), so it is explored to two.
  *
  * Data for tests and the docs: the library's own code does not import it.
@@ -52,7 +52,6 @@ export function samplesOf(type: string): readonly unknown[] {
         case 'boolean': return [true, false];
         case 'string': return [REASON];
         case 'string | null': return [null, REASON];
-        case "'reset' | 'load'": return ['reset', 'load'];
         case 'unknown': return [{}];
         case 'window': return [WINDOW_A, WINDOW_B];
         case 'window | null': return [null, WINDOW_A, WINDOW_B];
@@ -80,13 +79,12 @@ const windowName = (value: unknown) => (value === WINDOW_A ? 'A' : value === WIN
 function stateKey(state: LcState): string {
     const build = state.build;
     return JSON.stringify([
+        state.started,
         state.state,
         state.pending === null ? null : [state.pending.reason, state.pending.gen === state.gen],
         state.dispatching,
         state.within,
         build === null ? null : [build.strict, build.announces, build.frameLoaded, build.accepted, windowName(build.announcer)],
-        state.lastInputs === null ? null : state.lastInputs === state.inputs,
-        state.refused,
     ]);
 }
 

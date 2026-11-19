@@ -251,7 +251,7 @@ export class NetworkMethods {
         if (this._fetchPolicy) unused.push('fetchBridge');
         if (this._config.guestWrites === true) unused.push('guestWrites');
         if (this._config.scriptUnsafe === true) unused.push('execute()');
-        if (this._exposedNames.size > 0) unused.push('the methods published with expose()');
+        if (this._hasMethods) unused.push('the host methods of the grants');
         if (unused.length === 0) return;
         this._warnOnce(`[Sandbox] cooperative mode without "allow-scripts" runs no script, the library's own included: ${unused.join(', ')} ${unused.length === 1 ? 'has' : 'have'} no effect. Add "allow-scripts" to capabilities.`);
     }
@@ -274,7 +274,7 @@ export class NetworkMethods {
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const featuresArgument = `, ${toInlineScriptLiteral(features)}`;
-        // Only literals are interpolated: `=== true` here as well, whatever setConfig() stored (AR:A6).
+        // Only literals are interpolated: `=== true` here as well, whatever start() stored (AR:A6).
         const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument}, ${createSizeOf.toString()}, ${postToFrame}, ${requestGate.toString()})`;
         // Guest writes (BL:C5): sandboxFiles gets the comms script's captured write call through `comms`, a constant
         // of a block the whole bootstrap then runs in: block-scoped, so never a global guest code could read.
@@ -386,6 +386,35 @@ export class NetworkMethods {
         // Setting onmessage starts the port: frames the guest posted before its announcement was accepted are
         // delivered now, after 'ready'. What waits in the queue is posted by the `flush` effect, the one flush point.
         port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, null);
+    }
+
+    /**
+     * The element's `execute()` in a build with the network modes (network-types.ts declares it on `WebSandbox`); the
+     * default build's element has no such member, since nothing installs this method there.
+     */
+    execute(code: string) {
+        if (typeof code !== 'string') {
+            console.warn("[Sandbox] execute() ignored: code must be a string.");
+            return;
+        }
+        if (!this._config.scriptUnsafe) {
+            console.warn("[Sandbox] execute() blocked: scriptUnsafe is false. Enable it in config to run arbitrary code.");
+            return;
+        }
+        // One rule for work handed to the guest (BL:B8): it belongs to an environment, and while idle or
+        // terminated there is none. execute() warns and does nothing; call() rejects at once with TERMINATED.
+        // (Code queued while idle would be dropped silently by the build on insertion.)
+        const state = this._lc.state;
+        if (state === 'terminated' || state === 'idle') {
+            console.warn(`[Sandbox] execute() ignored: the sandbox ${state === 'idle' ? 'is not in the document' : 'was terminated'}. Call it once the element is in the document and not terminated (reset() starts a new environment).`);
+            return;
+        }
+        // Before `ready` it waits, even with a port (strict mode has one from the wrapper's load): the `flush` effect posts it.
+        if (this._port && state === 'ready') {
+            this._postExecute(this._port, code);
+            return;
+        }
+        this._queue.push({ code });
     }
 
     // One EXECUTE frame, with its budget armed first.

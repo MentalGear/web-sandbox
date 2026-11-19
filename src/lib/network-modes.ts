@@ -78,15 +78,16 @@ export interface NetworkHost {
     _origins: OriginPolicy;
     _fetchPolicy: object | null;
     _callBudget: Readonly<CallBudget>;
-    _exposedNames: Set<string>;
+    _hasMethods: boolean;
     _port: MessagePort | null;
+    _queue: ({ code: string } | { frame: unknown })[];
     _fetchBridge: FetchHandler | null;
     _bridgeFrame: { close(): void } | null;
     _warnedBridgeFrame: boolean;
     _executionTimers: Set<LongTimeout>;
     _executionProbes: Map<number, () => void>;
     _probePings: number;
-    readonly _lc: { readonly gen: Generation };
+    readonly _lc: { readonly gen: Generation; readonly state: string };
     _step(input: LcInput): void;
     _warnOnce(message: string): void;
     _autoResizeEnabled(): boolean;

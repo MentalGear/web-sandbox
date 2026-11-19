@@ -16,11 +16,10 @@ const RUNS = Number(process.env.WEB_SANDBOX_TRANSITION_RUNS ?? 1000);
 
 /** What LcState's union says by its type, checked on the values: null where the shape is right, else what is wrong. */
 function wrongShape(value: LcState): string | null {
-    const state: { state: string; build: unknown; pending: unknown; refused: unknown } = value; // as data: the type already says it
+    const state: { state: string; build: unknown; pending: unknown } = value; // as data: the type already says it
     const standing = state.state === 'loading' || state.state === 'ready';
     if (standing !== (state.build !== null)) return `${state.state} with build ${JSON.stringify(state.build)}`;
     if (state.pending !== null && state.state !== 'terminated') return `${state.state} with a pending termination`;
-    if (standing && state.refused !== null) return `${state.state} with a refusal`;
     return null;
 }
 const exploration = exploreLifecycle();
@@ -54,7 +53,7 @@ describe('the transitions listed from the declaration (lifecycleTransitions)', (
         expect(new Set(into('ready').map(transition => transition.from))).toEqual(new Set(['loading']));
         expect(new Set(into('ready').map(transition => transition.input))).toEqual(new Set(['frameLoad', 'announced', 'viewReady']));
         const fromIdle = exploration.transitions.filter(transition => transition.from === 'idle' && transition.to !== 'idle');
-        expect(new Set(fromIdle.map(transition => transition.input))).toEqual(new Set(['connect', 'build', 'configured', 'terminate']));
+        expect(new Set(fromIdle.map(transition => transition.input))).toEqual(new Set(['connect', 'build', 'terminate']));
         // the edges step 0's exploration drew that the element never makes: none of them is declared
         expect(exploration.transitions.some(transition => transition.from === 'idle' && (transition.input === 'buildFailed' || transition.input === 'announced'))).toBe(false);
     });
@@ -76,8 +75,10 @@ describe('the transitions listed from the declaration (lifecycleTransitions)', (
             expect(result.ok, `seed ${seed}: ${result.divergence}`).toBe(true);
         }
         expect([...new Set(unlisted)]).toEqual([]);
-        // and the runs reach most of what the list says: the exploration over-approximates the element, not by much
-        expect(made.size / listed.size).toBeGreaterThan(0.6);
+        // and the runs reach most of what the list says: the exploration over-approximates the element, not by much. The
+        // pairs it lists and the runs never make are the declaration's room (a `connect` admitted in every state, a
+        // termination with notices from any state, a completion that is a second one): at most this many.
+        expect(listed.size - made.size).toBeLessThanOrEqual(27);
     });
 });
 

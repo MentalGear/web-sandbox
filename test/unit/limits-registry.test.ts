@@ -64,7 +64,7 @@ describe('the limits registry lists every bound the code enforces (BD3:LIM-3)', 
     });
 
     it('the bounds pass 3 found without a row are rows, and their constants are the registry\'s', () => {
-        for (const name of ['LOG_OWN_LINES', 'KIND_MAX_LENGTH', 'ERROR_WALK_NODES', 'ERROR_WALK_DEPTH', 'MAX_HEADERS', 'MAX_HEADER_VALUE', 'SAME_DATA_MAX_PAIRS'] as const) {
+        for (const name of ['LOG_OWN_LINES', 'KIND_MAX_LENGTH', 'ERROR_WALK_NODES', 'ERROR_WALK_DEPTH', 'MAX_HEADERS', 'MAX_HEADER_VALUE'] as const) {
             expect(LIMITS[name].label, name).not.toBeNull();
             expect(LIMITS[name].value, name).toBeGreaterThan(0);
         }

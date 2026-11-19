@@ -54,7 +54,7 @@ export interface SandboxOrigins {
      * admits `fetch()` and `WebSocket` to the host on every engine, and `https://host` alone admits `fetch()` only. Strict
      * mode opens no WebSocket, since a handshake carries the cookies the browser attaches: a `wss://` entry is dropped
      * with a warning, and the request gate refuses every `WebSocket` (a streamed `fetch()` response, or a socket the host
-     * page opens and relays through `expose()`, takes its place). Cooperative mode's guest document also
+     * page opens and relays through a host method of the grants, takes its place). Cooperative mode's guest document also
      * has EventSource and sendBeacon(), which this list governs; strict and worker mode's worker has neither. The host
      * page's own `connect-src` narrows this list in every engine (`hostContentSecurityPolicy`, without which the whole
      * list is dropped). The guest's fetch(),
@@ -180,7 +180,7 @@ function originsOf(kind: OriginKind, entries: readonly unknown[], mode: unknown,
  * Why strict mode keeps no `wss://` entry and opens no WebSocket (S74, class A): what the warning of a dropped
  * entry says, and what replaces the socket.
  */
-export const STRICT_NO_SOCKET = "strict mode opens no WebSocket: a handshake carries the cookies the browser attaches by site, which the library cannot strip. Stream a fetch() response instead, or open the socket in the host page and relay it to the guest with expose() (see docs/API.md#origins).";
+export const STRICT_NO_SOCKET = "strict mode opens no WebSocket: a handshake carries the cookies the browser attaches by site, which the library cannot strip. Stream a fetch() response instead, or open the socket in the host page and relay it to the guest through a host method of the grants (see docs/API.md#origins).";
 
 /** The `https://` origin that a `wss://` origin needs beside it: the same host and port. */
 export function httpsTwin(origin: string): string {

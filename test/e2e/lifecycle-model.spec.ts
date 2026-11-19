@@ -110,10 +110,10 @@ test.describe("round 4's L-1 as a property: no `ready` inside a DOM operation", 
                 return seed / 2147483648;
             };
             const cmds: Cmd[] = [
-                { op: 'register', files: { 'agent.js': 'AGENT', 'bad.js': 'BAD', 'data.txt': 'data' } },
                 {
-                    op: 'setConfig',
+                    op: 'start',
                     cfg: { kind: 'valid', mode, scriptUnsafe: true, guestWrites: false, watchdog: undefined, execTimeout: undefined, html: 'plain', fetch: false, limits: 'none', variant: 0, ...(mode === 'cooperative' ? { noScripts: true } : {}), ...(mode === 'strict' ? { entry: 'agent.js' as const } : {}) },
+                    methods: null,
                 },
                 { op: 'insert' },
                 { op: 'settle' },

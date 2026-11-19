@@ -24,11 +24,11 @@ export interface Preset {
     label: string;
     // 'security': an attack the sandbox must stop; every one has a regression spec. 'demo': a feature tour.
     category: 'security' | 'demo';
-    // How `code` runs: as a script through execute() (needs scriptUnsafe) or as guest markup through load().
+    // How `code` runs: as a script through execute() (needs scriptUnsafe) or as the app's markup, its `html`.
     run: 'script' | 'markup';
     code: string;
     rules: PresetRules;
-    // Registered on the sandbox before it is built (registerFiles); the guest reads them through sandboxFiles.
+    // The app's files, given to start() with it; the guest reads them through sandboxFiles.
     files?: Record<string, string>;
     // A URL in `code` (and every variant) that stands for the attacker: specs aim it at a listener outside the
     // browser (test/e2e/recorder.ts). The playground keeps it as written.

@@ -1,4 +1,4 @@
-/** docs/API.md's `terminated` reasons and the element's own log lines, from src/lib/reasons.ts. */
+/** docs/API.md's `terminated` reasons, the messages of start()'s refusals and the element's own log lines, from src/lib/reasons.ts. */
 import { signatureOf, type Item } from '../engine';
 import { HOST_LINE_OCCASIONS, HOST_LINES, reasonCauses, TERMINATION_REASONS, type HostLineId, type ReasonId } from '../../../src/lib/reasons';
 import { code, row, table, type Extractor } from './markdown';
@@ -24,7 +24,8 @@ const items = (): Item[] => [
 export const reasons: Extractor = {
     items,
     regions: {
-        'termination-reasons': () => table(['Reason', 'Cause'], items().filter(item => item.id.startsWith('reason:')).map(item => item.render())),
+        'termination-reasons': () => table(['Reason', 'Cause'], reasonIds().filter(id => TERMINATION_REASONS[id].decidedBy !== 'start').map(id => row([code(TERMINATION_REASONS[id].text), reasonCauses()[id]]))),
+        'start-refusals': () => table(['Message', 'Cause'], reasonIds().filter(id => TERMINATION_REASONS[id].decidedBy === 'start').map(id => row([code(TERMINATION_REASONS[id].text), reasonCauses()[id]]))),
         'host-lines': () => table(['Line', 'Level', 'Source', 'When'], items().filter(item => item.id.startsWith('host-line:')).map(item => item.render())),
     },
 };

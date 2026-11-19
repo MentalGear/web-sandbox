@@ -9,7 +9,7 @@ import { installNetworkModes } from "./lib/network-install";
 installNetworkModes();
 
 export * from "./sealed";
-export type { CooperativeSandboxConfig, NetworkModeEvents, NetworkSandboxOptions, StrictSandboxConfig, WorkerSandboxConfig } from "./lib/network-types";
+export type { CooperativeSandboxConfig, NetworkModeEvents, NetworkModeMethods, NetworkSandboxOptions, StrictSandboxConfig, WorkerSandboxConfig } from "./lib/network-types";
 export type { SandboxOrigins, StrictSandboxOrigins } from "./lib/csp/origins";
 export type { FetchBridgeConfig, FetchErrorCode, FetchRecord } from "./lib/fetch-bridge";
 export { FETCH_ERROR_CODES } from "./lib/fetch-bridge";

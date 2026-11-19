@@ -48,30 +48,48 @@ const WATCHDOG_VALUES: (Raw | undefined)[] = [undefined, undefined, 0, -1, 'NaN'
 const EXEC_VALUES: (Raw | undefined)[] = [undefined, undefined, 0, 'NaN', 150, 300];
 const SWITCHES: Raw[] = [true, true, true, 'true', 1, 0, null, 'no', false];
 const WRITE_PATHS = ['w/a.txt', 'w/b.js', 'data.txt'];
+// The values start() takes, of each option the generator varies: a start() that throws binds nothing, so most configs
+// draw from these (`usable`), and the rest from every value, which start() mostly refuses (startRefused).
+const USABLE_WATCHDOG = WATCHDOG_VALUES.filter(value => value === undefined || value === 0 || (typeof value === 'number' && value > 0));
+const USABLE_EXEC = EXEC_VALUES.filter(value => value === undefined || typeof value === 'number');
+const USABLE_SWITCHES = SWITCHES.filter(value => typeof value === 'boolean');
 
-/** A config of the sequence's mode, mostly valid. */
+/** A config of the sequence's mode: mostly one start() takes; else one of unusable values, kinds or entries. */
 export function genConfig(rng: Rng, mode: Mode, variant: number): ConfigDesc {
     const roll = rng.next();
-    if (roll < 0.06) return { kind: 'unknownMode', mode: rng.pick(['iframe', 'Strict', 7]) };
-    if (roll < 0.12) return { kind: 'unusable', why: rng.pick(['function', 'notObject', 'origins', 'originsList'] as const) };
+    if (roll < 0.04) return { kind: 'unknownMode', mode: rng.pick(['iframe', 'Strict', 7]) };
+    if (roll < 0.08) return { kind: 'unusable', why: rng.pick(['function', 'notObject', 'origins', 'originsList'] as const) };
+    const usable = roll < 0.88;
+    const switches = usable ? USABLE_SWITCHES : SWITCHES;
     const desc: ConfigDesc = {
         kind: 'valid',
         mode,
         // worker mode installs its agent with execute(): scriptUnsafe on, mostly
-        scriptUnsafe: mode === 'worker' ? (rng.chance(0.9) ? true : rng.pick(SWITCHES)) : rng.pick(SWITCHES),
-        guestWrites: rng.chance(0.6) ? true : rng.pick(SWITCHES),
-        watchdog: rng.pick(WATCHDOG_VALUES),
-        execTimeout: rng.pick(EXEC_VALUES),
+        scriptUnsafe: mode === 'worker' ? (rng.chance(0.9) ? true : rng.pick(switches)) : rng.pick(switches),
+        guestWrites: rng.chance(0.6) ? true : rng.pick(switches),
+        watchdog: rng.pick(usable ? USABLE_WATCHDOG : WATCHDOG_VALUES),
+        execTimeout: rng.pick(usable ? USABLE_EXEC : EXEC_VALUES),
         html: rng.chance(0.8) ? 'agent' : rng.pick(['plain', 'none'] as const),
         fetch: rng.chance(0.4),
-        limits: rng.chance(0.75) ? 'none' : rng.pick(['tinyBytes', 'fewCalls', 'bogus'] as const),
+        limits: rng.chance(0.75) ? 'none' : rng.pick(usable ? (['tinyBytes', 'fewCalls'] as const) : (['tinyBytes', 'fewCalls', 'bogus'] as const)),
         variant,
     };
     if (mode === 'strict') {
-        const entry = rng.chance(0.85) ? 'agent.js' : rng.pick(['bad.js', 'missing.js', undefined] as const);
+        const entry = rng.chance(0.85) ? 'agent.js' : rng.pick(usable ? (['bad.js', 'import.js', undefined] as const) : (['bad.js', 'import.js', 'missing.js', undefined] as const));
         if (entry) desc.entry = entry;
     }
     if (mode === 'cooperative' && rng.chance(0.08)) desc.noScripts = true;
+    return desc;
+}
+
+/**
+ * An app that ends itself once its guest is busy (`which`): the watchdog at 150 ms, workerExecutionTimeout at 150 ms, or
+ * in strict mode an entry that throws. The model allows the watchdog's termination only once a guest step blocked the
+ * event loop (lifecycle-model.ts, autonomousAllowed), so the sequence makes it busy right after its prologue.
+ */
+function endingConfig(mode: Mode, which: number, variant: number): ConfigDesc {
+    const desc: ConfigDesc = { kind: 'valid', mode, scriptUnsafe: true, guestWrites: false, watchdog: which === 0 ? 150 : undefined, execTimeout: which === 1 ? 150 : undefined, html: 'agent', fetch: false, limits: 'none', variant };
+    if (mode === 'strict') desc.entry = which === 2 ? 'bad.js' : 'agent.js';
     return desc;
 }
 
@@ -93,41 +111,37 @@ export function genGuestSpec(rng: Rng): GuestSpec {
     }
 }
 
+/** A start() of a config of the sequence's mode, with the host method `hostEcho` mostly. */
+function genStart(rng: Rng, mode: Mode, variant: () => number): Cmd {
+    return { op: 'start', cfg: genConfig(rng, mode, variant()), methods: rng.chance(0.8) ? 'echo' : rng.pick(['throw', null] as const) };
+}
+
 /** A lifecycle action, for listener plans and argument getters. */
 export function genAction(rng: Rng, mode: Mode, variant: () => number): Cmd {
-    const roll = rng.int(0, 11);
+    const roll = rng.int(0, 8);
     switch (roll) {
         case 0: case 1: return { op: 'reset' };
         case 2: return { op: 'terminate', reason: rng.pick(['from a listener', '', undefined]) };
         case 3: return { op: 'remove' };
         case 4: return { op: 'insert' };
         case 5: return { op: 'foreign' };
-        case 6: return { op: 'setConfig', cfg: genConfig(rng, mode, variant()) };
-        case 7: return { op: 'setConfigEqual' };
-        case 8: return { op: 'load', agent: rng.chance(0.7) };
-        case 9: return { op: 'register', files: { 'data.txt': rng.pick(['data', 'data2']) } };
-        case 10: return { op: 'call', method: 'act', spec: { k: 'mark' }, timeout: rng.pick([undefined, 20]) };
-        default: return { op: 'unregister', paths: [rng.pick(['agent.js', 'data.txt'])] };
+        case 6: return genStart(rng, mode, variant);
+        case 7: return { op: 'call', method: 'act', spec: { k: 'mark' }, timeout: rng.pick([undefined, 20]) };
+        default: return { op: 'listWrites' };
     }
 }
 
 // Every operation about equally often, so each is reached in every state.
-const CMD_KINDS = ['insert', 'remove', 'foreign', 'setConfig', 'setConfig', 'setConfigEqual', 'load', 'reset', 'reset', 'terminate', 'register', 'registerBad', 'unregister', 'expose', 'call', 'call', 'callWithTimeout', 'guest', 'guest', 'guest', 'execute', 'listWrites', 'commit', 'wait', 'settle'] as const;
+const CMD_KINDS = ['insert', 'remove', 'foreign', 'start', 'reset', 'reset', 'terminate', 'call', 'call', 'callWithTimeout', 'guest', 'guest', 'guest', 'execute', 'listWrites', 'commit', 'wait', 'settle'] as const;
 
 function genCmd(rng: Rng, mode: Mode, variant: () => number): Cmd {
     switch (rng.pick(CMD_KINDS)) {
         case 'insert': return { op: 'insert' };
         case 'remove': return { op: 'remove' };
         case 'foreign': return { op: 'foreign' };
-        case 'setConfig': return { op: 'setConfig', cfg: genConfig(rng, mode, variant()) };
-        case 'setConfigEqual': return { op: 'setConfigEqual' };
-        case 'load': return { op: 'load', agent: rng.chance(0.75) };
+        case 'start': return genStart(rng, mode, variant);
         case 'reset': return { op: 'reset' };
         case 'terminate': return { op: 'terminate', reason: rng.pick(['bye', '', '  ', 7, undefined]) };
-        case 'register': return { op: 'register', files: rng.pick<Record<string, string>>([{ 'data.txt': 'data2' }, { 'data.txt': 'data' }, { 'agent.js': 'AGENT' }, { 'x.css': 'p{}' }]) };
-        case 'registerBad': return { op: 'registerBad' };
-        case 'unregister': return { op: 'unregister', paths: rng.chance(0.15) ? undefined : [rng.pick(['data.txt', 'agent.js', 'x.css', 'nothing.txt'])] };
-        case 'expose': return { op: 'expose', variant: rng.chance(0.8) ? 'echo' : 'throw' };
         case 'call':
         case 'callWithTimeout': {
             const method = rng.chance(0.92) ? 'act' : rng.pick(['missing', 'long'] as const);
@@ -148,9 +162,11 @@ function genCmd(rng: Rng, mode: Mode, variant: () => number): Cmd {
 }
 
 /**
- * One sequence: a mode, 0–3 re-entrant listener plans, a prologue (the agent registered, a config, insertion, settle),
+ * One sequence: a mode, 0–3 re-entrant listener plans, a prologue (the app started, mostly before insertion; settle),
  * then 3–6 segments: churn (3–7 operations with no gaps), calm (settle, then guest steps and calls with waits) or a
- * scenario (a call with an argument getter, many calls while loading, the moves of R4:L-1).
+ * scenario (a call with an argument getter, many calls while loading, the moves of R4:L-1, a second start(), guest
+ * writes). One sequence in five starts an app that ends itself (the watchdog, workerExecutionTimeout or a failing entry),
+ * and its first segment makes the guest busy.
  */
 export function generate(seed: number): Sequence {
     const rng = new Rng(seed);
@@ -162,14 +178,16 @@ export function generate(seed: number): Sequence {
     for (let i = 0; i < planCount; i++) {
         plans.push({ event: rng.pick(['ready', 'terminated', 'sandbox-log', 'fileswritten', 'fetch'] as PlanEvent[]), action: genAction(rng, mode, variant), times: rng.int(1, 2) });
     }
-    const first = genConfig(rng, mode, variant());
-    const cmds: Cmd[] = [
-        { op: 'register', files: { 'agent.js': 'AGENT', 'bad.js': 'BAD', 'data.txt': 'data' } },
-        { op: 'setConfig', cfg: first },
-        { op: 'insert' },
-    ];
+    // a termination the element starts: the watchdog, workerExecutionTimeout or a failing entry, from the app's start
+    const ending = rng.chance(0.2) ? rng.int(0, 2) : null;
+    const first = ending === null ? genConfig(rng, mode, variant()) : endingConfig(mode, ending, variant());
+    const start: Cmd = { op: 'start', cfg: first, methods: 'echo' };
+    const cmds: Cmd[] = rng.chance(0.8) ? [start, { op: 'insert' }] : [{ op: 'insert' }, { op: 'settle' }, start];
     if (mode === 'worker') cmds.push({ op: 'execute', code: 'agent' });
-    cmds.push({ op: 'expose', variant: 'echo' }, { op: 'settle' });
+    cmds.push({ op: 'settle' });
+    if (ending !== null) {
+        cmds.push(ending === 1 ? { op: 'execute', code: 'busy' } : { op: 'call', method: 'act', spec: { k: 'busy', ms: 900 } }, { op: 'wait', ms: 1500 }, { op: 'settle' });
+    }
     const segments = rng.int(3, 6);
     for (let s = 0; s < segments; s++) {
         const kind = rng.pick(['churn', 'churn', 'calm', 'calm', 'scenario'] as const);
@@ -198,20 +216,8 @@ export function generate(seed: number): Sequence {
                 // R4:L-1: a move or removal soon after a rebuild
                 cmds.push({ op: 'settle' }, { op: 'insert' }, { op: 'wait', ms: rng.int(12, 30) }, rng.pick([{ op: 'insert' }, { op: 'remove' }, { op: 'foreign' }] as Cmd[]), { op: 'insert' });
             } else if (scenario === 3) {
-                // a termination the element starts: the watchdog, workerExecutionTimeout or a failing entry
-                const which = rng.int(0, 2);
-                const base = genConfig(new Rng(seed * 31 + s), mode, variant());
-                const valid: ConfigDesc = base.kind === 'valid' ? base : { kind: 'valid', mode, scriptUnsafe: true, guestWrites: false, watchdog: undefined, execTimeout: undefined, html: 'agent', fetch: false, limits: 'none', variant: variant() };
-                if (valid.kind !== 'valid') throw new Error('unreachable');
-                valid.scriptUnsafe = true;
-                if (which === 0) valid.watchdog = 150;
-                if (which === 1) valid.execTimeout = 150;
-                if (which === 2 && mode === 'strict') valid.entry = 'bad.js';
-                if (mode === 'strict' && which !== 2) valid.entry = 'agent.js';
-                if (mode === 'cooperative') valid.html = 'agent';
-                cmds.push({ op: 'register', files: { 'agent.js': 'AGENT', 'bad.js': 'BAD' } }, { op: 'setConfig', cfg: valid }, { op: 'settle' });
-                if (mode === 'worker') cmds.push({ op: 'execute', code: 'agent' });
-                cmds.push(which === 1 ? { op: 'execute', code: 'busy' } : { op: 'call', method: 'act', spec: { k: 'busy', ms: 900 } }, { op: 'wait', ms: 1500 }, { op: 'settle' });
+                // another app on the same element: start() throws and changes nothing, and the first app still answers
+                cmds.push({ op: 'settle' }, genStart(rng, mode, variant), { op: 'call', method: 'act', spec: { k: 'mark' } }, { op: 'settle' });
             } else {
                 // guest writes, listed and committed
                 cmds.push({ op: 'settle' });

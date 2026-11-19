@@ -7,7 +7,7 @@
  * plans, then by a closing listener; operations run by a plan or by an argument getter are nested operation frames, so
  * the model knows what ran synchronously inside what.
  */
-import { AGENT_PATH, BAD_ENTRY_PATH, FEW_CALLS_BUDGET, LifecycleModel, TINY_BYTES_BUDGET, rawValue, type Cmd, type ConfigDesc, type Sequence } from './lifecycle-model';
+import { FEW_CALLS_BUDGET, LifecycleModel, START_FILES, TINY_BYTES_BUDGET, rawValue, type Cmd, type ConfigDesc, type Sequence } from './lifecycle-model';
 
 /** The guest agent: one method, `act(spec)`, that runs a guest step. Installed as the strict entry, as cooperative markup, or by execute(). */
 export const AGENT_SOURCE = `(() => {
@@ -34,16 +34,37 @@ export const AGENT_SOURCE = `(() => {
 })();`;
 
 const BAD_ENTRY_SOURCE = `throw new Error('the entry fails');`;
+const IMPORT_ENTRY_SOURCE = `void import('./nothing.js');`;
 const COOPERATIVE_AGENT_HTML = `<script>${AGENT_SOURCE}</script><p>agent</p>`;
 
-function fileContent(token: string): string {
+export function fileContent(token: string): string {
     if (token === 'AGENT') return AGENT_SOURCE;
     if (token === 'BAD') return BAD_ENTRY_SOURCE;
+    if (token === 'IMPORT') return IMPORT_ENTRY_SOURCE;
     return token;
 }
 
-/** The object setConfig() receives for a descriptor: a fresh one each time. */
-export function configOf(desc: ConfigDesc, origin: string): unknown {
+// The keys of the app, start()'s first argument; every other key of a config is a grant.
+const APP_KEYS = ['html', 'entry'];
+
+/**
+ * start()'s two arguments for a descriptor, fresh each time: the app (its `html`, `entry` and the files, START_FILES)
+ * and the grants (every other option, and the host method `hostEcho` when `methods` names one).
+ */
+export function startArgumentsOf(desc: ConfigDesc, origin: string, methods: 'echo' | 'throw' | null): [unknown, unknown] {
+    const config = configOf(desc, origin);
+    const hostMethods = methods === null ? {} : { methods: { hostEcho: methods === 'echo' ? (env: unknown) => 'echo:' + env : () => { throw new Error('the host refuses'); } } };
+    // an app that is not an object, with grants that name a mode: the e2e harness refuses sealed grants on the network
+    // build before start() could (test/e2e/fixture.ts), and the refusal under test is start()'s own
+    if (!config || typeof config !== 'object') return [config, { mode: 'strict', ...hostMethods }];
+    const app: Record<string, unknown> = { files: Object.fromEntries(Object.entries(START_FILES).map(([path, token]) => [path, fileContent(token)])) };
+    const grants: Record<string, unknown> = { ...hostMethods };
+    for (const [key, value] of Object.entries(config)) (APP_KEYS.includes(key) ? app : grants)[key] = value;
+    return [app, grants];
+}
+
+/** The options for a descriptor, the app's and the grants' in one object (startArgumentsOf splits them). */
+function configOf(desc: ConfigDesc, origin: string): unknown {
     if (desc.kind === 'unknownMode') return { mode: desc.mode };
     if (desc.kind === 'unusable') {
         switch (desc.why) {
@@ -199,15 +220,9 @@ export async function runSequence(sequence: Sequence, origin = location.origin):
             case 'insert': inDomOperation(() => document.body.appendChild(el)); return;
             case 'remove': inDomOperation(() => el.remove()); return;
             case 'foreign': inDomOperation(() => foreignDoc.body.appendChild(el)); return;
-            case 'setConfig': el.setConfig(configOf(cmd.cfg, origin)); return;
-            case 'setConfigEqual': el.setConfig(configOf(model.lastDesc!, origin)); return;
-            case 'load': el.load(cmd.agent ? COOPERATIVE_AGENT_HTML : '<p>plain</p>'); return;
+            case 'start': el.start(...startArgumentsOf(cmd.cfg, origin, cmd.methods)); return;
             case 'reset': el.reset(); return;
             case 'terminate': if (cmd.reason === undefined) el.terminate(); else el.terminate(cmd.reason); return;
-            case 'register': el.registerFiles(Object.fromEntries(Object.entries(cmd.files).map(([path, token]) => [path, fileContent(token)]))); return;
-            case 'registerBad': el.registerFiles({ '../outside.txt': 'x' }); return;
-            case 'unregister': el.unregisterFiles(cmd.paths); return;
-            case 'expose': el.expose('hostEcho', cmd.variant === 'echo' ? (env: unknown) => 'echo:' + env : () => { throw new Error('the host refuses'); }); return;
             case 'call': {
                 const record = model.calls.get(frame.callId!)!;
                 const spec = { ...cmd.spec, env: record.envId ?? 0, id: record.id, url: `${origin}/test/e2e/pixel.png?env=${record.envId}&i=${record.id}` };
@@ -254,7 +269,6 @@ export async function runSequence(sequence: Sequence, origin = location.origin):
 
     function runOp(cmd: Cmd) {
         if (failure !== null) return;
-        if (cmd.op === 'setConfigEqual' && !model.lastDesc) return;
         let frame: ReturnType<LifecycleModel['begin']>;
         try {
             // a commit is predicted from the pending list; a path interleaved guest requests left undecided is read first
@@ -315,5 +329,3 @@ export async function runSequence(sequence: Sequence, origin = location.origin):
     };
 }
 
-/** The agent's paths, for the spec's documentation of what the prologue registers. */
-export const REGISTERED = [AGENT_PATH, BAD_ENTRY_PATH, 'data.txt'];

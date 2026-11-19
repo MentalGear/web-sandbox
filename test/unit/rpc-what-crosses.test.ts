@@ -16,8 +16,7 @@ import { startWith, type AppSetup } from './start-app';
  * - a host handler's failure carries the embedder's own words only, never an engine's text, which quotes the data it was
  *   handling; a result that cannot be copied is refused with the library's own text (BD5:LIM-2, BD5:DOC-1);
  * - an error the library made crosses as its code and a fixed text, never its message, which can quote the host's path,
- *   a method name or another app's text (BD7:CHL-2);
- * - a method removed with the element's unexpose() is refused as one never exposed (BD5:DOC-3).
+ *   a method name or another app's text (BD7:CHL-2).
  * test/unit/structural.test.ts holds the property test over the posted snapshot and the source scans of the broker.
  */
 
@@ -384,7 +383,7 @@ describe('a library error crosses as its code and a fixed text, never its messag
     });
 });
 
-describe('the element: what a guest learns of a failed host method, and unexpose() (BD5:LIM-2, BD5:DOC-3, BD7:CHL-2)', () => {
+describe('the element: what a guest learns of a failed host method (BD5:LIM-2, BD7:CHL-2)', () => {
     let warn: ReturnType<typeof vi.spyOn>;
     beforeEach(() => {
         vi.spyOn(window, 'postMessage').mockImplementation(() => {});
@@ -468,25 +467,6 @@ describe('the element: what a guest learns of a failed host method, and unexpose
         const [line, text] = warn.mock.calls[0]!;
         expect(line).toBe('[Sandbox] "parse" failed, and the other side received "the method failed (SyntaxError)" in place of its error, which was:');
         expect(text).toMatch(/^SyntaxError: /);
-        done();
-    });
-
-    it("reserved names are never removed: naming one is refused with a warning, as expose() refuses it; unexpose() leaves the library's methods", async () => {
-        const { el, call, done } = element();
-        warn.mockClear();
-        el.unexpose('sandbox:write');
-        expect(warn.mock.calls.map((args: unknown[]) => args[0])).toEqual(['[Sandbox] unexpose(): names starting with "sandbox:" are reserved for the library; "sandbox:write" was not removed.']);
-        el.unexpose();
-        expect((await call('sandbox:write', {})).code).toBe('FILES_NOT_ALLOWED'); // guest writes are off: the library's answer, not UNKNOWN_METHOD
-        done();
-    });
-
-    it('names that are not a string or a list of strings throw a TypeError, and nothing is removed', async () => {
-        const { el, call, done } = element({ a: () => 'a' });
-        expect(() => el.unexpose(42)).toThrow(TypeError);
-        expect(() => el.unexpose(['a', 1])).toThrow(TypeError);
-        expect(() => el.unexpose(null)).toThrow(TypeError);
-        expect(await call('a')).toEqual({ ok: 'a' });
         done();
     });
 });

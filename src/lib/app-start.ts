@@ -102,16 +102,22 @@ function checkKey(key: string, own: Argument, other: Argument) {
  * each throw.
  */
 function readOptions(appFields: Fields, grantFields: Fields, hostPage: HostPage): { normalised: NormalisedConfig; warnings: readonly string[] } {
-    const copy: Record<string, unknown> = {};
-    for (const name of [...APP_OPTIONS, ...EMBEDDER_OPTIONS]) {
-        const fields = APP_OPTIONS.includes(name) ? appFields : grantFields;
-        if (Object.hasOwn(fields, name)) copy[name] = copied(name, fields[name]);
-    }
+    const copy = copiedOptions(appFields, grantFields);
     const { value, warnings, refusal: refused } = normaliseConfig(copy, hostPage, 'start');
     if (value === null) throw startRefusal(refused);
     const unknownMode = unknownModeReason(value.config.mode);
     if (unknownMode !== null) throw refusal(`${unknownMode}.`);
     return { normalised: value, warnings };
+}
+
+/** Both arguments' options in one object, each copied (structured clone): what the config schema reads. */
+function copiedOptions(appFields: Fields, grantFields: Fields): Record<string, unknown> {
+    const copy: Record<string, unknown> = {};
+    for (const name of [...APP_OPTIONS, ...EMBEDDER_OPTIONS]) {
+        const fields = APP_OPTIONS.includes(name) ? appFields : grantFields;
+        if (Object.hasOwn(fields, name)) copy[name] = copied(name, fields[name]);
+    }
+    return copy;
 }
 
 function copied(name: OptionName, value: unknown): unknown {
@@ -151,7 +157,7 @@ function checkEntry({ config }: NormalisedConfig, files: FileStore) {
 }
 
 /**
- * The host methods: own enumerable string keys, each a name `expose()` takes (at most 256 characters, not `sandbox:`
+ * The host methods: own enumerable string keys, each a name the broker can call (at most 256 characters, not `sandbox:`
  * reserved) and a function, read once into a frozen record with no prototype.
  */
 function readMethods(methods: unknown): Readonly<Record<string, HostMethod>> {

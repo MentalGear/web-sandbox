@@ -10,11 +10,11 @@
  *
  * What holds by construction:
  *   - One set of rules. A write is checked by CheckedFile.from(), the same path and entry validation as
- *     registerFiles(), so its type is the type the store assigns (override or extension table), and the
+ *     the app's files, so its type is the type the store assigns (override or extension table), and the
  *     write-time quota is FileStore.check() of the build's store with the overlay and this write applied: the count and
  *     the registered bytes, exactly apply()'s first step, without lexing. The commit is FileStore.apply(), the
  *     full check including what module and stylesheet rewrites add. So a write the host could never register is
- *     refused at once with registerFiles()'s own code, and a commit can still be refused (FILES_QUOTA_EXCEEDED)
+ *     refused at once with the store's own code, and a commit can still be refused (FILES_QUOTA_EXCEEDED)
  *     if the host registered more in between; a refused commit changes neither the store nor the overlay.
  *   - The host is the single source of truth. A refused request changes nothing here; the guest's own view
  *     (in-sandbox-files.ts) changes only after this module's answer.

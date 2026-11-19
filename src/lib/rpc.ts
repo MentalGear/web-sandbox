@@ -137,7 +137,7 @@ export type RpcFrame = (
  * - `HANDLER_ERROR`: the handler threw or rejected. A guest handler's text arrives as it is. A host handler's text is
  *   the message of a plain `Error` or a thrown string; an error of the library's that it let through arrives as its
  *   code and the library's fixed text for that code; any other throw arrives as `the method failed (<name>)` (see
- *   `expose()`).
+ *   {@link HostMethod}).
  * - `RESULT_NOT_TRANSFERABLE`: the handler's return value cannot be structured-cloned (a fixed text, never the clone's
  *   error), or an answer arrived past `RPC_MAX_BYTES`.
  * - `BUSY`: the other side already has {@link MAX_INBOUND_IN_FLIGHT} of your calls (or `RPC_MAX_INBOUND_BYTES` of their
@@ -198,7 +198,7 @@ export const RPC_LIBRARY_CODES = [
 ] as const satisfies readonly RpcLibraryCode[];
 type RpcLibraryCodesComplete = Holds<Complete<RpcLibraryCode, typeof RPC_LIBRARY_CODES>>;
 
-/** Every library-reserved method name starts with this prefix; expose() never registers one. */
+/** Every library-reserved method name starts with this prefix; `expose()` of a broker never registers one. */
 export const RESERVED_METHOD_PREFIX = 'sandbox:';
 
 /**
@@ -243,10 +243,6 @@ export interface BrokerOptions {
     // The host's broker only (BD5:LIM-2, BD7:CHL-2): what makes it the host's, as one group, so that no broker of the host
     // can be made with one part and not the others. A handler's error text crosses by the rule of the header.
     host?: HostBrokerOptions;
-    // The host's broker only (BD5:DOC-3): given, once, the function that removes one exposed method, or every one when
-    // called with no name; reserved names are never removed. Like takeBusyRefusal it is never part of the returned object,
-    // which the guest's bootstrap publishes as `bridge`.
-    takeUnexpose?: (unexpose: (name?: string) => void) => void;
 }
 
 /** What makes a broker the host's (BrokerOptions.host): minted-errors.ts's factory and table, and the host's console. */
@@ -374,13 +370,11 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const admitOutboundOption = options.admitOutbound;
     const admitInboundOption = options.admitInbound;
     const takeBusyRefusalOption = options.takeBusyRefusal;
-    const takeUnexposeOption = options.takeUnexpose;
     const hostOption = options.host;
     const sizeOf = typeof sizeOfOption === 'function' ? sizeOfOption : null;
     const admitOutbound = typeof admitOutboundOption === 'function' ? admitOutboundOption : null;
     const admitInbound = typeof admitInboundOption === 'function' ? admitInboundOption : null;
     const takeBusyRefusal = typeof takeBusyRefusalOption === 'function' ? takeBusyRefusalOption : null;
-    const takeUnexpose = typeof takeUnexposeOption === 'function' ? takeUnexposeOption : null;
     // The host's group (HostBrokerOptions), each member read once; `isHost` decides the handler texts. Its type requires all
     // three, so a host broker always has the factory and its table, and tells the library's errors from the embedder's.
     const isHost = hostOption !== null && typeof hostOption === 'object';
@@ -981,19 +975,6 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // surprising choice, it mirrors Map.set and lets a handler be hot-swapped.
         set(registry, name, fn);
     }
-
-    // Removes an exposed method, or every one with no name (BD5:DOC-3): a call that arrives after it is answered
-    // UNKNOWN_METHOD, as for a name never exposed; a call that already arrived runs on (its handler was looked up when it
-    // arrived). Reserved names are never removed. Handed out by takeUnexpose only, never in the returned object.
-    function unexpose(name?: string): void {
-        if (name === undefined) {
-            apply(mapClear, registry, []);
-            return;
-        }
-        if (typeof name !== 'string' || isReservedName(name)) return;
-        remove(registry, name);
-    }
-    if (takeUnexpose) takeUnexpose(unexpose);
 
     function exposeReserved(name: string, fn: RpcMethod): void {
         if (typeof name !== 'string' || typeof fn !== 'function' || !isReservedName(name)) return;

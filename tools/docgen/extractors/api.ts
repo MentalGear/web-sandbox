@@ -87,7 +87,7 @@ const body = (member: ApiMember, where = member.path): string => [member.doc.sum
 // ---- Regions
 
 /** The order the page presents the element's methods in; a method it does not name follows, by name. */
-export const METHOD_ORDER = ['start', 'setConfig', 'load', 'reset', 'terminate', 'execute', 'expose', 'unexpose', 'call', 'callWithTimeout', 'registerFiles', 'unregisterFiles', 'listFiles', 'listGuestWrites', 'commitGuestWrites'];
+export const METHOD_ORDER = ['start', 'reset', 'terminate', 'execute', 'call', 'callWithTimeout', 'listFiles', 'listGuestWrites', 'commitGuestWrites'];
 
 /** Things a doc says that a value holds, rendered after the method's own text. */
 const APPENDICES: Readonly<Record<string, () => string>> = {
@@ -98,9 +98,13 @@ const REACTIONS = ['connectedCallback', 'disconnectedCallback', 'adoptedCallback
 
 const webSandbox = () => exported('WebSandbox', 'Class');
 
-/** The element's methods in the page's order: everything public that is not a property, a constructor or a reaction. */
+/**
+ * The element's methods in the page's order: everything public that is not a property, a constructor or a reaction, and
+ * the ones the network modes add to it (NetworkModeMethods, merged into it in that build).
+ */
 export function methods(): ApiMember[] {
-    const all = webSandbox().members.filter(member => member.kind === 'Method' && !REACTIONS.includes(member.name));
+    const own = webSandbox().members.filter(member => member.kind === 'Method' && !REACTIONS.includes(member.name));
+    const all = [...own, ...exported('NetworkModeMethods').members];
     const rank = (member: ApiMember) => (METHOD_ORDER.includes(member.name) ? METHOD_ORDER.indexOf(member.name) : METHOD_ORDER.length);
     return [...all].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }

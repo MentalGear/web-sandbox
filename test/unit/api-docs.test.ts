@@ -178,8 +178,11 @@ describe('docs/API.md lists the public surface', () => {
     });
 
     it('every public method of the element, and no other', () => {
-        // the element's private members, and the methods the network build installs on it (network-host.ts): none is public
-        const isPrivate = new Set([...[...read('src/host.ts').matchAll(/^ {4}private (\w+)/gm)].map(match => match[1]!), ...networkMethodNames()]);
+        // the element's private members, its class's and the network build's (network-host.ts), whose one public method
+        // (`execute`) the element has in that build only, as the page says
+        const privateIn = (file: string) => [...read(file).matchAll(/^ {4}private (\w+)/gm)].map(match => match[1]!);
+        const isPrivate = new Set([...privateIn('src/host.ts'), ...privateIn('src/lib/network-host.ts')]);
+        expect(networkMethodNames().filter(name => !isPrivate.has(name))).toEqual(['execute']);
         const callbacks = new Set(['constructor', 'connectedCallback', 'disconnectedCallback', 'adoptedCallback']);
         const members = Object.getOwnPropertyNames(WebSandbox.prototype).filter(name => !isPrivate.has(name) && !callbacks.has(name));
         // the element's properties are its getters (`state`, `started`), documented in the table of "The element"
@@ -346,7 +349,7 @@ describe('Migrating to sealed as the default', () => {
     // A config with no mode is a sealed config, so every refusal of the config schema except the unknown mode is one a
     // no-mode embed can hit (BD7:DOC-2): each needs its row, with the reason's text, so the table cannot omit one.
     it('has a row for every refusal a config with no mode can hit', () => {
-        const reasons = (Object.keys(TERMINATION_REASONS) as ReasonId[]).filter(id => TERMINATION_REASONS[id].decidedBy === 'config' && id !== 'unknownMode');
+        const reasons = (Object.keys(TERMINATION_REASONS) as ReasonId[]).filter(id => TERMINATION_REASONS[id].decidedBy === 'start' && id !== 'unknownMode' && id !== 'configRefused');
         expect(reasons.length).toBeGreaterThan(0);
         const rows = section.split('\n').filter(line => line.startsWith('| no `mode`'));
         for (const id of reasons) {

@@ -2,7 +2,7 @@
  * The config schema (class C, docs/research/18_finding_classes/README.md, design 4; R5:L-2, R5:N-5): where a
  * field's validity is decided together with the fields it depends on, once, before anything is stored or built. Its
  * configuration (S67): every option's default, accepted values,
- * clamp, warnings and modes are declared once in CONFIG_SCHEMA, normaliseConfig() is the one reading of a setConfig()
+ * clamp, warnings and modes are declared once in CONFIG_SCHEMA, normaliseConfig() is the one reading of a start()
  * argument, and the cross-field invariants are declared once in CONFIG_INVARIANTS. host.ts keeps no validation of its
  * own: it stores what normaliseConfig() returns, says its warnings once per element and message, and refuses what it
  * refuses.
@@ -76,7 +76,7 @@ export const CALL_LIMIT_FIELDS = ['maxPerSecond', 'maxBytesPerSecond'] as const 
 type CallLimitFieldsComplete = Holds<Complete<keyof CallLimits, typeof CALL_LIMIT_FIELDS>>;
 
 /**
- * The call budget `callLimits` asks for (from the copy setConfig() took). Each field is a finite number >= 1, else its
+ * The call budget `callLimits` asks for (from the copy start() took). Each field is a finite number >= 1, else its
  * default: left out, silently; anything else (Infinity, a number below 1, NaN, a string), with a warning. There is no
  * "off": a budget that can be lifted is one a config typo lifts. Nor a budget that admits nothing (R4:C-6):
  * below 1, every call would be BUSY forever, without a word, since no call weighs less than 1. A byte budget below
@@ -104,7 +104,7 @@ export function callBudgetOf(callLimits: unknown, warn: (message: string) => voi
     return budget;
 }
 
-/** An InvalidValue that only warns: setConfig()'s reading. */
+/** An InvalidValue that only warns: the lenient reading. */
 export const warningOnly = (warn: (message: string) => void): InvalidValue => (warning) => {
     if (warning !== null) warn(warning);
 };
@@ -206,7 +206,7 @@ export function sealedScriptUnsafeRefusal(mode: unknown, source: Record<string, 
 
 /**
  * Strict and sealed mode's `html` longer than one render may be (VIEW_RENDER_MAX_LENGTH: the initial view is a render) is
- * refused with its reason (`htmlTooLong`), by setConfig() (normaliseConfig) and load() (host.ts) alike, before anything
+ * refused with its reason (`htmlTooLong`), by start() (normaliseConfig), before anything
  * stores or reads it (BD7:LIM-3): the view parses the whole of its initial markup before its renderer can refuse any of
  * it, so the bound is decided here, where the markup arrives. Cooperative mode's `html` is its guest document, which the
  * browser parses as it is, and worker mode's is ignored.
@@ -241,10 +241,10 @@ export function buildModesNote(): LibraryDetail {
 /** Why no environment is built for a mode that is not one (the build's refusal, _buildRefusal), or null. */
 export const unknownModeReason = (mode: unknown): string | null => (isSandboxMode(mode) ? null : reasonText('unknownMode', joinDetails(renamedModeNote(mode), buildModesNote())));
 
-/** The warning for a mode that is not one: the modes there are, the build's own among them, and what starts the sandbox. */
+/** The warning for a mode that is not one: the modes there are, the build's own among them, and what start() takes. */
 export function unknownModeNotice(mode: unknown): string {
     const startsWith = networkModes() === null ? "'sealed', or no mode" : 'one of them';
-    return `[Sandbox] mode ${describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}${renamedModeNote(mode)}${buildModesNote()}: the sandbox will not start until setConfig() names ${startsWith}.`;
+    return `[Sandbox] mode ${describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}${renamedModeNote(mode)}${buildModesNote()}: the sandbox starts only with ${startsWith}.`;
 }
 
 // The sandbox flags of strict mode's view, always (why: host.ts, at its import): listing one of them in `capabilities`
@@ -283,7 +283,7 @@ export interface StoredConfig {
     hostContentSecurityPolicy?: string | false;
 }
 
-/** What one setConfig() argument normalises to: everything a build reads of the configuration. */
+/** What start()'s options normalise to: everything a build reads of the configuration. */
 export interface NormalisedConfig {
     config: StoredConfig;
     /** The validated `fetchBridge` option (fetch-bridge.ts, FetchPolicy), which only the network modes read; null when off, and in sealed mode. */
@@ -312,14 +312,17 @@ export interface NormaliseContext {
 }
 
 /**
- * A value an option does not take. Read for setConfig(), the warning is said (none when null) and the rule's fallback is
- * stored; read for start(), the argument is refused with a TypeError whose message is `refusal`, and nothing is stored
- * (design 01, "start(app, grants)": start() throws for the shape and type of each option).
+ * A value an option does not take. Read for start(), the argument is refused with a TypeError whose message is
+ * `refusal`, and nothing is stored (design 01, "start(app, grants)": start() throws for the shape and type of each
+ * option); read leniently, the warning is said (none when null) and the rule's fallback is stored.
  */
 export type InvalidValue = (warning: string | null, refusal: string) => void;
 
-/** Which method's argument is read: setConfig() warns about a value it cannot take, start() refuses it. */
-export type ConfigReading = 'setConfig' | 'start';
+/**
+ * How a value an option cannot take is read: start() refuses it; the lenient reading warns and stores the option's
+ * fallback, which defaultConfig() (an argument that names nothing) and the schema's tests use.
+ */
+export type ConfigReading = 'lenient' | 'start';
 
 /** What an option's rules see while one argument is normalised. */
 export interface OptionInput {
@@ -332,7 +335,7 @@ export interface OptionInput {
     /** the host page (NormaliseContext), read when a rule first asks for it, at most once per argument */
     host: () => NormaliseContext;
     warn: (message: string) => void;
-    /** a value the option does not take (InvalidValue): a warning for setConfig(), a refusal for start() */
+    /** a value the option does not take (InvalidValue): a refusal for start(), a warning when read leniently */
     invalid: InvalidValue;
 }
 
@@ -358,7 +361,7 @@ export type OptionOwner = (typeof OPTION_OWNERS)[number];
  *  - `owner`: whose the option is (I17, design 01): the app's own content, which `start()` takes in its first argument
  *    (SandboxApp), or the embedder's, which it takes in the second (SandboxGrants). Each argument refuses an option of
  *    the other. Every key of the schema has one, a removed one included (test/unit/config-schema.test.ts).
- * A removed option (`removed`) is never stored: it is ignored, with that warning, by setConfig() and by start(), whose
+ * A removed option (`removed`) is never stored: it is ignored, with that warning, by start(), whose
  * grants take it as the embedder's key it always was.
  */
 export interface OptionRule {
@@ -378,7 +381,7 @@ const noStrictView = (mode: unknown) => !hasStrictView(mode);
 const asList = <T>(value: T[] | undefined): T[] => value ?? [];
 
 /**
- * Only a literal true enables a switch: each one is interpolated into a bootstrap as a literal. setConfig() takes any
+ * Only a literal true enables a switch: each one is interpolated into a bootstrap as a literal. The lenient reading takes any
  * other value as false, silently; start() refuses one that is not a boolean, unless the mode ignores the option.
  */
 const literalTrue = (name: 'autoResize' | 'scriptUnsafe' | 'guestWrites') => ({ given, mode, invalid }: OptionInput): boolean => {
@@ -460,7 +463,7 @@ export const CONFIG_SCHEMA = {
     // the raw policy, replaced by `origins` (ADR-007): ignored, never adapted, so it fails closed (no origin)
     connectionsAllowed: { owner: 'embedder', removed: '[Sandbox] connectionsAllowed was removed; use origins. It was ignored: the guest policy admits only the exact origins listed in `origins` (see docs/API.md#origins).' },
     // configured the removed Service-Worker hub (ADR-004)
-    virtualFilesUrl: { owner: 'embedder', removed: '[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).' },
+    virtualFilesUrl: { owner: 'embedder', removed: '[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: give the app its files with start() and read them in the guest through sandboxFiles (see docs/ADR-004).' },
     origins: {
         owner: 'embedder',
         // Never read in sealed mode, the default (readIn), as fetchBridge; its rule is the network modes' too.
@@ -485,8 +488,8 @@ export const CONFIG_SCHEMA = {
     entry: {
         owner: 'app',
         default: undefined, documented: 'none', modes: STRICT_VIEW_MODES, ignoredIn: noStrictView,
-        // a registered path or nothing: it is looked up in each build's snapshot (setConfig() drops any other value
-        // silently; start() refuses it, and checks the path against the files it is given)
+        // a path of the app's files or nothing: start() refuses any other value, and checks the path against the files
+        // it is given; each build looks it up in its snapshot (the lenient reading drops any other value silently)
         read: ({ given, invalid }) => {
             if (typeof given === 'string') return given;
             if (given !== undefined) invalid(null, `[Sandbox] start(): "entry" must be a string, not ${shown(given)}.`);
@@ -579,20 +582,20 @@ export interface Normalised {
 }
 
 /**
- * One setConfig() argument (already a structured clone) normalised by the schema: every option's stored value from its
+ * One argument of options (already a structured clone) normalised by the schema: every option's stored value from its
  * own rule, then the cross-field rules (CONFIG_INVARIANTS), and every warning in order. Pure: it warns into the result,
  * never to the console, and never throws. A config that cannot be used (not an object; an `origins` that is not an
  * object, or a kind of it that is not a list) is a refusal, with the warnings said up to it, and nothing of it is kept
  * (FR:F6). Reads own keys only and writes only defined data properties (AR:A7, FR:F4), so no
  * key of the argument reaches a prototype, and nothing but the schema's options reaches the stored config.
- * `reading` says whose argument it is: setConfig()'s warns about a value an option cannot take and stores the option's
- * fallback; start()'s refuses it, with a TypeError (InvalidValue).
+ * `reading` says how a value an option cannot take is read: start()'s refuses it, with a TypeError (InvalidValue); the
+ * lenient one warns and stores the option's fallback.
  */
-export function normaliseConfig(copy: unknown, hostPage: HostPage, reading: ConfigReading = 'setConfig'): Normalised {
+export function normaliseConfig(copy: unknown, hostPage: HostPage, reading: ConfigReading = 'lenient'): Normalised {
     const warnings: string[] = [];
     const warn = (message: string) => { warnings.push(message); };
     const invalid: InvalidValue = reading === 'start' ? refuseValue : warningOnly(warn);
-    if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return { value: null, warnings, refusal: mintUncodedError(TypeError, 'setConfig() takes an object') };
+    if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return { value: null, warnings, refusal: mintUncodedError(TypeError, 'the options must be an object') };
     const source = copy as Record<string, unknown>;
     let asked: NormaliseContext | null = null;
     const host = (): NormaliseContext => (asked ??= typeof hostPage === 'function' ? hostPage() : hostPage);
