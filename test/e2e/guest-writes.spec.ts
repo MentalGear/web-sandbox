@@ -386,7 +386,9 @@ for (const mode of MODES) {
                 const refusal = (run: () => unknown) => {
                     try { run(); return 'no throw'; } catch (e) { return e instanceof TypeError ? 'TypeError' : String(e); }
                 };
-                const refusals = [undefined, ['b.txt'], [{ ...listed[0] }], [structuredClone(listed[0])]].map(writes => refusal(() => el.commitGuestWrites(writes)));
+                // a write's content has methods, so a structured clone is of its data: the value with its content's bytes
+                const cloned = structuredClone({ ...listed[0], content: listed[0].content.bytes() });
+                const refusals = [undefined, ['b.txt'], [{ ...listed[0] }], [cloned]].map(writes => refusal(() => el.commitGuestWrites(writes)));
                 const files = () => el.listFiles().map((f: any) => [f.path, f.size]);
                 const stale = el.commitGuestWrites(listed);
                 const afterStale = files();
