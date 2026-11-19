@@ -3,7 +3,7 @@
  * fast-check is not a dependency, so the random source is mulberry32 and shrinking is delta debugging (ddmin) over the
  * command list, then over the listener plans.
  */
-import type { Cmd, ConfigDesc, GuestSpec, Mode, Plan, PlanEvent, Raw, Sequence } from './lifecycle-model';
+import { AGENT_PATH, AGENT_TEXT, ENTRY_TEXTS, type Cmd, type ConfigDesc, type GuestSpec, type Mode, type Plan, type PlanEvent, type Raw, type Sequence } from './lifecycle-model';
 
 /** mulberry32: a 32-bit seeded PRNG; the same seed gives the same sequence on every engine. */
 export function mulberry32(seed: number): () => number {
@@ -47,7 +47,9 @@ const TIMEOUT_VALUES: Raw[] = [0, -1, 'NaN', 'Infinity', 2 ** 31 + 5, 2 ** 32, 1
 const WATCHDOG_VALUES: (Raw | undefined)[] = [undefined, undefined, 0, -1, 'NaN', 'Infinity', '300', 5000, 4000];
 const EXEC_VALUES: (Raw | undefined)[] = [undefined, undefined, 0, 'NaN', 150, 300];
 const SWITCHES: Raw[] = [true, true, true, 'true', 1, 0, null, 'no', false];
-const WRITE_PATHS = ['w/a.txt', 'w/b.js', 'data.txt'];
+// The paths the guest writes and removes: the agent's file, which is the strict app's entry, among them, so a committed
+// change can leave the next build with no entry, or with one that calls import() (API.md, `entry`).
+const WRITE_PATHS = [AGENT_PATH, 'w/a.txt', 'w/b.js', 'data.txt'];
 // The values start() takes, of each option the generator varies: a start() that throws binds nothing, so most configs
 // draw from these (`usable`), and the rest from every value, which start() mostly refuses (startRefused).
 const USABLE_WATCHDOG = WATCHDOG_VALUES.filter(value => value === undefined || value === 0 || (typeof value === 'number' && value > 0));
@@ -93,6 +95,11 @@ function endingConfig(mode: Mode, which: number, variant: number): ConfigDesc {
     return desc;
 }
 
+/** A guest write at `path`: over the entry, one of the entry texts (ENTRY_TEXTS); anywhere else, a plain one. */
+function genWrite(rng: Rng, path: string): GuestSpec {
+    return { k: 'write', path, text: path === AGENT_PATH ? rng.pick(ENTRY_TEXTS) : rng.pick(['v1', 'v2']) };
+}
+
 export function genGuestSpec(rng: Rng): GuestSpec {
     const roll = rng.int(0, 15);
     switch (roll) {
@@ -101,7 +108,7 @@ export function genGuestSpec(rng: Rng): GuestSpec {
         case 2: return { k: 'uncaught' };
         case 3: return { k: 'busy', ms: rng.int(50, 400) };
         case 4: return { k: 'wait', ms: rng.int(0, 60) };
-        case 5: case 6: return { k: 'write', path: rng.pick(WRITE_PATHS), text: rng.pick(['v1', 'v2']) };
+        case 5: case 6: return genWrite(rng, rng.pick(WRITE_PATHS));
         case 7: return { k: 'remove', path: rng.pick(WRITE_PATHS) };
         case 8: return { k: 'fetch' };
         case 9: return { k: 'bgfetch' };
@@ -162,10 +169,31 @@ function genCmd(rng: Rng, mode: Mode, variant: () => number): Cmd {
 }
 
 /**
+ * The guest changes its own entry and the embedder commits it, then rebuilds (API.md, `entry`): a committed removal
+ * leaves the next build no entry (`entryNotRegistered`), a committed write of the import() text one that calls import()
+ * (`entryImport`), and a rebuild of a bound app is refused then, from `ready` or from `terminated`, each time with its
+ * `terminated`. Sometimes the guest writes the agent back and that is committed too, before the rebuild: the entry is
+ * back, and the next build stands again. Then, sometimes, the element is removed, terminated while detached and inserted:
+ * the insertion's build is refused or stands the same way.
+ */
+function entryRewritten(rng: Rng, mode: Mode): Cmd[] {
+    const cmds: Cmd[] = [{ op: 'settle' }];
+    if (mode === 'worker') cmds.push({ op: 'execute', code: 'agent' });
+    const change: GuestSpec = rng.chance(0.5) ? { k: 'remove', path: AGENT_PATH } : genWrite(rng, AGENT_PATH);
+    const commit: Cmd = { op: 'commit', paths: [AGENT_PATH], code: rng.chance(0.85) };
+    cmds.push({ op: 'call', method: 'act', spec: change }, { op: 'wait', ms: 80 }, { op: 'listWrites' }, commit);
+    if (rng.chance(0.3)) cmds.push({ op: 'call', method: 'act', spec: { k: 'write', path: AGENT_PATH, text: AGENT_TEXT } }, { op: 'wait', ms: 80 }, { op: 'commit', paths: [AGENT_PATH], code: true });
+    cmds.push({ op: 'reset' }, { op: 'settle' }, { op: 'reset' }, { op: 'settle' });
+    // and the insertion's build: of an element terminate() ended while detached, which is `terminated` when it connects
+    if (rng.chance(0.5)) cmds.push({ op: 'remove' }, { op: 'terminate', reason: undefined }, { op: 'insert' }, { op: 'settle' });
+    return cmds;
+}
+
+/**
  * One sequence: a mode, 0–3 re-entrant listener plans, a prologue (the app started, mostly before insertion; settle),
  * then 3–6 segments: churn (3–7 operations with no gaps), calm (settle, then guest steps and calls with waits) or a
  * scenario (a call with an argument getter, many calls while loading, the moves of R4:L-1, a second start(), guest
- * writes). One sequence in five starts an app that ends itself (the watchdog, workerExecutionTimeout or a failing entry),
+ * writes, the entry rewritten by the guest and committed). One sequence in five starts an app that ends itself (the watchdog, workerExecutionTimeout or a failing entry),
  * and its first segment makes the guest busy.
  */
 export function generate(seed: number): Sequence {
@@ -204,7 +232,7 @@ export function generate(seed: number): Sequence {
             }
             cmds.push({ op: 'wait', ms: 100 }, { op: 'listWrites' });
         } else {
-            const scenario = rng.int(0, 4);
+            const scenario = rng.int(0, 5);
             if (scenario === 0) {
                 cmds.push({ op: 'settle' }, { op: 'call', method: 'act', spec: { k: 'mark' }, arg: 'getter', getter: genAction(rng, mode, variant) });
             } else if (scenario === 1) {
@@ -218,12 +246,14 @@ export function generate(seed: number): Sequence {
             } else if (scenario === 3) {
                 // another app on the same element: start() throws and changes nothing, and the first app still answers
                 cmds.push({ op: 'settle' }, genStart(rng, mode, variant), { op: 'call', method: 'act', spec: { k: 'mark' } }, { op: 'settle' });
-            } else {
+            } else if (scenario === 4) {
                 // guest writes, listed and committed
                 cmds.push({ op: 'settle' });
                 if (mode === 'worker') cmds.push({ op: 'execute', code: 'agent' });
                 for (let i = 0; i < 3; i++) cmds.push({ op: 'call', method: 'act', spec: genGuestSpec(rng) });
                 cmds.push({ op: 'call', method: 'act', spec: { k: 'write', path: rng.pick(WRITE_PATHS), text: 'v1' } }, { op: 'wait', ms: 80 }, { op: 'listWrites' }, { op: 'commit', paths: WRITE_PATHS.slice(), code: rng.chance(0.5) });
+            } else {
+                cmds.push(...entryRewritten(rng, mode));
             }
         }
     }

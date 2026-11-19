@@ -119,8 +119,18 @@ export const FEW_CALLS_BUDGET = 3;
 export const AGENT_PATH = 'agent.js';
 export const BAD_ENTRY_PATH = 'bad.js';
 export const IMPORT_ENTRY_PATH = 'import.js';
-/** The app's files every start() gives, as tokens (the runner's fileContent): the agent, an entry that throws, one that calls import(), data. */
-export const START_FILES: Readonly<Record<string, string>> = Object.freeze({ [AGENT_PATH]: 'AGENT', [BAD_ENTRY_PATH]: 'BAD', [IMPORT_ENTRY_PATH]: 'IMPORT', 'data.txt': 'data' });
+/** The texts of the app's JavaScript files, as tokens (the runner's fileContent): the agent, an entry that throws, one that calls import(). */
+export const AGENT_TEXT = 'AGENT';
+export const BAD_ENTRY_TEXT = 'BAD';
+export const IMPORT_ENTRY_TEXT = 'IMPORT';
+/** The app's files every start() gives, as tokens: the agent, an entry that throws, one that calls import(), data. */
+export const START_FILES: Readonly<Record<string, string>> = Object.freeze({ [AGENT_PATH]: AGENT_TEXT, [BAD_ENTRY_PATH]: BAD_ENTRY_TEXT, [IMPORT_ENTRY_PATH]: IMPORT_ENTRY_TEXT, 'data.txt': 'data' });
+/**
+ * What the guest writes over the agent's file, the strict app's usual entry: each of the entry texts, so a committed
+ * write makes the next build's entry the agent again, one that throws, or one that calls import(). Never another text:
+ * what an entry of some other text does when it runs is not the model's to predict.
+ */
+export const ENTRY_TEXTS: readonly string[] = Object.freeze([AGENT_TEXT, BAD_ENTRY_TEXT, IMPORT_ENTRY_TEXT]);
 
 /** What start() receives for a raw token. */
 export function rawValue(raw: Raw | undefined): unknown {
@@ -295,13 +305,21 @@ export class LifecycleModel {
         return !!cfg && cfg.kind === 'valid' && cfg.scriptUnsafe === true;
     }
 
-    // The refusals of a build the element decides from the app as it stands: an entry the files do not hold (a commit
-    // can remove it), and an entry that calls import().
+    // The text of the strict entry as the files hold it now (a commit can replace or remove it), or undefined.
+    private get entryText(): string | undefined {
+        const cfg = this.cfg;
+        if (!cfg || cfg.kind !== 'valid' || cfg.mode !== 'strict' || !cfg.entry) return undefined;
+        return this.files[cfg.entry];
+    }
+
+    // The refusals of a build the element decides from the app as it stands (API.md, `entry`): an entry the files do not
+    // hold (a committed removal), and an entry whose text calls import() (a committed write can make it one).
     private buildRefusal(): string | null {
         const cfg = this.cfg;
         if (!cfg || cfg.kind !== 'valid' || cfg.mode !== 'strict' || !cfg.entry) return null;
-        if (!(cfg.entry in this.files) || !cfg.entry.endsWith('.js')) return ENTRY_NOT_REGISTERED_REASON;
-        if (cfg.entry === IMPORT_ENTRY_PATH) return ENTRY_IMPORT_REASON;
+        const text = this.entryText;
+        if (text === undefined || !cfg.entry.endsWith('.js')) return ENTRY_NOT_REGISTERED_REASON;
+        if (text === IMPORT_ENTRY_TEXT) return ENTRY_IMPORT_REASON;
         return null;
     }
 
@@ -310,17 +328,17 @@ export class LifecycleModel {
         const valid = cfg && cfg.kind === 'valid' ? cfg : null;
         const mode = valid ? valid.mode : 'strict';
         const html = valid ? valid.html : 'none';
-        const entry = valid && mode === 'strict' ? valid.entry : undefined;
+        const entry = this.entryText;
         return {
             id: this.nextEnv++,
             mode,
-            agent: mode === 'strict' ? entry === AGENT_PATH : mode === 'cooperative' ? html === 'agent' && !valid?.noScripts : false,
+            agent: mode === 'strict' ? entry === AGENT_TEXT : mode === 'cooperative' ? html === 'agent' && !valid?.noScripts : false,
             bootstrap: !(mode === 'cooperative' && valid?.noScripts),
             ready: false,
             startedAt: now,
             busy: false,
             execBusy: false,
-            entryBad: entry === BAD_ENTRY_PATH,
+            entryBad: entry === BAD_ENTRY_TEXT,
             guestWrites: !!valid && valid.guestWrites === true,
             tinyBytes: !!valid && valid.limits === 'tinyBytes',
             fewCalls: !!valid && valid.limits === 'fewCalls',

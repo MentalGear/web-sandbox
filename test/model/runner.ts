@@ -7,7 +7,7 @@
  * plans, then by a closing listener; operations run by a plan or by an argument getter are nested operation frames, so
  * the model knows what ran synchronously inside what.
  */
-import { FEW_CALLS_BUDGET, LifecycleModel, START_FILES, TINY_BYTES_BUDGET, rawValue, type Cmd, type ConfigDesc, type Sequence } from './lifecycle-model';
+import { AGENT_TEXT, BAD_ENTRY_TEXT, FEW_CALLS_BUDGET, IMPORT_ENTRY_TEXT, LifecycleModel, START_FILES, TINY_BYTES_BUDGET, rawValue, type Cmd, type ConfigDesc, type GuestSpec, type Sequence } from './lifecycle-model';
 
 /** The guest agent: one method, `act(spec)`, that runs a guest step. Installed as the strict entry, as cooperative markup, or by execute(). */
 export const AGENT_SOURCE = `(() => {
@@ -37,11 +37,17 @@ const BAD_ENTRY_SOURCE = `throw new Error('the entry fails');`;
 const IMPORT_ENTRY_SOURCE = `void import('./nothing.js');`;
 const COOPERATIVE_AGENT_HTML = `<script>${AGENT_SOURCE}</script><p>agent</p>`;
 
+const SOURCES: Readonly<Record<string, string>> = Object.freeze({ [AGENT_TEXT]: AGENT_SOURCE, [BAD_ENTRY_TEXT]: BAD_ENTRY_SOURCE, [IMPORT_ENTRY_TEXT]: IMPORT_ENTRY_SOURCE });
+
+/** The text a token of the model stands for: an entry's source, or the token itself. */
 export function fileContent(token: string): string {
-    if (token === 'AGENT') return AGENT_SOURCE;
-    if (token === 'BAD') return BAD_ENTRY_SOURCE;
-    if (token === 'IMPORT') return IMPORT_ENTRY_SOURCE;
-    return token;
+    return Object.hasOwn(SOURCES, token) ? SOURCES[token]! : token;
+}
+
+/** The token of a text as the element lists it back: fileContent's inverse. */
+export function tokenOf(text: string): string {
+    for (const [token, source] of Object.entries(SOURCES)) if (source === text) return token;
+    return text;
 }
 
 // The keys of the app, start()'s first argument; every other key of a config is a grant.
@@ -114,8 +120,14 @@ function deepFrozen(value: unknown, seen = new WeakSet<object>()): boolean {
     return true;
 }
 
-function listingOf(entries: any[]): { path: string; change: string; text?: string }[] {
-    return entries.map(entry => ({ path: entry.path, change: entry.change, ...(entry.change === 'write' ? { text: new TextDecoder().decode(entry.content) } : {}) }));
+/** listGuestWrites() as the model reads it: each written text as its token. */
+export function listingOf(entries: any[]): { path: string; change: string; text?: string }[] {
+    return entries.map(entry => ({ path: entry.path, change: entry.change, ...(entry.change === 'write' ? { text: tokenOf(new TextDecoder().decode(entry.content)) } : {}) }));
+}
+
+/** A guest step as the agent receives it: a write carries the text its token stands for. */
+export function guestStep(spec: GuestSpec): GuestSpec {
+    return spec.k === 'write' ? { ...spec, text: fileContent(spec.text) } : spec;
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -225,7 +237,7 @@ export async function runSequence(sequence: Sequence, origin = location.origin):
             case 'terminate': if (cmd.reason === undefined) el.terminate(); else el.terminate(cmd.reason); return;
             case 'call': {
                 const record = model.calls.get(frame.callId!)!;
-                const spec = { ...cmd.spec, env: record.envId ?? 0, id: record.id, url: `${origin}/test/e2e/pixel.png?env=${record.envId}&i=${record.id}` };
+                const spec = { ...guestStep(cmd.spec), env: record.envId ?? 0, id: record.id, url: `${origin}/test/e2e/pixel.png?env=${record.envId}&i=${record.id}` };
                 const method = cmd.method === 'act' ? 'act' : cmd.method === 'missing' ? 'missingMethod' : 'm'.repeat(300);
                 let extra: unknown = 0;
                 if (cmd.arg === 'function') extra = () => 1;

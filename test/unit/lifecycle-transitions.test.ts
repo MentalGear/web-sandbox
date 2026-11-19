@@ -24,6 +24,43 @@ function wrongShape(value: LcState): string | null {
 }
 const exploration = exploreLifecycle();
 
+// The reasons several never-made transitions share.
+const DISPATCH_STARTS_TERMINATED = "unreachable by the executor: dispatchStarted is stepped only before a 'terminated' dispatch, by an output in `terminated` (terminateNow, buildTerminationDue), runEffects runs no effect of an output once its environment was torn down, and nothing leaves `terminated` without a teardown";
+const STANDING_IS_CONNECTED = "unreachable by the element: a standing build is connected, connectedCallback runs only for an element that is not, and leaving the document or being adopted stepped `disconnect`, into `idle`, first";
+const BUILD_WHERE_IT_BUILDS = "unreachable by the element: a standing build is connected in the element's own document, and leaving it steps `disconnect`, into `idle`, before any embedder code can call reset()";
+const TERMINATION_WITH_NOTICES = 'not reached by the model: a termination with notices (a host-page refusal, an entry that failed) keeps the state until its nested step; the fake guest causes none, and the e2e model runs reach the entry failure';
+const NOT_THE_MODELS_GUEST = "not reached by the model: its guests announce once, from their bootstrap, and never navigate the wrapper; lifecycle-reducer.test.ts makes it by hand (\"the wrapper's load: …\", \"a guest that checked in: …\")";
+
+/**
+ * The listed transitions the model runs never make, each with why. Compared exactly with what the runs leave unmade, so
+ * a transition the runs stop making, or start making, changes this list and its reason, and no bound absorbs it.
+ */
+const NEVER_MADE: Readonly<Record<string, string>> = {
+    'idle -dispatchStarted-> idle': DISPATCH_STARTS_TERMINATED,
+    'loading -dispatchStarted-> loading': DISPATCH_STARTS_TERMINATED,
+    'ready -dispatchStarted-> ready': DISPATCH_STARTS_TERMINATED,
+    'ready -dispatchEnded-> ready': "unreachable by the element: a 'terminated' dispatch starts in `terminated`, and a build a listener starts completes only after the listeners returned (the wrapper's load in a microtask, the announcement and the view's check-in in a task)",
+    'loading -connect-> idle': STANDING_IS_CONNECTED,
+    'loading -connect-> loading': STANDING_IS_CONNECTED,
+    'loading -connect-> terminated': STANDING_IS_CONNECTED,
+    'ready -connect-> idle': STANDING_IS_CONNECTED,
+    'ready -connect-> loading': STANDING_IS_CONNECTED,
+    'ready -connect-> terminated': STANDING_IS_CONNECTED,
+    'loading -build-> idle': BUILD_WHERE_IT_BUILDS,
+    'ready -build-> idle': BUILD_WHERE_IT_BUILDS,
+    'ready -viewReady-> ready': "unreachable by the element: the view checks in once, at the INIT_VIEW the element sends at the wrapper's one load (a second load ends the build); lifecycle-reducer.test.ts makes it by hand (\"the view's check-in counts only while loading\")",
+    'ready -loadDeadline-> ready': "unreachable by the element: enterReady stops the load deadline (stopLoadDeadline), and the fake element's too; lifecycle-reducer.test.ts makes it by hand (\"the load deadline: …\"), the reducer's own bound were a stop missed",
+    'loading -build-> terminated': "not reached by the model: a rebuild of a bound app is refused only for what a commit changed in the files, and a loading build's overlay is new and empty; the model's guests write only when called, a call made while loading waits for `ready`, and the strict view starts the worker that runs the entry only after its check-in",
+    'loading -buildFailed-> terminated': "not reached by the model: the build or attach effect throwing (a host page's Trusted Types default policy that throws); its host pages have none, and the fake element's build does not throw; policy-guarantees.test.ts and lifecycle-edge-cases.test.ts make it",
+    'loading -terminate-> loading': TERMINATION_WITH_NOTICES,
+    'ready -terminate-> ready': TERMINATION_WITH_NOTICES,
+    'loading -announced-> loading': "not reached by the model: worker mode's refusal (R2:C-5), a worker the host page's policy refused, keeps `loading` until its termination; the model's host pages have no policy",
+    'loading -announced-> terminated': NOT_THE_MODELS_GUEST,
+    'ready -announced-> terminated': NOT_THE_MODELS_GUEST,
+    'loading -frameLoad-> terminated': NOT_THE_MODELS_GUEST,
+    'ready -frameLoad-> terminated': NOT_THE_MODELS_GUEST,
+};
+
 describe('the transitions listed from the declaration (lifecycleTransitions)', () => {
     it('each is what `reduce` gives for its witness, a declared pair; and the exploration is finite and small', () => {
         expect(exploration.transitions.length).toBeGreaterThan(10);
@@ -75,10 +112,20 @@ describe('the transitions listed from the declaration (lifecycleTransitions)', (
             expect(result.ok, `seed ${seed}: ${result.divergence}`).toBe(true);
         }
         expect([...new Set(unlisted)]).toEqual([]);
-        // and the runs reach most of what the list says: the exploration over-approximates the element, not by much. The
-        // pairs it lists and the runs never make are the declaration's room (a `connect` admitted in every state, a
-        // termination with notices from any state, a completion that is a second one): at most this many.
-        expect(listed.size - made.size).toBeLessThanOrEqual(27);
+        // and what the list says and the runs never make is exactly NEVER_MADE, each with its reason
+        const unmade = [...listed].filter(key => !made.has(key)).sort();
+        expect(unmade).toEqual(Object.keys(NEVER_MADE).sort());
+        // among what the runs make: a rebuild of a bound app refused for a committed change of its entry (API.md, `entry`),
+        // and the insertion's refused build of an element terminate() ended while detached
+        expect([made.has('ready -build-> terminated'), made.has('terminated -connect-> terminated')]).toEqual([true, true]);
+    }, 120_000);
+
+    it('every never-made transition is one the declaration lists, with a reason', () => {
+        const listed = new Set(exploration.transitions.map(transitionKey));
+        for (const [key, reason] of Object.entries(NEVER_MADE)) {
+            expect(listed.has(key), key).toBe(true);
+            expect(reason, key).toMatch(/^(unreachable by the (element|executor)|not reached by the model): /);
+        }
     });
 });
 

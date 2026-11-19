@@ -69,7 +69,7 @@ async function report(seed: number, divergence: string) {
 const sampled = new Map<string, LcState>(); // distinct states the runs reached, for the fuzzed inputs below
 
 describe('the reducer against the lifecycle model', () => {
-    it(`${RUNS} generated sequences, without calls, execute(), commits or listings, agree with the model, and every step keeps the reducer's properties`, async () => {
+    it(`${RUNS} generated sequences, with the guest's writes and their commits but no other call and no execute(), agree with the model, and every step keeps the reducer's properties`, async () => {
         const started = performance.now();
         const totals: Record<string, number> = {};
         const coverage = new Set<string>();
@@ -95,11 +95,14 @@ describe('the reducer against the lifecycle model', () => {
             expect(totals[`input:${input}`] ?? 0, input).toBeGreaterThan(0);
         }
         for (const stale of ['frameLoad', 'announced', 'viewReady', 'loadDeadline', 'buildTerminationDue']) expect(totals[`stale:${stale}`] ?? 0, `stale ${stale}`).toBeGreaterThan(0);
+        // the fake guest's writes, announced, and their commits, which reach a strict entry's refusal (below)
+        for (const event of ['fileswritten', 'fileschanged']) expect(totals[`event:${event}`] ?? 0, event).toBeGreaterThan(0);
         for (const key of ['event:terminated-self', 'event:ready']) {
             for (const mode of ['strict', 'cooperative', 'worker']) expect(coverage.has(`${key}|${mode}`), `${key}|${mode}`).toBe(true);
         }
         // a refused build: start() refuses every unusable app itself, so what is left to refuse is a strict entry (one that
-        // calls import()), which only strict mode runs
+        // calls import(), from the start or since a committed write, or one a committed removal took away), which only
+        // strict mode runs
         expect(coverage.has('event:terminated-refusal|strict'), 'event:terminated-refusal|strict').toBe(true);
         for (const key of ['start-again', 'start-refused']) expect([...coverage].some(seen => seen.startsWith(`${key}|`)), key).toBe(true);
     }, 120_000);
