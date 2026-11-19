@@ -12,6 +12,7 @@ import { KIND_DIRECTIVES } from './csp/csp-generator';
 import { VIOLATION_DIRECTIVES } from './violation';
 import { cssReferences, keepsUrl, withKeptReferences } from './css-references';
 import { styleMarkup, type StyleMarkup } from './style-markup';
+import { GUEST_IMAGE_TYPES } from './guest-bytes';
 
 /**
  * Strict mode's view and worker prelude (ADR-005).
@@ -464,8 +465,12 @@ export const VIEW_FILE_TYPES = [
     'text/vtt',
 ] as const;
 
-/** The raster image types: the browser only decodes them, and opened on their own they are an image, never a document. */
-export const RASTER_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'] as const;
+/**
+ * The raster image types: the browser only decodes them, and opened on their own they are an image, never a document.
+ * GUEST_IMAGE_TYPES (guest-bytes.ts) is the list, so what the view shows of a guest's write and what `image()` answers
+ * are one set.
+ */
+export const RASTER_IMAGE_TYPES = GUEST_IMAGE_TYPES;
 
 /**
  * The only types the view mints a URL for from a guest write (R1:R4-4, the owner's decision): the files

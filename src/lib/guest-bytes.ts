@@ -17,23 +17,18 @@
  * Host-realm code handed to the embedder: it runs with the host page's built-ins, which are the embedder's to keep.
  * Each value is frozen and holds the write's bytes without copying them; nothing here changes them.
  */
-import type { RASTER_IMAGE_TYPES } from './in-sandbox-view';
 import { FALLBACK_TYPE, INERT_TYPES, mimeTypeFor } from './files';
-import type { Holds } from './utils';
 
 /**
  * The types {@link GuestBytes}'s `image()` can answer a `Blob` of: the raster images, which a browser only decodes, and
  * opened on their own are an image, never a document. SVG is not one.
  */
+// The one list of them: the types the view mints a URL for from a guest write are this list (RASTER_IMAGE_TYPES,
+// in-sandbox-view.ts).
 export const GUEST_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'] as const;
 
 /** One type of {@link GUEST_IMAGE_TYPES}. */
 export type GuestImageType = (typeof GUEST_IMAGE_TYPES)[number];
-
-// GUEST_IMAGE_TYPES and the types the view mints a URL for from a guest write (RASTER_IMAGE_TYPES) are one set: the
-// build fails if either gains a type the other lacks.
-type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : { differ: [A, B] }) : { differ: [A, B] };
-type GuestImageTypesAreTheViewsRasterTypes = Holds<Same<GuestImageType, (typeof RASTER_IMAGE_TYPES)[number]>>;
 
 /** One byte of a signature: its value, or null for any byte (a length field). */
 export type SignatureByte = number | null;

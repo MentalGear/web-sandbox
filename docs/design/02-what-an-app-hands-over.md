@@ -1,6 +1,6 @@
 # 02 · What an app hands to the host page
 
-**Status: a design, partly built:** no `Blob` or `File` from the guest, a guest write's type from its path, `unknown` for guest values, the registry of guest values and `links` ([05](05-build-order.md), 2.1, 2.2, 2.4, 2.5 and 2.6). [The folder's index](README.md) has the invariants (I6 to I10 are this file's) and
+**Status: a design, partly built:** no `Blob` or `File` from the guest, a guest write's type from its path, `GuestBytes`, `unknown` for guest values, the registry of guest values and `links` ([05](05-build-order.md), step 2, all built). [The folder's index](README.md) has the invariants (I6 to I10 are this file's) and
 what [review 1](REVIEW-1.md) and [review 2](REVIEW-2.md) changed here.
 
 ## The root
@@ -141,6 +141,18 @@ A write's content is a value with four named ways out, in place of a `Uint8Array
 - `bytes()` hands out the raw bytes. `new Blob([w.content.bytes()], { type: w.type })` still runs an SVG as the host
   page: the two common needs have a safe name, and the unsafe one is a step the embedder writes out. That makes this
   part a check, one named step away, and not a construction.
+
+**As built** (`src/lib/guest-bytes.ts`, step 2.3), where this section was silent:
+- A `GuestWrite` cannot be structured-cloned or posted as it is, since its `content` has methods (`DataCloneError`): an
+  embedder that posts a write posts `content.bytes()`. A changed promise.
+- The name's inert test is the write's own type lookup, so a dotfile, a name with no extension and a trailing dot get
+  the suffix (`README.download`). `image()` answers `null` for an AVIF whose major brand is not `avif` or `avis`.
+- `save()` on all three engines: the download carried the library's name and the write's bytes, the URL was revoked
+  right after the click, nothing navigated, and no `blob:` document opened (`test/e2e/guest-bytes.spec.ts`).
+- Not measured: Safari, where `.download` is also the suffix of its own unfinished downloads, so Finder may treat
+  `report.html.download` in a way of its own; a name longer than a filesystem takes (a path may be 256 characters, and
+  the suffix adds 9); a host page that is itself sandboxed without `allow-downloads`, where `save()` does nothing and
+  the library sees no error.
 
 **This reverses the owner's decision of 2026-11-06** ("docs only, no helper"). Without it, `content` stays a
 `Uint8Array` and the `blob:` case stays a documented limit.
