@@ -57,11 +57,16 @@ async function quietBaseline(host: RealisticHost) {
     return { violations: await host.cspViolations(), reports: (await host.hits()).reports.length, consoleErrors: [...host.consoleErrors] };
 }
 
+const WEBKIT_UNKNOWN_FLAG = "Error while parsing the 'sandbox' attribute: 'allow-orientation-lock' is an invalid sandbox flag.";
+
 async function expectQuiet(host: RealisticHost, baseline: Awaited<ReturnType<typeof quietBaseline>>, label: string) {
     await host.page.waitForTimeout(500);
     expect(await host.cspViolations(), covering('trustedTypesRequirement', `${label}: the library's own writes give the host page no securitypolicyviolation event`)).toEqual(baseline.violations);
     expect((await host.hits()).reports.length, covering('trustedTypesRequirement', `${label}: nor a CSP report to the page's report-uri`)).toBe(baseline.reports);
-    expect(host.consoleErrors, covering('trustedTypesRequirement', `${label}: nor a console error`)).toEqual(baseline.consoleErrors);
+    // WebKit does not know `allow-orientation-lock`, which the served file's view carries in its static attribute (design 03,
+    // "The sandbox flags"), and logs it as invalid while it applies the others: the one line of the file's own markup
+    const errors = host.consoleErrors.filter(line => line !== WEBKIT_UNKNOWN_FLAG);
+    expect(errors, covering('trustedTypesRequirement', `${label}: nor a console error`)).toEqual(baseline.consoleErrors);
     expect(await host.ttDefaultCalls(), covering('trustedTypesDefault', `${label}: the host's Trusted Types default policy is never asked for a string of the library's`)).toEqual([]);
     expect(await host.reportedErrors(), covering('hostRealmGlobals', `${label}: the host's error reporter sees no error or rejection of the library's host code`)).toEqual([]);
     expect(host.pageErrors, covering('hostRealmGlobals', `${label}: nor an uncaught exception`)).toEqual([]);

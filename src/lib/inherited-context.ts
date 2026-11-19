@@ -185,7 +185,7 @@ export const INHERITED_CONTEXT = {
         engines: ['chromium', 'firefox', 'webkit'],
         environmentChecks: ['isolated'],
         tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/realistic-host.spec.ts', 'test/e2e/directive-matrix.spec.ts', 'test/unit/environment-check.test.ts', 'test/unit/environment-gate.test.ts'],
-        sealed: { standing: 'remains', note: "`crossOriginIsolated` is the one value of the host page's that sealed mode reads, only to refuse" },
+        sealed: { standing: 'remains', note: "`crossOriginIsolated` is the one value of the host page's that sealed mode reads, only to refuse. Under `require-corp` alone Firefox and WebKit refuse the frame of a served file whose response does not opt in (Firefox under `credentialless` too), and the build ends with `documentSilent`; Chromium frames it, the frame being credentialless (test/e2e/directive-matrix.spec.ts)" },
     },
     referrer: {
         channel: "The host page's URL as a referrer, and the engines' own referrer exceptions for same-site targets",

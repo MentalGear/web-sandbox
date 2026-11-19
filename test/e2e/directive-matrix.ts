@@ -146,8 +146,8 @@ export const DIRECTIVE_CASES = {
 /** Headers of the page that reach the sandbox besides the policy list. */
 export const HEADER_CASES = [
     // ledger: coep-require-corp
-    { header: 'cross-origin-embedder-policy', value: 'require-corp', row: 'coep', outcome: works(), note: "strict mode runs on every engine: the view's blob: worker is not refused" },
-    { header: 'cross-origin-embedder-policy', value: 'credentialless', row: 'coep', outcome: works(), note: 'alone it does not make the page cross-origin isolated' },
+    { header: 'cross-origin-embedder-policy', value: 'require-corp', row: 'coep', outcome: works(), sealedEngines: { firefox: UNFRAMED, webkit: UNFRAMED }, note: "strict mode runs on every engine: the view's blob: worker is not refused. Sealed mode's frame loads the served file, which an embedder policy refuses unless the file's response opts in: Chromium frames it all the same, as the frame is credentialless; Firefox and WebKit refuse it, so the view never announces itself" },
+    { header: 'cross-origin-embedder-policy', value: 'credentialless', row: 'coep', outcome: works(), sealedEngines: { firefox: UNFRAMED }, note: "alone it does not make the page cross-origin isolated; Firefox refuses sealed mode's frame of the served file, as under require-corp" },
     { header: 'cross-origin-opener-policy', value: 'same-origin', row: 'coep', outcome: works(), note: 'alone it does not make the page cross-origin isolated' },
     // COOP and COEP together can make the host page cross-origin isolated, which is not supported on any engine
     // (docs/API.md#host-page-policy): the element refuses to build on an isolated host page (host.ts, `_buildRefusal`), before
