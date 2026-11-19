@@ -8,6 +8,7 @@ import { FILE_ERROR_CODES, fileError } from '@src/lib/files';
 import { FETCH_ERROR_CODES, fetchRefusal } from '@src/lib/fetch-bridge';
 import { ConfigRefusal } from '@src/lib/config-schema';
 import { CROSSING_TEXTS, crossingText, mintError, mintUncodedError, type LibraryErrorCode } from '@src/lib/minted-errors';
+import { startWith, type AppSetup } from './start-app';
 
 /**
  * What crosses a call is what the value and the API show (class P, research 18), at the broker (rpc.ts, createBroker):
@@ -396,11 +397,11 @@ describe('the element: what a guest learns of a failed host method, and unexpose
 
     // An element with a port of its environment, and the guest's requests delivered on it (as relay-and-rpc-budgets'
     // hostWithPort): every answer the element posts back is recorded.
-    function element() {
+    function element(methods: AppSetup['methods'] = {}) {
         defineWebSandbox();
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'] }, { methods });
         const { port1 } = new MessageChannel();
         el._port = port1;
         let id = 0;
@@ -417,9 +418,8 @@ describe('the element: what a guest learns of a failed host method, and unexpose
     // guest receives the code and a fixed text; the host's console has the message.
     const MARKER = 'HOSTFOLDER-alice-7f3a9c';
     const ROWS: [string, (el: any, other: ReturnType<typeof element>) => unknown, string][] = [
-        ['registerFiles(), a path of the host\'s', (el) => el.registerFiles({ [`${MARKER}/..`]: 'x' }), `INVALID_PATH: ${CROSSING_TEXTS.INVALID_PATH}`],
-        ['registerFiles(), a bad type', (el) => el.registerFiles({ [`${MARKER}/notes.txt`]: { content: 'x', type: 'not a type' } }), `INVALID_FILE: ${CROSSING_TEXTS.INVALID_FILE}`],
-        ['unregisterFiles()', (el) => el.unregisterFiles([`${MARKER}/..`]), `INVALID_PATH: ${CROSSING_TEXTS.INVALID_PATH}`],
+        ['start() of another element, a path of the host\'s', () => document.createElement('web-sandbox').start({ files: { [`${MARKER}/..`]: 'x' } }), `INVALID_PATH: ${CROSSING_TEXTS.INVALID_PATH}`],
+        ['start() of another element, a bad type', () => document.createElement('web-sandbox').start({ files: { [`${MARKER}/notes.txt`]: { content: 'x', type: 'not a type' } } }), `INVALID_FILE: ${CROSSING_TEXTS.INVALID_FILE}`],
         ['commitGuestWrites()', (el) => el.commitGuestWrites([`${MARKER}/..`]), `INVALID_PATH: ${CROSSING_TEXTS.INVALID_PATH}`],
         ['a timeout of the host\'s call', (el) => el.callWithTimeout(1, `HOSTMETHOD-${MARKER}`), `TIMEOUT: ${CROSSING_TEXTS.TIMEOUT}`],
         ['a relayed call to a name the app lacks', (el) => {
@@ -435,9 +435,8 @@ describe('the element: what a guest learns of a failed host method, and unexpose
     ];
 
     it.each(ROWS)("%s: the guest receives the code and a fixed text, never the host's data; the console has it", async (_label, run, received) => {
-        const { el, call, done } = element();
         const other = element();
-        el.expose('m', () => run(el, other));
+        const { el, call, done } = element({ m: () => run(el, other) });
         warn.mockClear();
         const answer = await call('m');
         expect(answer).toEqual({ code: 'HANDLER_ERROR', error: received });
@@ -450,10 +449,11 @@ describe('the element: what a guest learns of a failed host method, and unexpose
     });
 
     it("the embedder's own words still cross as written: a thrown string, or a plain Error it made", async () => {
-        const { el, call, done } = element();
-        el.expose('string', () => { throw 'own words'; });
-        el.expose('plain', () => { throw new Error('own words'); });
-        el.expose('rejected', () => Promise.reject(new Error('own words, later')));
+        const { call, done } = element({
+            string: () => { throw 'own words'; },
+            plain: () => { throw new Error('own words'); },
+            rejected: () => Promise.reject(new Error('own words, later')),
+        });
         expect([await call('string'), await call('plain'), await call('rejected')]).toEqual([
             { code: 'HANDLER_ERROR', error: 'own words' }, { code: 'HANDLER_ERROR', error: 'own words' }, { code: 'HANDLER_ERROR', error: 'own words, later' },
         ]);
@@ -461,55 +461,13 @@ describe('the element: what a guest learns of a failed host method, and unexpose
     });
 
     it('a handler that throws an engine error answers its name only, and writes the engine text to the console, once per call', async () => {
-        const { el, call, done } = element();
-        el.expose('parse', (text: string) => JSON.parse(text));
+        const { call, done } = element({ parse: (text: string) => JSON.parse(text) });
         warn.mockClear();
         expect(await call('parse', `{"note": ${SECRET}}`)).toEqual({ code: 'HANDLER_ERROR', error: 'the method failed (SyntaxError)' });
         expect(warn).toHaveBeenCalledTimes(1);
         const [line, text] = warn.mock.calls[0]!;
         expect(line).toBe('[Sandbox] "parse" failed, and the other side received "the method failed (SyntaxError)" in place of its error, which was:');
         expect(text).toMatch(/^SyntaxError: /);
-        done();
-    });
-
-    it('after unexpose(name) a call is refused exactly as a call to a name never exposed; other methods still answer', async () => {
-        const { el, call, done } = element();
-        el.expose('save', () => 'saved');
-        el.expose('load', () => 'loaded');
-        expect(await call('save')).toEqual({ ok: 'saved' });
-        el.unexpose('save');
-        const removed = await call('save');
-        const fresh = element();
-        expect(removed).toEqual(await fresh.call('save'));
-        expect(removed).toEqual({ code: 'UNKNOWN_METHOD', error: 'unknown method: save' });
-        expect(await call('load')).toEqual({ ok: 'loaded' });
-        fresh.done();
-        done();
-    });
-
-    it('unexpose() removes every host method, a list removes those it names, and a name not exposed is ignored', async () => {
-        const { el, call, done } = element();
-        for (const name of ['a', 'b', 'c']) el.expose(name, () => name);
-        el.unexpose(['a', 'missing']);
-        expect([await call('a'), await call('b')]).toEqual([{ code: 'UNKNOWN_METHOD', error: 'unknown method: a' }, { ok: 'b' }]);
-        el.unexpose();
-        expect((await call('b')).code).toBe('UNKNOWN_METHOD');
-        expect((await call('c')).code).toBe('UNKNOWN_METHOD');
-        el.expose('b', () => 'again');
-        expect(await call('b')).toEqual({ ok: 'again' });
-        done();
-    });
-
-    it('a call that already arrived runs to completion and is answered; the next one is refused', async () => {
-        const { el, call, done } = element();
-        let finish!: (value: string) => void;
-        el.expose('slow', () => new Promise<string>(resolve => { finish = resolve; }));
-        const first = call('slow');
-        await new Promise(resolve => setTimeout(resolve, 0));
-        el.unexpose('slow');
-        finish('done');
-        expect(await first).toEqual({ ok: 'done' });
-        expect((await call('slow')).code).toBe('UNKNOWN_METHOD');
         done();
     });
 
@@ -524,8 +482,7 @@ describe('the element: what a guest learns of a failed host method, and unexpose
     });
 
     it('names that are not a string or a list of strings throw a TypeError, and nothing is removed', async () => {
-        const { el, call, done } = element();
-        el.expose('a', () => 'a');
+        const { el, call, done } = element({ a: () => 'a' });
         expect(() => el.unexpose(42)).toThrow(TypeError);
         expect(() => el.unexpose(['a', 1])).toThrow(TypeError);
         expect(() => el.unexpose(null)).toThrow(TypeError);

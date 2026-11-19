@@ -284,7 +284,7 @@ const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 describe('5:N-4 and 5:L-4 (class D): one diff of the guest-write state', () => {
     it('L-4: a withdrawn write (a new path written, then removed) is announced, since the list changed, and listed nowhere; docs/API.md says so', async () => {
         const { el } = element();
-        el.setConfig({ mode: 'strict', guestWrites: true });
+        startWith(el, { mode: 'strict', guestWrites: true });
         fakeView(el);
         const heard: string[][] = [];
         el.addEventListener('fileswritten', (e: CustomEvent) => heard.push([...e.detail.paths]));

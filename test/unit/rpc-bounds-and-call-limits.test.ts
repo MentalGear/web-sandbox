@@ -12,6 +12,7 @@ import { LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { createFetchBridge, toFetchPolicy, type FetchRecord } from '@src/lib/fetch-bridge';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 import { runBootstrap } from './sandbox-environment';
+import { startWith, type AppSetup } from './start-app';
 
 /**
  * Findings of R3 where the library's own logic decides, each reproduced here first against the code it names.
@@ -348,13 +349,13 @@ describe('M-2: the calls the guest initiates have a per-second budget, in the gu
 
     // The host checks the same window on receipt: frames that did not come through the guest's broker's check (a guest
     // broker of an older bootstrap, or delivery bunched up) are answered BUSY there.
-    function hostWithPort() {
+    function hostWithPort(methods: AppSetup['methods']) {
         realPlatform();
         defineWebSandbox();
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'] }, { methods });
         const { port1 } = new MessageChannel();
         el._port = port1;
         const answers: any[] = [];
@@ -365,9 +366,8 @@ describe('M-2: the calls the guest initiates have a per-second budget, in the gu
     it('the host answers BUSY to a call past 1000 in one second, before its method runs', async () => {
         let now = 1000;
         vi.spyOn(performance, 'now').mockImplementation(() => now);
-        const { el, answers, deliver, done } = hostWithPort();
         let ran = 0;
-        el.expose('noop', () => { ran++; });
+        const { answers, deliver, done } = hostWithPort({ noop: () => { ran++; } });
         for (let i = 1; i <= CALL_BUDGET.calls + 1; i++) deliver(request(i, 'noop'));
         await settle();
         expect(ran).toBe(CALL_BUDGET.calls);
@@ -381,8 +381,7 @@ describe('M-2: the calls the guest initiates have a per-second budget, in the gu
 
     it('the host counts bytes too: the third call of 30 MiB in one second is BUSY, even when the earlier ones settled', async () => {
         vi.spyOn(performance, 'now').mockImplementation(() => 1000);
-        const { el, answers, deliver, done } = hostWithPort();
-        el.expose('noop', () => {});
+        const { answers, deliver, done } = hostWithPort({ noop: () => {} });
         const big = 'x'.repeat(15_000_000);
         for (let i = 1; i <= 3; i++) {
             deliver(request(i, 'noop', [big]));
@@ -398,7 +397,7 @@ describe('M-2: the calls the guest initiates have a per-second budget, in the gu
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'] });
         expect(el._callBudget).toEqual(CALL_BUDGET);
         const literal = JSON.stringify(CALL_BUDGET);
         expect(el._getSandboxCommsScript('cooperative', [])).toContain(`"callBudget":${literal}`);
@@ -414,7 +413,7 @@ describe("L-4: guest lines the host's window drops are announced in 'sandbox-log
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'] });
         const lines: any[] = [];
         el.addEventListener('sandbox-log', (event: CustomEvent) => lines.push(event.detail));
         const flood = () => {
@@ -438,31 +437,30 @@ describe("L-4: guest lines the host's window drops are announced in 'sandbox-log
 });
 
 describe('L-1: re-inserted from a terminated listener after a refused build, the element is terminated, not idle', () => {
-    for (const [name, config] of [
-        ["an old mode ('iframe')", { mode: 'iframe', capabilities: ['allow-scripts'] }],
-        ['an unregistered entry', { mode: 'strict', entry: 'missing.js' }],
-    ] as const) {
-        it(name, async () => {
-            realPlatform();
-            defineWebSandbox();
-            vi.spyOn(console, 'warn').mockImplementation(() => {});
-            const el = document.createElement('web-sandbox') as any;
-            const slot = document.createElement('div');
-            document.body.append(el, slot);
-            const events: string[] = [];
-            el.addEventListener('ready', () => events.push('ready'));
-            el.addEventListener('terminated', (event: CustomEvent) => {
-                events.push(`terminated: ${event.detail.reason}`);
-                slot.appendChild(el); // a move: disconnected, then connected
-            });
-            el.setConfig(config);
-            await settle();
-            await settle();
-            expect([el.isConnected, el.state, el.shadowRoot.querySelector('iframe')]).toEqual([true, 'terminated', null]);
-            expect(events).toHaveLength(1);
-            expect(await outcome(el.call('anything'))).toMatchObject({ code: 'TERMINATED', message: expect.stringContaining('terminated') });
+    it('an entry the files no longer hold', async () => {
+        realPlatform();
+        defineWebSandbox();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = document.createElement('web-sandbox') as any;
+        const slot = document.createElement('div');
+        document.body.append(el, slot);
+        startWith(el, { mode: 'strict', entry: 'main.js', guestWrites: true }, { files: { 'main.js': 'void 0' } });
+        // the guest removes its entry and the host commits it: the next build is refused
+        await el._handleGuestWrite(el._guestWrites, { change: 'remove', path: 'main.js' });
+        el.commitGuestWrites(['main.js']);
+        const events: string[] = [];
+        el.addEventListener('ready', () => events.push('ready'));
+        el.addEventListener('terminated', (event: CustomEvent) => {
+            events.push(`terminated: ${event.detail.reason}`);
+            slot.appendChild(el); // a move: disconnected, then connected
         });
-    }
+        el.reset();
+        await settle();
+        await settle();
+        expect([el.isConnected, el.state, el.shadowRoot.querySelector('iframe')]).toEqual([true, 'terminated', null]);
+        expect(events).toHaveLength(1);
+        expect(await outcome(el.call('anything'))).toMatchObject({ code: 'TERMINATED', message: expect.stringContaining('terminated') });
+    });
 });
 
 describe("L-2: a call whose arguments' getter ends the environment settles", () => {
@@ -472,7 +470,7 @@ describe("L-2: a call whose arguments' getter ends the environment settles", () 
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'] });
         expect(el.state).toBe('loading');
         return el;
     }
@@ -576,59 +574,58 @@ describe("M-2: callLimits, the call budget's option (the owner's name)", () => {
         realPlatform();
         defineWebSandbox();
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = document.createElement('web-sandbox') as any;
-        document.body.appendChild(el);
+        const created = () => {
+            const el = document.createElement('web-sandbox') as any;
+            document.body.appendChild(el);
+            return el;
+        };
         const warnings = () => warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('callLimits'));
-        return { el, warnings };
+        return { created, warnings };
     }
     const literal = (budget: { calls: number; bytes: number }) => `"callBudget":${JSON.stringify(budget)}`;
 
     it('the defaults: no callLimits, an empty one, or a field left out', () => {
-        const { el, warnings } = element();
+        const { created, warnings } = element();
         for (const config of [{}, { callLimits: {} }, { callLimits: { maxPerSecond: undefined } }]) {
-            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], ...config });
+            const el = startWith(created(), { mode: 'cooperative', capabilities: ['allow-scripts'], ...config });
             expect(el._callBudget).toEqual(CALL_BUDGET);
             expect(el._getSandboxCommsScript('cooperative', [])).toContain(literal(CALL_BUDGET));
         }
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: 1024 } });
+        const el = startWith(created(), { mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: 1024 } });
         expect(el._callBudget).toEqual({ calls: CALL_BUDGET.calls, bytes: 1024 });
         // a byte budget below the largest call is kept, and says once which calls it refuses (R5:L-2)
         expect(warnings()).toEqual(['[Sandbox] callLimits.maxBytesPerSecond is 1024, below the largest call (34603008 bytes): a call heavier than 1024 bytes is refused with ARGS_NOT_TRANSFERABLE.']);
     });
 
-    it('a value that is not a finite number >= 1 takes its default, with one warning each (once per element); there is no "off"', () => {
-        const { el, warnings } = element();
+    it('a value that is not a finite number >= 1 is refused by start(), field by field, and so is a callLimits that is not an object; there is no "off"', () => {
+        const { created } = element();
         const invalid = [Infinity, 0, -1, NaN, '10', null, true];
         for (const value of invalid) {
-            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: value, maxBytesPerSecond: value } });
-            expect(el._callBudget, String(value)).toEqual(CALL_BUDGET);
-            expect(el.state).toBe('loading'); // the config is used, the rest of it applies
+            for (const field of ['maxPerSecond', 'maxBytesPerSecond']) {
+                const el = created();
+                expect(() => startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { [field]: value } }), `${field}: ${String(value)}`).toThrow(new RegExp(`^\\[Sandbox\\] start\\(\\): callLimits\\.${field} must be a finite number >= 1`));
+                expect([el.started, el._callBudget], String(value)).toEqual([false, CALL_BUDGET]);
+            }
         }
-        expect(warnings()).toHaveLength(2 * invalid.length);
-        expect(warnings()[0]).toBe('[Sandbox] callLimits.maxPerSecond must be a finite number >= 1; Infinity was ignored: the default 1000 applies.');
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: Infinity } });
-        expect(warnings()).toHaveLength(2 * invalid.length); // the same message, said once
         for (const value of [5, 'off', [1]]) {
-            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: value });
+            const el = created();
+            expect(() => startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: value }), String(value)).toThrow(/^\[Sandbox\] start\(\): callLimits must be an object/);
             expect(el._callBudget).toEqual(CALL_BUDGET);
         }
-        expect(warnings().filter(message => message.startsWith('[Sandbox] callLimits must be an object'))).toHaveLength(3);
     });
 
     it('a custom value takes effect at both ends, in every mode: the host answers BUSY at its edge, and the bootstrap carries it', async () => {
         let now = 1000;
         vi.spyOn(performance, 'now').mockImplementation(() => now);
-        const { el } = element();
+        const { created } = element();
         const custom = { calls: 3, bytes: 1_000_000 };
-        el.setConfig({ mode: 'worker', callLimits: { maxPerSecond: 3, maxBytesPerSecond: 1_000_000 } });
-        expect(el._getSandboxCommsScript('worker', [])).toContain(literal(custom));
-        el.setConfig({ mode: 'strict', callLimits: { maxPerSecond: 3, maxBytesPerSecond: 1_000_000 } });
-        expect(el._getStrictWorkerSource([], '')).toContain(literal(custom));
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: 3, maxBytesPerSecond: 1_000_000 } });
+        const callLimits = { maxPerSecond: 3, maxBytesPerSecond: 1_000_000 };
+        expect(startWith(created(), { mode: 'worker', callLimits })._getSandboxCommsScript('worker', [])).toContain(literal(custom));
+        expect(startWith(created(), { mode: 'strict', callLimits })._getStrictWorkerSource([], '')).toContain(literal(custom));
+        const el = startWith(created(), { mode: 'cooperative', capabilities: ['allow-scripts'], callLimits }, { methods: { noop: () => 'ok' } });
         const { port1 } = new MessageChannel();
         el._port = port1;
         const answers: any[] = [];
-        el.expose('noop', () => 'ok');
         for (let i = 1; i <= 4; i++) el._onGuestMessage(port1, (answer: unknown) => answers.push(answer), request(i, 'noop'), null);
         await settle();
         expect(answers.map(answer => answer.code ?? answer.value)).toEqual(['BUSY', 'ok', 'ok', 'ok']); // BUSY at once, the others a microtask later
@@ -638,18 +635,6 @@ describe("M-2: callLimits, the call budget's option (the owner's name)", () => {
         await settle();
         expect(answers.at(-1)).toMatchObject({ id: 5, ok: true });
         port1.close();
-    });
-
-    it('a changed callLimits is a changed config: the same one rebuilds nothing, another rebuilds', () => {
-        const { el } = element();
-        const config = { mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: 10 } };
-        el.setConfig(config);
-        const frame = el.shadowRoot.querySelector('iframe');
-        el.setConfig(structuredClone(config));
-        expect(el.shadowRoot.querySelector('iframe')).toBe(frame);
-        el.setConfig({ ...config, callLimits: { maxPerSecond: 11 } });
-        expect(el.shadowRoot.querySelector('iframe')).not.toBe(frame);
-        expect(el._callBudget.calls).toBe(11);
     });
 });
 

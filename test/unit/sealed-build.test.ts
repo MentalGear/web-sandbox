@@ -18,6 +18,7 @@ import { limitValues } from '@src/lib/limits';
 import { refuseCodeFromStrings } from '@src/lib/code-from-strings';
 import { reasonText } from '@src/lib/reasons';
 import { inheritedContext } from '../../tools/docgen/extractors/inherited-context';
+import { startWith } from './start-app';
 
 /**
  * Sealed mode's build path (docs/research/24_sealed_mode, step 2): strict mode's view and worker with no network, and no
@@ -92,6 +93,13 @@ async function mount() {
     return el;
 }
 
+/** A new element in the document, started with `config` and the app's `files`. */
+const started = async (config: Record<string, unknown>, files?: Record<string, unknown>) => startWith(await mount(), config, { files });
+
+const clearNetwork = () => {
+    for (const fn of Object.values(NETWORK)) fn.mockClear();
+};
+
 beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'info').mockImplementation(() => {});
@@ -109,38 +117,36 @@ afterEach(() => {
 // ---- the host page's origin, and the network code, at run time
 
 describe("the sealed path reads nothing of the host page's origin or site, and runs no network code", () => {
-    it('setConfig(), reset(), load(), registerFiles() and a switch from strict mode: no read of the host page and no network code, in the config or the build', async () => {
-        const el = await mount();
-        el.registerFiles({ 'main.js': 'void 0', 'a.css': 'p { color: red }', 'b.png': 'x', 'c.json': '{}' });
-        el.setConfig({ mode: 'strict' }); // a strict build first, which runs the network code
-        for (const fn of Object.values(NETWORK)) fn.mockClear();
-        el.setConfig(SEALED_EVERY);
+    it('start(), reset(), a removal and an insertion, after a strict element: no read of the host page and no network code, in the config or the build', async () => {
+        const FILES = { 'main.js': 'void 0', 'a.css': 'p { color: red }', 'b.png': 'x', 'c.json': '{}' };
+        await started({ mode: 'strict' }, FILES); // a strict build first, which runs the network code
+        clearNetwork();
+        const el = await started(SEALED_EVERY, FILES);
         expect(el.state).toBe('loading');
         el.reset();
-        el.load('<p>again</p>');
-        el.registerFiles({ 'd.css': 'p { color: blue }' });
-        el.setConfig({ mode: 'sealed' });
-        el.setConfig({ mode: 'sealed', origins: undefined, fetchBridge: undefined });
-        expect(el.state).toBe('loading');
+        el.remove();
+        document.body.appendChild(el);
+        const plain = await started({ mode: 'sealed' }, { ...FILES, 'd.css': 'p { color: blue }' });
+        const undefinedOptions = await started({ mode: 'sealed', origins: undefined, fetchBridge: undefined });
+        expect([el.state, plain.state, undefinedOptions.state]).toEqual(['loading', 'loading', 'loading']);
         expect(called()).toEqual([]);
 
-        // a strict build with a bridge, then sealed again: the switch reads nothing, and leaves no bridge
-        el.setConfig(STRICT_NETWORK);
-        expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(2);
-        for (const fn of Object.values(NETWORK)) fn.mockClear();
-        el.setConfig({ mode: 'sealed' });
+        // a strict build with a bridge, then a sealed element: it reads nothing, and has no bridge
+        const strict = await started(STRICT_NETWORK);
+        expect(strict.shadowRoot.querySelectorAll('iframe')).toHaveLength(2);
+        clearNetwork();
+        const sealed = await started({ mode: 'sealed' });
         expect(called()).toEqual([]);
-        expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(1);
-        expect([el._fetchBridge, el._bridgeFrame]).toEqual([null, null]);
+        expect(sealed.shadowRoot.querySelectorAll('iframe')).toHaveLength(1);
+        expect([sealed._fetchBridge, sealed._bridgeFrame]).toEqual([null, null]);
     });
 
     it('positive control: strict mode with origins and fetchBridge runs every one of them, the host page read in the config and the bridge at attach', async () => {
-        const el = await mount();
-        for (const fn of Object.values(NETWORK)) fn.mockClear();
-        el.setConfig(STRICT_NETWORK);
+        clearNetwork();
+        await started(STRICT_NETWORK);
         expect(called()).toEqual(Object.keys(NETWORK).filter(name => name !== 'cooperativePolicy').sort());
-        for (const fn of Object.values(NETWORK)) fn.mockClear();
-        el.setConfig({ ...STRICT_NETWORK, mode: 'cooperative', capabilities: ['allow-scripts'] });
+        clearNetwork();
+        await started({ ...STRICT_NETWORK, mode: 'cooperative', capabilities: ['allow-scripts'] });
         expect(called()).toContain('cooperativePolicy');
         expect(called()).toContain('hostPageOrigin');
     });
@@ -171,9 +177,7 @@ describe("the sealed path reads nothing of the host page's origin or site, and r
 
 describe('T4: a sealed build wires no network source: its policy, its gate list, no bridge frame, nothing about origins in INIT_VIEW', () => {
     const build = async (config: Record<string, unknown>) => {
-        const el = await mount();
-        el.registerFiles({ 'main.js': 'void 0', 'a.css': 'p {}', 'b.png': 'x', 'c.json': '{}', 'd.woff2': 'x', 'e.mp4': 'x' });
-        el.setConfig({ ...config, entry: 'main.js' });
+        const el = await started({ ...config, entry: 'main.js' }, { 'main.js': 'void 0', 'a.css': 'p {}', 'b.png': 'x', 'c.json': '{}', 'd.woff2': 'x', 'e.mp4': 'x' });
         expect(el.state).toBe('loading');
         return { el, prepared: el._prepareBuild(), features: featuresOf(el._strictInit.workerSource) };
     };
@@ -240,9 +244,7 @@ describe("a sealed build carries no state of the host page into the worker's fea
         const control = document.title;
         expect(control).toContain(MARK); // the markers are in the page
         for (const config of [{ mode: 'sealed' }, {}, SEALED_EVERY]) {
-            const el = await mount();
-            el.registerFiles({ 'main.js': 'void 0', 'a.css': 'p {}' });
-            el.setConfig({ ...config, entry: 'main.js', html: '<p>hello</p>' });
+            const el = await started({ ...config, entry: 'main.js', html: '<p>hello</p>' }, { 'main.js': 'void 0', 'a.css': 'p {}' });
             expect(el.state, JSON.stringify(config)).toBe('loading');
             const text = handedOver(el);
             expect(text.length).toBeGreaterThan(1000); // it reads what the build hands over, not an empty string
@@ -253,8 +255,7 @@ describe("a sealed build carries no state of the host page into the worker's fea
 
     it('the check sees a leak: with the page title put into the features, the marker is found', async () => {
         poison();
-        const el = await mount();
-        el.setConfig({ mode: 'sealed', html: `<p>${document.title}</p>` }); // the leak the check is for, made by hand
+        const el = await started({ mode: 'sealed', html: `<p>${document.title}</p>` }); // the leak the check is for, made by hand
         expect(handedOver(el)).toContain(MARK);
     });
 });
@@ -415,13 +416,12 @@ describe("T6: the egress table's sealed column: every surface of sealed mode is 
     });
 
     it('the sealed build installs the listeners of its column and has none of the realms the column leaves out: no bridge frame; strict mode with fetchBridge has one', async () => {
-        const el = await mount();
-        el.setConfig({ mode: 'sealed' });
+        const el = await started({ mode: 'sealed' });
         expect(featuresOf(el._strictInit.workerSource).listeners).toEqual(bootstrapListeners('sealed'));
         expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(1);
-        el.setConfig(STRICT_NETWORK);
-        expect(featuresOf(el._strictInit.workerSource).listeners).toEqual(bootstrapListeners('strict'));
-        expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(2);
+        const strict = await started(STRICT_NETWORK);
+        expect(featuresOf(strict._strictInit.workerSource).listeners).toEqual(bootstrapListeners('strict'));
+        expect(strict.shadowRoot.querySelectorAll('iframe')).toHaveLength(2);
     });
 
     it("every channel says what it reaches of the network in sealed mode, none, and the build bears out the two that could: the view's loads and sandboxFetch()", async () => {
@@ -430,16 +430,12 @@ describe("T6: the egress table's sealed column: every surface of sealed mode is 
         expect(channel('`sandboxFetch()`').sealed).toContain('rejects in the guest');
         expect(channel("Strict: the view's loads").sealed).toContain('`blob:`');
         // the view's loads: no network source in the sealed view's policy; strict mode's lists its origins (positive control)
-        const el = await mount();
-        el.registerFiles({ 'b.png': 'x' });
-        el.setConfig({ mode: 'sealed', guestWrites: true });
+        const el = await started({ mode: 'sealed', guestWrites: true }, { 'b.png': 'x' });
         expect(networkSources(policyOf(el))).toEqual([]);
         expect(directives(policyOf(el)).get('img-src')).toEqual(['blob:']);
-        el.setConfig(STRICT_NETWORK);
-        expect(networkSources(policyOf(el))).toContain(LISTED);
+        expect(networkSources(policyOf(await started(STRICT_NETWORK, { 'b.png': 'x' })))).toContain(LISTED);
         // sandboxFetch(): the sealed worker's bootstrap is told so (the guest's refusal: the describe above)
-        el.setConfig({ mode: 'sealed' });
-        expect(featuresOf(el._strictInit.workerSource).sealed).toBe(true);
+        expect(featuresOf((await started({ mode: 'sealed' }))._strictInit.workerSource).sealed).toBe(true);
     });
 
     it('docs/API.md renders the column', () => {
@@ -470,9 +466,7 @@ describe("T9: every row of the host page's context says what it is in sealed mod
         const noNetwork = inheritedContextRows().filter(row => row.sealed.standing === 'not-applicable' && row.sealed.because === 'no-network').map(row => row.id);
         expect(noNetwork.sort()).toEqual(['cookies', 'referrer', 'serviceWorker']);
         const paths = async (config: Record<string, unknown>) => {
-            const el = await mount();
-            el.registerFiles({ 'a.css': 'p {}', 'b.png': 'x' });
-            el.setConfig(config);
+            const el = await started(config, { 'a.css': 'p {}', 'b.png': 'x' });
             const policy = directives(policyOf(el));
             return {
                 sources: networkSources(policyOf(el)),
@@ -495,11 +489,8 @@ describe("T9: every row of the host page's context says what it is in sealed mod
     it("the rows dropped for 'no-guest-document': a sealed build is the strict view, which has none; a cooperative build has one (positive control)", async () => {
         const rows = inheritedContextRows().filter(row => row.sealed.standing === 'not-applicable' && row.sealed.because === 'no-guest-document').map(row => row.id);
         expect(rows.sort()).toEqual(['ancestorOrigins', 'uiSurfaces']);
-        const el = await mount();
-        el.setConfig({ mode: 'sealed' });
-        expect(el._prepareBuild().strictInit).not.toBeNull();
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
-        expect(el._prepareBuild().strictInit).toBeNull();
+        expect((await started({ mode: 'sealed' }))._prepareBuild().strictInit).not.toBeNull();
+        expect((await started({ mode: 'cooperative', capabilities: ['allow-scripts'] }))._prepareBuild().strictInit).toBeNull();
     });
 
     it("docs/THREAT-MODEL.md renders the column", () => {
@@ -515,31 +506,28 @@ describe("T9: every row of the host page's context says what it is in sealed mod
 describe("the warning about scripts in `html` names sealed mode in sealed mode", () => {
     it('sealed says sealed mode (the default), once per element; strict says strict mode', async () => {
         const warn = vi.mocked(console.warn);
-        const el = await mount();
         // what the view noted it dropped of the initial view (VIEW_INITIAL), which the element warns from (BD7:LIM-1)
-        const viewDropped = (dropped: string[]) => {
+        const viewDropped = (el: any, dropped: string[]) => {
             const { port1 } = new MessageChannel();
             el._viewPort = port1;
             el._onViewMessage(port1, { type: 'VIEW_INITIAL', dropped });
             port1.close();
         };
-        el.setConfig({ mode: 'sealed', html: '<script>x()</script>' });
-        viewDropped(['script']);
-        el.setConfig({ mode: 'sealed', html: '<p onclick="y()">y</p>' });
-        viewDropped(['handler']);
+        const el = await started({ mode: 'sealed', html: '<script>x()</script><p onclick="y()">y</p>' });
+        viewDropped(el, ['script']);
+        el.reset();
+        viewDropped(el, ['handler']);
         const said = () => warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('runs no script in `html`'));
         expect(said()).toEqual(["[Sandbox] sealed mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`."]);
-        el.setConfig({ mode: 'strict', html: '<script>x()</script>' });
-        viewDropped(['script']);
+        viewDropped(await started({ mode: 'strict', html: '<script>x()</script>' }), ['script']);
         expect(said()[1]).toBe("[Sandbox] strict mode runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.");
     });
 
     it("a registered stylesheet's network URL: sealed mode's warning names no origin to list, strict mode's does", async () => {
         const warn = vi.mocked(console.warn);
-        const el = await mount();
-        el.registerFiles({ 'a.css': `p { background: url(${LISTED}/x.png) }` });
-        el.setConfig({ mode: 'sealed' });
-        el.setConfig({ mode: 'strict' });
+        const files = { 'a.css': `p { background: url(${LISTED}/x.png) }` };
+        await started({ mode: 'sealed' }, files);
+        await started({ mode: 'strict' }, files);
         const said = warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('registered stylesheet "a.css"'));
         expect(said).toHaveLength(2);
         expect(said[0]).toMatch(/^\[Sandbox\] sealed mode: .*sealed mode has no network\. Register the file instead\.$/);
@@ -554,41 +542,36 @@ describe("sealed mode's wirings are held by the unit run: the code-from-string r
     const refusal = refuseCodeFromStrings.toString();
 
     it("the worker's source holds the code-from-string refusal exactly when scriptUnsafe is off: always in sealed mode, in strict mode without scriptUnsafe", async () => {
-        const el = await mount();
-        el.registerFiles({ 'main.js': 'void 0' });
-        const sourceOf = (config: Record<string, unknown>) => {
-            el.setConfig(config);
+        const sourceOf = async (config: Record<string, unknown>) => {
+            const el = await started(config, { 'main.js': 'void 0' });
             expect(el.state, JSON.stringify(config)).toBe('loading');
             return el._strictInit.workerSource as string;
         };
         for (const config of [{}, { mode: 'sealed' }, { mode: 'sealed', entry: 'main.js' }, { mode: 'strict' }, { mode: 'strict', entry: 'main.js' }]) {
-            const source = sourceOf(config);
+            const source = await sourceOf(config);
             expect(source.split(refusal), `${JSON.stringify(config)}: the refusal runs once, before the entry`).toHaveLength(2);
             expect(source.indexOf(refusal), JSON.stringify(config)).toBeLessThan(source.indexOf('\n(function () {\n'));
         }
         // positive control: strict mode's scriptUnsafe runs strings as code, so its worker has no refusal
-        expect(sourceOf({ mode: 'strict', scriptUnsafe: true }).includes(refusal)).toBe(false);
+        expect((await sourceOf({ mode: 'strict', scriptUnsafe: true })).includes(refusal)).toBe(false);
     });
 
     it("an entry that holds an import expression is refused by the build in sealed and strict mode, with its reason; one without builds", async () => {
-        const el = await mount();
-        const reasons: string[] = [];
-        el.addEventListener('terminated', (event: CustomEvent) => reasons.push(event.detail.reason));
         for (const mode of ['sealed', 'strict'] as const) {
             for (const entry of ["import('https://x.example/a')", "import.source('https://x.example/a')", "import /* */ . defer('https://x.example/a')", "x = 1; // import(later)"]) {
-                el.registerFiles({ 'main.js': entry });
-                el.setConfig({ mode, entry: 'main.js' });
+                const el = await started({ mode, entry: 'main.js' }, { 'main.js': entry });
                 expect(el.state, `${mode}: ${entry}`).toBe('terminated');
                 expect(el._buildRefusal(), `${mode}: ${entry}`).toBe(reasonText('entryImport'));
             }
-            el.registerFiles({ 'main.js': 'const imports = 1; sandboxView.render("<p>x</p>");' });
-            el.setConfig({ mode, entry: 'main.js' });
+            const el = await started({ mode, entry: 'main.js' }, { 'main.js': 'const imports = 1; sandboxView.render("<p>x</p>");' });
             expect(el.state).toBe('loading');
             expect(el._buildRefusal(), `${mode}: no import expression`).toBeNull();
         }
         // the termination says why
-        el.registerFiles({ 'main.js': "import.defer('https://x.example/a')" });
-        el.setConfig({ entry: 'main.js' });
+        const el = await mount();
+        const reasons: string[] = [];
+        el.addEventListener('terminated', (event: CustomEvent) => reasons.push(event.detail.reason));
+        startWith(el, { entry: 'main.js' }, { files: { 'main.js': "import.defer('https://x.example/a')" } });
         await vi.waitFor(() => expect(reasons.at(-1)).toBe(reasonText('entryImport')));
     });
 });

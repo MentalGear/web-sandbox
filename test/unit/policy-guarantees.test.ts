@@ -318,7 +318,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         expect([el.state, el._config.html]).toEqual(['loading', '<p id="kept">']);
     });
 
-    it("the config is a copy: an array the caller changes after setConfig() never changes the policy a later reset() builds", async () => {
+    it("the config is a copy: an array the caller changes after start() never changes the policy a later reset() builds", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const list = ['https://a.example'];
         const capabilities: string[] = ['allow-scripts'];

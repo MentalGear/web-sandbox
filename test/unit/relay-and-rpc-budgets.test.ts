@@ -6,6 +6,7 @@ import { defineWebSandbox } from '@src/host';
 import { createBroker, RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_BYTES_PER_SECOND, LOG_DROPPED_ARGUMENT, LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_MAX_STRING, toLogDetail } from '@src/lib/sandbox-log';
+import { startWith, type AppSetup } from './start-app';
 
 /**
  * Findings of R1 that library logic decides, each
@@ -289,7 +290,7 @@ describe('R3-3: one byte budget per RPC message, and per channel in flight', () 
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
-        el.setConfig({ mode: 'cooperative' });
+        startWith(el, { mode: 'cooperative' });
         await expect(el.callWithTimeout(0, 'm', new Uint8Array(RPC_MAX_BYTES))).rejects.toMatchObject({ code: 'ARGS_NOT_TRANSFERABLE' });
         el.remove();
     });
@@ -393,23 +394,32 @@ describe('R3-1: the Trusted Types policy blesses only the sandbox\'s own documen
 
 // ---- low findings -------------------------------------------------------------------------------------------------
 
-const mountElement = async (config?: Record<string, unknown>) => {
+const mountElement = async (config?: Record<string, unknown>, setup: AppSetup = {}) => {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    if (config) el.setConfig(config);
+    if (config) startWith(el, config, setup);
     return el;
 };
 const task = () => new Promise(resolve => setTimeout(resolve, 0));
 
 describe('R1-3: a value that should be dropped never refuses the whole config', () => {
     it.each([
-        ['capabilities: 5', { capabilities: 5 }, 'must be a list'],
-        ['capabilities: {}', { capabilities: {} }, 'must be a list'],
-        ['unsafeCapabilities that is not a list', { unsafeCapabilities: 'allow-popups' }, 'must be a list'],
+        ['capabilities: 5', { capabilities: 5 }, '"capabilities" must be a list'],
+        ['capabilities: {}', { capabilities: {} }, '"capabilities" must be a list'],
+        ['unsafeCapabilities that is not a list', { unsafeCapabilities: 'allow-popups' }, '"unsafeCapabilities" must be a list'],
+        ['html that is not a string', { html: 5 }, '"html" must be a string'],
+    ])('%s: a value of the wrong type is refused by start(), with a TypeError that names it; nothing is built', async (_, config, refusal) => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        defineWebSandbox();
+        const el = document.createElement('web-sandbox') as any;
+        expect(() => startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'], ...config })).toThrow(`[Sandbox] start(): ${refusal}`);
+        expect(el.started).toBe(false);
+    });
+
+    it.each([
         ['a BigInt and a cyclic entry in fetchBridge.allow', (() => { const cyclic: any = {}; cyclic.self = cyclic; return { fetchBridge: { allow: [1n, cyclic, 'https://api.example'] } }; })(), 'a value of type bigint'],
         ['fetchBridge.methods that is not a list', { fetchBridge: { allow: [], methods: 'GET' } }, 'fetchBridge.methods must be a list'],
-        ['html that is not a string', { html: 5 }, '"html" must be a string'],
     ])('%s: dropped with a warning, the rest applied, the sandbox builds', async (_, config, warning) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mountElement({ mode: 'cooperative', capabilities: ['allow-scripts'], ...config });
@@ -446,62 +456,35 @@ describe('R3-5: fetchBridge.allow naming the host page or a private host is hono
 });
 
 describe("R3-2: a build's 'terminated' comes in a task: a listener added right after the call hears it", () => {
-    it('setConfig() of an unknown mode, reset() of it, a strict entry that is not registered: state at once, the event after', async () => {
+    it('start() of a build that throws, reset() of it, a strict entry the files no longer hold: state at once, the event after', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mountElement();
-        for (const act of [() => el.setConfig({ mode: 'Strict' }), () => el.reset(), () => el.setConfig({ entry: 'missing.js' })]) {
+        el._guestPolicy = () => { throw new Error('no policy'); };
+        const entry = await mountElement({ mode: 'strict', entry: 'main.js', guestWrites: true }, { files: { 'main.js': 'void 0' } });
+        await entry._handleGuestWrite(entry._guestWrites, { change: 'remove', path: 'main.js' });
+        entry.commitGuestWrites(['main.js']); // the next build has no entry
+        for (const [target, act] of [[el, () => startWith(el, { mode: 'strict' })], [el, () => el.reset()], [entry, () => entry.reset()]] as const) {
             act();
-            expect(el.state).toBe('terminated');
+            expect(target.state).toBe('terminated');
             const reasons: string[] = [];
-            el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason), { once: true });
+            target.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason), { once: true });
             await task();
             expect(reasons).toHaveLength(1);
         }
     });
 
-    it('an answer that is no longer the state is never dispatched: a usable config set right after a refused one', async () => {
+    it('an answer that is no longer the state is never dispatched: a build that works started right after one that failed', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mountElement();
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
-        el.setConfig({ mode: 'Strict' });
-        el.setConfig({ mode: 'cooperative' });
+        const build = el._guestPolicy;
+        el._guestPolicy = () => { throw new Error('no policy'); };
+        startWith(el, { mode: 'cooperative' });
+        el._guestPolicy = build;
+        el.reset();
         await task();
         expect([el.state, reasons]).toEqual(['loading', []]);
-    });
-});
-
-describe('R3-7: setConfig() of the configuration the environment stands on is no change', () => {
-    it('no rebuild for the same config (the same frame stays); a changed config, load() in between, or a terminated sandbox rebuild', async () => {
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const config = { mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: ['https://a.example'] } };
-        const el = await mountElement(config);
-        const frame = () => el.shadowRoot.querySelector('iframe');
-        const first = frame();
-        el.setConfig(structuredClone(config));
-        expect(frame()).toBe(first);
-        el.setConfig({ ...config, html: '<p>other</p>' });
-        expect(frame()).not.toBe(first);
-        const second = frame();
-        el.load('<p>loaded</p>');
-        el.setConfig({ ...config, html: '<p>other</p>' });
-        expect(frame()).not.toBe(second);
-        el.terminate();
-        el.setConfig({ ...config, html: '<p>other</p>' });
-        expect(el.state).toBe('loading');
-    });
-});
-
-describe("R3-8: auto-sizing gives the embedder's inline height back", () => {
-    it('the inline height before the first report returns when a build turns auto-sizing off', async () => {
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mountElement({ mode: 'cooperative', capabilities: ['allow-scripts'], autoResize: true });
-        el.style.height = '123px';
-        el._startAutoResize(); // what 'ready' does (no frame loads in jsdom)
-        el._resizer.report({ type: 'RESIZE', height: 40 });
-        await vi.waitFor(() => expect(el.style.height).toBe('40px'));
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
-        expect(el.style.height).toBe('123px');
     });
 });
 
@@ -517,16 +500,14 @@ describe('R3-9: expose() with a handler that is not a function, or a name that i
 describe("R3-4: cooperative mode without allow-scripts says once what has no effect", () => {
     it('scripts in html, the watchdog, autoResize, the fetch bridge, guest writes, execute() and exposed methods are named, once', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mountElement();
-        el.expose('m', () => 1);
         const config = { mode: 'cooperative', html: '<script>x()</script>', watchdogTimeout: 1000, autoResize: true, fetchBridge: { allow: [] }, guestWrites: true, scriptUnsafe: true };
-        el.setConfig(config);
+        const el = await mountElement(config, { methods: { m: () => 1 } });
         el.reset();
         const said = warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('without "allow-scripts"'));
         expect(said).toHaveLength(1);
         for (const name of ['scripts and handlers in html', 'watchdogTimeout', 'autoResize', 'fetchBridge', 'guestWrites', 'execute()', 'expose()']) expect(said[0]).toContain(name);
         warn.mockClear();
-        el.setConfig({ ...config, capabilities: ['allow-scripts'] }); // positive control: nothing to say
+        await mountElement({ ...config, capabilities: ['allow-scripts'] }, { methods: { m: () => 1 } }); // positive control, another element: nothing to say
         expect(warn.mock.calls.filter(call => String(call[0]).includes('without "allow-scripts"'))).toEqual([]);
     });
 });

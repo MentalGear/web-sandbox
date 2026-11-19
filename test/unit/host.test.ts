@@ -2,6 +2,7 @@ import '@src/network'; // the network build: this file tests modes and options t
 import { describe, it, expect, vi } from 'vitest';
 import { ALLOWED_CAPABILITIES } from '@src/csp-directives';
 import { policyNotGiven } from '@src/lib/csp/host-connect';
+import { startWith, type AppSetup } from './start-app';
 
 describe('WebSandbox Security Configuration', () => {
   it('should have ALLOWED_CAPABILITIES defined', () => {
@@ -36,12 +37,12 @@ const frames = (el: HTMLElement) => {
   return { outer, wrapper, inner, policy };
 };
 
-const mount = async (config?: Record<string, unknown>) => {
+const mount = async (config?: Record<string, unknown>, setup: AppSetup = {}) => {
   const { defineWebSandbox } = await import('@src/host');
   defineWebSandbox();
   const el = document.createElement('web-sandbox') as any;
   document.body.appendChild(el);
-  if (config) el.setConfig(config);
+  if (config) startWith(el, config, setup);
   return el;
 };
 
@@ -72,7 +73,7 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
       warn.mockClear();
       const el = await mount({ mode, origins: { scripts: ["'SELF'", 'https://a.example'], connect: ["'self'", 'https:', '*'], images: ['data:'] } });
       el.reset();
-      el.setConfig({ mode, origins: { scripts: ["'SELF'", 'https://a.example'], connect: ["'self'", 'https:', '*'], images: ['data:'] } });
+      el.reset();
       const { policy } = frames(el);
       expect(policy.toLowerCase()).not.toMatch(/'self'|data:|\*|https: /);
       expect(policy).toContain("script-src 'unsafe-inline' https://a.example;");
@@ -88,7 +89,7 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const el = await mount({ mode: 'cooperative', connectionsAllowed: { 'img-src': ['https://img.example'], 'default-src': ['*'] }, origins: { connect: ['https://api.example'] }, hostContentSecurityPolicy: false, html: '<p id="kept">' });
     el.reset();
-    el.setConfig({ mode: 'cooperative', connectionsAllowed: null, origins: { connect: ['https://api.example'] }, hostContentSecurityPolicy: false, html: '<p id="kept">' });
+    el.reset();
     expect(el.state).toBe('loading');
     expect(frames(el).policy).toBe(COOPERATIVE_DEFAULT.replace("connect-src 'none'", 'connect-src https://api.example'));
     expect(el._config.html).toBe('<p id="kept">');
@@ -139,7 +140,7 @@ describe("the host page's policy applied to the connect lists (hostContentSecuri
       warn.mockClear();
       const el = await mount({ mode, ...CONFIG, hostContentSecurityPolicy: 'connect-src https://api.example' });
       el.reset();
-      el.setConfig({ mode, ...CONFIG, hostContentSecurityPolicy: 'connect-src https://api.example', html: '<p>again</p>' });
+      el.reset();
       const connect = /connect-src ([^;]*);/.exec(mode === 'strict' ? el.shadowRoot!.querySelector('iframe')!.srcdoc : frames(el).policy)![1];
       expect(connect, mode).toMatch(/^https:\/\/api\.example/);
       expect(connect, mode).not.toMatch(/ws\.example|127\.0\.0\.1/);
@@ -173,7 +174,7 @@ describe("the host page's policy applied to the connect lists (hostContentSecuri
       warn.mockClear();
       const el = await mount({ mode, ...CONFIG });
       el.reset();
-      el.setConfig({ mode, ...CONFIG, html: '<p>again</p>' });
+      el.reset();
       const connect = /connect-src ([^;]*);/.exec(mode === 'strict' ? el.shadowRoot!.querySelector('iframe')!.srcdoc : frames(el).policy)![1];
       expect(connect, mode).not.toMatch(/example|127\.0\.0\.1/);
       expect(bridgePolicy(el), mode).toContain("connect-src 'none';");
@@ -198,14 +199,16 @@ describe("the host page's policy applied to the connect lists (hostContentSecuri
     warn.mockRestore();
   });
 
-  it('the configured lists are kept as they are: dropping is per build, so a later config with false has the lists whole', async () => {
+  it('the configured lists are kept as they are: dropping is per build, so each build drops again and a config with false has the lists whole', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const el = await mount({ mode: 'cooperative', ...CONFIG, hostContentSecurityPolicy: "connect-src 'none'" });
     expect(frames(el).policy).toContain("connect-src 'none';");
-    el.setConfig({ mode: 'cooperative', ...CONFIG });
+    expect([el._origins.connect, el._fetchPolicy.allow]).toEqual([CONFIG.origins.connect, CONFIG.fetchBridge.allow]);
+    el.reset();
     expect(frames(el).policy).toContain("connect-src 'none';");
-    el.setConfig({ mode: 'cooperative', ...CONFIG, hostContentSecurityPolicy: false });
-    expect(frames(el).policy).toContain('connect-src https://api.example https://ws.example wss://ws.example http://127.0.0.1:3001;');
+    const unnarrowed = await mount({ mode: 'cooperative', ...CONFIG, hostContentSecurityPolicy: false });
+    expect(frames(unnarrowed).policy).toContain('connect-src https://api.example https://ws.example wss://ws.example http://127.0.0.1:3001;');
+    unnarrowed.remove();
     el.remove();
     warn.mockRestore();
   });
@@ -222,14 +225,12 @@ describe('the scriptUnsafe guard rail (backlog S4)', () => {
   const scriptUnsafeWarnings = (warn: { mock: { calls: unknown[][] } }) =>
     warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('scriptUnsafe is enabled'));
 
-  it('warns exactly once per instance across setConfig(), reset() and load(), naming eval in the guest', async () => {
+  it('warns exactly once per instance across start() and reset(), naming eval in the guest', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const first = await mount();
-    first.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
+    startWith(first, { mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
     first.reset();
-    first.load('<p>again</p>');
-    first.setConfig({ scriptUnsafe: false });
-    first.setConfig({ scriptUnsafe: true, mode: 'worker' });
+    first.terminate();
     first.reset();
     const warnings = scriptUnsafeWarnings(warn);
     expect(warnings).toHaveLength(1);
@@ -239,13 +240,13 @@ describe('the scriptUnsafe guard rail (backlog S4)', () => {
 
     // a second instance has its own guard rail
     const second = await mount();
-    second.setConfig({ mode: 'strict', scriptUnsafe: true });
+    startWith(second, { mode: 'strict', scriptUnsafe: true });
     expect(scriptUnsafeWarnings(warn)).toHaveLength(2);
-    // sealed mode, the default, refuses it (BD6:ISO-1): no warning, the config refused with its reason
+    // sealed mode, the default, refuses it (BD6:ISO-1): no warning, start() throws its reason
     const third = await mount();
-    third.setConfig({ scriptUnsafe: true });
+    expect(() => startWith(third, { scriptUnsafe: true })).toThrow(TypeError);
     expect(scriptUnsafeWarnings(warn)).toHaveLength(2);
-    expect(third.state).toBe('terminated');
+    expect(third.started).toBe(false);
     third.remove();
     first.remove();
     second.remove();
@@ -254,11 +255,14 @@ describe('the scriptUnsafe guard rail (backlog S4)', () => {
 
   it('never warns while scriptUnsafe is off, and only a literal true enables it', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const el = await mount();
-    el.setConfig({ capabilities: ['allow-scripts'] });
-    el.setConfig({ scriptUnsafe: false });
-    el.setConfig({ scriptUnsafe: 'true' as any });
-    el.setConfig({ scriptUnsafe: 1 as any });
+    const left = startWith(await mount(), { capabilities: ['allow-scripts'] });
+    left.remove();
+    const el = startWith(await mount(), { scriptUnsafe: false });
+    for (const scriptUnsafe of ['true', 1]) {
+      const refused = await mount();
+      expect(() => startWith(refused, { mode: 'cooperative', scriptUnsafe }), String(scriptUnsafe)).toThrow(/scriptUnsafe must be a boolean/);
+      refused.remove();
+    }
     el.reset();
     expect(scriptUnsafeWarnings(warn)).toEqual([]);
     const wrapper = new DOMParser().parseFromString(el.shadowRoot!.querySelector('iframe')!.srcdoc, 'text/html');
@@ -277,7 +281,7 @@ describe('no directive a <meta> policy discards is ever emitted (backlog S7)', (
       const origins = { 'frame-ancestors': ["'none'"], 'report-uri': ['https://r.example/'], 'report-to': ['group'], 'sandbox': ['allow-scripts'] };
       const el = await mount({ mode, origins });
       el.reset();
-      el.setConfig({ mode, origins });
+      el.reset();
       const { policy } = frames(el);
       expect(policy).toBe(COOPERATIVE_DEFAULT);
       for (const directive of ['frame-ancestors', 'report-uri', 'report-to', 'sandbox']) {
@@ -326,8 +330,9 @@ describe('the guest bootstrap always runs where scripts are allowed (backlog S13
       const el = await mount({ mode, capabilities: ['allow-scripts'], origins: { scripts: ['https://cdn.example'] } });
       expect(frames(el).policy, mode).toMatch(/script-src 'unsafe-inline'[ ;]/);
       expect(el._lc.build.announces, mode).toBe(true);
-      el.setConfig({ mode, capabilities: [] });
-      expect(el._lc.build.announces, mode).toBe(mode === 'worker'); // worker mode always adds allow-scripts
+      const without = await mount({ mode, capabilities: [] });
+      expect(without._lc.build.announces, mode).toBe(mode === 'worker'); // worker mode always adds allow-scripts
+      without.remove();
       el.remove();
     }
   });
@@ -341,24 +346,17 @@ describe('content auto-sizing reaches the guest bootstrap only when asked for (b
   };
 
   it('passes { autoResize: true } in cooperative mode with autoResize: true, and nothing otherwise', async () => {
-    const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const el = document.createElement('web-sandbox') as any;
-    document.body.appendChild(el);
     const FEATURE = '"autoResize":true'; // in the features literal, next to the call budget every bootstrap carries
 
-    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
-    expect(guestDocument(el)).not.toContain(FEATURE);
-    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], autoResize: 'yes' });
-    expect(guestDocument(el)).not.toContain(FEATURE);
-    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], autoResize: true });
-    expect(guestDocument(el)).toContain(FEATURE);
-    el.setConfig({ mode: 'worker', autoResize: true });
-    expect(guestDocument(el)).not.toMatch(/autoResize\\*":true/); // the worker source is a string literal: escaped quotes
+    expect(guestDocument(await mount({ mode: 'cooperative', capabilities: ['allow-scripts'] }))).not.toContain(FEATURE);
+    const refused = await mount();
+    expect(() => startWith(refused, { mode: 'cooperative', capabilities: ['allow-scripts'], autoResize: 'yes' })).toThrow(/autoResize must be a boolean/);
+    expect(guestDocument(await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], autoResize: true }))).toContain(FEATURE);
+    expect(guestDocument(await mount({ mode: 'worker', autoResize: true }))).not.toMatch(/autoResize\\*":true/); // the worker source is a string literal: escaped quotes
     expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('autoResize'))).toHaveLength(1);
 
-    el.remove();
+    document.body.replaceChildren();
     warn.mockRestore();
   });
 });
@@ -370,26 +368,19 @@ describe('the fetch bridge reaches the guest only when configured (backlog B5)',
   };
 
   it('passes { fetchBridge: { timeoutMs } } in both modes, nothing without it, and keeps the reserved name for itself', async () => {
-    const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const el = document.createElement('web-sandbox') as any;
-    document.body.appendChild(el);
 
-    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
-    expect(guestDocument(el)).not.toMatch(/fetchBridge\\*":/);
-    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: { allow: ['https://api.example'], timeoutMs: 2500 } });
-    expect(guestDocument(el)).toContain('"fetchBridge":{"timeoutMs":2500}');
-    el.setConfig({ mode: 'worker', fetchBridge: { allow: [] } });
-    expect(guestDocument(el)).toMatch(/fetchBridge\\*":\{\\*"timeoutMs\\*":10000\}/);
-    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: 'on' });
-    expect(guestDocument(el)).not.toMatch(/fetchBridge\\*":/);
+    expect(guestDocument(await mount({ mode: 'cooperative', capabilities: ['allow-scripts'] }))).not.toMatch(/fetchBridge\\*":/);
+    expect(guestDocument(await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: { allow: ['https://api.example'], timeoutMs: 2500 } }))).toContain('"fetchBridge":{"timeoutMs":2500}');
+    expect(guestDocument(await mount({ mode: 'worker', fetchBridge: { allow: [] } }))).toMatch(/fetchBridge\\*":\{\\*"timeoutMs\\*":10000\}/);
+    expect(guestDocument(await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: 'on' }))).not.toMatch(/fetchBridge\\*":/);
 
-    el.expose('sandbox:fetch', () => 'forged');
-    el.expose('sandbox:other', () => 'forged');
-    expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('reserved for the library'))).toHaveLength(2);
+    for (const name of ['sandbox:fetch', 'sandbox:other']) {
+      const el = await mount();
+      expect(() => startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: { allow: [] } }, { methods: { [name]: () => 'forged' } }), name).toThrow(/reserved for the library/);
+    }
 
-    el.remove();
+    document.body.replaceChildren();
     warn.mockRestore();
   });
 });
