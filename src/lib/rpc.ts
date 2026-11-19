@@ -1056,7 +1056,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         const type = (data as any).type;
         if (typeof type !== 'string') return;
         // An answer goes back on the channel its request arrived on when the caller names one: the host
-        // does (see setupChannel), and that is what keeps one frame's answers out of the next frame.
+        // does (see _setupChannel), and that is what keeps one frame's answers out of the next frame.
         // Without one it falls back to `send` — the guest has a single port per frame, so they coincide.
         if (type === 'RPC_REQ') return handleRequest(data, reply ?? send);
         if (type === 'RPC_RES') return handleResponse(data);

@@ -370,7 +370,7 @@ stateDiagram-v2
 | `startLoadDeadline` | arms the load deadline (LOAD_TIMEOUT_MS) | — |
 | `stopLoadDeadline` | stops the load deadline | — |
 | `sendInitView` | strict mode, at the wrapper's load: the view (`target`) gets its ports (`_setupStrictChannels`) | `target: window` |
-| `openChannel` | cooperative and worker mode: the announced port, or none (`setupChannel`) | `port: unknown` |
+| `openChannel` | cooperative and worker mode: the announced port, or none (`_setupChannel`) | `port: unknown` |
 | `closePort` | an announced port no build takes | `port: unknown` |
 | `checkView` | the view's size and still-style warnings (R3-1) | `height: unknown`, `stillStyleRefused: boolean` |
 | `flush` | what waited for `ready` goes to the port (`_flushQueues`) | — |

@@ -411,7 +411,7 @@ for (const mode of MODES) {
         test('a host answer produced after a re-init is never delivered to the next frame (no port yet)', async ({ sandbox }) => {
             await sandbox.exposeHost('whoami', `() => 'fresh answer for the next frame'`);
             // Re-initializes, queues the next frame's first call, then answers while no port exists at all
-            // (between the teardown and the next setupChannel).
+            // (between the teardown and the next _setupChannel).
             await sandbox.exposeHost('reloadThenAnswer', `() => {
                 const el = document.querySelector('web-sandbox');
                 el.reset();

@@ -376,7 +376,7 @@ export class NetworkMethods {
     // The guest's port, announced by the guest frame itself (BR:CB1), becomes this environment's port. Null when this
     // build's guest runs no bootstrap (no allow-scripts): there is nothing to talk to,
     // and calls wait in the queue until they time out.
-    private setupChannel(port: MessagePort | null) {
+    private _setupChannel(port: MessagePort | null) {
         if (this._port) { this._port.close(); this._port = null; }
         if (!port) return;
         this._port = port;

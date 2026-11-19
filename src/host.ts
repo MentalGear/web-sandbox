@@ -722,7 +722,7 @@ export class WebSandbox extends ElementBase {
 
     // One broker lives on the element for its whole life, so the app's host methods persist across
     // frame recreation (the guest's broker is per-frame and resets with each new frame). Its send only
-    // ever carries the host's own requests: it queues them until a port exists, then setupChannel
+    // ever carries the host's own requests: it queues them until a port exists, then _setupChannel
     // flushes them. Answers to the guest never use it — they go back on the port the request arrived on.
     // Results go back with their snapshot's ArrayBuffers transferred (R2:C-3: rpc.ts, sendResult).
     // A guest's request past its environment's per-second budget is answered BUSY (R3:M-2: _admitGuestCall).
@@ -1270,7 +1270,7 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Strict mode (ADR-005): two channels to the view, once per frame like setupChannel. The logic port goes
+     * Strict mode (ADR-005): two channels to the view, once per frame like _setupChannel. The logic port goes
      * on to the worker, which the view spawns; the view port stays with the view, which runs no guest code,
      * so what arrives on it is the library's own: the view's violations, its height, an entry failure, and
      * its liveness answers. The render port between view and worker is the view's to create.
@@ -1916,7 +1916,7 @@ export class WebSandbox extends ElementBase {
     // _flushQueues. The queued calls and execute() code are posted in the order they were made, and nowhere else. A call
     // made while loading waits in the queue for this point; if it settles first (its timeout), it leaves the queue and is
     // never posted (_queuedWhilePending), so a call that timed out before `ready` never runs. Neither the wrapper's load
-    // (_setupStrictChannels) nor setupChannel flushes: two flush points for one rule would let strict mode's release a
+    // (_setupStrictChannels) nor _setupChannel flushes: two flush points for one rule would let strict mode's release a
     // call before `ready`.
     private _flush() {
         if (this._port) this._flushQueues(this._port);
@@ -2047,10 +2047,10 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
         // The completion of a build (S65), in the order `enterReady` gives them.
         stopLoadDeadline: () => Reflect.apply(LIFECYCLE._stopLoadDeadline, element, []),
         sendInitView: (target) => Reflect.apply(LIFECYCLE._setupStrictChannels, element, [target as Window]),
-        // Only a build of the network modes announces a port, and has the method (network-host.ts, setupChannel): reached
+        // Only a build of the network modes announces a port, and has the method (network-host.ts, _setupChannel): reached
         // through the class's prototype, where that build installed it, as every effect is (BR:CB7).
         openChannel: (port) => {
-            const setupChannel = (LIFECYCLE as unknown as Partial<NetworkElement>).setupChannel;
+            const setupChannel = (LIFECYCLE as unknown as Partial<NetworkElement>)._setupChannel;
             if (setupChannel) Reflect.apply(setupChannel, element, [port as MessagePort | null]);
         },
         closePort: (port) => (port as MessagePort | null)?.close(),

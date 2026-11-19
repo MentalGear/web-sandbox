@@ -122,7 +122,7 @@ export interface NetworkElement {
     /** The guest frame's announcement (cooperative and worker mode), handed to the reducer. */
     _onAnnouncement(announcement: Announcement): void;
     /** The announced port becomes the environment's (the reducer's `openChannel`). */
-    setupChannel(port: MessagePort | null): void;
+    _setupChannel(port: MessagePort | null): void;
     /** One EXECUTE frame, with its budget armed first. */
     _postExecute(port: MessagePort, code: string): void;
     /** Whether a PONG answers an execution probe, which then passes. */
@@ -130,7 +130,7 @@ export interface NetworkElement {
 }
 
 /** The names of those methods, as a value: what the install checks the network modes bring (network-install.ts). */
-export const NETWORK_ELEMENT_METHODS = ['_prepareNetworkBuild', '_startFetchBridge', '_documentSandboxFlags', '_onAnnouncement', 'setupChannel', '_postExecute', '_passExecutionProbe'] as const satisfies readonly (keyof NetworkElement)[];
+export const NETWORK_ELEMENT_METHODS = ['_prepareNetworkBuild', '_startFetchBridge', '_documentSandboxFlags', '_onAnnouncement', '_setupChannel', '_postExecute', '_passExecutionProbe'] as const satisfies readonly (keyof NetworkElement)[];
 type NetworkElementMethodsComplete = Holds<Complete<keyof NetworkElement, typeof NETWORK_ELEMENT_METHODS>>;
 
 /**

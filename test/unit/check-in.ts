@@ -17,7 +17,7 @@ export function checkIn(el: any, port: unknown): void {
     const build = el._lc.build;
     const gen = el._lc.gen;
     if (build?.strict) {
-        el.setupChannel(port);
+        el._setupChannel(port);
         el._step({ t: 'viewReady', gen, height: null, stillStyleRefused: false });
         return;
     }

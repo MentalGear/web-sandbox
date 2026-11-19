@@ -253,7 +253,7 @@ export const LC_EFFECTS = {
     startLoadDeadline: { summary: 'arms the load deadline (LOAD_TIMEOUT_MS)' },
     stopLoadDeadline: { summary: 'stops the load deadline' },
     sendInitView: { summary: "strict mode, at the wrapper's load: the view (`target`) gets its ports (`_setupStrictChannels`)", fields: { target: /* @__PURE__ */ field<unknown>('window') } },
-    openChannel: { summary: 'cooperative and worker mode: the announced port, or none (`setupChannel`)', fields: { port: /* @__PURE__ */ field<unknown>('unknown') } },
+    openChannel: { summary: 'cooperative and worker mode: the announced port, or none (`_setupChannel`)', fields: { port: /* @__PURE__ */ field<unknown>('unknown') } },
     closePort: { summary: 'an announced port no build takes', fields: { port: /* @__PURE__ */ field<unknown>('unknown') } },
     checkView: { summary: "the view's size and still-style warnings (R3-1)", fields: { height: /* @__PURE__ */ field<unknown>('unknown'), stillStyleRefused: /* @__PURE__ */ field<boolean>('boolean') } },
     flush: { summary: 'what waited for `ready` goes to the port (`_flushQueues`)' },

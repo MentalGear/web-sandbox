@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { WebSandbox } from '@src/index';
 import { APP_SURFACE, APP_SURFACE_KINDS, surfaceOf, type AppSurfaceKind } from '@src/lib/app-surface';
 import { BUILDS, type Build } from '@src/lib/build-flag';
-import { NETWORK_ELEMENT_METHODS } from '@src/lib/network-modes';
 import { NetworkMethods } from '@src/lib/network-host';
 
 /**
@@ -28,8 +27,8 @@ const INHERITED = ['addEventListener', 'removeEventListener'];
 /** The members of the element of `build` at run time: its own public names, and the listeners it inherits. */
 function prototypeOf(build: Build): string[] {
     const own = ownPublic(WebSandbox.prototype);
-    // the network build installs every method of NetworkMethods; the ones the element calls through the seam are internal
-    const added = build === 'network' ? ownPublic(NetworkMethods.prototype).filter(name => !(NETWORK_ELEMENT_METHODS as readonly string[]).includes(name)) : [];
+    // the network build installs every method of NetworkMethods; an internal one carries the `_`, as the element's own do
+    const added = build === 'network' ? ownPublic(NetworkMethods.prototype) : [];
     return sorted([...own, ...added, ...INHERITED]);
 }
 
@@ -76,6 +75,9 @@ describe('APP_SURFACE: every public member of the element is classified, in each
     it("the scans see a member no row classifies: one more own name, in either build, is a member the table lacks", () => {
         const probe = sorted([...prototypeOf('default'), 'registerFiles']);
         expect(probe).not.toEqual(sorted(surfaceOf('default')));
+        // a method of the network modes without the `_` is a member of the network build's element like any other
+        const networkProbe = sorted([...prototypeOf('network'), 'setupChannel']);
+        expect(networkProbe).not.toEqual(sorted(surfaceOf('network')));
         const report = readReport('network').replace('export class WebSandbox extends HTMLElement {\n', 'export class WebSandbox extends HTMLElement {\n    load(html: string): void;\n');
         expect(sorted([...reportMembers(report, 'export class WebSandbox extends HTMLElement'), ...reportMembers(report, 'export interface WebSandbox'), ...reportMembers(report, 'export interface NetworkModeMethods')])).toContain('load');
     });
