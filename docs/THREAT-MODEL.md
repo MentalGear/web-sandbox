@@ -465,7 +465,10 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
   frames (other sandboxes' views, guest frames and bridge frames, and the bodies their fetches carry), so it does not
   separate one sandbox from another ([S79](BACKLOG.md#s79)).
 - **Browser extensions**, which can read and change any frame. What one writes into a field of the view reaches a
-  strict or sealed guest only as the `autofill` row says: from the field the user is in, while they are in it.
+  strict or sealed guest only as the `autofill` row says: from the field the user is in, while they are in it. On
+  Chromium a page's policy does not govern requests to an installed extension's web-accessible resources (measured in
+  [research 34](research/34_non_http_host/README.md)'s fixture, under `connect-src 'none'`), so a strict-mode guest with a
+  network option could detect installed extensions; with the library this is not yet measured ([S90](BACKLOG.md#s90)).
 - **UI spoofing inside the element's box**, and what the user chooses to do with what the view shows.
 - **Denial of service by the embedder's own configuration**: a host method of the grants that does heavy work per call, a
   generous `callLimits` or `fetchBridge`.

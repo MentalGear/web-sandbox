@@ -783,6 +783,24 @@ Measure, on three engines: a sealed guest that makes and sends such buffers thro
 engine reserves for a buffer a guest makes. A fix that refuses earlier would have to keep the guest from making one
 (`ArrayBuffer`'s options are not on the worker's allowlist to strip), which would need its own measurement first.
 
+### <a id="s90"></a>S90 · On Chromium a page's Content-Security-Policy does not govern requests to an installed extension's web-accessible resources — ⏳ **open** (P3 · M · to measure)
+
+*[Research 34](research/34_non_http_host/README.md), measured in its fixture, not with the library.* Class E-net (egress
+the policy does not govern). In research 34's fixture, under `connect-src 'none'` and `img-src blob:`, a document and its
+worker that could make a request read the web-accessible resources of another installed extension with `fetch` and XHR,
+from an `http` host page too; the same run refused the `http` targets, and resources that are not web-accessible.
+
+**What is open.** Measure it with the library and a real extension installed (Chromium's full build in a persistent
+context, the extension loaded as research 34's `probe-ext.mjs` loads one):
+- sealed mode, expected to hold, from the code and not measured: the worker's allowlist has no name that makes a request
+  (`SEALED_WORKER_GLOBALS`), and the view loads only URLs it minted (`keepsUrl`);
+- strict mode, whose guest can make requests (`origins`, `fetchBridge`): there it would let a guest detect which
+  extensions are installed and send the answer to a listed origin.
+
+The test is a strict guest with a network option that asks for an installed extension's web-accessible resource, and a
+sealed guest that tries every name it has; the answer is a row of `INHERITED_CONTEXT` or a documented limit of the
+network options, as the measurement says.
+
 ---
 
 ## Parity Reference
