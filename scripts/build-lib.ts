@@ -12,11 +12,17 @@
  * (src/lib/build-modules.ts): the bundler reports the modules it kept code of, and a bundle that holds one outside the
  * build's list is not written. `--out <directory>` writes the bundle elsewhere than dist/ (the e2e server keeps the
  * network build beside the default one): a path from the checkout's root, or an absolute one.
+ *
+ * Beside the bundle it writes sealed mode's served document (src/lib/sealed-document.ts; design 03), generated from
+ * sealed mode's view bootstrap, which is one text in both builds: `sealedDocument()` takes no input, so both builds write
+ * the same bytes (I12; scripts/smoke-package.sh compares the two). In the default build the element's own bootstrap is
+ * that very text, and a build where it is not writes nothing.
  */
-import { rmSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { BUILD_ENTRIES, buildFor, NETWORK_MODES_FLAG } from '../src/lib/build-flag';
 import { modulesOf } from '../src/lib/build-modules';
+import { SEALED_DOCUMENT_FILE, sealedDocument, sealedViewBootstrap } from '../src/lib/sealed-document';
 
 const root = join(import.meta.dir, '..');
 const build = buildFor(process.env[NETWORK_MODES_FLAG.env]);
@@ -29,6 +35,12 @@ const entry = join(root, BUILD_ENTRIES[build]);
 await import(entry);
 const { viewBootstrapHash, viewBootstrapText } = await import('../src/lib/in-sandbox-view');
 const bootstrap = viewBootstrapText(); // throws if the text could not be hashed as written (A3)
+// The default build's element runs sealed mode's view, so its bootstrap is the served document's, byte for byte.
+if (build === 'default' && bootstrap !== sealedViewBootstrap()) {
+    console.error("build-lib: the default build's view bootstrap is not sealed mode's, which the served document holds: nothing was written");
+    process.exit(1);
+}
+const servedDocument = sealedDocument();
 
 const result = await Bun.build({
     entrypoints: [entry],
@@ -64,4 +76,6 @@ if (built.viewScriptHash() !== viewBootstrapHash()) {
     console.error(`build-lib: ${relative(root, outdir)}/index.js hashes its view bootstrap as ${built.viewScriptHash()}, not ${viewBootstrapHash()}: the literal is missing`);
     process.exit(1);
 }
+writeFileSync(join(outdir, SEALED_DOCUMENT_FILE), servedDocument);
 console.log(`build-lib: ${relative(root, outdir)}/index.js, the ${build} build, view bootstrap ${viewBootstrapHash()} (${bootstrap.length} characters)`);
+console.log(`build-lib: ${relative(root, outdir)}/${SEALED_DOCUMENT_FILE}, sealed mode's served document (${servedDocument.length} characters)`);

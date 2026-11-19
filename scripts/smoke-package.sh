@@ -64,13 +64,13 @@ smoke() {
     local tarball
     tarball="$(ls "$work/pack-$build"/*.tgz)"
 
-    # The manifest, exactly: package.json, the README and the notices, the one bundle, and the declarations tsc emitted
-    # into the freshly cleaned dist/ (build:lib removes it first). No source map (not shipped: dist/index.js is the
-    # readable, unminified bundle), and nothing a stale dist/ could leave behind (a stale host.js or devtools.js, which a
-    # `"files": ["dist"]` would pack).
+    # The manifest, exactly: package.json, the README and the notices, the one bundle, sealed mode's served document, and
+    # the declarations tsc emitted into the freshly cleaned dist/ (build:lib removes it first). No source map (not
+    # shipped: dist/index.js is the readable, unminified bundle), and nothing a stale dist/ could leave behind (a stale
+    # host.js or devtools.js, which a `"files": ["dist"]` would pack).
     local expected actual
     expected="$(
-        printf '%s\n' package/package.json package/README.md package/LICENSE package/THIRD_PARTY_NOTICES.md package/dist/index.js
+        printf '%s\n' package/package.json package/README.md package/LICENSE package/THIRD_PARTY_NOTICES.md package/dist/index.js package/dist/sealed-document.html
         (cd "$root" && find dist -name '*.d.ts' -type f | sed 's|^|package/|')
     )"
     actual="$(tar -tzf "$tarball")"
@@ -140,7 +140,24 @@ TS
             exit 1
         fi
     fi
-    echo "package smoke test passed: $(basename "$tarball"), the $build build, view bootstrap $plain"
+
+    # Sealed mode's served document (design 03): exported as ./sealed-document.html, and the installed file is the one the
+    # build wrote. Both builds write the same bytes (I12): the first build's file is kept, and the second's must equal it.
+    local served
+    served="$(bun -e "console.log(Bun.resolveSync('web-sandbox/sealed-document.html', process.cwd()))")"
+    if ! cmp -s "$served" "$root/dist/sealed-document.html"; then
+        echo "package smoke test failed ($build build): web-sandbox/sealed-document.html resolves to $served, which is not the file the build wrote" >&2
+        exit 1
+    fi
+    if [ -f "$work/sealed-document.html" ]; then
+        if ! cmp -s "$work/sealed-document.html" "$served"; then
+            echo "package smoke test failed: the $build build's sealed-document.html differs from the other build's (I12)" >&2
+            exit 1
+        fi
+    else
+        cp "$served" "$work/sealed-document.html"
+    fi
+    echo "package smoke test passed: $(basename "$tarball"), the $build build, view bootstrap $plain, sealed-document.html $(sha256sum "$served" | cut -c1-16)"
 }
 
 smoke network 1

@@ -11,10 +11,12 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./sealed-document.html": "./dist/sealed-document.html"
   },
   "files": [
     "dist/index.js",
+    "dist/sealed-document.html",
     "dist/**/*.d.ts",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"

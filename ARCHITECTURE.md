@@ -162,7 +162,7 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 
 ## Two builds: the network modes behind a flag
 
-<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eae43198ed4 -->
+<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eae583a8ed4 -->
 
 The package is built two ways, chosen by one flag that is off by default ([ADR-009](docs/ADR-009-network-modes-build-flag.md);
 `NETWORK_MODES_FLAG`, `src/lib/build-flag.ts`):
@@ -195,7 +195,10 @@ The package is built two ways, chosen by one flag that is off by default ([ADR-0
   (`networkModesOffRefusal`, `src/lib/config-schema.ts`): `start()` throws, with a message that names the flag, and no
   rule of a network option exists to run in any mode.
 - **The bootstrap.** The hashed script is the view's and, in the network build, the fetch bridge frame's too; the
-  default build's has the view alone, so each build has its own `viewScriptHash()`.
+  default build's has the view alone, so each build has its own `viewScriptHash()`. Sealed mode's view bootstrap, the
+  view alone, is one text in both builds (`sealedViewBootstrap()`, `src/lib/sealed-document.ts`, a registry no build
+  imports), and `scripts/build-lib.ts` writes `sealed-document.html` from it beside the bundle, the same bytes in both
+  (design 03, I12); the package exports it as `./sealed-document.html`, and no code of the element reads it.
 - **What is shared stays shared.** The functions stringified into the guest's worker and the view, the broker, the
   lifecycle reducer and the environment's teardown are the same text in both builds. They keep their branches for
   cooperative and worker mode and for strict mode's network, which the default build cannot reach: it stringifies the
@@ -472,6 +475,7 @@ the docs read) and the role its header comment gives.
 | `src/lib/request-gate.ts` | network | The request gate of strict, cooperative and worker mode |
 | `src/lib/rpc.ts` | every build | β — a typed, bidirectional RPC broker that rides the MessageChannel already connecting host and guest |
 | `src/lib/sandbox-log.ts` | every build | The detail of the element's 'sandbox-log' event |
+| `src/lib/sealed-document.ts` | none (a registry) | Sealed mode's served document, `sealed-document.html` (design 03, "Inside the file") |
 | `src/lib/sealed-reach.ts` | none (a registry) | Everything a sealed guest can reach, classified against every row of INHERITED_CONTEXT |
 | `src/lib/srcset.ts` | network | The URLs of a `srcset` attribute |
 | `src/lib/structured-size.ts` | every build | The one measure of the byte budgets on log lines and RPC messages: how many bytes structured clone copies for a value |

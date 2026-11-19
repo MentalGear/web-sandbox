@@ -83,6 +83,7 @@ export const BUILD_MODULES = {
     'src/lib/references.ts': 'sealed',
     'src/lib/rpc.ts': 'sealed',
     'src/lib/sandbox-log.ts': 'sealed',
+    'src/lib/sealed-document.ts': 'data',
     'src/lib/sealed-reach.ts': 'data',
     'src/lib/srcset.ts': 'network',
     'src/lib/structured-size.ts': 'sealed',
