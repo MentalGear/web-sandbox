@@ -46,10 +46,22 @@ defineWebSandbox(options: { tagName?: string; documentUrl: string | URL }): type
   It is a constant because the view cannot compute a digest everywhere: under a host page that is not a secure context
   (`http:` on a name that is not loopback), `crypto.subtle` was undefined in the view on all three engines (research 31,
   Q1b).
-- **Schemes.** A host page that is not on `http:` or `https:` (a `file:` page, a browser extension's own page, an app
-  shell on a custom scheme such as Electron's) has no URL to serve the file from, and there is no `srcdoc` fallback
-  (D8): such pages can use sealed mode today and cannot in this design. Whether the file can be admitted from the host
-  page's own scheme there is not measured ([index](README.md#waits-for-the-owner), 3).
+- **Schemes.** `documentUrl` is on `http:` or `https:`, and there is no `srcdoc` fallback (D8). A host page that is
+  not on `http(s)` itself (a `file:` page, a browser extension's own page, an app shell on a scheme of its own) names
+  an `http(s)` copy of the file: with one, the design ran from every such host page tried, a `file:` page on all three
+  engines, a Chromium extension's page and Electron ([research 34](../research/34_non_http_host/README.md), measured). With the file beside the host page instead:
+  - **a browser's `file:` page**: the view, the worker, the ports and the gates work, but the guard cannot: `self.origin`
+    reads `"null"` there with the sandbox and without it, on all three engines, so I14 does not hold, and on Chromium
+    and WebKit the host page cannot read the file for [the check](#the-check-of-the-file);
+  - **a Chromium extension**: the file runs only as a sandbox page of the manifest with a narrowed policy (the
+    extension's own policy refuses its scripts anywhere else, and the default sandbox policy refuses the worker, which
+    the policy check reports), and there a request of a guest realm for the extension's own files passes the `<meta>`;
+  - **Electron**, on `file:` and on a standard, secure scheme of the app's: everything held, the guard included, since
+    a document's origin there is not `"null"`.
+
+  Today's build, for comparison, runs sealed mode on a browser's `file:` page only as one classic script (the published
+  module loads there on Firefox alone), on Electron, and in an extension only as a sandbox page with a narrowed policy.
+  Whether the rule admits more than `http(s)` waits for the owner ([index](README.md#waits-for-the-owner), 3).
 
 "No backend, no server config" becomes "one static file, no response headers that set a policy on it"
 ([below](#the-policies-in-force)).
@@ -451,6 +463,11 @@ Allowed, and not recommended over the code's own origin.
 
 - **Does not change:** the permission state keyed to the top-level page (Chromium's view and WebKit's worker read the
   host page's geolocation grant), the secure-context bit, the host page's thread on the engines named above.
+- **Does not govern, on Chromium:** a `chrome-extension:` URL. Under the file's `connect-src 'none'` and `img-src blob:`
+  a guest realm that could make a request read the web-accessible resources of installed extensions, from an `http`
+  host page too ([research 34](../research/34_non_http_host/README.md), in its fixture). The library's worker has no name that makes a request and its view loads only
+  URLs it minted, so what holds there is those two lists, not the policy; with the library and an installed extension
+  this is not measured.
 - **Adds:** a URL any site can frame; a requirement on the host page's policy (`frame-src` must admit `documentUrl`); a
   deployment step; a policy the file's server can add; a host trusted with the app; the WebKit browser closing in one
   wrong-way case.
@@ -478,7 +495,9 @@ own name; `viewScriptHash()` there is strict mode's.
   same.
 - The check of the file: its cost, the digest's comparison, a server that answers it and the frame's navigation
   differently, and a host page's `connect-src` and Service Worker in its path.
-- A host page on a scheme that is not `http(s)`.
+- Extensions on Firefox, WebKit and Safari; Tauri and Capacitor; Electron beyond its defaults (research 34 measured a
+  browser's `file:` page, a Chromium extension and Electron 45).
+- The library, with an extension installed, against `chrome-extension:` URLs.
 - A password manager's extension when another site frames the file: whether it offers the embedder's saved login in a
   form that site drives there (review 2, open question).
 - Report-only headers that are not Content-Security-Policy.

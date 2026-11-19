@@ -85,7 +85,7 @@ the served file, the popup blocker and autofill; a real browser profile; a revie
 | `links` works at all | step 2.6's spec: research 30 measured a call from the worker in today's view, not the click as the request |
 | `links` works in Safari | the popup blocker measured on a Mac (research 30's pages) |
 | `documentUrl` can default to the bundle's own copy | not promised: research 32 found that most bundlers do not serve the file unchanged |
-| A host page on `file:`, an extension's page or an app's own scheme can use sealed mode | the file admitted and measured from such a scheme |
+| A host page on `file:`, an extension's page or an app's own scheme can use sealed mode | with an `http(s)` copy of the file: measured ([research 34](../research/34_non_http_host/README.md)), and step 3.2's spec with the library. With the file beside the page: the owner's decision 3, and the rule's own test |
 | A site-wide policy header ends the build on WebKit as on the others | step 3.6 on WebKit, in the view and in the worker |
 | The served document on Safari and Android | the twelve ways of opening it, there |
 | Autofill does not reach a guest in the served document | step 3.9 |

@@ -148,7 +148,7 @@ and the gates as written, on Chromium 159, Firefox 159 and WebKit 27.2.
 
 | # | Decision | Recommended | If not |
 | :--- | :--- | :--- | :--- |
-| 3 | A host page that is not on `http(s)` (a `file:` page, a browser extension's page, an app shell on its own scheme) cannot use sealed mode, since there is no `srcdoc` fallback (D8) | accept it for now, and measure whether the file can be admitted from such a scheme before the served document is released | keep a `srcdoc` path for those pages, which keeps the code step 4 would delete |
+| 3 | What a host page that is not on `http(s)` (a `file:` page, a browser extension's page, an app shell on its own scheme) does for sealed mode, with no `srcdoc` fallback (D8). **Measured** ([research 34](../research/34_non_http_host/README.md)): an `http(s)` copy of the file works from all of them; the file beside the page works with its guard on Electron only, and on a browser's `file:` page the guard cannot work ([03](03-served-document.md#the-public-surface)) | no `srcdoc` path. `documentUrl` is `http(s)`, or a URL of the host page's own origin where that origin is not opaque (Electron's `file:` and an app's own standard scheme, where the guard was measured to hold); a browser's `file:` page and an extension's page name an `http(s)` copy | keep a `srcdoc` path for those pages, which keeps the code step 4 would delete. What it alone keeps working: a browser's `file:` page with no server at all (today as one classic script), and an extension's sandbox page offline |
 
 ## What the design does not do
 
@@ -182,4 +182,5 @@ Stated once here; each file repeats what concerns it.
 - A password manager's extension, and one when another site frames the served file.
 - The check of the file: its cost, and what stands in its path on a host page.
 - Report-only headers on the file that are not Content-Security-Policy.
-- A host page that is not on `http(s)`.
+- Extensions on Firefox, WebKit and Safari, and Tauri and Capacitor, as host pages (research 34 measured a browser's
+  `file:` page, a Chromium extension and Electron).
