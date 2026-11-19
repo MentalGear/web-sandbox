@@ -98,7 +98,8 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
 - **Which gates, when.** Before a change is merged into the working branch: `bun run typecheck`, the unit suite,
   `bun run api:check`, `bun run docs:check`, the package smoke test when the package's files changed, and on three
   engines the specs the change touches. CI runs the whole e2e suite and the probes on every push to a pull request, its
-  three engines side by side, and is the gate of the whole suite. Run the whole suite locally too for a change that moves
+  three engines side by side, and is the gate of the whole suite; a browser job whose inputs (every file but the
+  Markdown ones) have already passed on its engine is not run again ([T10](docs/BACKLOG.md#t10)). Run the whole suite locally too for a change that moves
   many specs at once (the view's document, the harness pages, the fixture). The lifecycle model runs at 400 sequences or
   more when the lifecycle, the frames it reads or the guest's writes change; CI runs it at 40.
 - **One e2e run at a time on a machine.** Runs of several checkouts share the machine's cores, and the specs that

@@ -30,7 +30,7 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S87](#s87) | ⏳ open (P3 · S) · low | A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time (S74 board BD5:LIM-3; availability only) |
 | [S89](#s89) | ⏳ open (P3 · S) · low | A resizable `ArrayBuffer`'s maximum is reserved by the browser before any receiver measures it (review 3 of the design, finding 5; availability only) |
 | [S90](#s90) | ⏳ open (P3 · M) · to measure | On Chromium a page's policy does not govern requests to an installed extension's web-accessible resources (research 34) |
-| [T10](#t10) | ⏳ open (P2 · M) | A run reruns every spec for every change, from files served live: tests load the built bundle, and a spec's result is keyed by its inputs (owner, 2026-11-19) |
+| [T10](#t10) | ⏳ open (P2 · M) | A run reruns every spec for every change, from files served live. Built: CI keys the suite's result by its inputs, so a docs-only commit runs no browser. Left: tests load the built bundle, a key per spec, the measuring specs in a group of their own (owner, 2026-11-19) |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
 
 Done items, review rounds and the capability snapshot are in [the archive](archive/backlog/BACKLOG-done.md).
@@ -825,13 +825,18 @@ server (`test/e2e/library.ts`: `src/index.ts` or `src/network.ts`), in a new bro
 during the run are what is tested (CONTRIBUTING.md, "No edit of served files during a run"), and no spec's result is
 tied to the inputs that produced it.
 
-**Fix, by construction**, in this order, each measured before and after on three engines:
+**Built: the suite's result in CI is keyed by its inputs.** Each browser job of `.github/workflows/ci.yml` hashes the
+checkout's files but the Markdown ones (no page, spec or probe reads one; the unit job checks the docs) and keeps a
+marker under that hash and its engine once every test step has passed. A job whose key has passed runs no browser, so
+a commit that changes only docs costs the unit job alone. A failed or cancelled job saves no marker.
+
+**Fix, by construction**, what is left, each measured before and after on three engines:
 1. **The tests load the built bundle.** The server already builds `dist/` and `dist-network/` when it starts
    (`package.spec.ts` mounts from them). Every harness page takes its build's bundle: one request for the library
    in place of one per module, a run tests the code as it was built at its start whatever is edited meanwhile, and
    the tests run what the package ships. To settle first: what the specs that read a source module directly need (a
    helper imported from `src/`), and source maps for a failure's stack.
-2. **A spec's result is keyed by its inputs**: its build's bundle (a hash), the spec and the helpers it imports, the
+2. **A spec's result is keyed by its inputs**, where CI's key is the whole suite's: its build's bundle (a hash), the spec and the helpers it imports, the
    harness pages, the engine's version and the Playwright config. A key that has passed on an engine is not run again:
    a docs-only commit runs no spec, a change of one spec runs that spec, and a change confined to `network` modules
    runs no spec of the default build, whose bundle is the same bytes (`BUILD_MODULES`: a `sealed` module imports no
