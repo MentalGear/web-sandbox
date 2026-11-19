@@ -86,7 +86,9 @@ measure of a guest value refuses `Blob` and `File` before the value is handed to
 browser has deserialised it in the host page by then; nothing of the embedder's sees it), wherever a guest value
 arrives: a host method's arguments, the result
 of `call()`, a log line's arguments. The guest sends bytes (`Uint8Array`, `ArrayBuffer`) and the host page decides what
-they are. A changed promise: an app that returned a `Blob` must return its bytes.
+they are. The measure is one for both directions (`SNAPSHOT_REFUSED_KINDS`, `src/lib/structured-size.ts`), so a `Blob`
+or a `File` of the host page's does not reach the guest either: a host method returns bytes, and so does an argument
+of `call()`. A changed promise: an app that returned a `Blob` must return its bytes, and so must a host method.
 
 ## A guest write's type comes from its path
 
