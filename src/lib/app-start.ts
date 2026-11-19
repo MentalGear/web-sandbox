@@ -56,7 +56,8 @@ type Fields = Readonly<Record<string, unknown>>;
 
 const NO_FIELDS: Fields = Object.freeze(Object.create(null));
 
-const refusal = (message: string) => mintUncodedError(TypeError, `[Sandbox] start(): ${message}`);
+const START_PREFIX = '[Sandbox] start(): ';
+const refusal = (message: string) => mintUncodedError(TypeError, `${START_PREFIX}${message}`);
 
 /**
  * Reads start()'s arguments into the values the element stores, or throws a TypeError or a FileError. Runs the
@@ -117,14 +118,16 @@ function copied(name: OptionName, value: unknown): unknown {
     try {
         return structuredClone(value);
     } catch (error) {
-        throw refusal(`${name} cannot be copied${joinDetails(errorName(error))}: an option holds data only (no function, Proxy or DOM node).`);
+        throw refusal(`${name} cannot be copied (${errorName(error)}): an option holds data only (no function, Proxy or DOM node).`);
     }
 }
 
-// What the schema refused, as start() throws it: its own TypeError as it is, a refusal with a reason of the library's as
-// that reason, anything else as the configuration that could not be used, named as the element's refusal names it.
+// What the schema refused, as start() throws it: its own TypeError, said as start()'s where it is not yet (the options
+// were copied before the schema read them, so a TypeError here is the library's own text, never the embedder's), a
+// refusal with a reason of the library's as that reason, anything else as the configuration that could not be used,
+// named as the element's refusal names it.
 function startRefusal(refused: unknown): TypeError {
-    if (refused instanceof TypeError) return refused;
+    if (refused instanceof TypeError) return refused.message.startsWith(START_PREFIX) ? refused : refusal(`${refused.message}.`);
     if (refused instanceof ConfigRefusal) return refusal(`${refused.reason}.`);
     return refusal(`${reasonText('configRefused', joinDetails(errorName(refused), networkModes()?.refusalDetail(refused) ?? fixedDetail('')))}.`);
 }

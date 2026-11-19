@@ -190,7 +190,7 @@ describe('A6: the values interpolated into the bootstrap come from one copy of t
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         const before = wrapperOf(el);
-        expect(() => el.start({}, { mode: 'cooperative', capabilities: shifty, scriptUnsafe: false })).toThrow(/^\[Sandbox\] start\(\): capabilities cannot be copied\W*DataCloneError/);
+        expect(() => el.start({}, { mode: 'cooperative', capabilities: shifty, scriptUnsafe: false })).toThrow(/^\[Sandbox\] start\(\): capabilities cannot be copied \(DataCloneError\): an option holds data only/);
         await settled();
         expect([el.started, wrapperOf(el), trapped]).toEqual([false, before, 0]);
         expect(reasons).toEqual([]);
@@ -296,12 +296,12 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
     });
 
     it.each([
-        ['a Proxy array', (el: any) => startWith(el, { mode: 'strict', origins: { connect: new Proxy(['https://a.example'], {}) } }), /^\[Sandbox\] start\(\): origins cannot be copied\W*DataCloneError/],
-        ['origins that is not an object', (el: any) => startWith(el, { mode: 'strict', origins: 'https://a.example' }), /^origins must be an object of origin lists$/],
-        ['origins: null', (el: any) => startWith(el, { mode: 'strict', origins: null }), /^origins must be an object of origin lists$/],
-        ['a kind that is not a list (a string)', (el: any) => startWith(el, { mode: 'strict', origins: { images: "x; script-src *" } }), /^origins\.images must be a list of origins$/],
-        ['a kind that is not a list (a number)', (el: any) => startWith(el, { mode: 'strict', origins: { connect: 7 } }), /^origins\.connect must be a list of origins$/],
-        ['a function value', (el: any) => startWith(el, { html: () => '<p>' }), /^\[Sandbox\] start\(\): html cannot be copied\W*DataCloneError/],
+        ['a Proxy array', (el: any) => startWith(el, { mode: 'strict', origins: { connect: new Proxy(['https://a.example'], {}) } }), /^\[Sandbox\] start\(\): origins cannot be copied \(DataCloneError\): an option holds data only/],
+        ['origins that is not an object', (el: any) => startWith(el, { mode: 'strict', origins: 'https://a.example' }), /^\[Sandbox\] start\(\): origins must be an object of origin lists\.$/],
+        ['origins: null', (el: any) => startWith(el, { mode: 'strict', origins: null }), /^\[Sandbox\] start\(\): origins must be an object of origin lists\.$/],
+        ['a kind that is not a list (a string)', (el: any) => startWith(el, { mode: 'strict', origins: { images: "x; script-src *" } }), /^\[Sandbox\] start\(\): origins\.images must be a list of origins\.$/],
+        ['a kind that is not a list (a number)', (el: any) => startWith(el, { mode: 'strict', origins: { connect: 7 } }), /^\[Sandbox\] start\(\): origins\.connect must be a list of origins\.$/],
+        ['a function value', (el: any) => startWith(el, { html: () => '<p>' }), /^\[Sandbox\] start\(\): html cannot be copied \(DataCloneError\): an option holds data only/],
         ['null', (el: any) => el.start(null), /^\[Sandbox\] start\(\): the app \(the first argument\) must be an object/],
         ['an array', (el: any) => el.start([]), /^\[Sandbox\] start\(\): the app \(the first argument\) must be an object/],
     ])('%s: the configuration could not be used: start() throws a TypeError naming it, nothing applied; a usable app starts the element', async (_, start, refusal) => {

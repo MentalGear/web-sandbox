@@ -205,7 +205,7 @@ describe('F3: a reason, event or host line never carries the text of a caught er
         const reasons = terminations(el);
         // a build's 'terminated' comes in a task of its own (R1:R3-2)
         const settled = () => new Promise(resolve => setTimeout(resolve, 0));
-        expect(() => el.start({ html: 'x' }, { capabilities: [function hook() { return SECRET; }] })).toThrow(/^\[Sandbox\] start\(\): capabilities cannot be copied\W*DataCloneError\W*: an option holds data only/);
+        expect(() => el.start({ html: 'x' }, { capabilities: [function hook() { return SECRET; }] })).toThrow(/^\[Sandbox\] start\(\): capabilities cannot be copied \(DataCloneError\): an option holds data only/);
         const thrown: unknown[] = [new RangeError(SECRET), { name: SECRET, message: SECRET }, SECRET];
         for (const error of thrown) {
             let caught: unknown = null;
@@ -225,7 +225,7 @@ describe('F3: a reason, event or host line never carries the text of a caught er
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const refused = await mount();
         const settled = () => new Promise(resolve => setTimeout(resolve, 0));
-        expect(() => startWith(refused, { mode: 'strict', origins: { images: `x; ${SECRET}` } })).toThrow(/^origins\.images must be a list of origins$/);
+        expect(() => startWith(refused, { mode: 'strict', origins: { images: `x; ${SECRET}` } })).toThrow(/^\[Sandbox\] start\(\): origins\.images must be a list of origins\.$/);
         const el = await mount();
         const reasons = terminations(el);
         el._guestPolicy = () => { throw new Error(SECRET); };
@@ -325,7 +325,7 @@ describe('F6: a refused config is never stored', () => {
         const fresh = await mount();
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
-        expect(() => startWith(el, { mode: 'strict', watchdogTimeout: 9, workerExecutionTimeout: 7, origins: null })).toThrow(/^origins must be an object of origin lists$/);
+        expect(() => startWith(el, { mode: 'strict', watchdogTimeout: 9, workerExecutionTimeout: 7, origins: null })).toThrow(/^\[Sandbox\] start\(\): origins must be an object of origin lists\.$/);
         await new Promise(resolve => setTimeout(resolve, 0)); // a build's 'terminated' comes in a task (R1:R3-2)
         expect(reasons).toEqual([]);
         expect([el.started, el._config, el._origins]).toEqual([fresh.started, fresh._config, fresh._origins]);
@@ -349,8 +349,8 @@ describe('F6: a refused config is never stored', () => {
             }
         }
         // the refusal names the option (BD3:NEW-3)
-        const notAnObject = 'origins must be an object of origin lists';
-        const refusals = [notAnObject, notAnObject, notAnObject, notAnObject, 'origins.images must be a list of origins', 'origins.connect must be a list of origins'];
+        const notAnObject = '[Sandbox] start(): origins must be an object of origin lists.';
+        const refusals = [notAnObject, notAnObject, notAnObject, notAnObject, '[Sandbox] start(): origins.images must be a list of origins.', '[Sandbox] start(): origins.connect must be a list of origins.'];
         expect(thrown).toEqual(['cooperative', 'worker', 'strict'].flatMap(() => refusals));
         expect([el.started, reasons]).toEqual([false, []]);
         startWith(el, { mode: 'strict', origins: { images: ['https://a.example'] } });
