@@ -56,7 +56,7 @@ different name of this class, and its `SyntaxError` for a name that is not a val
 
 ## The element
 
-<!-- describes: api:WebSandbox sig:5b54 -->
+<!-- describes: api:WebSandbox sig:a150 -->
 The element has no observed attributes. An app is given to it once, with [`start(app, grants)`](#startapp-grants): the
 app's own content in the first argument, what you allow it in the second. No other member takes app content or a grant,
 and another app is another element. Until `start()` the element builds nothing: inserted, reset or terminated, it stays
@@ -638,7 +638,7 @@ report that it returned.
 ### `call(method, ...args)`
 
 ```ts
-call<T = unknown>(method: string, ...args: unknown[]): Promise<T>
+call(method: string, ...args: unknown[]): Promise<unknown>
 ```
 
 Calls a method the guest exposed with `bridge.expose()` and resolves with its result. It works without
@@ -672,16 +672,13 @@ Calls a method the guest exposed with `bridge.expose()` and resolves with its re
 - Calls made while `'idle'` (not in the document, or no app) or `'terminated'` reject at once with `TERMINATED`;
  so do pending ones when the environment goes away.
 
-**Type parameters**
-
-- `T`: The type of the result, which the caller asserts: the guest's value is not checked against it.
-
 **Parameters**
 
 - `method`: The name the guest exposed.
 - `...args`: The arguments, copied by structured clone.
 
-**Returns:** The guest method's return value (awaited if it is a promise).
+**Returns:** The guest method's return value (awaited if it is a promise): the guest's data, typed `unknown`, so your
+code checks its type and shape before it uses it. No type argument asserts it.
 
 **Throws:** Never synchronously: the promise rejects with an `RpcError`, an `Error` whose `code` is an
 `RpcErrorCode`. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and
@@ -691,15 +688,11 @@ and the library's fixed text for it, never this message (see `HostMethod`).
 ### `callWithTimeout(timeoutMs, method, ...args)`
 
 ```ts
-callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T>
+callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown>
 ```
 
 Like `call()`, with a timeout of your own for this one call. Every other timeout is waited out in
 full, however long: `watchdogTimeout` and `workerExecutionTimeout` do not shorten it.
-
-**Type parameters**
-
-- `T`: The type of the result, which the caller asserts.
 
 **Parameters**
 
@@ -707,7 +700,7 @@ full, however long: `watchdogTimeout` and `workerExecutionTimeout` do not shorte
 - `method`: The name the guest exposed.
 - `...args`: The arguments, copied by structured clone.
 
-**Returns:** The guest method's return value (awaited if it is a promise).
+**Returns:** The guest method's return value (awaited if it is a promise): the guest's data, typed `unknown`, as `call()`'s.
 
 **Throws:** Never synchronously: the promise rejects as `call()`'s does.
 

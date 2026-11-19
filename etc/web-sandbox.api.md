@@ -222,8 +222,8 @@ export interface WebSandbox {
 export class WebSandbox extends HTMLElement {
     constructor();
     adoptedCallback(): void;
-    call<T = unknown>(method: string, ...args: unknown[]): Promise<T>;
-    callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T>;
+    call(method: string, ...args: unknown[]): Promise<unknown>;
+    callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown>;
     commitGuestWrites(paths: string[], options?: {
         code?: boolean;
     }): void;

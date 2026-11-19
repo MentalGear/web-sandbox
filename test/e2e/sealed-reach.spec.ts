@@ -8,6 +8,7 @@ import { clickInSandbox, inView, waitInView } from './strict-view';
 import { ENTRY_DONE_PREFIX } from '@src/lib/in-sandbox-view';
 import { LIBRARY_GUEST_GLOBALS, surfaceOf } from '@src/lib/sealed-reach';
 import { SEALED_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { asStrings } from './guest-value';
 
 /**
  * Class A, closed by enumeration (S74; SEALED_REACH, src/lib/sealed-reach.ts): everything a sealed guest can reach is
@@ -79,7 +80,7 @@ test.describe('sealed mode: what the guest can reach, against every inherited ro
         expect(events.at(-1), 'the sealed build is ready').toEqual({ type: 'ready', reason: null });
         const swept = await host.guestResult<{ calls: number; members: number; globals: number; instances: number; heard: number; thrown?: string }>(150000);
         expect(swept.thrown, 'the sweep ran to its end').toBeUndefined();
-        const texts = await sandbox.call<string[]>('sweepTexts');
+        const texts = asStrings(await sandbox.call('sweepTexts'));
         await host.page.waitForTimeout(2000); // a report the browser sends after the attempt
         const hits = await host.hits();
 
@@ -262,7 +263,7 @@ test.describe("the secureContext row: the sealed worker is the same whatever the
             const page = await host.page.evaluate(() => self.isSecureContext);
             expect((await host.embed('sealed', { guest: PATHS })).at(-1)).toEqual({ type: 'ready', reason: null });
             const worker = await host.guestResult<{ isSecureContext: boolean; count: number }>(30000);
-            return { page, worker: worker.isSecureContext, paths: await sandbox.call<string[]>('paths') };
+            return { page, worker: worker.isSecureContext, paths: asStrings(await sandbox.call('paths')) };
         };
         const insecure = await read(`http://app.insecure.test:${E2E_PORT}`);
         const loopback = await read();

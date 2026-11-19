@@ -1077,36 +1077,35 @@ export class WebSandbox extends ElementBase {
      * - Calls made while `'idle'` (not in the document, or no app) or `'terminated'` reject at once with `TERMINATED`;
      *   so do pending ones when the environment goes away.
      *
-     * @typeParam T - The type of the result, which the caller asserts: the guest's value is not checked against it.
      * @param method - The name the guest exposed.
      * @param args - The arguments, copied by structured clone.
-     * @returns The guest method's return value (awaited if it is a promise).
+     * @returns The guest method's return value (awaited if it is a promise): the guest's data, typed `unknown`, so your
+     * code checks its type and shape before it uses it. No type argument asserts it.
      * @throws Never synchronously: the promise rejects with an {@link RpcError}, an `Error` whose `code` is an
      * {@link RpcErrorCode}. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and
      * their message is the guest's text. A host method that lets the rejection propagate hands its own caller the code
      * and the library's fixed text for it, never this message (see {@link HostMethod}).
      */
-    call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
+    call(method: string, ...args: unknown[]): Promise<unknown> {
         const refusal = this._noEnvironmentError();
         if (refusal) return Promise.reject(refusal);
-        return this._issue(() => this._broker.call(method, ...args)) as Promise<T>;
+        return this._issue(() => this._broker.call(method, ...args));
     }
 
     /**
      * Like `call()`, with a timeout of your own for this one call. Every other timeout is waited out in
      * full, however long: `watchdogTimeout` and `workerExecutionTimeout` do not shorten it.
      *
-     * @typeParam T - The type of the result, which the caller asserts.
      * @param timeoutMs - The timeout in ms. `0`, any value that is not above 0, and `Infinity` disable it.
      * @param method - The name the guest exposed.
      * @param args - The arguments, copied by structured clone.
-     * @returns The guest method's return value (awaited if it is a promise).
+     * @returns The guest method's return value (awaited if it is a promise): the guest's data, typed `unknown`, as `call()`'s.
      * @throws Never synchronously: the promise rejects as `call()`'s does.
      */
-    callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T> {
+    callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown> {
         const refusal = this._noEnvironmentError();
         if (refusal) return Promise.reject(refusal);
-        return this._issue(() => this._broker.callWithTimeout(timeoutMs, method, ...args)) as Promise<T>;
+        return this._issue(() => this._broker.callWithTimeout(timeoutMs, method, ...args));
     }
 
     // One host call, made in the current environment (R3:L-2). The broker copies the arguments with

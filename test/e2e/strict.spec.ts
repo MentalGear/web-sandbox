@@ -4,6 +4,7 @@ import { clickInSandbox, inFrames, inView, waitInView } from './strict-view';
 import type { SandboxConfig } from '@src/host';
 import type { StrictSandboxConfig } from '@src/lib/network-types';
 import { VIEW_MODES, type ViewMode } from './view-modes';
+import { asStrings } from './guest-value';
 
 // The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
 test.use({ build: 'network' });
@@ -479,7 +480,7 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
                 bridge.expose('seen', () => seen);` });
             expect(await sandbox.mount(inMode(mode, { entry: 'listens.js' }))).toBe('ready');
             await sandbox.waitForLog('later failure');
-            const seen: string[] = await sandbox.call('seen');
+            const seen = asStrings(await sandbox.call('seen'));
             expect(seen).toHaveLength(3); // the later error, once per listener (WebKit's worker: muted, "Script error.")
             expect(seen.filter(line => line.includes('__sandboxEntryRan_'))).toEqual([]);
             expect((await sandbox.logs()).filter(line => line.includes('__sandboxEntryRan_'))).toEqual([]);

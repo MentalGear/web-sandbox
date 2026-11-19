@@ -253,8 +253,11 @@ export class SandboxDriver {
 
     // ---- β broker helpers (backlog B1) -------------------------------------------------------
 
-    /** Host -> guest: invokes a guest-exposed method and returns its resolved value. */
-    async call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
+    /**
+     * Host -> guest: invokes a guest-exposed method and returns its resolved value, the guest's data, `unknown` as the
+     * element's call() returns it: a spec narrows it (test/e2e/guest-value.ts) before it reads it.
+     */
+    async call(method: string, ...args: unknown[]): Promise<unknown> {
         await this.live();
         return this.page.evaluate(
             ({ method, args }) => (document.querySelector('web-sandbox') as any).call(method, ...args),

@@ -1,6 +1,6 @@
 # 02 · What an app hands to the host page
 
-**Status: a design, partly built:** no `Blob` or `File` from the guest, and a guest write's type from its path ([05](05-build-order.md), 2.1 and 2.2). [The folder's index](README.md) has the invariants (I6 to I10 are this file's) and
+**Status: a design, partly built:** no `Blob` or `File` from the guest, a guest write's type from its path, and `unknown` for guest values ([05](05-build-order.md), 2.1, 2.2 and 2.4). [The folder's index](README.md) has the invariants (I6 to I10 are this file's) and
 what [review 1](REVIEW-1.md) and [review 2](REVIEW-2.md) changed here.
 
 ## The root

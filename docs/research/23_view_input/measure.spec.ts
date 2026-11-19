@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect, type SandboxDriver } from '../../../test/e2e/fixture';
 import { inView, waitInView } from '../../../test/e2e/strict-view';
 import { busyOf, idleBaseline, ticks } from '../../../test/e2e/host-share';
+import { asNumber } from '../../../test/e2e/guest-value';
 
 // The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
 test.use({ build: 'network' });
@@ -86,7 +87,7 @@ test('latency and host cost of a 60 Hz drag answered with set({ css })', async (
         await mount(sandbox, page, browserName, ENTRIES[name]!);
         await page.mouse.move(box.x + 10, box.y + 10);
         await sleep(300);
-        const before = await sandbox.call<number>('received');
+        const before = await sandbox.call('received').then(asNumber);
         const moves = startMoves(page, box, 60);
         await sleep(500);
         const window = await ticks(page, 4000);
@@ -97,7 +98,7 @@ test('latency and host cost of a 60 Hz drag answered with set({ css })', async (
         results[name] = {
             movesPerSecond: Math.round(sent.sent / (sent.ms / 1000)),
             rawInView: m.raw,
-            received: (await sandbox.call<number>('received')) - before,
+            received: (await sandbox.call('received').then(asNumber)) - before,
             rendered: latency.length,
             hostBusyPercent: Math.round(busyOf(window.count, 4000, idle) * 100),
             hostLongestGapMs: window.longest,
@@ -122,10 +123,10 @@ test('a burst of moves as fast as the driver sends them: what reaches the view, 
         const loop = (async () => { let k = 0; while (running) { k++; await page.mouse.move(box.x + 20 + (k % 2) * 360, box.y + 20 + (k % 2) * 260, { steps: 50 }); } })();
         await sleep(500);
         const rawBefore = await inView<number>(page, browserName, 'globalThis.__m.raw') as number;
-        const receivedBefore = await sandbox.call<number>('received');
+        const receivedBefore = await sandbox.call('received').then(asNumber);
         const window = await ticks(page, 3000);
         const rawAfter = await inView<number>(page, browserName, 'globalThis.__m.raw') as number;
-        const receivedAfter = await sandbox.call<number>('received');
+        const receivedAfter = await sandbox.call('received').then(asNumber);
         running = false;
         await loop;
         results[name] = {

@@ -11,6 +11,7 @@ import type { SandboxConfig } from '@src/host';
 import { reasonText } from '@src/lib/reasons';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { makerCode, makerUrl, SEALED_MAKERS, type Maker, type MakerScheme } from './sealed-makers';
+import { asStringRecord } from './guest-value';
 
 /**
  * Sealed mode makes no request, on any engine (docs/research/24_sealed_mode, step 3). Every request maker a sealed guest can
@@ -121,7 +122,7 @@ const stylesheet = (origins: Record<MakerScheme, string>) => byRealm('stylesheet
 const apply = (page: Page, config: SandboxConfig) => page.evaluate((c) => startFresh(c), config as any);
 
 /** Runs every maker in a sandbox of `config`, with the clicks that would follow; resolves with what the worker's makers saw. */
-async function runMakers(sandbox: { registerFiles: (files: Record<string, string>) => Promise<string>; call: <T>(method: string) => Promise<T> }, page: Page, browserName: string, listener: Listener, config: SandboxConfig) {
+async function runMakers(sandbox: { registerFiles: (files: Record<string, string>) => Promise<string>; call: (method: string) => Promise<unknown> }, page: Page, browserName: string, listener: Listener, config: SandboxConfig) {
     expect(await sandbox.registerFiles({ 'main.js': entry(listener.origins), 'net.css': stylesheet(listener.origins) })).toBe('ok');
     expect(await apply(page, config)).toBe('ready');
     await waitInView(page, browserName, `!!document.getElementById('m-done')`, 10000);
@@ -130,7 +131,7 @@ async function runMakers(sandbox: { registerFiles: (files: Record<string, string
         const box = await waitInView<{ x: number; y: number } | null>(page, browserName, `(() => { const r = document.getElementById(${JSON.stringify(maker.click)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
         await clickInSandbox(page, box!.x, box!.y);
     }
-    const seen = await sandbox.call<Record<string, string>>('results');
+    const seen = asStringRecord(await sandbox.call('results'));
     await page.waitForTimeout(1500); // what a load, a navigation or a ping would send after the attempt
     return seen;
 }
