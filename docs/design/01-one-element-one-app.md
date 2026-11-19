@@ -136,8 +136,9 @@ readonly started: boolean     // true once a start() has succeeded, for the rest
 | Every build (the first, a `reset()`, a re-insertion) | pending guest writes are discarded | unchanged, and the write values listed before it can no longer be committed ([below](#files-and-commits)) |
 | `call()` before the element is ready, or with no app | queued or refused by today's rules | unchanged; on an element with no app it is refused as it is today on one that is `'idle'` |
 
-The lifecycle model (research 17, `LC_INPUTS`) loses the inputs for `setConfig` and `load`, keeps the one for changed
-files (a commit), and gains one rule: no input builds an environment on an element with no app.
+The lifecycle model (research 17, `LC_INPUTS`) loses the inputs for `setConfig`, `load` and changed files (a commit
+changed only a count that `setConfig()`'s no-op rule read), gains the `start` input, and gains one rule: no input builds
+an environment on an element with no app.
 
 **Frameworks.** One element per app means the code that starts an app also makes its element, and removes it:
 
@@ -228,7 +229,7 @@ tree. Not chosen ([index](README.md#decided-after-review-1), 5): events are how 
 - A large test migration: `setConfig` appears in 84 files of `test/`, about 400 times, and the playground and the
   example app change with it.
 - Less code in the library: roughly 350 lines out and 150 in under `src/`. The lifecycle model loses the inputs of
-  `setConfig` and `load`; the input for changed files stays, for commits.
+  `setConfig`, `load` and changed files.
 
 ## Considered and not chosen
 
