@@ -9,7 +9,8 @@
  *
  * The rules of S64 that the model holds the element to:
  * - one app per element (design 01, I1): a start() that succeeds binds it for the element's life, a second start() and
- *   one whose arguments are unusable throw and change nothing;
+ *   one whose arguments are unusable throw and change nothing; an element with no app builds nothing: inserted, reset
+ *   or terminated, it stays `idle` and dispatches nothing;
  * - `ready` is the only flush point: a call made while `loading` that settles before `ready` (its timeout) never runs;
  * - one "no repeat" rule for every `terminated`: a build started while a `terminated` is dispatched and refused with that
  *   very reason ends `terminated` without another event;
@@ -252,6 +253,7 @@ export function opName(cmd: Cmd): string {
 
 export class LifecycleModel {
     where: Where = 'none';
+    doc: 'own' | 'foreign' = 'own'; // the document the element belongs to: its adoption into another ends its environment
     state: State = 'idle';
     started = false; // a start() succeeded: the element has its app, for the rest of its life
     cfg: ConfigDesc | null = null; // null: no app (the defaults: sealed mode, which the model reads as strict, no html)
@@ -343,7 +345,10 @@ export class LifecycleModel {
         this.announced = new Map();
     }
 
+    // A build, of an element that has its app: one with no app builds nothing and stays as it is (design 01, the
+    // lifecycle), so reset() and insertion change nothing there.
     private initialize(now: number) {
+        if (!this.started) return;
         const buildWithin = this.dispatching.length ? this.dispatching[this.dispatching.length - 1]! : null;
         this.teardown();
         this.discardWrites();
@@ -372,7 +377,8 @@ export class LifecycleModel {
     }
 
     private terminate(reason: string, frame: Frame | null) {
-        if (this.state === 'terminated') return;
+        // an element with no app has no environment to end: it stays idle, and dispatches nothing
+        if (this.state === 'terminated' || !this.started) return;
         this.teardown(); // the overlay's writes stay listable and committable until the next build
         this.state = 'terminated';
         if (frame) frame.expected.push({ type: 'terminated', reason });
@@ -401,10 +407,16 @@ export class LifecycleModel {
         if (cmd.op === 'foreign' || (cmd.op === 'remove' && this.where !== 'none') || cmd.op === 'insert') this.coverage.add(`${opName(cmd)}|where:${this.where}|${this.mode}`);
         this.frames.push(frame);
         switch (cmd.op) {
-            case 'insert':
+            case 'insert': {
+                // a move, and an adoption back from another document, are disconnected (stop), then connected (a build,
+                // of an element that has its app)
+                const moved = this.where !== 'none' || this.doc !== 'own';
                 this.where = 'own';
-                this.initialize(now); // a move is disconnected (stop), then connected (a build)
+                this.doc = 'own';
+                if (!this.started && moved) this.stop();
+                this.initialize(now);
                 break;
+            }
             case 'remove':
                 if (this.where === 'none') break; // remove() of a detached element does nothing
                 this.where = 'none';
@@ -413,6 +425,7 @@ export class LifecycleModel {
             case 'foreign':
                 if (this.where !== 'foreign') frame.expectWarn = false; // warned once per element: not checked
                 this.where = 'foreign';
+                this.doc = 'foreign';
                 this.stop();
                 break;
             case 'start':

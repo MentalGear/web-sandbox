@@ -55,9 +55,9 @@ afterEach(() => {
 });
 
 describe('T8: a config that names no mode is sealed', () => {
-    it.each([['inserted, never started', undefined], ['start({})', {}], ['start() with html only', { html: '<p>hi</p>' }]])('%s: the view document holds only the sealed policy and the hashed bootstrap', async (_, config) => {
+    it.each([['start({})', {}], ['start() with html only', { html: '<p>hi</p>' }]])('%s: the view document holds only the sealed policy and the hashed bootstrap', async (_, config) => {
         const el = await element();
-        if (config) startWith(el, config, { files: FILES }); // an element never started has no files
+        startWith(el, config, { files: FILES });
         document.body.appendChild(el);
         expect(el._config.mode).toBe('sealed');
         expect(built(el)).toEqual({ scripts: [viewBootstrapText()], policy: SEALED_POLICY(), body: 0, flags: 'allow-scripts allow-forms', frames: 1 });

@@ -179,7 +179,9 @@ export interface InputKind {
  * What can happen to the lifecycle. The inputs that carry `gen` come from a platform callback or a timer armed in that
  * environment, and are dropped when it is gone; the others come from the embedder's call or from the executor itself,
  * now, and carry none. A stamped input that is not stale arrives only while the environment it was armed in stands:
- * every transition but `loading` → `ready` is a teardown, which counts the generation up.
+ * every transition but `loading` → `ready` is a teardown, which counts the generation up. So each of them arrives only
+ * on an element that has its app (`app: 'bound'`): one with no app builds nothing (design 01, the lifecycle), and no
+ * input changes that; `connect`, `build` and `terminate` leave it as it is.
  */
 export const LC_INPUTS = {
     // connectedCallback (host.ts, `connected`); the host does not step it when the engine refused to give a Firefox-adopted
@@ -195,10 +197,10 @@ export const LC_INPUTS = {
     // The build effect returned what it prepared, or threw (the reason the host gives for what it threw), for the build of
     // `gen` (LM-2: embedder code can run inside the build effect and build again, and then this build is gone). The
     // `attach` effect's own throw is a `buildFailed` of its build too. Its build is `loading` until it is attached.
-    built: { from: 'the build effect', stamped: 'always', states: ['loading'], fields: { prepared: field<unknown>('unknown') } },
-    buildFailed: { from: 'the build or attach effect', stamped: 'always', states: ['loading'], fields: { reason: field<string>('string') } },
+    built: { from: 'the build effect', stamped: 'always', states: ['loading'], app: 'bound', fields: { prepared: field<unknown>('unknown') } },
+    buildFailed: { from: 'the build or attach effect', stamped: 'always', states: ['loading'], app: 'bound', fields: { reason: field<string>('string') } },
     // The task of a build's 'terminated' (R1:R3-2), armed as the build ends.
-    buildTerminationDue: { from: 'the task effect', stamped: 'always', states: ['terminated'], fields: {} },
+    buildTerminationDue: { from: 'the task effect', stamped: 'always', states: ['terminated'], app: 'bound', fields: {} },
     // A termination. Without `gen`: terminate() (its reason already defaulted, R2:L-7), or a build failure
     // the executor caught. With `gen`: one the element starts (the watchdog, the view's watchdog, workerExecutionTimeout,
     // the uncaught budget, VIEW_OVERRUN, an entry failure, a host-page refusal, a second announcement, the frame-integrity
@@ -207,17 +209,17 @@ export const LC_INPUTS = {
     // after its own output terminated ends that environment again, which changes nothing.
     terminate: { from: "terminate(), the element's own terminations, the executor", stamped: 'optional', states: ANY_STATE, fields: { reason: field<string>('string'), notices: optional<readonly Notice[]>('readonly Notice[]') } },
     // The load deadline (BR:CB3): LOAD_TIMEOUT_MS of loading.
-    loadDeadline: { from: 'the load deadline', stamped: 'always', states: STANDING, fields: {} },
+    loadDeadline: { from: 'the load deadline', stamped: 'always', states: STANDING, app: 'bound', fields: {} },
     // The wrapper's load, in the microtask the host's load handler queues (R4:L-1): `gen` as the load event found it;
     // `stillOurs` whether, in the microtask, the frame is still the element's and both are connected; `guest` the guest
     // frame's window, or null (R2:L-6, S46): compared with the build's `announcer` by identity.
-    frameLoad: { from: "the wrapper's load event", stamped: 'always', states: STANDING, fields: { stillOurs: field<boolean>('boolean'), guest: field<unknown>('window | null') } },
+    frameLoad: { from: "the wrapper's load event", stamped: 'always', states: STANDING, app: 'bound', fields: { stillOurs: field<boolean>('boolean'), guest: field<unknown>('window | null') } },
     // The guest frame's announcement (BR:CB1). `valid`: trusted, and exactly one port or worker mode's refusal; `refusal`:
     // the reason worker mode's frame gave for a worker that could not start (R2:C-5), else null; `source`:
     // the window it came from (the guest frame's: the host's listener hears no other). A strict build listens for none.
-    announced: { from: "the host page's message listener", stamped: 'always', states: STANDING, modes: ['cooperative', 'worker'], fields: { valid: field<boolean>('boolean'), refusal: field<string | null>('string | null'), port: field<unknown>('unknown'), source: field<unknown>('window') } },
+    announced: { from: "the host page's message listener", stamped: 'always', states: STANDING, app: 'bound', modes: ['cooperative', 'worker'], fields: { valid: field<boolean>('boolean'), refusal: field<string | null>('string | null'), port: field<unknown>('unknown'), source: field<unknown>('window') } },
     // The strict view's check-in on its port (R1:R3-1), with what the host checks then.
-    viewReady: { from: "the view port's VIEW_READY", stamped: 'always', states: STANDING, modes: ['strict'], fields: { height: field<unknown>('unknown'), stillStyleRefused: field<boolean>('boolean') } },
+    viewReady: { from: "the view port's VIEW_READY", stamped: 'always', states: STANDING, app: 'bound', modes: ['strict'], fields: { height: field<unknown>('unknown'), stillStyleRefused: field<boolean>('boolean') } },
     // Around each 'terminated' dispatch (the executor's; R4:L-3: every one, so the no-repeat rule holds for all).
     dispatchStarted: { from: 'the executor', stamped: 'never', states: ANY_STATE, fields: { reason: field<string>('string') } },
     dispatchEnded: { from: 'the executor', stamped: 'never', states: ANY_STATE, fields: {} },
@@ -500,13 +502,14 @@ export function reduce(state: LcState, input: LcInput): LcOutput {
                 const stopped = stop(state);
                 return { state: stopped.state, effects: [...stopped.effects, { k: 'warnForeignDocument' }] };
             }
-            return initialize(state, input.ctx);
+            return state.started ? initialize(state, input.ctx) : unchanged(state);
         case 'disconnect':
             return stop(state);
         case 'start':
             return { state: { ...state, started: true }, effects: NOTHING };
         case 'build':
-            return initialize(state, input.ctx);
+            // reset() of an element with no app does nothing: there is nothing to build
+            return state.started ? initialize(state, input.ctx) : unchanged(state);
         case 'built':
             // LM-2 (class L; S65). Embedder code runs inside the build effect: a host page's Trusted Types default
             // policy at each HTML sink it writes (the wrapper's srcdoc, the inert parse of the markup), a patched
@@ -536,7 +539,8 @@ export function reduce(state: LcState, input: LcInput): LcOutput {
         case 'buildTerminationDue':
             return buildTerminationDue(state);
         case 'terminate':
-            return terminate(state, input);
+            // an element with no app has no environment to end, and is never `terminated`
+            return state.started ? terminate(state, input) : unchanged(state);
         case 'loadDeadline':
             return loadDeadline(state);
         case 'frameLoad':

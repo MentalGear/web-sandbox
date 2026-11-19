@@ -305,6 +305,39 @@ describe('start(): the binding is one step (I1)', () => {
     });
 });
 
+describe('an element with no app builds nothing (design 01, the lifecycle)', () => {
+    it('inserted, reset, terminated, moved, removed and inserted again: idle, no frame, no event; a call is refused at once', async () => {
+        const el = newElement();
+        const events: string[] = [];
+        for (const type of ['ready', 'terminated']) el.addEventListener(type, () => events.push(type));
+        const frames = () => el.shadowRoot.querySelectorAll('iframe').length;
+        const steps: [string, () => void][] = [
+            ['inserted', () => document.body.append(el)],
+            ['reset', () => el.reset()],
+            ['terminated', () => el.terminate('bye')],
+            ['moved', () => document.body.append(el)],
+            ['removed', () => el.remove()],
+            ['inserted again', () => document.body.append(el)],
+        ];
+        for (const [label, act] of steps) {
+            act();
+            expect([el.state, el.started, frames()], label).toEqual(['idle', false, 0]);
+        }
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(events).toEqual([]);
+        await expect(el.call('anything')).rejects.toMatchObject({ code: 'TERMINATED', message: '[Sandbox] call() rejected: the element has no app. Call start() first.' });
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('terminated'));
+    });
+
+    it('start() on it then builds at once, in the document', () => {
+        const el = newElement();
+        document.body.append(el);
+        el.reset();
+        el.start(app());
+        expect([el.state, el.shadowRoot.querySelectorAll('iframe').length]).toEqual(['loading', 1]);
+    });
+});
+
 describe('start(): a second call throws, whatever the state', () => {
     const STATES: [string, (el: any) => void][] = [
         ['outside a document', () => {}],

@@ -218,9 +218,11 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 ```
 
 *   **`terminate(reason?)`** removes the frame now and fires `terminated` with `{ reason }`. Calling
-    it again while terminated does nothing. The sandbox stays terminated until `reset()`.
+    it again while terminated does nothing, and so does calling it on an element with no app. The sandbox stays
+    terminated until `reset()`.
 *   **`reset()`** builds a fresh environment of the same app, from any state, with its files as they are now
     (committed writes included). Guest methods are gone, host methods stay; pending calls reject with `TERMINATED`.
+    On an element with no app it does nothing: until `start()`, the element builds nothing, wherever it is.
 *   **Removing the element** tears the sandbox down the same way, without a `terminated` event, and
     leaves it `idle`. Inserting it again builds the same app again. Moved into another window's document, it builds
     nothing there (one warning) until it is back.

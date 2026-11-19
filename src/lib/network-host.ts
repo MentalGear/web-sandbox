@@ -406,7 +406,8 @@ export class NetworkMethods {
         // (Code queued while idle would be dropped silently by the build on insertion.)
         const state = this._lc.state;
         if (state === 'terminated' || state === 'idle') {
-            console.warn(`[Sandbox] execute() ignored: the sandbox ${state === 'idle' ? 'is not in the document' : 'was terminated'}. Call it once the element is in the document and not terminated (reset() starts a new environment).`);
+            const why = state === 'terminated' ? 'was terminated' : this._lc.started ? 'is not in the document' : 'has no app (start() gives it one)';
+            console.warn(`[Sandbox] execute() ignored: the sandbox ${why}. Call it once the element is in the document and not terminated (reset() starts a new environment).`);
             return;
         }
         // Before `ready` it waits, even with a port (strict mode has one from the wrapper's load): the `flush` effect posts it.

@@ -76,7 +76,7 @@ describe('B3: every sandbox-log detail is normalised and labelled', () => {
 
     it(`dispatches at most ${LOG_EVENTS_PER_SECOND} guest lines per second per environment, with one warning; host lines are never limited; a new environment starts afresh`, async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount();
+        const el = await mount({}); // an app, so that reset() builds the new environment
         const heard = logs(el);
         const { port1 } = new MessageChannel();
         el._port = port1;

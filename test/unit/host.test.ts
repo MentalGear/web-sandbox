@@ -300,6 +300,7 @@ describe("the element's 'violation' event (backlog S5)", () => {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
+    el.start({}); // an app, so that reset() builds the next environment
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const heard: unknown[] = [];
     const onWindow = (e: Event) => { if (e.target === el) heard.push((e as CustomEvent).detail); };

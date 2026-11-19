@@ -170,12 +170,14 @@ describe("the reducer's properties on fuzzed inputs", () => {
 const COOPERATIVE: BuildContext = { buildsHere: true, blocked: null, strict: false, announces: true };
 const NO_BOOTSTRAP: BuildContext = { buildsHere: true, blocked: null, strict: false, announces: false };
 const STRICT: BuildContext = { buildsHere: true, blocked: null, strict: true, announces: false };
+// The state of an element that has its app (start()'s `start`): what the hand-written traces below build from.
+const BOUND: LcState = reduce(INITIAL_LIFECYCLE, { t: 'start' }).state;
 // Guest frame windows, as identities (frameLoad.guest, announced.source): the one that checked in, and another one.
 const ANNOUNCER = Object.freeze({ window: 'announcer' });
 const OTHER = Object.freeze({ window: 'other' });
 
 class RecordingHost implements LifecycleHost {
-    lc: LcState = INITIAL_LIFECYCLE;
+    lc: LcState = BOUND;
     log: string[] = [];
     events: string[] = [];
     tasks: LcInput[] = [];
@@ -238,6 +240,34 @@ const sequence = (mode: Sequence['mode'], cmds: Sequence['cmds'], plans: Sequenc
 // build refuses, with its reason
 const START = (mode: Sequence['mode'], extra: Parameters<typeof validConfig>[1] = {}): Sequence['cmds'][number] => ({ op: 'start', cfg: validConfig(mode, extra), methods: 'echo' });
 const REFUSED_APP = START('strict', { entry: 'import.js' });
+
+describe('design 01: an element with no app builds nothing, and is never terminated', () => {
+    const contexts: BuildContext[] = [COOPERATIVE, NO_BOOTSTRAP, STRICT, { ...STRICT, blocked: 'refused' }];
+    it('connect where it may build, build (reset()) and terminate leave it idle, with no effect at all', () => {
+        for (const input of [...contexts.flatMap(ctx => [{ t: 'connect', ctx }, { t: 'build', ctx }] as LcInput[]), { t: 'terminate', reason: 'bye' } as LcInput]) {
+            const output = reduce(INITIAL_LIFECYCLE, input);
+            expect([output.state, output.effects], input.t).toEqual([INITIAL_LIFECYCLE, []]);
+        }
+    });
+    it('no input of a build is admitted before start(): each comes from an environment that exists only once one is built', () => {
+        const gen = INITIAL_LIFECYCLE.gen;
+        const ofABuild: LcInput[] = [{ t: 'built', gen, prepared: {} }, { t: 'buildFailed', gen, reason: 'x' }, { t: 'loadDeadline', gen }, { t: 'frameLoad', gen, stillOurs: true, guest: OTHER }, { t: 'announced', gen, valid: true, refusal: null, port: {}, source: ANNOUNCER }, { t: 'viewReady', gen, height: 1, stillStyleRefused: false }];
+        for (const input of ofABuild) expect(admits(INITIAL_LIFECYCLE, input), input.t).toBe(false);
+        // and start() is admitted once: an element that has its app takes no second
+        expect(admits(INITIAL_LIFECYCLE, { t: 'start' })).toBe(true);
+        expect(admits(BOUND, { t: 'start' })).toBe(false);
+    });
+    it('start() then builds as reset() does: the same input, from the same state', () => {
+        const host = new RecordingHost();
+        host.lc = INITIAL_LIFECYCLE;
+        host.step({ t: 'connect', ctx: COOPERATIVE });
+        expect([host.lc.state, host.log]).toEqual(['idle', []]);
+        host.step({ t: 'start' });
+        host.step({ t: 'build', ctx: COOPERATIVE });
+        expect(host.lc.state).toBe('loading');
+        expect(host.log).toEqual(['teardown', 'discardWrites', 'build', 'attach {"build":1}', 'startLoadDeadline']);
+    });
+});
 
 describe('class L, finding by finding', () => {
     describe("round 4, L-1: `ready` from inside the embedder's appendChild() or remove()", () => {
@@ -381,7 +411,7 @@ describe("the reducer describes today's host.ts", () => {
     });
 
     it("a refused build counts two teardowns, as host.ts's initialize() (_endEnvironment, then its `buildFailed` step) does", () => {
-        const output = reduce(INITIAL_LIFECYCLE, { t: 'connect', ctx: { ...STRICT, blocked: 'refused' } });
+        const output = reduce(BOUND, { t: 'connect', ctx: { ...STRICT, blocked: 'refused' } });
         expect(output.state.gen).toBe(2);
         expect(output.effects.filter(effect => effect.k === 'teardown')).toHaveLength(2);
     });

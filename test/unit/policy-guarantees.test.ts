@@ -333,7 +333,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
 
     it('a throw while the frame loads (the second half of a build) is a termination too', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount();
+        const el = await mount({});
         const reasons = terminations(el);
         // the strict view's ports, handed over at the wrapper's load (the `sendInitView` effect, applied through the
         // class's prototype, CB7), throw; the wrapper's load of the standing environment, as the platform delivers it

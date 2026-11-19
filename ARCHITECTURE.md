@@ -291,7 +291,7 @@ How a field is bounded:
 
 ## The lifecycle: one reducer, one executor
 
-<!-- describes: lifecycle:states, lifecycle:inputs, lifecycle:effects, lifecycle:transitions sig:204ee8507ef5f3fc -->
+<!-- describes: lifecycle:states, lifecycle:inputs, lifecycle:effects, lifecycle:transitions sig:204ee8507ef58b0a -->
 
 The element's `state` is not kept by the code that reacts to the DOM. Every platform callback, timer, embedder call and
 build result is an **input** to one pure function, `reduce(state, input)`, which returns the next state and a list of
@@ -302,10 +302,12 @@ the environment it is told about in place. This is what makes the rules checkabl
 - an input that comes from a callback or timer carries the generation of the environment that armed it, and `reduce`
   drops one from an environment that is gone, with no effect: an old environment cannot act;
 - the `ready` gate has one door: only `loading` reaches `ready`, together with the flush of what waited for it;
-- each input declares where it comes from and the states and modes it can arrive in; `reduce` asserts that, the model
-  runs check it, and the diagram below is drawn by exploring `reduce` over exactly those pairs.
+- each input declares where it comes from and the states and modes it can arrive in, and whether the element must
+  have its app (`start` binds it once; no input of a build arrives without it, and `connect`, `build` and `terminate`
+  leave an element with no app `idle`); `reduce` asserts that, the model runs check it, and the diagram below is drawn
+  by exploring `reduce` over exactly those pairs.
 
-The states: `idle` (no environment: the element is not in a document), `loading` (an environment is being built, and its
+The states: `idle` (no environment: the element has no app, or is not in a document), `loading` (an environment is being built, and its
 guest has not checked in), `ready` (the guest checked in; its document may still be loading) and `terminated` (the
 environment is gone, with a reason). See [ADR-003](docs/ADR-003-lifecycle-and-liveness.md).
 
@@ -325,17 +327,17 @@ stateDiagram-v2
     idle --> idle: build, connect, disconnect, dispatchEnded, dispatchStarted, start, terminate
     idle --> loading: build, connect
     idle --> terminated: build, connect, terminate
-    loading --> loading: announced, build, built, connect, dispatchEnded, dispatchStarted, frameLoad, start, terminate
+    loading --> loading: announced, build, built, connect, dispatchEnded, dispatchStarted, frameLoad, terminate
     loading --> ready: announced, frameLoad, viewReady
     loading --> terminated: announced, build, buildFailed, connect, frameLoad, loadDeadline, terminate
     loading --> idle: build, connect, disconnect
     ready --> terminated: announced, build, connect, frameLoad, terminate
     ready --> idle: build, connect, disconnect
     ready --> loading: build, connect
-    ready --> ready: dispatchEnded, dispatchStarted, frameLoad, loadDeadline, start, terminate, viewReady
+    ready --> ready: dispatchEnded, dispatchStarted, frameLoad, loadDeadline, terminate, viewReady
     terminated --> idle: build, connect, disconnect
     terminated --> loading: build, connect
-    terminated --> terminated: build, buildTerminationDue, connect, dispatchEnded, dispatchStarted, start, terminate
+    terminated --> terminated: build, buildTerminationDue, connect, dispatchEnded, dispatchStarted, terminate
 ```
 <!-- generated:end -->
 

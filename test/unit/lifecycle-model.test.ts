@@ -186,6 +186,28 @@ describe('the lifecycle model on the round reports', () => {
     });
 });
 
+describe('design 01: an element with no app stays idle', () => {
+    it('inserted, moved, reset, terminated or removed, it builds nothing and dispatches nothing; a call is refused at once', () => {
+        const model = new LifecycleModel('strict');
+        for (const cmd of [{ op: 'insert' }, { op: 'insert' }, { op: 'reset' }, { op: 'terminate', reason: 'bye' }, { op: 'foreign' }, { op: 'insert' }, { op: 'remove' }, { op: 'insert' }] as Cmd[]) {
+            op(model, cmd);
+            expect([model.state, model.env, model.pendingTermination], cmd.op).toEqual(['idle', null, null]);
+        }
+        const call = op(model, { op: 'call', method: 'act', spec: { k: 'mark' } }).callId!;
+        expect(() => model.settled(call, { status: 'rejected', code: 'TIMEOUT' }, 1)).toThrow(/expected TERMINATED/);
+    });
+    it('a `terminated` or a `ready` from it is a divergence; start() then builds it', () => {
+        const model = new LifecycleModel('strict');
+        op(model, { op: 'insert' });
+        expect(() => op(model, { op: 'terminate', reason: 'bye' }, () => model.event(seen(model, 'terminated', { reason: 'bye' }, { depth: 1 })))).toThrow(/unexpected terminated/);
+        const fresh = new LifecycleModel('strict');
+        op(fresh, { op: 'insert' });
+        expect(() => fresh.event(seen(fresh, 'ready', null))).toThrow(/ready while the model is idle/);
+        op(fresh, { op: 'start', cfg: valid('strict'), methods: 'echo' });
+        expect(fresh.state).toBe('loading');
+    });
+});
+
 describe('design 01, I1: one app per element', () => {
     it('a second start() throws a TypeError in every state and changes nothing; not throwing it is a divergence', () => {
         const model = standing('strict');

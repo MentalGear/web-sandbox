@@ -484,7 +484,8 @@ export interface CallLimits {
 /**
  * Where the element is in its lifecycle; read it from `state`.
  *
- * - `'idle'`: constructed, or removed from the document. There is no frame.
+ * - `'idle'`: no app yet (`start()` was not called), or not in the document (constructed, removed). There is no frame:
+ *   an element with no app builds nothing, wherever it is, and is never `'terminated'`.
  * - `'loading'`: a frame was built and the guest has not checked in (without a bootstrap, the frame has not loaded).
  * - `'ready'`: the guest checked in and `ready` was dispatched. In cooperative mode the guest document may still be
  *   loading; its calls wait until it is parsed.
@@ -506,6 +507,7 @@ export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 const TERMINATED_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was terminated. Call reset() to start it again.";
 const RESET_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was reset or terminated.";
 const IDLE_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox is not in the document. Call it once the element is inserted.";
+const NO_APP_CALL_MESSAGE = "[Sandbox] call() rejected: the element has no app. Call start() first.";
 
 // The sandbox flags of strict mode's view, always: scripts for its bootstrap, and forms so that `submit` reaches it, to be
 // forwarded to the worker's handlers and cancelled (research 15, P4: without allow-forms Chromium and Firefox dispatch no
@@ -637,7 +639,8 @@ const ElementBase: typeof HTMLElement = typeof HTMLElement === 'function' ? HTML
  *
  * @remarks
  * The element has no observed attributes and two properties, `state` and `started`; everything else is done through
- * its methods. An element with no app builds nothing and stays `'idle'`; another app is another element. It builds an environment only while it is in the document of the window that defined it: moved into another
+ * its methods. An element with no app builds nothing and stays `'idle'`, wherever it is and whatever is called on it;
+ * another app is another element. It builds an environment only while it is in the document of the window that defined it: moved into another
  * document it tears its environment down and stays `'idle'` there, with one warning. Its events are listed in
  * {@link WebSandboxEventMap}. Reference: docs/API.md.
  */
@@ -796,7 +799,8 @@ export class WebSandbox extends ElementBase {
      *   way, the one that finishes validating first binds and the other throws.
      * - **Its lifecycle.** `reset()` rebuilds the same app, with its files as they are now, committed writes included;
      *   `terminate()` ends it, and a later `reset()` starts it again; removing the element ends its environment and
-     *   inserting it again builds the same app.
+     *   inserting it again builds the same app. Until `start()` is called the element builds nothing: inserted, reset
+     *   or terminated, it stays `'idle'`.
      *
      * @param app - The app: its markup, its entry and its files; see {@link SandboxApp}.
      * @param grants - What the embedder allows it: its host methods and options; see {@link SandboxGrants}. None when
@@ -843,8 +847,8 @@ export class WebSandbox extends ElementBase {
     // guest would keep running with nothing left that could end it.
     /**
      * Custom element reaction: the browser calls it when the element is inserted into a document. It builds an
-     * environment of the element's app (see `state`) where the element may build one; nothing is dispatched
-     * synchronously.
+     * environment of the element's app (see `state`) where the element may build one, and nothing for an element with
+     * no app; nothing is dispatched synchronously.
      */
     connectedCallback() {
         connected(this);
@@ -878,8 +882,8 @@ export class WebSandbox extends ElementBase {
      * builds a new environment of the same app.
      *
      * @remarks
-     * Calling it while terminated does nothing, so `terminated` fires once per termination. The reason is also written to
-     * the console as a warning.
+     * Calling it while terminated does nothing, so `terminated` fires once per termination; so does calling it on an
+     * element with no app, which stays `'idle'`. The reason is also written to the console as a warning.
      *
      * @param reason - Why, as the `terminated` event reports it; `'terminated by the host'` when left out. A value that
      * is not a string, or is empty or only white space, is replaced by that default.
@@ -894,7 +898,8 @@ export class WebSandbox extends ElementBase {
      * Rebuilds the environment of the same app now, from any state (terminated included): a fresh frame with a fresh
      * opaque origin and a new snapshot of the app's files, committed writes included. Methods the guest exposed are
      * gone, the host methods of the grants stay, and pending calls reject with `TERMINATED`. Wait for `ready` before
-     * relying on the new environment. Outside the document it builds nothing until the element is inserted.
+     * relying on the new environment. Outside the document it builds nothing until the element is inserted, and on an
+     * element with no app it does nothing.
      */
     reset(): void {
         step(this, { t: 'build', ctx: this._buildContext() });
@@ -1136,7 +1141,7 @@ export class WebSandbox extends ElementBase {
     // the build.)
     private _noEnvironmentError(): Error | null {
         if (this._lc.state === 'terminated') return this._broker.terminationError(TERMINATED_CALL_MESSAGE);
-        if (this._lc.state === 'idle') return this._broker.terminationError(IDLE_CALL_MESSAGE);
+        if (this._lc.state === 'idle') return this._broker.terminationError(this._lc.started ? IDLE_CALL_MESSAGE : NO_APP_CALL_MESSAGE);
         return null;
     }
 

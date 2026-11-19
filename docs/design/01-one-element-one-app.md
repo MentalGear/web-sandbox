@@ -1,9 +1,10 @@
 # 01 · One element runs one app, given once
 
-**Status: built up to step 1.5 of [the build order](05-build-order.md#step-1--startapp-grants)**: `start(app, grants)`
+**Status: built up to step 1.6 of [the build order](05-build-order.md#step-1--startapp-grants)**: `start(app, grants)`
 and `started` in both builds, the six members gone from both, `execute()` in the build with the network modes only,
-and `APP_SURFACE` (I1, I3) and `CONFIG_SCHEMA`'s owners (I17) with their tests. Not built yet: the element with no app
-(1.6), commits by identity (1.7) and the events that do not bubble (1.8). The code as it is:
+`APP_SURFACE` (I1, I3) and `CONFIG_SCHEMA`'s owners (I17) with their tests, and an element with no app that builds
+nothing (the lifecycle's rows below). Not built yet: commits by identity (1.7) and the events that do not bubble
+(1.8). The code as it is:
 [API.md](../API.md). [The folder's index](README.md) has the invariants (I1 to I5 and I17 are this file's) and what
 [review 1](REVIEW-1.md) and [review 2](REVIEW-2.md) changed here.
 

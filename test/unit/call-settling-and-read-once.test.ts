@@ -233,6 +233,7 @@ describe('5:L-2 (class C): callLimits.maxBytesPerSecond smaller than one call', 
 describe('5:L-3 (class D/L): the first listener cannot rewrite a detail for the listeners after it', () => {
     it('terminated: { reason } is frozen; a listener that rewrites it changes nothing for the next', () => {
         const { el } = element();
+        el.start({}); // an element with no app has nothing to terminate
         const seen: unknown[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => { Reflect.set(e.detail, 'reason', 'rewritten'); });
         el.addEventListener('terminated', (e: CustomEvent) => { seen.push(e.detail.reason, Object.isFrozen(e.detail)); });

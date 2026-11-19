@@ -87,7 +87,7 @@ export interface NetworkHost {
     _executionTimers: Set<LongTimeout>;
     _executionProbes: Map<number, () => void>;
     _probePings: number;
-    readonly _lc: { readonly gen: Generation; readonly state: string };
+    readonly _lc: { readonly gen: Generation; readonly state: string; readonly started: boolean };
     _step(input: LcInput): void;
     _warnOnce(message: string): void;
     _autoResizeEnabled(): boolean;

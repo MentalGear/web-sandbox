@@ -59,7 +59,8 @@ different name of this class, and its `SyntaxError` for a name that is not a val
 <!-- describes: api:WebSandbox sig:5b54 -->
 The element has no observed attributes. An app is given to it once, with [`start(app, grants)`](#startapp-grants): the
 app's own content in the first argument, what you allow it in the second. No other member takes app content or a grant,
-and another app is another element. In the build with the network modes it also has
+and another app is another element. Until `start()` the element builds nothing: inserted, reset or terminated, it stays
+`idle`. In the build with the network modes it also has
 [`execute()`](#executecode). It has two properties:
 
 <!-- generated:begin api-element -->
@@ -553,7 +554,8 @@ stored. It builds at once while the element is in the document, otherwise when i
  way, the one that finishes validating first binds and the other throws.
 - **Its lifecycle.** `reset()` rebuilds the same app, with its files as they are now, committed writes included;
  `terminate()` ends it, and a later `reset()` starts it again; removing the element ends its environment and
- inserting it again builds the same app.
+ inserting it again builds the same app. Until `start()` is called the element builds nothing: inserted, reset
+ or terminated, it stays `'idle'`.
 
 **Parameters**
 
@@ -578,7 +580,8 @@ reset(): void
 Rebuilds the environment of the same app now, from any state (terminated included): a fresh frame with a fresh
 opaque origin and a new snapshot of the app's files, committed writes included. Methods the guest exposed are
 gone, the host methods of the grants stay, and pending calls reject with `TERMINATED`. Wait for `ready` before
-relying on the new environment. Outside the document it builds nothing until the element is inserted.
+relying on the new environment. Outside the document it builds nothing until the element is inserted, and on an
+element with no app it does nothing.
 
 ### `terminate(reason?)`
 
@@ -590,8 +593,8 @@ Removes the frame now, sets `state` to `'terminated'` and dispatches `terminated
 reject with `TERMINATED` and later calls are refused at once. The sandbox stays terminated until `reset()`
 builds a new environment of the same app.
 
-Calling it while terminated does nothing, so `terminated` fires once per termination. The reason is also written to
-the console as a warning.
+Calling it while terminated does nothing, so `terminated` fires once per termination; so does calling it on an
+element with no app, which stays `'idle'`. The reason is also written to the console as a warning.
 
 **Parameters**
 
@@ -769,7 +772,7 @@ The inert types, exactly: `application/json`, `audio/flac`, `audio/mp4`, `audio/
 The browser calls these when the element is inserted, removed or moved; you do not.
 
 <!-- generated:begin api-reactions -->
-- `connectedCallback()`: Custom element reaction: the browser calls it when the element is inserted into a document. It builds an environment of the element's app (see `state`) where the element may build one; nothing is dispatched synchronously.
+- `connectedCallback()`: Custom element reaction: the browser calls it when the element is inserted into a document. It builds an environment of the element's app (see `state`) where the element may build one, and nothing for an element with no app; nothing is dispatched synchronously.
 - `disconnectedCallback()`: Custom element reaction: the browser calls it when the element is removed from a document. The environment ends and pending calls reject with `TERMINATED`. This is not a termination: no `terminated` event is dispatched, and inserting the element again builds a fresh environment.
 - `adoptedCallback()`: Custom element reaction: the browser calls it when the element is moved into another document (`adoptNode()`, or appending it to an iframe's document). Its environment ends as for a removal and it stays `'idle'` there, with one warning; moved back, it builds again.
 <!-- generated:end -->
@@ -1027,10 +1030,10 @@ message names the option and what it takes. For the options it refuses as a whol
 
 ## Lifecycle
 
-<!-- describes: lifecycle:states, lifecycle:transitions, api:SandboxState sig:204ef3fca4b8 -->
+<!-- describes: lifecycle:states, lifecycle:transitions, api:SandboxState sig:204e8b0aa4b8 -->
 | State | Meaning |
 | :--- | :--- |
-| `idle` | Not in the document (constructed, or removed): no frame. |
+| `idle` | No app yet (`start()` not called), or not in the document (constructed, or removed): no frame. An element with no app stays `idle` whatever is done to it. |
 | `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, and in strict mode, for the frame to load); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
 | `ready` | The guest can be reached; `ready` was dispatched. In cooperative mode the guest document may still be loading. |
 | `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`, the view's longest operation), an integrity check or a failed build; `terminated` was dispatched. |
@@ -1039,9 +1042,10 @@ There is no `running` state: nothing reports that guest code is running or that 
 
 | From | Action | To |
 | :--- | :--- | :--- |
-| any | inserted into the document; `start()` or `reset()` while in it | `loading`, then `ready`, or `terminated` if the build is refused or fails: one `terminated` per attempt, except for an attempt made from a `terminated` listener that ends with the very reason being dispatched (the same refusal again), which ends `terminated` without another event |
+| `idle` with no app | inserted into the document, moved, `reset()`, `terminate()`, removed | `idle`: nothing is built and nothing is dispatched; a call is refused at once with `TERMINATED` |
+| any, with its app | inserted into the document; `start()` or `reset()` while in it | `loading`, then `ready`, or `terminated` if the build is refused or fails: one `terminated` per attempt, except for an attempt made from a `terminated` listener that ends with the very reason being dispatched (the same refusal again), which ends `terminated` without another event |
 | any | removed from the document | `idle`, no event |
-| any but `terminated` | `terminate()`, watchdog, `workerExecutionTimeout`, the view's longest operation, integrity check | `terminated` |
+| any but `terminated`, with its app | `terminate()`, watchdog, `workerExecutionTimeout`, the view's longest operation, integrity check | `terminated` |
 
 Every rebuild and teardown rejects pending calls with `TERMINATED`, aborts in-flight `sandboxFetch()` requests,
 and resets the per-environment caps (log rate, violations). Listeners run synchronously; a listener that calls
