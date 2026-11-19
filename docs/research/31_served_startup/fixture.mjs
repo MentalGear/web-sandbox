@@ -148,8 +148,9 @@ self.onmessage = async (m) => {
  * another text, so another hash). `commands` are this probe's content messages (a form, the flags), answered after the
  * start-up, on the port.
  */
-export function cScript({ gates = true, check = true, allowlist = true, version = '1' } = {}) {
-    const policyTemplate = metaPolicy(HOLE);
+export function cScript({ gates = true, check = true, allowlist = true, version = '1', scriptExtra = '', first = false, reloadAfterPost = false } = {}) {
+    if (first) return cScriptFirst({ gates, check, allowlist, version, scriptExtra, reloadAfterPost });
+    const policyTemplate = metaPolicy(HOLE, withScripts(scriptExtra));
     return `(() => {
 const VERSION = ${JSON.stringify(version)};
 const SELF = document.currentScript.textContent;
@@ -212,6 +213,75 @@ addEventListener('message', async (e) => {
 })();`;
 }
 
+/** The <meta>'s `script-src` with more hashes (a file whose F or a second frame has a script of its own: Q7's forgeries). */
+const withScripts = (extra) => (extra ? (d) => ({ 'script-src': `${d['script-src']} ${extra}` }) : null);
+
+/**
+ * C's bootstrap in the order "the view speaks first" (Q7, 03 "Who receives the first port"): at its own start C runs its
+ * gates and its check (the same as cScript's), posts `{ version, verdicts }` to parent.parent with target origin '*', and
+ * takes the first message from parent.parent that is 'ws-port' with a port. On that port it then answers what cScript
+ * answers (content, form, flags, guest), first with `{ hello: 'port received', doc }`, where `doc` names this document.
+ * Its listener is added before anything else, so a port that arrives while it still runs its gates is kept.
+ * `reloadAfterPost`: right after its post, C reloads itself once (window.name marks the second document), for Q7 (f).
+ */
+function cScriptFirst({ gates, check, allowlist, version, scriptExtra, reloadAfterPost }) {
+    const policyTemplate = metaPolicy(HOLE, withScripts(scriptExtra));
+    return `(() => {
+const VERSION = ${JSON.stringify(version)};
+const SELF = document.currentScript.textContent;
+const DOC = Math.random().toString(36).slice(2, 10);
+const ev = []; document.addEventListener('securitypolicyviolation', (e) => ev.push((${VIOL})(e)));
+const ignored = [];
+let portEvent = null;
+let onPort = null;
+addEventListener('message', (e) => {
+  if (portEvent) return;
+  if (e.source !== parent.parent || !e.ports[0] || e.data !== 'ws-port') { ignored.push(e.source === parent.parent ? 'from parent.parent, malformed' : 'not from parent.parent'); return; }
+  portEvent = e;
+  if (onPort) onPort(e);
+}, false);
+(async () => {
+  const t0 = performance.now();
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(SELF)));
+  const hash = "'sha256-" + btoa(String.fromCharCode(...digest)) + "'";
+  const expected = ${JSON.stringify(policyTemplate)}.replace(${JSON.stringify(HOLE)}, hash);
+  const ph = { hash: Math.round(performance.now() - t0) };
+  let worker = null;
+  const pendingW = new Promise((res) => {
+    let w;
+    try { w = worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerSource({ gates, check, allowlist }))}], { type: 'text/javascript' }))); }
+    catch (x) { res({ started: 'throws ' + x.name }); return; }
+    w.onmessage = (m) => res({ started: 'yes', ...m.data });
+    w.onerror = () => res({ started: 'error event (not started)' });
+    w.postMessage({ expected });
+    setTimeout(() => res({ started: 'no answer in 3 s' }), 3000);
+  });
+  const g = ${gates ? `await (${GATES})('C')` : '{}'};
+  ph.gates = Math.round(performance.now() - t0);
+  const loads = ${check ? `await (${CHECK})(ev)` : '{}'};
+  ph.check = Math.round(performance.now() - t0);
+  const W = await pendingW;
+  ph.worker = Math.round(performance.now() - t0);
+  const extra = W.started === 'yes' ? [] : ['worker: ' + W.started];
+  const check = ${check ? `(${VERDICT})(expected, ev, loads, extra)` : '{ clean: W.started === "yes", skipped: true }'};
+  // the announcement: the library's version and the verdicts, nothing else
+  const verdicts = { C: { gates: g, check }, W: { started: W.started, gates: W.gates, check: W.check } };
+  parent.parent.postMessage({ version: VERSION, verdicts }, '*');
+  const posted = performance.now();
+  ${reloadAfterPost ? "if (window.name !== 'reloaded') { window.name = 'reloaded'; location.reload(); return; }" : ''}
+  onPort = (e) => {
+    const port = e.ports[0];
+    port.postMessage({ hello: 'port received', doc: DOC, reloaded: window.name === 'reloaded', msAfterPost: Math.round(performance.now() - posted), ms: performance.now() - t0, phases: ph, hash, ignored: ignored.slice(), C: { loads, events: ev.map((v) => ({ ...v, policy: v.policy === expected ? '(the meta, exact)' : v.policy.slice(0, 160) })) }, W });
+    port.onmessage = (m) => {
+      const d = m.data || {};
+      if (d.cmd === 'content') port.postMessage({ ack: 'content', bytes: String(d.body).length, doc: DOC });
+    };
+  };
+  if (portEvent) onPort(portEvent);
+})();
+})();`;
+}
+
 // What a guest could make the view or the worker do after a clean start-up, each carrying a marker of its own in a URL
 // or in the text a 'report-sample' copies (Q3: which outside policies the check does not see still report these?).
 // Every URL is under .invalid (never resolved) and the file's own policy refuses every one of them.
@@ -266,11 +336,16 @@ export function cDocument(script) {
  * F, the served file. Options: `meta` (false: no <meta>), `weaken` (directives replaced in the <meta>), `guard` (false:
  * no guard script), `c` (cScript options), `cAttr` (C's sandbox attribute).
  */
-export function servedFile({ meta = true, weaken = null, guard = true, c = {}, cAttr = 'allow-scripts allow-forms allow-orientation-lock' } = {}) {
-    const script = cScript(c);
+export function servedFile({ meta = true, weaken = null, guard = true, c = {}, cAttr = 'allow-scripts allow-forms allow-orientation-lock', script: own = null, fScripts = [], extraFrames = [] } = {}) {
+    // `script`: C's bootstrap in place of cScript's (Q6's canaries). `fScripts`: scripts of F's own after the guard, and
+    // `extraFrames` ({ attr, scripts }): srcdoc frames after C; their hashes join the <meta>'s script-src (Q7's forgeries)
+    const extra = [...fScripts, ...extraFrames.flatMap((x) => x.scripts)].map(sha).join(' ');
+    const script = own ?? cScript({ ...c, scriptExtra: extra });
     const cHash = sha(script);
-    const policy = metaPolicy(cHash, weaken);
-    const html = `<!doctype html><html><head>${meta ? `<meta http-equiv="Content-Security-Policy" content="${esc(policy)}">` : ''}<meta charset="utf-8">${guard ? `<script>${GUARD}</script>` : ''}</head><body><iframe sandbox="${cAttr}" srcdoc="${esc(cDocument(script))}"></iframe></body></html>`;
+    const policy = extra ? metaPolicy(cHash, (d) => ({ ...withScripts(extra)(d), ...(typeof weaken === 'function' ? weaken(d) : weaken || {}) })) : metaPolicy(cHash, weaken);
+    const fOwn = fScripts.map((x) => `<script>${x}</script>`).join('');
+    const more = extraFrames.map((x) => `<iframe sandbox="${x.attr ?? cAttr}" srcdoc="${esc(`<!doctype html><meta charset="utf-8">${x.scripts.map((y) => `<script>${y}</script>`).join('')}`)}"></iframe>`).join('');
+    const html = `<!doctype html><html><head>${meta ? `<meta http-equiv="Content-Security-Policy" content="${esc(policy)}">` : ''}<meta charset="utf-8">${guard ? `<script>${GUARD}</script>` : ''}${fOwn}</head><body><iframe sandbox="${cAttr}" srcdoc="${esc(cDocument(script))}"></iframe>${more}</body></html>`;
     return { html, policy, cHash, script };
 }
 
@@ -278,7 +353,9 @@ export function servedFile({ meta = true, weaken = null, guard = true, c = {}, c
  * The host page H: `window.start(url, opts)` inserts a <web-sandbox-probe> whose closed shadow root holds the frame of F,
  * runs the start-up order and resolves with what H saw. `opts`: `attrs` (F's sandbox attribute), `expectHash` (H's
  * viewScriptHash), `srcdoc` (today's view shape: the wrapper as srcdoc instead of src), `intruder` (a sibling frame posts
- * the hello first), `keep` (leave the element in the page), `send` (false: do not send content even on a clean verdict).
+ * the hello first), `keep` (leave the element in the page), `send` (false: do not send content even on a clean verdict),
+ * `first` (Q7's order: the view speaks first; with `postTo`, `answerDelay`, `expectVersion`), `busy` (ms of a busy main
+ * thread right after insertion).
  */
 export function hostPage(expectHash) {
     return `<!doctype html><html><head><meta charset="utf-8"><title>host</title></head><body><script>
@@ -298,7 +375,7 @@ window.start = (url, opts = {}) => new Promise((resolve) => {
   const R = window.last = { loads: [], hello: null, verdict: null, decision: null, acks: [], messages: [], timeline: {} };
   const now = () => +(performance.now() - t0).toFixed(1);
   let ended = false;
-  const end = (why) => { if (ended) return; ended = true; R.end = why; R.timeline.end = now(); R.hostViolations = hostViolations.slice(); hostViolations.length = 0; if (!opts.keep) setTimeout(() => el.remove(), 50); resolve(R); };
+  const end = (why) => { if (ended) return; ended = true; R.end = why; R.timeline.end = now(); R.hostViolations = hostViolations.slice(); hostViolations.length = 0; if (opts.first) removeEventListener('message', onFirst); if (!opts.keep) setTimeout(() => el.remove(), 50); resolve(R); };
   const ch = new MessageChannel();
   window.lastPort = ch.port1;
   ch.port1.onmessage = (m) => {
@@ -321,10 +398,50 @@ window.start = (url, opts = {}) => new Promise((resolve) => {
     R.acks.push(d);
     if (d.ack === 'content') { R.timeline.content = now(); if (!opts.keep) end('content acknowledged'); else end('content acknowledged'); }
   };
+  // opts.first (Q7, "the view speaks first"): H posts nothing at load. A listener added before the frame is inserted
+  // takes the first { version, verdicts } whose source is frame.contentWindow[0], and only then posts the port to
+  // event.source (opts.postTo 'index': to frame.contentWindow[0] again), after opts.answerDelay ms
+  R.firstMessages = [];
+  const compare = (src) => {
+    const c = {};
+    const t = (k, fn) => { try { c[k] = fn(); } catch (x) { c[k] = 'throws ' + x.name; } };
+    const w = f.contentWindow;
+    t('index', () => src === w[0]); t('frames', () => src === w.frames[0]); t('parent', () => src != null && src.parent === w); t('self', () => src === w);
+    return c;
+  };
+  const onFirst = (e) => {
+    const rec = { t: now(), keys: Object.keys(e.data || {}).join(','), cmp: compare(e.source) };
+    R.firstMessages.push(rec);
+    if (ended || R.verdict || rec.cmp.index !== true) return;
+    const d = e.data;
+    if (!d || typeof d !== 'object' || !('version' in d) || !d.verdicts) return;
+    rec.accepted = true;
+    R.verdict = d; R.timeline.verdict = now(); R.verdictEpoch = performance.timeOrigin + performance.now();
+    const bad = [];
+    if (d.version !== (opts.expectVersion ?? '1')) bad.push('version');
+    for (const [realm, v] of [['C', d.verdicts.C], ['W', d.verdicts.W]]) {
+      for (const [k, s] of Object.entries((v && v.gates) || {})) if (String(s).startsWith('broken')) bad.push(realm + '.' + k);
+      if (!v || !v.check || !v.check.clean) bad.push(realm + '.policy');
+    }
+    if (!d.verdicts.W || d.verdicts.W.started !== 'yes') bad.push('W.started');
+    R.decision = bad.length ? { refused: bad } : 'send';
+    if (bad.length || opts.send === false) { setTimeout(() => end(bad.length ? 'refused' : 'verdict'), 20); return; }
+    const source = e.source;
+    const answer = () => {
+      R.portTo = opts.postTo === 'index' ? 'frame.contentWindow[0]' : 'event.source';
+      try { (opts.postTo === 'index' ? f.contentWindow[0] : source).postMessage('ws-port', '*', [ch.port2]); R.hello = 'port posted'; } catch (x) { R.hello = 'port post throws ' + x.name; }
+      R.timeline.hello = now();
+      ch.port1.postMessage({ cmd: 'content', body: 'the app' });
+    };
+    if (opts.answerDelay) setTimeout(answer, opts.answerDelay); else answer();
+  };
+  if (opts.first) addEventListener('message', onFirst);
+  const readIndex = () => { try { const x = f.contentWindow[0]; return x === undefined ? 'undefined' : x === null ? 'null' : 'a window'; } catch (x) { return 'throws ' + x.name; } };
   f.addEventListener('load', () => {
     const w = f.contentWindow;
     let length = null; try { length = w.length; } catch (e) { length = 'throws ' + e.name; }
-    R.loads.push({ t: now(), length });
+    R.loads.push(opts.first ? { t: now(), length, index: readIndex() } : { t: now(), length });
+    if (opts.first) return;
     if (R.hello) return;
     let target = null; try { target = w.frames[0] || null; } catch (e) { R.hello = 'frames[0] throws ' + e.name; return; }
     if (!target) { R.hello = 'no frames[0] at load'; return; }
@@ -338,10 +455,13 @@ window.start = (url, opts = {}) => new Promise((resolve) => {
     target.postMessage('ws-hello', '*', [ch.port2]);
     R.hello = 'posted'; R.timeline.hello = now();
   });
+  if (opts.first) R.indexBeforeInsertion = readIndex();
   if (opts.light) el.append(f); else root.append(f); // light: the frame outside the shadow root (Q5's positive control)
   const t0 = performance.now();
   if (opts.srcdoc) f.srcdoc = opts.srcdoc; else f.src = url;
   document.body.append(el);
+  if (opts.first) R.indexAtInsertion = readIndex();
+  if (opts.busy) { const b = performance.now(); while (performance.now() - b < opts.busy); } // a slow host page: its main thread busy at insertion
   setTimeout(() => end('no answer in ' + (opts.timeout ?? 6000) + ' ms'), opts.timeout ?? 6000);
 });
 window.intruderGot = () => (window.last && window.last.intruder ? window.last.intruder.contentWindow.got : null);

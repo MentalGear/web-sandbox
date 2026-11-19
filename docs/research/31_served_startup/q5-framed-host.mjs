@@ -41,7 +41,7 @@ addEventListener('message', (e) => {
 });
 <\/script>`.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"></iframe></body></html>`;
 
-const ATTACK = `<!doctype html><html><head><meta charset="utf-8"></head><body><script>
+export const ATTACK = `<!doctype html><html><head><meta charset="utf-8"></head><body><script>
 const q = new URLSearchParams(location.search);
 window.log = [];
 const evilUrl = location.origin + '/evil.html';
@@ -109,7 +109,10 @@ async function runEngine(name) {
     await browser.close();
 }
 
-for (const name of process.argv.slice(2).filter((a) => a in ENGINES)) {
-    try { await runEngine(name); } catch (e) { emit('q5.error', { engine: name, error: String(e).slice(0, 400) }); }
+// run only as a script: Q7 imports ATTACK
+if (import.meta.main) {
+    for (const name of process.argv.slice(2).filter((a) => a in ENGINES)) {
+        try { await runEngine(name); } catch (e) { emit('q5.error', { engine: name, error: String(e).slice(0, 400) }); }
+    }
+    process.exit(0);
 }
-process.exit(0);

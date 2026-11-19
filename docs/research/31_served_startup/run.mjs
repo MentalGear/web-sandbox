@@ -23,6 +23,8 @@ const PLAN = [
     ['q4w', 'q4-ways.mjs', ['static']],
     ['q4g', 'q4-ways.mjs', ['guarded']],
     ['q5', 'q5-framed-host.mjs', []],
+    ['q6', 'q6-refused-canaries.mjs', []],
+    ['q7', 'q7-view-first.mjs', []],
 ];
 const args = process.argv.slice(2);
 const onlyQ = args.filter((a) => PLAN.some(([q]) => q === a));

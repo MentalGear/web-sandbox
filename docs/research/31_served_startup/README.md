@@ -17,9 +17,14 @@ builds the file exactly as drawn and measures:
 - **Q4, the sandbox flags**: does a form's `submit` reach C; do research 27 Q2's twelve ways still leave C and its
   worker opaque with `allow-forms` on F; what does C gain when a hostile page frames F with more flags?
 - **Q5, a page that frames the host page**: can it reach F's frame (inside the closed shadow root) and navigate it?
+- **Q6, a refused canary per directive** (03's "To be measured" under "What the policy check provokes"): does a load the
+  `<meta>` itself refuses raise exactly its event, and a second one under the headers Q3 missed; which headers stay
+  unseen, and does a guest's URL get reported under them?
+- **Q7, the view speaks first** (03's "To be measured" under "Who receives the first port"): is `event.source ===
+  frame.contentWindow[0]` a reliable test, what does each forgery get, and what does the order cost?
 
 **Measured on headless Playwright 1.65.1 on a shared 4-core VM** (Chromium 159.0.8154.6 headless shell, Firefox 159.0,
-WebKit 27.2), 2026-11-18, from `80701b0`; no library code. Plain HTML served on loopback by
+WebKit 27.2), 2026-11-18, from `80701b0` (Q1 to Q5), and 2026-11-19, from `7494042` (Q6 and Q7); no library code. Plain HTML served on loopback by
 [`server.mjs`](server.mjs) (research 28's recording server, with arrival times). `localhost` and `127.0.0.1` are two
 sites. Raw output is in [`results/`](results/README.md).
 
@@ -81,6 +86,33 @@ sites. Raw output is in [`results/`](results/README.md).
   start, with one `load`. Today's `srcdoc` shape behaved the same, except on WebKit, where its `srcdoc` loaded before
   the framer reached it. After the first load, a navigation of F showed the host page a second `load`; C's own
   navigation was refused by F's `frame-src 'none'`.
+
+- **(Q6) A refused canary raised exactly the `<meta>`'s event under the `<meta>` alone, and a second one under every
+  header Q3 missed that reports a guest's URL, for `font-src`, `media-src`, `frame-src` and `object-src` on all three
+  engines**, with one fixed library URL per kind on a reserved name in `http:` and in `https:` (the pair sees
+  `https: blob:`-style headers too). No canary left the browser under the `<meta>`; the positive control reached the
+  server. `worker-src` is seen through a `data:` worker (a network worker fails before the policy, with no request).
+  **No refused canary**: `manifest-src` (no engine fetched a manifest in C, so neither a canary nor a guest's link
+  raised anything) and, **on Chromium, `form-action`: the refused form replaced C with an error page** (Firefox and
+  WebKit: one event, C stays). **The residual set** (unseen by both canaries, a guest's URL then reported): on Chromium
+  and Firefox, a header that names the canaries' own host (`*.canary.invalid`) for `font-src`, `media-src`,
+  `form-action` (full URL) and `frame-src`, `object-src` (origin); on Chromium also every `form-action` header that
+  refuses the guest's action (full URL). WebKit: none. The canaries' own reports carried library strings only, with an
+  empty `referrer`. They add 63 / 95 / 24 ms at the median (Chromium / Firefox / WebKit, the last two under load); each
+  is expected exactly, so a check can wait for the count rather than a fixed time (the latest arrived 99 / 165 / 203 ms
+  after issue). A refused frame or object left no trace outside C.
+- **(Q7) The view speaking first works, and `event.source === frame.contentWindow[0]` is a reliable test on all three
+  engines**, read inside `try`: C's message passed it in every start (100 of 100 per engine, half of them with the host
+  page busy 200 ms at insertion), and the reading throws (`TypeError` with no frame, `SecurityError` while F is not
+  loaded, opaque `about:blank`, or a page with no frames) rather than returning `undefined`. `event.source.parent ===
+  frame.contentWindow` is not enough: it holds for F's second frame. **Forgeries**: another frame of the host page, F
+  itself, a second frame inside F and a page that frames the host page were all ignored and received nothing; **an SPA
+  fallback's widget that speaks received the port and the content** (it is `frames[0]` of what answered: the trusted
+  host's limit), and a silent widget received nothing. A port posted to `event.source` reached a reloaded C (the same
+  browsing context) but was lost when F replaced C's frame; a fresh `frame.contentWindow[0]` reached the new C. The
+  order costs the same as Q1's (93 / 120 / 288 ms against 93 / 121 / 286 to the verdict). Another site framing F
+  receives only `{ version, verdicts }`. Q5 is unchanged: the closed shadow root keeps a framing page out; in the light
+  DOM its page took the port and the content.
 
 ## Method
 
@@ -391,12 +423,280 @@ whose shadow root has no slot. My reading is that this leaves it unrendered, so 
 style; the rendering was not checked directly. This is an artefact of the positive control only; the take-over did not
 depend on it.
 
+## Q6. A refused canary per directive ([`q6-refused-canaries.mjs`](q6-refused-canaries.mjs), [`canaries.mjs`](canaries.mjs), [`tables-q6.mjs`](tables-q6.mjs))
+
+Q3's canaries were loads the `<meta>` admits (a `blob:` font, `blob:` media, the `blob:` worker) or none at all (a frame,
+an object, a form, a manifest). Q6 adds, per kind, a load the `<meta>` itself **refuses**: a fixed URL on a reserved name,
+one host per kind (`http://font-api.canary.invalid/ws-canary/font-api`, …), so that an event or a report cut down to the
+origin still names its canary. Each refused canary runs **in both schemes, `http:` and `https:`**. A header such as
+`font-src https: blob:` admits an `https:` canary and would still report a guest's `http:` URL; `font-src http: blob:`
+is the reverse. With the pair, a header goes unseen only if it admits both canary URLs: `*`, both scheme sources, or a
+host source that names the canary's own host. `*` and scheme sources admit every guest URL on the network as well, so
+they report nothing of the guest's (measured below for `*` and `* blob: data:`); the host source is the residual.
+
+**Method.** The browser runs with the recording server as its proxy (as Q1b), so a canary that left the browser is a hit:
+an `http:` URL as a proxied request, an `https:` URL as a `CONNECT`. F is the design's file with Q6's view as C (its
+bootstrap runs canaries on command and reports every `securitypolicyviolation` of C and of its `blob:` worker, with
+arrival times; C also posts each event to the host page as it arrives, so the events before a navigation of C are
+kept). F is framed as designed (closed shadow root, `sandbox="allow-scripts allow-forms"`, `referrerpolicy="no-referrer"`)
+from a host page whose URL has a query. Per header, each phase in a fresh element: every canary at once (1000 ms);
+where the header names `form-action`, and in the baseline, a form submitted with `submit()` and one by a real click on
+its button, each to the `http:` and the `https:` canary, each form in an element of its own; then each refused kind again
+with a guest's URL (`http(s)://leak.invalid/GUEST-SECRET-<kind>`). The positive control is the same canaries in a file
+without the `<meta>`. "Q3's set" below is Q6's admitted loads (`blob:` image, sheet, font, media and worker) with Q3's
+refused `fetch(blob:)` and `eval`, in C and the worker: Q3's check without its gates. The verdicts are read from the raw
+events against the baseline of the same engine by `tables-q6.mjs`.
+
+**Under the `<meta>` alone** (the baseline, header 0). "1" is one event with the `<meta>`'s text and disposition
+`enforce`, per load and scheme. "Control" is the file without the `<meta>`.
+
+| Canary | Chromium 159 | Firefox 159 | WebKit 27.2 |
+| :--- | :--- | :--- | :--- |
+| `img`, `style`, `fetch`, `script`, `font-api` (`FontFace`), `audio`, `video-source` (`<source>`), `frame` (`<iframe src>`), `object` (`<object data>`) in C; `fetch`, `importScripts`, `import()` in the worker | 1 each; control: each reached the server | the same | the same |
+| `font-css` (`@font-face` in a `blob:` sheet, `document.fonts.load`) | 1 | **2**, both the `<meta>`, in every start | 1 |
+| `FontFace` in the worker | 1 | **none** (the console shows the refusal); control reached the server | **none**; control: **no request** |
+| `form-submit` (`submit()`), `form-click` (a real click) | **none reached C: C was replaced by an error page** (`chrome-error://chromewebdata/`); the console showed the `<meta>`'s `form-action` refusal and F's `frame-src` refusal of C's navigation | 1; C stays | 1; C stays |
+| `worker-data` (`new Worker('data:…')`) in C | 1 | **2** (C's and the worker's nested one, both filed in C) | 1 |
+| the same in the worker | 1 | filed in C (above) | 1 |
+| `worker` (`new Worker(http(s)://…)`), in C and in the worker | **none**: throws `SecurityError` at construction; control: no request | **none**: an `error` event; control: no request | **none**: an `error` event; control: no request |
+| `manifest` (`<link rel=manifest>`) | **none**; control: no request | the same | the same |
+
+- **No canary left the browser under the `<meta>`**: no hit in any of the 57 cases on any engine. The control reached the
+  server for every `http:` canary (a proxied `GET`) and every `https:` one (a `CONNECT`) except the cross-origin
+  workers, the manifest (all three) and WebKit's worker `FontFace`, so for those kinds "no hit" says nothing more than
+  "no request is made".
+- **The kinds with no refused canary**, and why:
+  - `manifest-src`: no engine fetched a manifest linked in C, with or without the `<meta>`; no event can be raised, and
+    a guest's manifest link reported nothing under any `manifest-src` header (rows 37 to 42);
+  - a network URL for `worker-src`: a worker of another origin than C's (opaque, so every network URL) fails before the
+    policy is consulted (Chromium throws; Firefox and WebKit fire `error`), with no request. A `data:` worker is
+    refused by the `<meta>`'s `worker-src blob:` and serves as the refused canary: it carries no URL of anyone's, and a
+    guest's network worker cannot be built either;
+  - `form-action` on Chromium: the refused form replaced C with an error page and C received no event, so the canary
+    ends the view; on Firefox and WebKit it raised one event and C stayed. Whether the `<meta>`'s `form-action` or F's
+    `frame-src` decided Chromium's navigation was not isolated (Q3 saw the same);
+  - a worker `FontFace` on Firefox and WebKit (no event), where C's `FontFace` and `@font-face` serve.
+
+**Under each header** (with `report-uri`). "admitted": Q3's set saw it; "refused: kinds": only Q6's refused canaries saw
+it (two events, or one with the header's text or disposition, against the baseline's count; "(http: only)": only the
+`http:` canary); "unseen": neither. After the dot, what a guest's URL then made the browser do: "R" a report at the
+endpoint carrying the guest's full URL or its origin; "E" an event in the page only (WebKit sends no report from an
+opaque document, Q3); "–" nothing.
+
+| # | Header on F | Chromium | Firefox | WebKit |
+| ---: | :--- | :--- | :--- | :--- |
+| 0 | none (control) | **unseen** · – | **unseen** · – | **unseen** · – |
+| 1 | RO font-src blob: (the `<meta>`'s own) | refused: font-api, font-css, w-font-api · R full URL | refused: font-api, font-css · R full URL | refused: font-api, font-css · E full URL |
+| 2 | CSP font-src blob: (the `<meta>`'s own, enforced) | refused: font-api, font-css, w-font-api · R full URL | refused: font-api, font-css · R full URL | refused: font-api, font-css · E full URL |
+| 3 | RO font-src \* | admitted · – | admitted · – | admitted · – |
+| 4 | RO font-src https: blob: | refused: font-api, font-css, w-font-api (http: only) · R full URL | refused: font-api, font-css (http: only) · R full URL | refused: font-api, font-css (http: only) · E full URL |
+| 5 | RO font-src \* blob: data: | **unseen** · – | **unseen** · – | **unseen** · – |
+| 6 | RO font-src \*.canary.invalid blob: (names the canaries' hosts) | **unseen** · R full URL | **unseen** · R full URL | refused: font-api, font-css · E full URL |
+| 7 | RO media-src blob: (the `<meta>`'s own) | refused: audio, video-source · R full URL | refused: audio, video-source · R full URL | refused: audio, video-source · E full URL |
+| 8 | CSP media-src blob: (the `<meta>`'s own, enforced) | refused: audio, video-source · R full URL | refused: audio, video-source · R full URL | refused: audio, video-source · E full URL |
+| 9 | RO media-src \* | admitted · – | admitted · – | **unseen** · – |
+| 10 | RO media-src https: blob: | refused: audio, video-source (http: only) · R full URL | refused: audio, video-source (http: only) · R full URL | refused: audio, video-source (http: only) · E full URL |
+| 11 | RO media-src \* blob: data: | **unseen** · – | **unseen** · – | **unseen** · – |
+| 12 | RO media-src \*.canary.invalid blob: (names the canaries' hosts) | **unseen** · R full URL | **unseen** · R full URL | refused: audio, video-source · E full URL |
+| 13 | RO worker-src blob: (the `<meta>`'s own) | refused: worker-data, w-worker-data · – | refused: worker-data · – | refused: worker-data, w-worker-data · – |
+| 14 | CSP worker-src blob: (the `<meta>`'s own, enforced) | refused: worker-data, w-worker-data · – | refused: worker-data · – | refused: worker-data, w-worker-data · – |
+| 15 | RO worker-src \* | admitted · E scheme | admitted · E scheme | admitted · E scheme |
+| 16 | RO worker-src https: blob: | refused: worker-data, w-worker-data · – | refused: worker-data · – | refused: worker-data, w-worker-data · – |
+| 17 | RO worker-src \* blob: data: | **unseen** · – | **unseen** · – | **unseen** · – |
+| 18 | RO worker-src \*.canary.invalid blob: (names the canaries' hosts) | refused: worker-data, w-worker-data · – | refused: worker-data · – | refused: worker-data, w-worker-data · – |
+| 19 | RO frame-src 'none' (the `<meta>`'s own) | refused: frame · R origin | refused: frame · R origin | refused: frame · E origin |
+| 20 | CSP frame-src 'none' (the `<meta>`'s own, enforced) | refused: frame · R origin | refused: frame · R origin | refused: frame · E origin |
+| 21 | RO frame-src \* | **unseen** · – | **unseen** · – | **unseen** · – |
+| 22 | RO frame-src https: blob: | refused: frame (http: only) · R origin | refused: frame (http: only) · R origin | refused: frame (http: only) · E origin |
+| 23 | RO frame-src \* blob: data: | **unseen** · – | **unseen** · – | **unseen** · – |
+| 24 | RO frame-src \*.canary.invalid blob: (names the canaries' hosts) | **unseen** · R origin | **unseen** · R origin | refused: frame · E origin |
+| 25 | RO object-src 'none' (the `<meta>`'s own) | refused: object · R origin | refused: object · R origin | refused: object · E origin |
+| 26 | CSP object-src 'none' (the `<meta>`'s own, enforced) | refused: object · R origin | refused: object · R origin | refused: object · E origin |
+| 27 | RO object-src \* | **unseen** · – | **unseen** · – | **unseen** · – |
+| 28 | RO object-src https: blob: | refused: object (http: only) · R origin | refused: object (http: only) · R origin | refused: object (http: only) · E origin |
+| 29 | RO object-src \* blob: data: | **unseen** · – | **unseen** · – | **unseen** · – |
+| 30 | RO object-src \*.canary.invalid blob: (names the canaries' hosts) | **unseen** · R origin | **unseen** · R origin | refused: object · E origin |
+| 31 | RO form-action 'none' (the `<meta>`'s own) | **unseen** · R full URL | refused: form-submit, form-click · R full URL | refused: form-submit, form-click · E full URL |
+| 32 | CSP form-action 'none' (the `<meta>`'s own, enforced) | **unseen** · R full URL | refused: form-submit, form-click · R full URL | refused: form-submit, form-click · E full URL |
+| 33 | RO form-action \* | **unseen** · – | **unseen** · – | **unseen** · – |
+| 34 | RO form-action https: blob: | **unseen** · R full URL | refused: form-submit, form-click (http: only) · R full URL | refused: form-submit, form-click (http: only) · E full URL |
+| 35 | RO form-action \* blob: data: | **unseen** · – | **unseen** · – | **unseen** · – |
+| 36 | RO form-action \*.canary.invalid blob: (names the canaries' hosts) | **unseen** · R full URL | **unseen** · R full URL | refused: form-submit, form-click · E full URL |
+| 37 | RO manifest-src 'none' (the `<meta>`'s own) | **unseen** · – | **unseen** · – | **unseen** · – |
+| 38 | CSP manifest-src 'none' (the `<meta>`'s own, enforced) | **unseen** · – | **unseen** · – | **unseen** · – |
+| 39 | RO manifest-src \* | **unseen** · – | **unseen** · – | **unseen** · – |
+| 40 | RO manifest-src https: blob: | **unseen** · – | **unseen** · – | **unseen** · – |
+| 41 | RO manifest-src \* blob: data: | **unseen** · – | **unseen** · – | **unseen** · – |
+| 42 | RO manifest-src \*.canary.invalid blob: (names the canaries' hosts) | **unseen** · – | **unseen** · – | **unseen** · – |
+| 43 | RO default-src blob: | admitted · R full URL, origin | admitted · R origin, full URL | refused (15 kinds) · E full URL, origin |
+| 44 | RO default-src 'self' blob: 'unsafe-inline' 'unsafe-eval' | refused (16 kinds) · R full URL, origin | refused (14 kinds) · R origin, full URL | refused (15 kinds) · E full URL, origin |
+| 45 | RO default-src https: blob: 'unsafe-inline' 'unsafe-eval' | refused (16 kinds) · R full URL, origin | refused (14 kinds) · R origin, full URL | refused (15 kinds) · E full URL, origin |
+| 46 | RO default-src \* blob: data: 'unsafe-inline' 'unsafe-eval' | **unseen** · – | **unseen** · – | **unseen** · – |
+| 47 | CSP default-src \* blob: data: 'unsafe-inline' 'unsafe-eval'; base-uri \*; form-action \* (enforced) | **unseen** · – | **unseen** · – | **unseen** · – |
+| 48 | RO child-src blob: | refused: worker-data, frame, w-worker-data · R origin | refused: frame, worker-data · R origin | refused: worker-data, frame, w-worker-data · E origin |
+| 49 | RO child-src \* | admitted · E scheme | admitted · E scheme | admitted · E scheme |
+| 50 | RO img-src blob: (control) | refused: img · R full URL | refused: img · R full URL | refused: img · E full URL |
+| 51 | RO style-src the `<meta>`'s own (control) | refused: style · R full URL | refused: style · R full URL | refused: style · E full URL |
+| 52 | RO connect-src 'none' (control) | admitted · R full URL | admitted · R full URL | admitted · E full URL |
+| 53 | RO script-src the `<meta>`'s own + 'report-sample' (control) | admitted · R full URL | admitted · R full URL | admitted · E scheme, full URL |
+| 54 | RO img-src \* (control) | admitted · – | admitted · – | admitted · – |
+| 55 | RO connect-src \* (control) | admitted · – | admitted · – | admitted · – |
+| 56 | CSP img-src \* blob: (control, enforced) | **unseen** · – | **unseen** · – | **unseen** · – |
+
+- **The second event exists for every header Q3 missed that reports a guest's URL**, on all three engines: report-only and
+  enforced `font-src blob:`, `media-src blob:`, `frame-src 'none'` and `object-src 'none'` (the `<meta>`'s own values),
+  the `https: blob:` variants (through the `http:` canary), `default-src` with `blob:` or `'self' blob:`, and `child-src
+  blob:`. `form-action 'none'` and `form-action https: blob:` (report-only and enforced) on Firefox and WebKit. `worker-src`
+  with the `<meta>`'s own `blob:`, enforced or report-only, is now seen by the `data:` worker on all three.
+- **WebKit** also saw the headers that name the canaries' host (`*.canary.invalid`), through the refused canaries;
+  Chromium and Firefox did not.
+- **The residual set**: a header that both canaries pass **and** under which a guest's URL reached the endpoint in a
+  report:
+
+  | Engine | Headers | What the report carried |
+  | :--- | :--- | :--- |
+  | Chromium | `font-src`, `media-src` or `form-action` with `*.canary.invalid blob:` | the guest's full URL (a form's with its query) |
+  | | `frame-src` or `object-src` with `*.canary.invalid blob:` | the guest's origin |
+  | | **every `form-action` header that refuses the guest's action**: `'none'` report-only and enforced, `https: blob:` | the full URL with its query (no form canary on Chromium) |
+  | Firefox | `font-src`, `media-src`, `form-action` with `*.canary.invalid blob:` | the full URL |
+  | | `frame-src`, `object-src` with `*.canary.invalid blob:` | the origin |
+  | WebKit | none (it saw the `*.canary.invalid` headers, and sends no report from an opaque document) | – |
+
+  Under every other header both canaries passed (`*`, `* blob: data:`, every `manifest-src`, `default-src * blob: data:
+  'unsafe-inline' 'unsafe-eval'` report-only and enforced, an enforced `img-src * blob:`), no guest action was reported
+  on any engine. Under `worker-src *` and `child-src *` the guest step's only event was the header's refusal of the
+  step's own `blob:` worker (scheme only), and no report: a guest's network worker fails before the policy (above).
+- **What the canaries' own reports carried** (to `report-uri`, F framed `no-referrer`): 179 reports on Chromium, 189 on
+  Firefox, 4 on WebKit (all F's own, blocked `inline` or `eval`, under headers 43 and 53). Every field was a library
+  string: the blocked URI a canary URL (`…canary.invalid/ws-canary/<kind>`, for a form with its fixed query
+  `?q=ws-canary`; for a frame or object the origin), `blob`, `data`, `inline` or `eval`; the document `about`, `blob` or
+  F's URL; **`referrer` empty in every report**; no field held the host page's URL or its query.
+- **Cost**, on the baseline file, from issuing the canaries in a fresh C (its worker started in the same run), median
+  (range) of 24 starts per mode, the modes alternating:
+
+  | | Chromium | Firefox | WebKit |
+  | :--- | ---: | ---: | ---: |
+  | Q3's set alone: until every load settled and every event arrived | 22.6 (17–26) | 36.5 (30–63) | 15.5 (10–26) |
+  | the refused canaries alone: until the last event | 62.6 (51–84) | 90.5 (76–126) | 27 (19–180) |
+  | both at once: until everything | **85.5 (73–111)** | **131 (97–165)** | **39 (33–203)** |
+  | added by the refused canaries (both − Q3's set, medians) | 63 | 94.5 | 23.5 |
+  | the last refused event, both at once: median / maximum | 73.7 / 98.6 | 131 / 165 | 38 / 203 |
+  | the latest canaries (median / maximum) | `object` https 73.7 / 98.6, `frame` https 50 / 69 | the `data:` worker in C 109 / 165, worker `fetch` 121 / 155 | worker `fetch` 37 / 203 (one start; the rest under 60) |
+
+  Load average 0.5–0.7 (Chromium), 3.6–5.1 (Firefox) and 1.3–4.0 (WebKit) during these runs: the machine was shared, and
+  Firefox's and WebKit's figures are inflated by it. Each start raised the same number of events (34; WebKit 30). The
+  refused canaries of one kind arrive together; the worker's arrive after the worker has started. **No fixed wait is
+  needed for completeness**: each refused canary's event is expected exactly (baseline count per engine), so a check
+  can wait for that count with a timeout, rather than for a fixed time. The largest arrival seen, 203 ms after issue
+  (WebKit, under load), bounds such a timeout here; it is a measurement, not a guarantee.
+- **Side effects** (baseline, all three engines). The frame and object canaries: C's `window.length` was 2 while the
+  canaries were in place (the two refused `<iframe>`s; the `<object>`s made none) and 0 after their removal, with no
+  canary element left; F's `length`, read by the host page, stayed 1 and C's 0 after removal; the host page saw no
+  second `load` of F. In C, the refused `<iframe>` fired `load` on Chromium and WebKit and `error` on Firefox; the
+  `<object>` fired `error` on Chromium and Firefox and nothing on WebKit. Every refusal printed a console error in its
+  realm. The form canary: on Chromium it replaced C with an error page (above), with no `load` of F seen by the host
+  page; on Firefox and WebKit, nothing.
+
+## Q7. The view speaks first ([`q7-view-first.mjs`](q7-view-first.mjs))
+
+The order of 03's "To be measured": the host page posts nothing at F's load. C runs its gates and its check at its own
+start (the fixture's, as in Q1), then posts `{ version, verdicts }` to `parent.parent` with target origin `'*'`, and
+takes the first message from `parent.parent` that is `'ws-port'` with a port. The host page adds a `message` listener
+before it inserts the frame, accepts the first message whose `event.source === frame.contentWindow[0]` and that has a
+`version` and `verdicts`, checks them, and only then posts the port to `event.source` (or, in (f), to
+`frame.contentWindow[0]`) and the content on it (`fixture.mjs`: `cScriptFirst`, `hostPage` with `first`). The host page
+compares the version with a constant, as 03 now draws it, not a hash. For every message it records four comparisons:
+`event.source === frame.contentWindow[0]`, `=== frame.contentWindow.frames[0]`, `event.source.parent ===
+frame.contentWindow`, `=== frame.contentWindow`, each read inside `try`.
+
+**The comparisons** (the same on Chromium 159, Firefox 159 and WebKit 27.2). "index / frames / parent / self" are the four
+comparisons above.
+
+| Who posts `{ version, verdicts }` | index / frames / parent / self | The host page | What the poster received |
+| :--- | :--- | :--- | :--- |
+| C, the correct file (positive control) | true / true / true / false | accepted; port and content sent to C | the port and the content |
+| (a) another frame of the host page (posts at 0, 40 and 80 ms after its load, while the listener is in place) | false / false / false / false; before F's first load the first two **threw `SecurityError`** (Chromium, Firefox) | ignored; then accepted C | nothing |
+| (b) an SPA fallback whose widget frame speaks (the widget is `frames[0]` of the page that answered) | true / true / true / false | **accepted; port and content sent to the widget**; no answer on it | **the port and the content** |
+| (b) the same page, its widget silent | – (no message) | posted nothing; "no answer" | **nothing** |
+| (c) F itself (a file with a script of its own) | false / false / false / true | ignored; then accepted C | nothing |
+| (d) a page that frames the host page (another site, posting to the host page every 5 ms) | false / false / false / false (16, 23 and 12 messages); one early one threw `SecurityError` on Chromium and WebKit | ignored; then accepted C | nothing |
+| (e) a second frame inside F (index 1) | false / false / **true** / false | ignored; then accepted C | nothing |
+
+**Reading `frame.contentWindow[0]`** in each state of the frame (`frames[0]` the same in every state), on all three:
+
+| State | `frame.contentWindow[0]` |
+| :--- | :--- |
+| before insertion (`contentWindow` is `null`) | throws `TypeError` |
+| inserted, its initial `about:blank` (sandboxed, so opaque) | throws `SecurityError` |
+| `src` set, before F's load | throws `SecurityError` |
+| at F's load, and after the start-up | C's window |
+| F navigated to a page with **no frames** | throws **`SecurityError`**, not `undefined` |
+| F navigated to `about:blank` | throws `SecurityError` |
+| the element removed | throws `TypeError` |
+
+So the reliable test is `event.source === frame.contentWindow[0]` (or `.frames[0]`, which gave the same values),
+evaluated inside `try` with a throw read as "no". `event.source.parent === frame.contentWindow` is **not** sufficient:
+it is true for every frame inside F, F's second frame included (e). `event.source === frame.contentWindow` is true only
+for F itself.
+
+**(f) C posts, then goes before the host page answers.** The host page accepted C's message and answered after a delay.
+
+| | to `event.source` | to `frame.contentWindow[0]` |
+| :--- | :--- | :--- |
+| C reloads itself right after its post (the same browsing context, a new document); answer after 400 ms | the port and the content reached the reloaded document (its second announcement was ignored) | the same |
+| F replaces C's frame by a new one at 600 ms (a new browsing context at index 0); answer after 1200 ms | **nothing arrived anywhere**: the port went to the discarded context; the host page saw "no answer" | the port and the content reached the new C |
+
+The same on all three engines. A posted `event.source` follows the browsing context, not the document; a replaced frame
+is a new context, which only a fresh read of `frame.contentWindow[0]` reaches. Either way the recipient is the document
+at index 0 of F at the time of the answer.
+
+**The race and the cost.** The listener exists before insertion, so no message can come before it: over 50 starts per
+engine, and 50 with the host page's main thread busy for 200 ms right after insertion, C's message was accepted in
+every start (100 of 100 on each engine), and content acknowledged in every one. In none did C's message arrive before
+F's `load` event (C's gates and check take longer than F's load), so the case "C speaks before the host page's `load`
+handler" did not occur on its own and was not forced. Insertion to the verdict, median (range): 91 (85–98), 119
+(108–145), 153 (121–451) ms; busy, 294 (287–324), 317 (309–398), 433 (374–947) ms. Against Q1's order, alternating, 24
+starts each (Q1's method):
+
+| | Chromium | Firefox | WebKit |
+| :--- | ---: | ---: | ---: |
+| Q1's order: insertion to the verdict | 93.2 (89–116) | 121 (113–181) | 286 (243–524) |
+| the view speaks first | 93.2 (86–129) | 120 (111–136) | 288 (254–370) |
+| insertion to F's load: Q1's order / this order | 14.7 / 29.6 | 29.5 / 45.5 | 186 / 190 |
+
+Load average 0.8 to 1.2. The two orders cost the same; WebKit's whole start-up was slower in this run than in Q1 (119 ms
+then), on a shared machine. Content followed the verdict within 1 ms in both orders.
+
+**F framed by another site** (a page at `127.0.0.1` framing the file at `localhost` as designed, without the element):
+C's one message reached that page, with `event.source === frame.contentWindow[0]` true and no port. It carried
+`{ version, verdicts }` and nothing else: the gate names with `held`, and the check's `clean`, counts and empty `off`
+list. On all three engines.
+
+**Q5 in this order** (the attack page of Q5, early variant; E's frame speaks first with the public version and clean
+verdicts):
+
+| H's frame of F | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| in the closed shadow root | A never reached F; H accepted the real C and sent it the content | the same | the same |
+| in the light DOM (positive control) | A navigated F at 14 ms; **E's frame announced itself, H accepted it (it is `frame.contentWindow[0]`), and E received the port and the content**; H saw one `load` | the same, at 27 ms | the same, at 16 ms |
+
+The order changes nothing in Q5's result: what stands between a framing page and the port is the closed shadow root.
+
+**Firefox's positive control, once.** In the run reported here, Firefox's first start (the positive control) was
+refused by the host page for `C.policy`: C's own policy check was not clean, while its message was accepted as coming
+from `frame.contentWindow[0]`; which part of the check failed was not recorded. In an earlier run of the same probe
+(its output replaced by this one, after the sibling forger of (a) was moved after insertion), Firefox refused 1 and 2 of
+its 50 race starts, for reasons not recorded; in this run, none. The comparison held in every one of them. Whether the
+fixture's check (Q1's two fixed 30 ms waits) is the cause was not isolated; Q6 measured Firefox's canary events arriving
+up to 165 ms after issue.
+
 ## What this means for the design
 
 Read against [03](../../design/03-served-document.md) as revised after review 2 (`docs/design/REVIEW-2.md`, both at
 `claude/amazing-ride-wbmowi`, `5b0fac5`). For each part: whether the measurement supports it as written, supports it with a change,
-or contradicts it, and the rung its guarantee then stands on. Facts as measured on the three engines named above; the
-choices are the owner's.
+or contradicts it, and the rung its guarantee then stands on. The last two rows read the two "To be measured" paragraphs
+of 03 as revised after this research (`7494042`): under "What the policy check provokes" (Q6) and "Who receives the
+first port" (Q7). Facts as measured on the three engines named above; the choices are the owner's.
 
 | Part of 03 | Verdict | Rung | Why |
 | :--- | :--- | :--- | :--- |
@@ -414,6 +714,8 @@ choices are the owner's.
 | **The five directives under which a guest load would be reported** | **contradicts "a policy that passes this cannot appear later" as a closure of the report channel** | the renderer's rules (a check each), not I18 | under report-only `font-src`, `media-src` and `form-action` with the `<meta>`'s own values, the check passes, and a guest action then reported its full URL on Chromium and Firefox; under `frame-src` and `object-src` (which the check never provokes) the guest's frame and object loads were reported with their origin (Q3; WebKit sent none). What closes each, from the code: **`font-src`, `media-src`**: the view loads a font or media only from a `blob:` URL it minted itself (`keepsUrl`, the CSS URL cut, `VIEW_LOAD_KINDS`); a minted URL carries no guest text, so under such a header the view's own loads raise nothing. **`frame-src`, `object-src`**: the renderer removes nested browsing contexts (`RENDER_REMOVED_ELEMENTS`). **`form-action`**: the renderer drops `action`, `formaction`, `method` and `target` (the form-target rule of `in-sandbox-view.ts`) and the view cancels every `submit` in the capture phase, so no form navigation exists to check. The five are closed while those checks hold; an implementation that relaxed one would reopen a guest-chosen report under a header I18 passes. State them in I18's row as what stands behind the check, with a test that runs a guest font, media, frame, object and form under each of the five headers |
 | **The SPA fallback whose page has a frame** | **contradicts "a file of another version receives nothing", for the port** | – | the hello went to `frames[0]` of whatever answered; an SPA shell with an iframe of its own (a widget) received the hello **and its `MessagePort`**, and answered on it (Q1, all three). The host page refused it, since it had no version and no verdicts, and nothing was sent on that port, so no data moved. But the port reached a third party's frame. The check of the file closes this where it can read the answer (the body is not the file); where it cannot, the host page can post the hello only when `contentWindow.length` is 1 and should close the port after a refused verdict |
 | What "serve it unchanged" excludes | **supported** | a documented limit | each excluded case either ends the build through the check (report-only, and an enforced header that lets the bootstrap run) or stops C (an enforced header that refuses the bootstrap, a refused framing, a wrong type), on all three (Q1, Q3). The kinds of header the check does not see (above) pass, and the check of the file names them |
+| **"To be measured": a refused canary per directive, to lift the five from the renderer's rules to the check** | **supported, with changes** | a check, at start-up, with a residual that is a documented limit; the renderer's rules stay behind it | Q6: a refused canary (one fixed URL per kind on a reserved name, in `http:` and `https:`) raised exactly the `<meta>`'s event and, under every header Q3 missed that reports a guest's URL, a second one, for `font-src`, `media-src`, `frame-src`, `object-src` on all three engines and `form-action` on Firefox and WebKit; `worker-src` through a `data:` worker. **The changes**: (1) **two** URLs per kind, `http:` and `https:` (one scheme leaves `https: blob:`-style headers unseen); (2) the list cannot give every directive a refused canary: `manifest-src` has none (no engine fetched a manifest in C, so there is also no load to report), and **on Chromium the refused form ended the view** (C replaced by an error page), so `form-action` keeps no canary there and stays behind the renderer's form rules; a network `worker-src` canary fails before the policy (the `data:` one serves); (3) **the residual**: a header that admits both canary URLs but not a guest's, measured as one that names the canaries' host (`*.canary.invalid`), is unseen on Chromium and Firefox and then reported a guest's full URL (`font-src`, `media-src`, `form-action`) or origin (`frame-src`, `object-src`); `*` and scheme sources report nothing of the guest's. That residual is constructed (an embedder's header naming a reserved library host), and on Chromium every `form-action` header is in it; both remain closed only by the renderer's rules. (4) Each refused canary's events are expected exactly (a constant count per engine: Firefox raises two for `@font-face`), so the check can wait for that count with a timeout instead of fixed waits: they added 63 / 95 / 24 ms at the median and the last arrived at most 99 / 165 / 203 ms after issue (Chromium / Firefox / WebKit; Firefox and WebKit under load). A list `POLICY_DIRECTIVES` with, per directive, its admitted canary, its refused canary or the reason it has none, fits these facts; the reasons measured are "no load of that kind is made in a framed document" (`manifest-src`), "the refusal ends the view" (`form-action` on Chromium) and "fails before the policy" (a network worker) |
+| **"To be measured": the view speaks first** | **supported, with changes** | impossible to reach, for any document that is not at index 0 of the element's frame; a documented limit for one that is | Q7: `event.source === frame.contentWindow[0]` held for C in every start and was false for every forger elsewhere (a frame of the host page, F itself, F's second frame, a framing page), on all three engines; the order costs the same as Q1's; no message was missed with the listener added before insertion, the host page busy or not. **The changes**: (1) the comparison must run inside `try`, with a throw read as "not the view": the read throws `SecurityError` while F is not loaded and when F has no frames (not `undefined`), and `TypeError` without a frame; (2) `event.source.parent === frame.contentWindow` must not stand in for it (true for F's second frame); (3) where to post the port: `event.source` follows the browsing context, so a reloaded C still receives it, but a frame replaced at index 0 is reached only by a fresh `frame.contentWindow[0]`; posting to `event.source` sends to the context that spoke or nowhere. **What it does not change**: a document at index 0 that speaks is accepted. An SPA fallback's widget that announced itself received the port and the content, and so did a framing page's document in the light DOM (Q5). A silent widget received nothing, where Q1's order gave it the port. So "a document that does not announce itself as the view receives no port at all" holds; "the element posts nothing at the frame's load" holds; the check of the file and the closed shadow root remain what keeps a speaking impostor away. What another site framing F receives is `{ version, verdicts }` only |
 
 ## Not measured
 
@@ -421,7 +723,13 @@ choices are the owner's.
 - The Reporting API on Chromium: its positive control failed over HTTP on loopback and over HTTPS with a self-signed
   certificate; whether Chromium's view and worker deliver `report-to` reports is void here.
 - Downloads on Firefox and WebKit: the positive control gave no download event under Playwright (void).
-- The shortest wait after the check's canaries that still sees every event, and so the check's least cost.
+- The shortest wait after Q3's canaries that still sees every event in the check as built (Q6 measured the arrival of
+  the refused canaries' events and of Q3's set in its own runner, not the fixture's check with its twin canary).
+- Q6: a header with both scheme sources (`font-src http: https: blob:`), which by its matching rules admits both canary
+  URLs like `*`; a guest's `data:` font or media under `* blob:` (Q3 found such blocked URIs reduced to the scheme);
+  `form-action` on Chromium in isolation from F's `frame-src` (which of the two ended C's navigation).
+- Q7: C announcing itself before F's `load` (it never did in 150 starts per engine; not forced); a widget of the SPA
+  page at another index than 0; the cause of Firefox's three refusals by C's own check.
 - The host page's `fetch()` of `documentUrl` under a host policy (`connect-src`) and whether a server answers that fetch
   as it answers the navigation (a server can vary its response by `Sec-Fetch-Dest`).
 - The library itself: no bundle was loaded; the guest step's URLs reached the browser directly, not through the
@@ -443,7 +751,11 @@ bun docs/research/31_served_startup/run.mjs q3 webkit                           
 bun docs/research/31_served_startup/summarize.mjs docs/research/31_served_startup/results/<set>/q3-webkit.txt
 bun docs/research/31_served_startup/tables.mjs <set>                             # Q3's tables
 bun docs/research/31_served_startup/compare-ways.mjs <set>                       # Q4's twelve ways against research 28
+bun docs/research/31_served_startup/tables-q6.mjs <set>                          # Q6's tables (verdicts read from the raw events)
 ```
+
+Q6 and Q7 are in `run.mjs`'s plan (`q6`, `q7`); `Q6_CASES=0,1,31 bun …/q6-refused-canaries.mjs <engine>` runs a subset of
+Q6's headers, and `Q7_RACE_STARTS` sets Q7's race count (default 50).
 
 The scripts are `.mjs`, not `*.spec.ts`, so the repository's Playwright configuration does not run them. None reads a
 host page's timer for a share or a stall (`test/unit/host-share.test.ts` passes without an `OUTSIDE` entry).

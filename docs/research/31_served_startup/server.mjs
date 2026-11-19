@@ -59,6 +59,12 @@ export function startServer(port = 0) {
         res.writeHead(out.status ?? 200, out.headers ?? HTML);
         res.end(out.body ?? '');
     });
+    // a browser that reaches an https: URL through this proxy sends CONNECT: recorded (the target in `host`), then refused,
+    // so research 31 Q6 sees an https: canary that would have left the browser
+    server.on('connect', (req, socket) => {
+        requests.push({ path: 'CONNECT', query: '', host: req.url, proxied: true, at: Date.now() });
+        socket.destroy();
+    });
     return new Promise((resolve) => {
         server.listen(port, '127.0.0.1', () => {
             const p = server.address().port;

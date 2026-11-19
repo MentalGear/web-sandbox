@@ -37,7 +37,29 @@ for (const file of process.argv.slice(2)) {
         } else if (tag === 'q1.case') {
             const s = o.seen;
             console.log(`${o.case} | end=${s.end} | decision=${JSON.stringify(s.decision)} | hello=${s.hello} | loads=${JSON.stringify(s.loads.map((l) => l.length))} | hostViolations=${s.hostViolations.length} | fetch=${JSON.stringify(o.fetchedByHost)}${o.widget ? ' | widget got ' + JSON.stringify(o.widget) : ''}${o.intruderGot ? ' | intruder got ' + JSON.stringify(o.intruderGot) : ''}${s.verdict?.ignored?.length ? ' | C ignored ' + s.verdict.ignored : ''}`);
-        } else if (tag.endsWith('.run') || tag === 'q1.cost' || tag.endsWith('.error')) console.log(line.slice(0, 600));
+        } else if (tag === 'q6.control') {
+            console.log(`control (no <meta>): forms ${JSON.stringify(o.forms)}\n   outcomes ${JSON.stringify(o.outcomes)}\n   W ${JSON.stringify(o.W)}\n   hits (${o.hits.length}) ${o.hits.sort().join(' ')}`);
+        } else if (tag === 'q6.case') {
+            if (!o.verdict) { console.log(`${o.i} ${o.case}: ${o.end}`); continue; }
+            console.log(`${o.i} ${o.case} => ${o.verdict.category} admitted=[${o.verdict.admittedWhy.join('; ')}] refused=[${o.verdict.refused.join(', ')}]`);
+            for (const [id, es] of Object.entries(o.per)) console.log(`     ${id}: ${es.join(' || ')}`);
+            console.log(`   forms ${JSON.stringify(o.forms)}\n   guest forms ${JSON.stringify(o.guestForms)}`);
+            console.log(`   guest events foreign: ${o.guest.foreign.join(' | ') || '-'}`);
+            const rr = (xs) => xs.map((r) => `${r.dir} ${r.disp} ${r.doc} ${r.blocked} ref=${JSON.stringify(r.referrer)}${r.hostQuery ? ' HOSTQUERY' : ''}`).join(' | ');
+            console.log(`   reports canary (${o.reports.canary.length}): ${rr(o.reports.canary)}\n   reports guest (${o.reports.guest.length}): ${rr(o.reports.guest)}`);
+            console.log(`   hits: ${o.hits.join(' ') || '-'}${o.side ? `\n   side: ${JSON.stringify({ ...o.side, console: o.side.console.length })}\n   outcomes: ${JSON.stringify(o.outcomes)} W: ${JSON.stringify(o.W)}` : ''}`);
+        } else if (tag === 'q7.case') {
+            const s = o.seen;
+            if (typeof s !== 'object') { console.log(`${o.case} | ${s}`); continue; }
+            const fm = (s.firstMessages || []).map((m) => `${m.keys || '-'}:${m.cmp.index}/${m.cmp.frames}/${m.cmp.parent}/${m.cmp.self}${m.accepted ? ' ACCEPTED' : ''}`);
+            const dist = {};
+            for (const x of fm) dist[x] = (dist[x] || 0) + 1;
+            console.log(`${o.case}\n   end=${s.end} decision=${JSON.stringify(s.decision)} portTo=${s.portTo} hello=${s.hello} loads=${JSON.stringify(s.loads)}\n   messages (keys:index/frames/parent/self) ${JSON.stringify(dist)}\n   acks ${JSON.stringify(s.acks)}${o.forgers ? `\n   forgers ${JSON.stringify(o.forgers)}` : ''}`);
+        } else if (tag === 'q7.q5') {
+            const a = o.attacker || {}, n = a.navigated || {};
+            const h = typeof o.host === 'string' ? o.host : `loads ${o.host.loads.length}, decision ${JSON.stringify(o.host.decision)}, ${o.host.end}, accepted from index: ${(o.host.firstMessages || []).some((m) => m.accepted)}`;
+            console.log(`q5 rerun | ${o.shape} | ${n.result}${n.at != null ? ' at ' + n.at + ' ms' : ''} | E: ${(a.log || []).filter((x) => x.evil).map((x) => x.evil).join(' + ') || '-'} | host: ${h}`);
+        } else if (tag.endsWith('.run') || tag === 'q1.cost' || tag.endsWith('.error') || tag === 'q6.cost') console.log(line.slice(0, 3000));
         else console.log(line.slice(0, 400));
     }
 }
