@@ -18,6 +18,9 @@ after both: [what review 1 changed](#what-review-1-changed) and [what review 2 c
 each finding and where its answer is. Three answers of review 2 change a public name or a decision the owner made, and
 [wait for the owner](#waits-for-the-owner).
 
+**Measured as drawn.** [Research 31](../research/31_served_startup/README.md) built the served document's shape and
+start-up order as a fixture on the three engines; [what it changed](#what-research-31-changed) is below.
+
 ## What the design is for
 
 Seven review passes found the same three kinds of finding in sealed mode, and each kind has one root:
@@ -66,10 +69,10 @@ I17 and I18 came from it, and review 2 cites all eighteen.
 | I12 | The served file's text has no input: one text per library version, the same in both builds | impossible to build, for the package's bytes: sealed mode's view bootstrap is the same in both builds, and the file is generated from it. What a server answers is checked where the answer can be read ([03](03-served-document.md#the-check-of-the-file)): a check, for honest deployments | [03](03-served-document.md) | a unit test: both builds emit the same bytes; each way a deployment changes the file ends with its reason |
 | I13 | Nothing can relay between the host page and the view | impossible to build, for the file of the package: it has no script that handles a message; the ports go from the host to the view. Against a page that frames the host page, as I3 | [03](03-served-document.md) | a source scan of the file: one script, the guard, with no listener; I3's framing spec |
 | I14 | The served file builds the view only where it is framed and opaque | a check, in the file's one script | [03](03-served-document.md) | research 28's guarded cases as an e2e spec |
-| I15 | A browser that does not enforce what the design assumes ends the sandbox with a reason: the view's gates answer before anything of the guest's is sent, the worker's before any guest code runs, and both before any data of the embedder's is sent | a check of the browser, at start-up only; **to be measured in that form** | [03](03-served-document.md#the-start-up-order) | each gate under the mutant that provokes it, on three engines, in the static file; no call reaches a worker whose gate failed |
+| I15 | A browser that does not enforce what the design assumes ends the sandbox with a reason: the view's gates answer before anything of the guest's is sent, the worker's before any guest code runs, and both before any data of the embedder's is sent | a check of the browser, at start-up only; measured in that form, with a library worker (research 31) | [03](03-served-document.md#the-start-up-order) | each gate under the mutant that provokes it, on three engines, in the static file; no call reaches a worker whose gate failed |
 | I16 | The guest receives from a form control only what the user entered into that control | a model in the view, independent of the browser's rules; **built** | [04](04-forms-and-autofill.md) | `test/unit/view-autofill.test.ts`, `test/e2e/view-values.spec.ts` (built) |
 | I17 | The app argument cannot carry a grant | impossible to build, for that argument: the app and the embedder's grants are two arguments, each read by its own schema, and the app's schema refuses a key that is a grant. A grant is whatever the embedder passes as the second | [01](01-one-element-one-app.md#startapp-grants) | `CONFIG_SCHEMA`: every option, the ones no longer accepted included, is classified as the app's or the embedder's, and the two types are derived from it |
-| I18 | The view and the worker run under the file's own policy and no other, or the build ends | a check, at start-up: in the view before anything of the guest's is sent, in the worker before the guest's entry runs; it sees a policy that lets the view's bootstrap run, and the check of the file names the others where it can read the answer; the mitigations for a host page's policy stay in place behind it | [03](03-served-document.md#the-policies-in-force) | each kind of load the view makes (`VIEW_LOAD_KINDS`) under a header on the file, enforced and report-only: a named termination and no report that carries guest text, on three engines |
+| I18 | No policy but the file's own sends a report that carries guest text: a policy that refuses one of the check's canaries ends the build, and under one that does not, the view makes no load of the guest's choosing | two checks. At start-up, in the view before anything of the guest's is sent and in the worker before the guest's entry runs: it sees a policy that lets the view's bootstrap run and refuses a canary (research 31 lists what it does not see). Behind it, the renderer's rules that keep a guest-chosen font, media, frame, object or form target from existing. The check of the file names the headers where it can read the answer | [03](03-served-document.md#the-policies-in-force) | each kind of load the view makes (`VIEW_LOAD_KINDS`) under a header on the file, enforced and report-only: a named termination and no report that carries guest text; a guest font, media, frame, object and form under each of the five directives the check does not provoke: no report that carries guest text; on three engines |
 
 ## What review 1 changed
 
@@ -123,6 +126,22 @@ Each changes a public name or a promise the owner had accepted. The owner approv
 | 13 · host pages the design leaves out | Named as a cost | [03](03-served-document.md#the-public-surface); **waits for the owner** |
 | Not specified | The order to `'ready'`, the second load, the referrer, the reasons from a parse, no release inside step 3 | [03](03-served-document.md), [05](05-build-order.md) |
 
+## What research 31 changed
+
+It supports the shape, the flags, the closed shadow root, the referrer rule, the version constant, the start-up order
+and the gates as written, on Chromium 159, Firefox 159 and WebKit 27.2.
+
+| What it found | What changed | Where |
+| :--- | :--- | :--- |
+| The policy check sees a report-only `worker-src` only through a worker | The view starts a canary worker of its own before it answers | [03](03-served-document.md#what-the-policy-check-provokes) |
+| The check passes under report-only `font-src`, `media-src`, `form-action`, `frame-src` and `object-src`, and a guest's load would then be reported | I18 restated: the check does not close the report channel alone; the renderer's five rules are named as what does, with a test; a refused canary per directive is to be measured | [03](03-served-document.md#what-the-policy-check-provokes) |
+| A header that repeats the `<meta>`'s text, enforced, is told from the `<meta>` only by a canary run alone | Said | [03](03-served-document.md#what-the-policy-check-provokes) |
+| A server that answers every path with a page that has a frame: that frame received the first port | The host page posts only to a document with one frame and closes a refused port; the view speaking first is to be measured | [03](03-served-document.md#who-receives-the-first-port) |
+| A file without its guard, wrongly framed, passes every gate and the check | Said: only the check of the file's bytes finds it | [03](03-served-document.md#inside-the-file) |
+| Reports sent at start-up carried the host page's URL as their referrer | The frame's `no-referrer` is stated as needed for this too | [03](03-served-document.md#the-shape) |
+| `crypto.subtle` is absent from the view under a host page that is not a secure context | The reason the version is a constant | [03](03-served-document.md#the-public-surface) |
+| WebKit raises the events and sends almost no report | Replaces "not measured on WebKit" | [03](03-served-document.md#what-the-policy-check-provokes) |
+
 ## Waits for the owner
 
 | # | Decision | Recommended | If not |
@@ -152,14 +171,14 @@ Each changes a public name or a promise the owner had accepted. The owner approv
 Stated once here; each file repeats what concerns it.
 
 - Safari on macOS and iOS, and Android, for everything: the served file, the popup blocker, autofill.
-- The served file as it will ship: one static file per library version, with the library's real bootstrap, framed with
-  the flags the element uses (`allow-forms` among them), with the gates in the view. Research 28's spike served the
-  library's per-build wrapper, and its gates ran in a file with a script of its own.
+- The served file as it will ship: one static file per library version, with the library's real bootstrap. Research
+  28's spike served the library's per-build wrapper; research 31 built this design's shape and start-up as a fixture,
+  with no bundle of the library's.
+- The policy check's refused canaries and the view speaking first
+  ([03](03-served-document.md#what-the-policy-check-provokes)).
 - `links` as designed: the click as the request, in the served file. Research 30 measured a call from the worker, in
   today's view.
 - Autofill inside the served file, with the value model.
-- Whether a page that frames the host page can reach the file's frame and navigate it before its first load. Today's
-  view has the same question.
 - A password manager's extension, and one when another site frames the served file.
 - The check of the file: its cost, and what stands in its path on a host page.
 - Report-only headers on the file that are not Content-Security-Policy.
