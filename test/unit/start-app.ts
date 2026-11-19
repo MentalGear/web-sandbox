@@ -21,16 +21,24 @@ export interface AppSetup {
     readonly methods?: Readonly<Record<string, (...args: any[]) => unknown>>;
 }
 
-/** start()'s two arguments for `config` and `setup`: the app's options and files, and the embedder's options and methods. */
+// An own data property, as the configuration had it: a key such as "__proto__" stays a key, never a prototype.
+const put = (target: Record<string, unknown>, name: string, value: unknown) => {
+    Object.defineProperty(target, name, { value, enumerable: true, writable: true, configurable: true });
+};
+
+/**
+ * start()'s two arguments for `config` and `setup`: the app's options and files, and the embedder's options and methods.
+ * Each own enumerable key of `config` is read once (a getter runs here) and kept as an own key of its argument.
+ */
 export function startArguments(config: Configuration, setup: AppSetup = {}): [app: Record<string, unknown>, grants: Record<string, unknown>] {
     const app: Record<string, unknown> = {};
     const grants: Record<string, unknown> = {};
     for (const [name, value] of Object.entries(config)) {
         const argument = (APP_OPTIONS as readonly string[]).includes(name) ? app : grants;
-        argument[name] = value;
+        put(argument, name, value);
     }
-    if (setup.files !== undefined) app[APP_FILES_KEY] = setup.files;
-    if (setup.methods !== undefined) grants[GRANT_METHODS_KEY] = setup.methods;
+    if (setup.files !== undefined) put(app, APP_FILES_KEY, setup.files);
+    if (setup.methods !== undefined) put(grants, GRANT_METHODS_KEY, setup.methods);
     return [app, grants];
 }
 

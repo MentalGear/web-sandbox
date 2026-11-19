@@ -13,6 +13,7 @@ import { createSizeOf } from '@src/lib/structured-size';
 import { workerBootstrap } from '@src/lib/worker-bootstrap';
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { bootstrapListeners, UNCAUGHT_BUDGET, type EgressMode } from '@src/lib/egress';
+import { startWith } from './start-app';
 
 // The files a build can name, typed by extension as the store types them.
 const typesOf = (paths: string[]) => new Map(paths.map(path => [path, mimeTypeFor(path)]));
@@ -57,10 +58,8 @@ async function mount(config?: Record<string, unknown>, files?: Record<string, un
     const { defineWebSandbox } = await import('@src/host');
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
-    if (files) el.registerFiles(files);
     document.body.appendChild(el);
-    el.setConfig({ mode: 'cooperative', ...config });
-    return el;
+    return startWith(el, { mode: 'cooperative', ...config }, { files });
 }
 
 afterEach(() => {
@@ -96,16 +95,6 @@ describe('with no files: the policy is unchanged, and the document differs only 
         const source = `'use strict';(function (g, postToFrame) {${comms(true, 'worker', 'postToFrame')}${EMPTY_FILES}})(this, ${globals});`;
         const bootstrap = gated(`(${workerBootstrap.toString()})(${JSON.stringify(source).replaceAll('<', '\\u003c')}, "web-sandbox");`, false); // the Trusted Types policy name (R1:R3-1)
         expect(wrapperOf(el)).toBe(buildWrapperDocument(buildGuestDocument({ csp: UNSAFE_POLICY, bootstrapScript: bootstrap, content: '' }), 'allow-scripts'));
-    });
-
-    it('registering and then unregistering every file gives the same document as never registering one', async () => {
-        const config = { capabilities: ['allow-scripts'], html: '<p>same</p>' };
-        const never = await mount(config);
-        const both = await mount(config, { 'a.js': 'x', 'b.css': 'y' });
-        expect(wrapperOf(both)).not.toBe(wrapperOf(never));
-        both.unregisterFiles();
-        both.reset();
-        expect(wrapperOf(both)).toBe(wrapperOf(never));
     });
 });
 
@@ -201,12 +190,16 @@ describe('the guest document', () => {
 });
 
 describe('files are part of the environment', () => {
-    it('registerFiles changes nothing in the running frame; the next build snapshots the store', async () => {
-        const el = await mount(undefined, { 'a.js': '1' });
+    // A guest's write, as its broker hands it to the element (jsdom never loads the frame).
+    const guestWrite = (el: any, request: unknown) => el._handleGuestWrite(el._guestWrites, request);
+
+    it('a change to the files (a commit) changes nothing in the running frame; the next build snapshots the store', async () => {
+        const el = await mount({ guestWrites: true }, { 'a.js': '1' });
         const before = wrapperOf(el);
         const frame = el.shadowRoot.querySelector('iframe');
-        el.registerFiles({ 'b.js': '2' });
-        el.unregisterFiles(['a.js']);
+        await guestWrite(el, { change: 'write', path: 'b.js', entry: '2' });
+        await guestWrite(el, { change: 'remove', path: 'a.js' });
+        el.commitGuestWrites(['a.js', 'b.js'], { code: true });
         expect(el.shadowRoot.querySelector('iframe')).toBe(frame);
         expect(wrapperOf(el)).toBe(before);
 
@@ -215,38 +208,45 @@ describe('files are part of the environment', () => {
         expect(guestDocumentOf(el)).toContain(JSON.stringify([['b.js', 'text/javascript', btoa('2')]]));
     });
 
-    it('the store survives terminate(), load() and setConfig()', async () => {
+    it('the store survives terminate() and reset()', async () => {
         const el = await mount(undefined, { 'a.js': '1' });
         el.terminate('test');
-        el.load('<p>x</p>');
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        el.reset();
         expect(el.listFiles()).toEqual([{ path: 'a.js', type: 'text/javascript', size: 1 }]);
         expect(guestDocumentOf(el)).toContain(inSandboxFiles.toString());
     });
 
-    it("fires 'fileschanged' synchronously, once per call that changed something, with { paths }", async () => {
-        const el = await mount();
+    it("fires 'fileschanged' synchronously, once per commit that changed something, with { paths }", async () => {
+        const el = await mount({ guestWrites: true });
         const seen: unknown[] = [];
         el.addEventListener('fileschanged', (e: CustomEvent) => seen.push(e.detail));
-        el.registerFiles({ 'b.js': '1', 'a.js': '1' });
+        await guestWrite(el, { change: 'write', path: 'b.js', entry: '1' });
+        await guestWrite(el, { change: 'write', path: 'a.js', entry: '1' });
+        el.commitGuestWrites(['b.js', 'a.js'], { code: true });
         expect(seen).toEqual([{ paths: ['a.js', 'b.js'] }]);
-        el.registerFiles({ 'a.js': '1' }); // identical
-        el.unregisterFiles(['missing.js']);
-        expect(() => el.registerFiles({ '../x.js': '' })).toThrow();
+        el.commitGuestWrites(['a.js'], { code: true }); // nothing pending there
+        el.commitGuestWrites(['missing.js']);
+        expect(() => el.commitGuestWrites(['../x.js'])).toThrow();
         expect(seen).toHaveLength(1);
-        el.unregisterFiles();
+        el.reset(); // the next build holds the committed files, which its guest can then remove
+        await guestWrite(el, { change: 'remove', path: 'a.js' });
+        await guestWrite(el, { change: 'remove', path: 'b.js' });
+        el.commitGuestWrites(['a.js', 'b.js']);
         expect(seen).toEqual([{ paths: ['a.js', 'b.js'] }, { paths: ['a.js', 'b.js'] }]);
     });
 
     it('a refused batch throws an Error with its code and leaves store and event silent', async () => {
-        const el = await mount(undefined, { 'keep.js': '' });
+        const { defineWebSandbox } = await import('@src/host');
+        defineWebSandbox();
+        const el = document.createElement('web-sandbox') as any;
+        document.body.appendChild(el);
         let events = 0;
         el.addEventListener('fileschanged', () => events++);
         let caught: any;
-        try { el.registerFiles({ 'ok.js': '', 'a/../b.js': '' }); } catch (e) { caught = e; }
+        try { startWith(el, { mode: 'cooperative' }, { files: { 'keep.js': '', 'ok.js': '', 'a/../b.js': '' } }); } catch (e) { caught = e; }
         expect(caught).toBeInstanceOf(Error);
         expect({ code: caught.code, keys: Object.keys(caught) }).toEqual({ code: 'INVALID_PATH', keys: ['code'] });
-        expect(el.listFiles().map((f: any) => f.path)).toEqual(['keep.js']);
+        expect(el.listFiles().map((f: any) => f.path)).toEqual([]);
         expect(events).toBe(0);
     });
 });
@@ -256,7 +256,7 @@ describe('virtualFilesUrl is gone', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const plain = await mount({ capabilities: ['allow-scripts'] });
         const el = await mount({ capabilities: ['allow-scripts'], virtualFilesUrl: 'http://virtual-files.localhost:4444' });
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], virtualFilesUrl: '/src/virtual-files' });
+        el.reset();
         expect(wrapperOf(el)).toBe(wrapperOf(plain));
         expect(document.querySelectorAll('iframe')).toHaveLength(0); // no hub frame in the host page
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('virtualFilesUrl'))).toHaveLength(1);
@@ -296,11 +296,12 @@ describe('markup references (PR2): guest markup that names a registered file is 
         expect(wrapperOf(el)).toBe(buildWrapperDocument(guestDocumentOf(el), 'allow-scripts'));
     });
 
-    it('load() rewrites the new markup; the default markup and worker mode never rewrite', async () => {
+    it('markup that names a file is rewritten; the default markup and worker mode never rewrite', async () => {
         const el = await mount(SCRIPTS, FILES);
         expect(guestDocumentOf(el)).toContain('<div id="root"></div>');
-        el.load('<img src="logo.svg">');
-        expect(bootstrapScriptOf(el)).toContain(inSandboxMarkup.toString());
+        expect(guestDocumentOf(el)).not.toContain(inSandboxMarkup.toString());
+        const naming = await mount({ ...SCRIPTS, html: '<img src="logo.svg">' }, FILES);
+        expect(bootstrapScriptOf(naming)).toContain(inSandboxMarkup.toString());
         const worker = await mount({ mode: 'worker', html: '<img src="logo.svg">' }, FILES);
         expect(guestDocumentOf(worker)).not.toContain('inSandboxMarkup');
         expect(guestDocumentOf(worker)).not.toContain('document.write');
@@ -317,11 +318,12 @@ describe('markup references (PR2): guest markup that names a registered file is 
 
     it('draws a fresh 128-bit nonce for every build that rewrites, and none for a build that does not', async () => {
         const el = await mount({ ...SCRIPTS, html: '<p>none</p>' }, FILES);
+        const rewriting = startWith(document.createElement('web-sandbox') as any, { mode: 'cooperative', ...SCRIPTS, html: '<img src="logo.svg">' }, { files: FILES });
         const spy = vi.spyOn(crypto, 'getRandomValues');
         el.reset();
         expect(spy).not.toHaveBeenCalled();
-        el.load('<img src="logo.svg">');
-        el.reset();
+        document.body.appendChild(rewriting); // its first build
+        rewriting.reset();
         const nonces = spy.mock.results.map(result => Array.from(result.value as Uint8Array).join(','));
         expect(spy.mock.calls.map(call => (call[0] as Uint8Array).length)).toEqual([16, 16]);
         expect(new Set(nonces).size).toBe(2);
@@ -516,7 +518,7 @@ describe('CSS references and srcset (PR4)', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount(SCRIPTS, { 'a.css': '@import "b.css";', 'b.css': '@import "a.css";' });
         el.reset();
-        el.load('<p>y</p>');
+        el.reset();
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('reference each other in a cycle'))).toHaveLength(1);
     });
 

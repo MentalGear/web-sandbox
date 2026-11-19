@@ -7,6 +7,7 @@ import { createBroker } from '@src/lib/rpc';
 import { startWatchdog } from '@src/lib/watchdog';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { checkIn } from './check-in';
+import { startWith } from './start-app';
 
 /**
  * Findings of R2 from model-based lifecycle testing: each reproduced here first, against the element
@@ -26,7 +27,7 @@ function element(config?: Record<string, unknown>) {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    if (config) el.setConfig(config);
+    if (config) startWith(el, config);
     const events: string[] = [];
     el.addEventListener('ready', () => events.push('ready'));
     el.addEventListener('terminated', (event: CustomEvent) => events.push(`terminated: ${event.detail.reason}`));
@@ -34,23 +35,23 @@ function element(config?: Record<string, unknown>) {
 }
 
 describe("L-1: in another window's document nothing builds, whatever starts the build", () => {
-    it('reset(), load() and setConfig() there leave the element idle: no frame, no event, calls refused at once', async () => {
+    it('reset() there, and start() of an element there, leave the element idle: no frame, no event, calls refused at once', async () => {
         const { el, events } = element({ mode: 'cooperative', capabilities: ['allow-scripts'] });
         const other = document.implementation.createHTMLDocument('another window');
         other.body.appendChild(el);
         expect([el.isConnected, el.ownerDocument === other, el.state]).toEqual([true, true, 'idle']);
         el.reset();
         expect(el.state).toBe('idle');
-        el.load('<p>x</p>');
-        expect(el.state).toBe('idle');
-        el.setConfig({ mode: 'cooperative', origins: 5 }); // refused: still nothing, not even a termination
-        expect(el.state).toBe('idle');
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
-        expect(el.state).toBe('idle');
         expect(el.shadowRoot.querySelector('iframe')).toBeNull();
+        const { el: started, events: startedEvents } = element();
+        other.body.appendChild(started);
+        startWith(started, { mode: 'cooperative', capabilities: ['allow-scripts'] });
+        expect([started.started, started.state, started.shadowRoot.querySelector('iframe')]).toEqual([true, 'idle', null]);
         await task();
         expect(events).toEqual([]);
+        expect(startedEvents).toEqual([]);
         await expect(el.call('anything')).rejects.toMatchObject({ code: 'TERMINATED' });
+        await expect(started.call('anything')).rejects.toMatchObject({ code: 'TERMINATED' });
         // positive control: back in its own document, it builds
         document.body.appendChild(el);
         expect(el.state).toBe('loading');
@@ -152,7 +153,7 @@ describe('L-3: work queued while loading is sent in the order it was issued', ()
 });
 
 describe("L-4: a 'terminated' listener that builds again to the same answer hears it once", () => {
-    it('a build that throws (here the frame itself): a listener whose load() fails the same way dispatches nothing more', async () => {
+    it('a build that throws (here the frame itself): a listener whose reset() fails the same way dispatches nothing more', async () => {
         const { el, events } = element({ mode: 'cooperative' });
         await task();
         events.length = 0;
@@ -160,33 +161,16 @@ describe("L-4: a 'terminated' listener that builds again to the same answer hear
         const build = vi.spyOn(Object.getPrototypeOf(el), '_prepareBuild').mockImplementation(() => { throw new TypeError('no frame'); });
         let builds = 0;
         el.addEventListener('terminated', () => {
-            if (++builds <= 50) el.load(`<p>${builds}</p>`);
+            if (++builds <= 50) el.reset();
         });
-        el.load('<p>0</p>');
+        el.reset();
         for (let i = 0; i < 20; i++) await task();
         expect(events).toEqual(['terminated: the environment could not be built (TypeError)']);
         expect(el.state).toBe('terminated');
         build.mockRestore();
-        el.load('<p>again</p>'); // positive control: a build that works builds
+        el.reset(); // positive control: a build that works builds
         expect(el.state).toBe('loading');
     });
-
-    for (const again of ['setConfig(same)', 'load()'] as const) {
-        it(`strict mode, an entry that is not registered: the listener's ${again} is the same answer, not dispatched again`, async () => {
-            const config = { mode: 'strict', entry: 'missing.js' };
-            const { el, events } = element();
-            let builds = 0;
-            el.addEventListener('terminated', () => {
-                if (++builds > 50) return;
-                if (again === 'load()') el.load(`<p>${builds}</p>`);
-                else el.setConfig(config);
-            });
-            el.setConfig(config);
-            for (let i = 0; i < 20; i++) await task();
-            expect(events).toEqual(['terminated: the guest entry is not a registered JavaScript file']);
-            expect(el.state).toBe('terminated');
-        });
-    }
 });
 
 describe('L-6: a load of a frame that is no longer in the document completes nothing', () => {
