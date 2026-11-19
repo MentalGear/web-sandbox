@@ -30,7 +30,7 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S87](#s87) | ⏳ open (P3 · S) · low | A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time (S74 board BD5:LIM-3; availability only) |
 | [S89](#s89) | ⏳ open (P3 · S) · low | A resizable `ArrayBuffer`'s maximum is reserved by the browser before any receiver measures it (review 3 of the design, finding 5; availability only) |
 | [S90](#s90) | ⏳ open (P3 · M) · to measure | On Chromium a page's policy does not govern requests to an installed extension's web-accessible resources (research 34) |
-| [T10](#t10) | ⏳ open (P2 · M) | A run reruns every spec for every change, from files served live. Built: CI keys the suite's result by its inputs, so a docs-only commit runs no browser. Left: tests load the built bundle, a key per spec, the measuring specs in a group of their own (owner, 2026-11-19) |
+| [T10](#t10) | ⏳ open (P2 · M) | A run reruns every spec for every change, from files served live. Built: CI keys the suite's result by its inputs, so a docs-only commit runs no browser. Left, in order: the specs that measure the host page (half the suite's time) as a group of their own, tests load the built bundle, a key per spec (owner, 2026-11-19) |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
 
 Done items, review rounds and the capability snapshot are in [the archive](archive/backlog/BACKLOG-done.md).
@@ -568,7 +568,7 @@ next occurrence says whether the view was hidden, empty or ended.
 (`SCALING_TIMEOUT_MS`, `test/unit/scaling.ts`), and `test/unit/host-share.test.ts` fails one under the runner's default
 limit or a number of its own: `view-autofill`'s linear submit timed out at load 8 with no ratio judged, and passes alone
 in 2.4 s. Runs of several checkouts go one at a time behind a lock (CONTRIBUTING.md, "One e2e run at a time on a
-machine"), and [T10](#t10)'s third step gives the specs that measure the host page a group of their own.
+machine"), and [T10](#t10)'s first step gives the specs that measure the host page a group of their own.
 
 The same day, `test/e2e/strict-renderer.spec.ts` on WebKit 27.2, strict mode ("every URL the view mints is of a type that
 is not a document"), failed once among six specs run together, and its error was not kept. Not reproduced: 6 runs alone
@@ -830,20 +830,29 @@ checkout's files but the Markdown ones (no page, spec or probe reads one; the un
 marker under that hash and its engine once every test step has passed. A job whose key has passed runs no browser, so
 a commit that changes only docs costs the unit job alone. A failed or cancelled job saves no marker.
 
-**Fix, by construction**, what is left, each measured before and after on three engines:
-1. **The tests load the built bundle.** The server already builds `dist/` and `dist-network/` when it starts
-   (`package.spec.ts` mounts from them). Every harness page takes its build's bundle: one request for the library
-   in place of one per module, a run tests the code as it was built at its start whatever is edited meanwhile, and
-   the tests run what the package ships. To settle first: what the specs that read a source module directly need (a
-   helper imported from `src/`), and source maps for a failure's stack.
-2. **A spec's result is keyed by its inputs**, where CI's key is the whole suite's: its build's bundle (a hash), the spec and the helpers it imports, the
-   harness pages, the engine's version and the Playwright config. A key that has passed on an engine is not run again:
-   a docs-only commit runs no spec, a change of one spec runs that spec, and a change confined to `network` modules
-   runs no spec of the default build, whose bundle is the same bytes (`BUILD_MODULES`: a `sealed` module imports no
-   `network` module). The specs that measure the host page stay out of it: the machine's load is one of their inputs.
-   Checkouts with the same inputs share results, and so can CI.
-3. **The specs that measure the host page run in a group of their own**, one worker, and the rest on as many workers
-   as the machine has ([S81](#s81)).
+**Where the time goes** (one full local run of 2026-11-19, three engines one after the other, two workers, read from
+its log): 3,145 tests took 128 minutes of worker time. The 15 specs that measure the host page (they import
+`test/e2e/host-share.ts`) are 462 tests and 49% of that time, four of them 39% alone; the other 2,683 tests are 51%.
+Half of all tests take under a second and are 12% of the time together, so the cost of loading a page is not where
+the time is.
+
+**Fix, by construction**, what is left, in this order, each measured before and after on three engines:
+1. **The specs that measure the host page are a group of their own**, derived from their import of
+   `test/e2e/host-share.ts`, never from a list. In CI each engine has two jobs: the measuring group alone on its
+   machine with one worker, which is the quiet machine those specs need ([S81](#s81)), and the rest on all of the
+   runner's workers. Locally the rest runs on as many workers as the machine has, and the measuring group runs for a
+   change to what it measures; CI always runs both. To confirm first: that the rest holds on four workers (S81 lists
+   specs outside the group that count in a fixed window).
+2. **The tests load the built bundle.** The server already builds `dist/` and `dist-network/` when it starts
+   (`package.spec.ts` mounts from them). Every harness page takes its build's bundle, so a run tests the code as it was
+   built at its start whatever is edited meanwhile, and the tests run what the package ships. This is for that
+   guarantee, not for speed. To settle first: what the specs that read a source module directly need (a helper imported
+   from `src/`), and source maps for a failure's stack.
+3. **A key per spec**, where CI's is the whole suite's: its build's bundle (a hash), the spec and the helpers it
+   imports, the harness pages, the engine's version and the Playwright config. It needs 2, and is worth building only
+   if the suite's key and the two groups leave a wait that matters: a change of one spec would run that spec, and a
+   change confined to `network` modules no spec of the default build (`BUILD_MODULES`: a `sealed` module imports no
+   `network` module). The measuring group stays out of it: the machine's load is one of its inputs.
 
 **What it does not change.** A change to code every page loads changes the bundle, and every spec runs again, as it
 must. For that case the time is the machine's cores and CI's three engines side by side (CONTRIBUTING.md, "Which
