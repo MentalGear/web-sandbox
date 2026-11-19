@@ -131,10 +131,10 @@ host page
   (research 31, Q4). A hostile page that frames F with more flags gives C nothing: C never has more than its own
   attribute (research 31, Q4: popups, top navigation, modals, downloads, each with its positive control). WebKit does
   not know the `allow-orientation-lock` token, logs it as invalid and applies the others.
-- **The host page posts to C directly**: C is `frames[0]` of F, and the host page posts only to a document that has
-  exactly one frame ([the start-up order](#the-start-up-order), step 1). C accepts messages only from its parent's
-  parent, as today's view does. The ports go from the host page to C, and C hands one to the worker. F handles no
-  message.
+- **The host page and C speak directly, and C speaks first**: C announces itself to its parent's parent, and the host
+  page answers only the window that is the first frame of the element's own frame
+  ([the start-up order](#the-start-up-order), steps 2 and 3). C accepts messages only from its parent's parent, as
+  today's view does. The ports go from the host page to C, and C hands one to the worker. F handles no message.
 - **The frame of F is in the element's closed shadow root, and that is load-bearing.** A frame in a shadow tree is not
   in the page's `window.frames`, so a site that frames the host page cannot reach F's frame and navigate it to a document
   of its own, which would then answer the handshake and receive the app. Measured on all three engines (review 2,
@@ -200,12 +200,12 @@ The design's answer has three parts, in the order of the ladder.
    policy" by "the file's response headers" as what is inherited.
 2. **A check that ends the build (I18).** The view, before the host page sends anything of the guest's, and the worker,
    before the guest's entry runs ([the start-up order](#the-start-up-order)), each make the loads of
-   [the table below](#what-the-policy-check-provokes), with fixed library strings, and listen for
+   [the list below](#what-the-policy-check-provokes), with fixed library strings, and listen for
    `securitypolicyviolation`. A violation whose policy is not the file's own `<meta>` text, or whose disposition is not
    the `<meta>`'s, means another policy is in force, enforced or report-only, and the view announces it; the build ends
    with a reason that names the header. What leaves the browser before that are the reports of those canaries, which
-   carry library strings only (research 31, Q3: every report sent before the check ended the build carried library
-   strings, scheme-only blocked URLs and the file's URL). Policies are fixed when the document is created, so no policy
+   carry library strings only (research 31, Q3 and Q6: every field of every report was a library string, a scheme, or
+   the file's URL, and the referrer was empty). Policies are fixed when the document is created, so no policy
    can appear after the check; a policy the check provokes nothing under is in force unseen, and the next part is what
    stands behind the check there.
 3. **The mitigations stay.** Everything the view and the element do today so that no report carries guest text (the
@@ -218,21 +218,49 @@ The design's answer has three parts, in the order of the ladder.
 
 ### What the policy check provokes
 
-Research 31 (Q3) ran the check in the view and in the worker under 80 policies on the file's response, on all three
-engines.
+Each directive of the file's policy has up to two canaries: a load the `<meta>` **admits** (a `blob:` URL of the
+library's), which a stricter outside policy refuses, and a load the `<meta>` itself **refuses**, which raises the
+`<meta>`'s own violation and, under an outside policy that would report a guest's URL for that directive, a second one.
+The directives are one list, `POLICY_DIRECTIVES`: each with its admitted canary, its refused canary, or the reason it
+has none, and a test enumerates the `<meta>`'s text against it, so a directive added to the file's policy is classified
+or the test fails.
+
+- **A refused canary is a fixed URL on a reserved name, one host per kind, in both schemes**
+  (`http://font.canary.invalid/…` and its `https:` twin). The host names its canary where a report is cut down to the
+  origin. Both schemes, because a header such as `font-src https: blob:` admits an `https:` canary and would still
+  report a guest's `http:` URL.
+- **No canary leaves the browser.** Under the `<meta>` none reached the network, in any of 57 cases on any engine, with
+  a control that reached it without the `<meta>` (research 31, Q6).
+- **The verdict depends on no fixed wait.** An event is attributed by what it carries (its canary's URL or directive,
+  its policy text, its disposition), the check waits for the events it expects with one timeout, and an event that is
+  not the `<meta>`'s ends the build whenever it arrives, after the verdict too. A check that sorts events by the time
+  they arrive can end a healthy sandbox on a slow machine: the fixture's, with two fixed waits, refused a clean file
+  in a few of fifty starts on Firefox (research 31, Q7; cause not isolated there).
+
+Measured under 80 policies on the file's response for the admitted canaries (research 31, Q3) and 57 for the refused
+ones (Q6), in the view and in the worker, on all three engines:
 
 | | |
 | :--- | :--- |
-| Sees | every policy that refuses one of its canaries, in the view and in the worker: enforced and report-only, with `report-uri` and with `report-to`, each single-directive `'self'` policy, Trusted Types enforced and report-only, and a header that repeats the `<meta>`'s own text (report-only by its disposition; enforced by a canary run alone, since counting duplicate events gives false positives on Firefox) |
-| Needs | **a canary worker of the view's own, before it answers.** The app's worker starts after the verdict, so a report-only `worker-src` is otherwise seen only once the app is in the view |
-| Does not see | a report-only `worker-src`, `font-src` or `media-src` that admits `blob:`; `frame-src`, `object-src`, `form-action` or `manifest-src` at any value; a `frame-ancestors` that admits the host page; `upgrade-insecure-requests`; a header `sandbox`; an enforced policy that admits everything the file does |
-| WebKit | raises the events in the view and in the worker, so the check sees there what it sees on the other two; it sends no report from an opaque document but the refusals of code from strings, filed under the file's URL |
-| Cost | 70 to 85 ms in the fixture, 60 ms of it two fixed waits; the least wait that still sees every event is not measured |
+| The admitted canaries see | every policy that refuses one of them: enforced and report-only, with `report-uri` and with `report-to`, each single-directive `'self'` policy, Trusted Types enforced and report-only, and a header that repeats the `<meta>`'s own text (report-only by its disposition; enforced by a canary run alone, since counting duplicate events gives false positives on Firefox) |
+| The refused canaries add | every header the admitted ones missed under which a guest's URL would be reported: report-only and enforced `font-src`, `media-src`, `frame-src` and `object-src` at the `<meta>`'s own values and at `https: blob:`, `default-src` with `'self' blob:` or `https: blob:`, and `child-src blob:`, on all three engines; `worker-src` through a `data:` worker; `form-action` on Firefox and WebKit |
+| A canary worker of the view's own | started before the view announces itself. The app's worker starts after the verdict, so a `worker-src` header is otherwise seen only once the app is in the view |
+| No refused canary | `manifest-src`: no engine fetches a manifest linked in a framed document, so there is no load to refuse and none of a guest's to report. A network URL for `worker-src`: a worker of another origin fails before the policy is asked, with no request; the `data:` worker stands in. **`form-action`**: on Chromium the refused form replaced the view with an error page, so the check submits no form on any engine |
+| Does not see | a header that admits both canary URLs and still refuses a guest's: one that names the canaries' own host (Chromium, Firefox), and any `form-action` header. A `frame-ancestors` that admits the host page; `upgrade-insecure-requests`; a header `sandbox`; a policy that admits every URL on the network (`*`), under which nothing of a guest's was reported either |
+| WebKit | raises the events in the view and in the worker, so the check sees there what it sees on the other two, and the headers that name the canaries' host as well; it sends no report from an opaque document but the refusals of code from strings, filed under the file's URL |
+| Cost | the admitted set settled in 23, 37 and 16 ms at the median (Chromium, Firefox, WebKit) and the refused canaries added 63, 95 and 24 ms; the last event arrived at most 99, 165 and 203 ms after issue (Firefox and WebKit on a loaded machine) |
+| Side effects | none outside the view: the refused frames exist in the view while the check runs and are removed, the file's frame count stays one, and the host page sees no second load |
 
-**Under five of the unseen directives a guest's load would be reported, if the view ever made it**, on Chromium and
-Firefox: with the full URL of the guest's choosing under report-only `font-src`, `media-src` and `form-action`, and with
-its origin under `frame-src` and `object-src`. So the check does not close the report channel alone. What closes each
-today is a rule of the renderer, a check each:
+**What is left unseen, and what closes it.** Under two kinds of header the check passes and a guest's load, if the view
+ever made it, would be reported on Chromium and Firefox (the full URL under `font-src`, `media-src` and `form-action`,
+the origin under `frame-src` and `object-src`):
+
+- a header that names the canaries' reserved host. An honest deployment has no reason to write one, and the host that
+  serves the file is [trusted with the app](#who-is-trusted-with-the-app) already;
+- any `form-action` header, which a site-wide policy often has.
+
+Where [the check of the file](#the-check-of-the-file) can read the answer, it names both before the file is framed.
+Where it cannot, each is closed by a rule of the renderer, which is why I18 is two checks and not one:
 
 | Directive | The rule that keeps the load from existing |
 | :--- | :--- |
@@ -240,15 +268,14 @@ today is a rule of the renderer, a check each:
 | `frame-src`, `object-src` | the renderer removes nested browsing contexts (`RENDER_REMOVED_ELEMENTS`) |
 | `form-action` | the renderer drops `action`, `formaction`, `method` and `target`, and the view cancels every `submit` in the capture phase |
 
-**To be measured, to lift the five from those rules to the check itself:** the fixture's canaries for these kinds were
-loads the `<meta>` admits (a `blob:` font) or none at all (a frame, an object, a form). A second canary per directive
-that the `<meta>` *refuses* (a fixed URL of the library's on a reserved name, for a font, media, a frame, an object and
-a form's action) raises the `<meta>`'s own violation and, under any header that would report a guest's URL for that
-directive, a second one. If that holds on three engines, the directives of the file's policy become one list
-(`POLICY_DIRECTIVES`), each with its admitted canary, its refused canary, or the reason no load of that kind can be
-built in a framed document, and a test enumerates the `<meta>` against it. Until measured, the rules above are what
-closes the five, and step 3.6 brings a test that renders a guest font, media, frame, object and form under each of the
-five headers and expects no report that carries guest text.
+Step 3.6 brings the test of those rules: a guest font, media, frame, object and form under each of the five headers,
+enforced and report-only, and no report that carries guest text.
+
+**Not measured:** a form canary aimed at a frame of the view's own, which might leave the view standing on Chromium; a
+header with both scheme sources (`font-src http: https: blob:`), which admits both canaries as `*` does; the check as
+the library builds it, with no fixed wait: what identifies each canary's event on each engine, whether a header's event
+for a load can arrive after the `<meta>`'s for the same load, and how an enforced header with the `<meta>`'s own text
+is told from the `<meta>` without a canary run alone in a window of time.
 
 What "serve it unchanged" excludes, for the docs: a `Content-Security-Policy` or
 `Content-Security-Policy-Report-Only` header on the file, `X-Frame-Options` or a `frame-ancestors` that refuses the host
@@ -264,58 +291,72 @@ constructed (the view loads only `blob:` URLs it minted), and none is measured.
 
 ## The start-up order
 
-1. The element checks the file where it can ([above](#the-check-of-the-file)), frames `documentUrl` and, at the frame's
-   load, posts one message to `frames[0]` with one port and nothing of the guest's. It posts only when the document
-   has exactly one frame, and closes the port when the answer is refused ([below](#who-receives-the-first-port)).
-2. The view checks the sender (its parent's parent), runs its gates and its policy check, and answers on the port: the
-   library version it was built for, and each gate's verdict.
-3. The host page reads the version and the verdicts. Only then does it send the app: the files, the worker's source, the
-   second port.
+1. The element checks the file where it can ([above](#the-check-of-the-file)), starts to listen for the view's
+   announcement, and only then frames `documentUrl`. It posts nothing at the frame's load.
+2. **The view speaks first.** It runs its gates and its policy check and posts one message to its parent's parent: the
+   library version it was built for, and each verdict. The message holds nothing else, and nothing in it is a secret.
+3. The host page takes that message only from the window that is the first frame of the element's own frame
+   ([below](#who-receives-the-first-port)), and reads the version and the verdicts. Only then, and in the same step,
+   does it post a port to that window, and on it the app: the files, the worker's source, the second port. The view
+   takes a port only from its parent's parent.
 4. The view starts the worker. The worker is made from the app (its source holds the guest's entry and files, and the
    policy admits no code from strings, so a worker of the library's alone could not be given the guest's code later). So
    the worker's gates and its half of the policy check run in the worker's prelude, **before the guest's entry runs**,
    and the worker reports its verdicts on the logic port.
 5. The element becomes `'ready'`, and sends the calls that were waiting, only after the worker's verdicts. No data of
    the embedder's reaches a worker whose gates failed.
-6. A view that does not answer within the load timeout ends the build with "the document did not answer". Where the
+6. A view that does not announce itself within the load timeout ends the build with "the document did not answer". Where the
    check of the file could not run, the host page cannot tell why from outside: a missing file, a server that answers
    every path with another page, a header that refuses the framing or the bootstrap, and a host policy whose
    `frame-src` does not admit `documentUrl` all look alike. The reason's text lists them.
 
 So the view holds nothing of the guest's before its own gates have answered, no guest code runs before the worker's
-have, and no data of the embedder's is sent before both. A file of another version receives nothing of the guest's. A
-hostile document at `documentUrl` can announce whatever it likes; that is the trust of
+have, and no data of the embedder's is sent before both. A file of another version receives no port and nothing of the
+guest's. A hostile document at `documentUrl` can announce whatever it likes; that is the trust of
 [the file's host](#who-is-trusted-with-the-app), which no order of messages changes.
 
-**Measured** (research 31, Q1, a fixture of this order with a library worker): it works on all three engines. The right
-file answered and received content; a file of another version answered and received nothing; a hello posted first by
-another frame of the host page was ignored by the view. From the frame's insertion to the verdict took 95, 109 and 119
-ms at the median (Chromium, Firefox, WebKit) against 22, 32 and 34 ms with no gates and no check; the gates are 2 to 4
-ms of the difference and the fixture's two fixed waits 60 ms. **Not measured:** the worker's gates in a worker made from
-the app's source; the policies a worker inherits are fixed when it is created, so the same events are expected.
+**Measured** (research 31, Q1 and Q7, a fixture of this order with a library worker): it works on all three engines. The
+right file announced itself and received the app in 100 of 100 starts per engine, half of them with the host page's
+thread busy for 200 ms after insertion; a file of another version received nothing. The view speaking first costs the
+same as the host page speaking first: 93, 120 and 288 ms against 93, 121 and 286 ms from the frame's insertion to the
+verdict (Chromium, Firefox, WebKit; medians of 24 alternating starts on a shared machine), where a start with no gates
+and no check took 22, 32 and 34 ms. The gates are 2 to 4 ms of the difference, and the fixture's check waited 60 ms in
+two fixed waits, which the library's check does not have. **Not measured:** the worker's gates in a worker made from the
+app's source; the policies a worker inherits are fixed when it is created, so the same events are expected.
 
 ### Who receives the first port
 
-The first message goes to `frames[0]` of whatever document answered `documentUrl`. Where a server answers every path
-with the application's own page and that page has a frame of its own (a widget), **that frame received the hello and
-its port**, on all three engines (research 31, Q1). It could not answer with a version and verdicts, the host page
-refused it, and nothing was sent on the port; but a port of the element's reached a third party's document.
+**Only a window that announced itself as the view, from the first frame of the element's own frame.** The host page's
+test is `event.source === frame.contentWindow[0]`, read inside `try`, and a throw is "not the view": the read throws
+while the file has not loaded, when the document that answered has no frame, and when the element is out of the
+document; it never gave `undefined` (research 31, Q7, the same on all three engines). The port is posted to
+`event.source`, in the handler that made the test: it goes to the browsing context that spoke, or nowhere.
 
-- Where the check of the file can read the answer, the body is not the library's file and no frame is made.
-- Where it cannot, two checks narrow it: the host page posts only when the document has exactly one frame
-  (`contentWindow.length`, readable across origins), and closes the port when the answer is refused. A page with
-  exactly one frame of its own still receives one port that is then closed.
-- **To be measured, to make it impossible to reach for a document that is not the library's view:** the view speaks
-  first. It posts its version and verdicts to its parent's parent, and the host page accepts that message only when
-  its source is the first frame of the element's own frame (`event.source === frame.contentWindow[0]`), and only then
-  sends a port. A document that does not announce itself as the view then receives no port at all, and the element
-  posts nothing at the frame's load. What the view posts is the library's version and verdicts, which are no secret,
-  so a wrong recipient (another site that frames the file) learns nothing. If it holds on three engines, this replaces
-  step 1's post and step 2's check of the sender, and the two checks above go.
+| Who posts a version and verdicts | The host page | Receives |
+| :--- | :--- | :--- |
+| the view | accepts | the port and the app |
+| another frame of the host page; the file's own document; a second frame inside the file; a page that frames the host page | ignores, and still accepts the view afterwards | nothing |
+| a document at `documentUrl` that is not the file and says nothing: a server's fallback page, with or without a frame of its own | never hears an announcement; the build ends with "the document did not answer" | nothing, no port either |
+| a frame at index 0 of a document at `documentUrl` that is not the file, announcing the right version and clean verdicts | accepts | the port and the app |
+| another site that frames the file | is not involved | the view's one message: the version and the verdicts |
+
+- **Not `event.source.parent === frame.contentWindow`**: that is true for every frame inside the file, a second one
+  included.
+- **The last accepting row is the trust of [the file's host](#who-is-trusted-with-the-app)**: a document that answers
+  `documentUrl` and speaks the view's protocol is that host's doing. The check of the file refuses it where it can
+  read the answer (the body is not the library's file). Against a page that frames the host page, what keeps its
+  document out of index 0 is the closed shadow root ([the shape](#the-shape)): with the frame in the light DOM, that
+  page's document announced itself and received the app, in this order as in the other (Q7).
+- So a document that is not the library's view and does not claim to be receives no port: impossible to reach, for
+  every window that is not at index 0 of the element's frame; a documented limit for one that is.
+
+**Not measured:** the view announcing itself before the frame's `load` event (it never did in 150 starts per engine, and
+the listener is in place before the frame exists, so nothing depends on it); a fallback page whose own frame sits at
+another index than 0.
 
 ## The start-up gates
 
-Canaries that confirm the browser enforces what the design assumes, run by the view before step 2 answers and by the
+Canaries that confirm the browser enforces what the design assumes, run by the view before it announces itself and by the
 worker's prelude before the entry runs. F runs none: its only script is the guard. Research 28 (Q7) measured twelve: origin, framing, code from
 strings, connect, image, style, base, frame, cookie, storage, parent, and the worker's network names. A canary that the
 browser does not refuse ends the build with a termination reason.
@@ -395,7 +436,8 @@ own name; `viewScriptHash()` there is strict mode's.
 - The file as it will ship: research 28's spike ran the library's per-build wrapper as a served file, and research 31
   a fixture of this design with no bundle of the library's: its guest loads reached the browser directly, not through
   the renderer, the cut of CSS URLs or the view's `submit` handling.
-- The policy check's refused canaries, and the view speaking first (both above).
+- The policy check as the library builds it: attributed by content, with no fixed wait; and a form canary that leaves
+  the view standing on Chromium.
 - The worker's gates and its half of the check in a worker made from the app's source.
 - The Reporting API (`report-to`) on Chromium, whose positive control failed; downloads on Firefox and WebKit, the
   same.
