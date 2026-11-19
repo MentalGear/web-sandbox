@@ -16,6 +16,14 @@
  * - Setup stays out of the timed section: `prepare` runs before each sample's clock starts, `verify` after it stops.
  */
 
+/**
+ * The time limit of a test that calls scalingRatio(). The measure takes up to `maxRounds` samples of each size, each as
+ * slow as the machine is loaded, so the runner's default limit is a wall-clock bound of the machine on it (backlog T9's
+ * class): a linear cost then fails by the load, with no ratio judged. A test declares this limit where it is declared,
+ * `it(name, { timeout: SCALING_TIMEOUT_MS }, …)`, and test/unit/host-share.test.ts fails one that does not.
+ */
+export const SCALING_TIMEOUT_MS = 120_000;
+
 /** One input size: `prepare` builds the input (untimed) and returns the work to time, and what to check about its result. */
 export type ScalingSize<R = unknown> = () => { run: () => R; verify?: (result: R) => void };
 

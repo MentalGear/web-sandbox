@@ -4,7 +4,7 @@ import { cssLoadBound, inSandboxView, isStyleProperty, RENDER_ATTRIBUTES, RENDER
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { styleMarkup } from '@src/lib/style-markup';
 import { cssReferences, keepsUrl, keptCss, withKeptReferences } from '@src/lib/css-references';
-import { scalingRatio } from './scaling';
+import { scalingRatio, SCALING_TIMEOUT_MS } from './scaling';
 
 /**
  * What a browser's autofill gives a sealed guest (INHERITED_CONTEXT.autofill; docs/research/29_autofill): the renderer's half
@@ -264,7 +264,7 @@ describe("the view: names map back, and the value model forwards only what the u
         expect([$('other').value, $('bare').value]).toEqual(['', '']);
     });
 
-    it('what a submit reconciles is linear in the form\'s controls, a radio group of thousands included', async () => {
+    it('what a submit reconciles is linear in the form\'s controls, a radio group of thousands included', { timeout: SCALING_TIMEOUT_MS }, async () => {
         const form = (id: string, n: number) => `<form id="${id}">${'<input type="radio" name="r">'.repeat(n)}${'<input name="t">'.repeat(n)}</form>`;
         const { fire, details } = await startView(form('small', 250) + form('large', 2000));
         const size = (id: string, n: number) => () => {

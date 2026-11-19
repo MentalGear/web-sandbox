@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { cssUrlReferences, replaceRanges } from './css-references';
-import { scalingRatio, type ScalingSize } from '../../test/unit/scaling';
+import { scalingRatio, SCALING_TIMEOUT_MS, type ScalingSize } from '../../test/unit/scaling';
 
 // [the source text a slot would replace, the decoded URL] for every reference, in order
 const refs = (css: string) => cssUrlReferences(css).map(r => [css.slice(r.start, r.end), r.url]);
@@ -295,7 +295,7 @@ describe('cssUrlReferences: guarantees', () => {
     // Linear, as a ratio measured in the same run (backlog T9's class: "under a second" measured the machine): 8 times the
     // references take at most 3 times 8 as long. scalingRatio samples both sizes alternately and keeps each one's fastest
     // time (test/unit/scaling.ts). A scan quadratic in the text takes about 64 times as long.
-    it('runs in linear time: 8 MiB of references take about 8 times as long as 1 MiB, not 64', { timeout: 120000 }, () => {
+    it('runs in linear time: 8 MiB of references take about 8 times as long as 1 MiB, not 64', { timeout: SCALING_TIMEOUT_MS }, () => {
         const size = (bytes: number): ScalingSize<ReturnType<typeof cssUrlReferences>> => () => {
             const n = Math.floor(bytes / 23);
             const css = 'a{b:url(x.png)}/*c*/"s"'.repeat(n);

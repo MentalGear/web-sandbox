@@ -5,7 +5,7 @@ import { REFERENCES } from './markup-references';
 import { inSandboxFiles } from './in-sandbox-files';
 import { VIOLATION_EVENT_LIMIT, VIOLATION_MAX_STRING } from './violation';
 import { mimeTypeFor } from './files';
-import { scalingRatio, type ScalingSize } from '../../test/unit/scaling';
+import { scalingRatio, SCALING_TIMEOUT_MS, type ScalingSize } from '../../test/unit/scaling';
 import { runBootstrap } from '../../test/unit/sandbox-environment';
 import { keptCss } from './css-references';
 
@@ -671,7 +671,7 @@ describe('review round 1: R1-2, the renderer is linear and keeps no element whos
     // over 8 times as many siblings takes at most ~8 times as long. scalingRatio samples both sizes alternately and keeps
     // each one's fastest time (test/unit/scaling.ts). A walk quadratic in the siblings (R1:R1-2) takes ~64 times as long.
     // jsdom; the browsers' own measure: view-budget.spec.ts.
-    it('many siblings to drop or unwrap: the walk takes time linear in their number (1 000 against 8 000 of each)', { timeout: 60000 }, () => {
+    it('many siblings to drop or unwrap: the walk takes time linear in their number (1 000 against 8 000 of each)', { timeout: SCALING_TIMEOUT_MS }, () => {
         const markup = (n: number) => '<p>' + 'x<wbr>'.repeat(n) + '<font>y</font>'.repeat(n) + '<script></script>'.repeat(n) + '</p>';
         const size = (n: number): ScalingSize<HTMLTemplateElement> => () => {
             const template = document.createElement('template');

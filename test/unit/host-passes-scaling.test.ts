@@ -16,7 +16,7 @@ import { elementEvent } from '@src/lib/element-events';
 import { scriptInMarkup } from '@src/lib/markup-scripts';
 import { VIEW_RENDER_MAX_LENGTH } from '@src/lib/in-sandbox-view';
 import type { Origin } from '@src/lib/origin';
-import { scalingRatio, type ScalingSize } from './scaling';
+import { scalingRatio, SCALING_TIMEOUT_MS, type ScalingSize } from './scaling';
 
 /**
  * Every pass of the host realm over guest content (HOST_PASSES, src/lib/host-passes.ts) costs time linear in what it
@@ -180,10 +180,10 @@ describe('every pass of the host realm over guest content is linear in it (HOST_
     });
 
     const cases = (Object.keys(SHAPES) as HostPassId[]).flatMap(id => SHAPES[id].map(shape => [id, shape.name, shape] as const));
-    it.each(cases)('%s: %s', async (_, __, shape) => {
+    it.each(cases)('%s: %s', { timeout: SCALING_TIMEOUT_MS }, async (_, __, shape) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         await host();
         const result = scalingRatio(timed(shape.make, shape.n), timed(shape.make, shape.n * 8), { bound: BOUND });
         expect(result.ratio, result.message).toBeLessThan(BOUND);
-    }, 120000);
+    });
 });
