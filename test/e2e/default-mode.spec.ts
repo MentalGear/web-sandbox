@@ -52,22 +52,21 @@ const HASH_ONLY = /^default-src 'none'; script-src 'sha256-[A-Za-z0-9+/]{43}='; 
 const CONNECT_SRC = `document.querySelector('meta[http-equiv="Content-Security-Policy"]').content.split('; ').find(d => d.startsWith('connect-src'))`;
 
 test.describe('sealed is the default mode; strict is named', () => {
-    test("the harness element, inserted and never configured, is sealed: a view whose one script is the hashed bootstrap, and whose connect-src stays 'none' with a JSON file registered; strict mode's has blob: (positive control)", async ({ sandbox, page, browserName }) => {
-        await page.waitForFunction(() => (document.querySelector('web-sandbox') as any).state === 'ready');
-        expect(await sandbox.state()).toBe('ready');
+    test("an app started with no option is sealed: a view whose one script is the hashed bootstrap, and whose connect-src stays 'none' with a JSON file in the app; strict mode's has blob: (positive control)", async ({ sandbox, page, browserName }) => {
+        void sandbox; // the fixture opens the harness; this case starts its own elements
+        const app = { files: { 'data.json': '{}' } };
+        expect(await page.evaluate((a) => startFresh({}, a), app)).toBe('ready');
         expect((await inFrames(page, browserName, '1')).map(f => f.path)).toEqual(['main', 'main/wrapper', 'main/wrapper/view']);
         const view = await inView<any>(page, browserName, VIEW_STATE);
         expect(view.scripts).toEqual(['head']);
         expect(view.policy).toMatch(HASH_ONLY);
         expect(view.body).toBe('<div id="root"></div>');
-        // the default's policy, told apart from strict mode's: a registered JSON file adds blob: to connect-src in strict
+        // the default's policy, told apart from strict mode's: a JSON file of the app adds blob: to connect-src in strict
         // mode only (sealed mode reads files with sandboxFiles.read(), which makes no request)
-        expect(await sandbox.registerFiles({ 'data.json': '{}' })).toBe('ok');
-        expect(await apply(page, {})).toBe('ready');
         await expect.poll(() => inView(page, browserName, CONNECT_SRC)).toBe("connect-src 'none'");
-        expect(await apply(page, { mode: 'strict' })).toBe('ready');
+        expect(await page.evaluate((a) => startFresh({ mode: 'strict' }, a), app)).toBe('ready');
         await expect.poll(() => inView(page, browserName, CONNECT_SRC)).toBe('connect-src blob:');
-        expect(await apply(page, {})).toBe('ready');
+        expect(await page.evaluate((a) => startFresh({}, a), app)).toBe('ready');
         await expect.poll(() => inView(page, browserName, CONNECT_SRC)).toBe("connect-src 'none'");
     });
 

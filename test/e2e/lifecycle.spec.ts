@@ -14,7 +14,7 @@ test.use({ build: 'network' });
 const MODES = ['cooperative', 'worker', ...VIEW_MODES] as const;
 
 const RESET_TEXT = '[Sandbox] call() rejected: the sandbox was reset or terminated.';
-const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.';
+const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset() to start it again.';
 
 function terminatedRefusal(message: string): CallOutcome {
     return { status: 'rejected', isError: true, code: 'TERMINATED', keys: ['code'], message };
