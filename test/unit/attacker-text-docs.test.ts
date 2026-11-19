@@ -3,21 +3,26 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isValidPath } from '@src/lib/files';
+import { guestText } from '@src/lib/guest-values';
 
 /**
  * The strings a guest chooses and the host page's events carry are attacker text, and the docs say so in three places: the
- * README's bullet, THREAT-MODEL's bullet and the events paragraph of docs/API.md (rendered from the TSDoc of
- * `WebSandboxEventMap`). BD2:NEW-4 wrote the list for log, violation and fetch; BD3:CHL-2 found the guest-writes surface
- * (`fileswritten`, `listGuestWrites()`) missing from it, and a path that a valid-path check accepts can end a
- * single-quoted attribute. This file keeps the three lists to the same fields (class C, docs of a guest-controlled
- * surface), and keeps the claim about paths true.
+ * README's bullet, THREAT-MODEL's bullet and docs/API.md's "Guest-chosen text", whose table is generated from the
+ * registry of guest values (GUEST_VALUES, src/lib/guest-values.ts; I10). BD2:NEW-4 wrote the list for log, violation and
+ * fetch; BD3:CHL-2 found the guest-writes surface (`fileswritten`, `listGuestWrites()`) missing from it, and a path that a
+ * valid-path check accepts can end a single-quoted attribute. This file holds the two handwritten lists to the registry's
+ * text (class C, docs of a guest-controlled surface: the list is the registry's, not this file's), and keeps the claim
+ * about paths true.
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (file: string) => readFileSync(path.join(ROOT, file), 'utf8');
 
-/** Every public field or method whose string a guest chooses, as the docs name it. */
-const GUEST_CHOSEN: ReadonlyArray<readonly string[]> = [['args', 'arguments'], ['blockedURI'], ['sourceFile'], ['url'], ['fileswritten'], ['listGuestWrites']];
+/** Every public value whose text a guest chooses, as the docs name it: the registry's. */
+const GUEST_CHOSEN: readonly string[] = guestText().map(text => text.name);
+
+/** docs/API.md's generated table of the guest's text. */
+const generatedTable = (text: string) => text.slice(text.indexOf('<!-- generated:begin guest-text -->'), text.indexOf('<!-- generated:end -->', text.indexOf('<!-- generated:begin guest-text -->')));
 
 /** The paragraph, or the list item, of `text` that holds `marker`. */
 function paragraphWith(text: string, marker: string): string {
@@ -30,12 +35,13 @@ describe('the attacker-text lists', () => {
     const places: Array<[string, string, string]> = [
         ['README.md', 'README.md', 'Every string a guest can set is attacker text'],
         ['docs/THREAT-MODEL.md', 'docs/THREAT-MODEL.md', 'Every string a guest can set is attacker text'],
-        ['docs/API.md (the events)', 'docs/API.md', 'Guest-controlled text (a log'],
+        ['docs/API.md (Guest-chosen text)', 'docs/API.md', '**Guest-chosen text.**'],
     ];
 
     it.each(places)('%s names every field a guest chooses, and the sink to show it with', (_, file, marker) => {
-        const paragraph = paragraphWith(read(file), marker);
-        for (const names of GUEST_CHOSEN) expect(names.some(name => paragraph.includes(name)), names.join(' or ')).toBe(true);
+        const paragraph = paragraphWith(read(file), marker) + (file === 'docs/API.md' ? generatedTable(read(file)) : '');
+        expect(GUEST_CHOSEN.length).toBeGreaterThan(8);
+        for (const name of GUEST_CHOSEN) expect(paragraph, name).toContain(name);
         expect(paragraph).toContain('textContent');
         expect(paragraph, 'and the console, where the first argument is a format string').toContain('format-string');
     });

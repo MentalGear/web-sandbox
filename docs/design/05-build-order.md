@@ -1,6 +1,6 @@
 # 05 · The order of the work
 
-**Status: steps 1 and 2 are under way: 1.0 to 1.6 and 1.8, and 2.1, 2.2 and 2.4, are built (each row says so); 1.7 waits for the owner; the rest is a plan.** Each step ends with the repository's gates passing on both builds and three engines
+**Status: steps 1 and 2 are under way: 1.0 to 1.6 and 1.8, and 2.1, 2.2, 2.4 and 2.5, are built (each row says so); 1.7 waits for the owner; the rest is a plan.** Each step ends with the repository's gates passing on both builds and three engines
 (CONTRIBUTING.md), and each brings the structural test of its invariant ([the folder's index](README.md)). The plan is
 the one after [review 1](REVIEW-1.md), the owner's [decisions on it](README.md#decided-after-review-1) and
 [review 2](REVIEW-2.md).
@@ -38,7 +38,7 @@ with the behaviour it tested, and the commit says which.
 | 2.2 | **built**: a write's type from its path: `FILE_TYPES` is the one table of types and of what commits without `{ code: true }`; a guest write carries a path and bytes, and one that carries a type is refused `INVALID_FILE` | the type table's test (I8; built: `test/unit/file-types.test.ts`) |
 | 2.3 | `GuestBytes` and `GUEST_IMAGE_TYPES`; `save()` | a unit test with an SVG, an HTML file and a polyglot behind an image signature; an e2e spec on three engines: `save()` of `invoice.pdf.exe` and `report.html` saves files under the library's names (I9) |
 | 2.4 | **built**: `unknown` for guest values: `call()` and `callWithTimeout()` answer `Promise<unknown>` with no type parameter | the API report (built: `test/unit/guest-values.test.ts`) |
-| 2.5 | `GUEST_VALUES` | the registry's test against the API report (I10) |
+| 2.5 | **built**: `GUEST_VALUES`, every value of both builds' API reports classified; docs/API.md's list of guest-chosen text generated from it | the registry's test against the API report (I10; built: `test/unit/guest-values.test.ts`) |
 | 2.6 | `links`, with the click as the request | an e2e spec with the popup blocker on (Chromium, Firefox): the tab opens for a click on a marked link, and for nothing else the guest can do; the egress table's row and its budget (I6) |
 
 Before 2.6 promises a marked link's `href` can be the listed URL: measure, on three engines, that a real `href` in the

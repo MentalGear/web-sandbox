@@ -271,8 +271,9 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     strict mode each report also carries `source`, `'view'` or `'logic'` (see [Strict mode](#strict-mode)).
 *   **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`,
     a `fetch` record's `url` (it can be `javascript:`), the path of a guest's write, which also chose its type (`fileswritten`'s
-    `detail.paths`, `listGuestWrites()`; a valid path can end a single-quoted attribute), the message of a call rejected by
-    a guest handler, and the arguments of a host method you grant. "Validated and clamped" bounds its size and shape; it does not make it safe to
+    `detail.paths`, `listGuestWrites()`, and of a committed one in `listFiles()`; a valid path can end a single-quoted
+    attribute), the result of `call()`, the message of a call rejected by a guest handler, and the arguments of a host
+    method you grant ([the whole list](docs/API.md#guest-chosen-text), from the registry of guest values). "Validated and clamped" bounds its size and shape; it does not make it safe to
     display. Show it with `textContent`, and never pass it to an HTML (`innerHTML`, `insertAdjacentHTML`), URL (a link
     `href`), `eval`, template or `console` format-string sink (as the first argument of a `console` method it is a
     format string, `%c` styles the line and `%s` takes the next argument: put a fixed text first, as the examples do).

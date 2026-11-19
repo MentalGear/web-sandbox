@@ -786,9 +786,10 @@ app's data. A listener added for the capture phase on an ancestor still receives
 capture phase runs down the whole path whatever `bubbles` says. The `detail` is frozen, deeply: every object and
 array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
 `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
-clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
-line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path of a guest's
-write, which also chose its type: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
+clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (every
+value of [Guest chosen text](#guest-chosen-text), the list the registry of guest values gives: a log line's `args`, a violation's
+`blockedURI` and `sourceFile`, a fetch record's `url`, the path of a guest's write in `fileswritten` and
+`listGuestWrites()`, which also chose its type, and the others listed there): show it with `textContent`, never in an HTML,
 URL (such as a link `href`), `eval`, template or `console` format-string sink, and do not forward it to a network sink,
 an error reporter or analytics (`fetch`, `navigator.sendBeacon`) as if it were your page's own event: whoever wrote
 the app reads that sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
@@ -804,6 +805,27 @@ library's text, which never quotes a value of your configuration, or the text yo
 | `fetch` | `FetchRecord` | no | A `sandboxFetch()` request settled, refusals included; see `FetchRecord`. Dispatched only with `fetchBridge` configured, so only in a build with the network modes. Without it `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
 | `fileschanged` | `{ paths: string[] }` | no | `commitGuestWrites()` changed the files; `detail.paths` lists the paths that changed. Dispatched synchronously, once per call that changed something. |
 | `fileswritten` | `{ paths: string[] }` | no | The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths` holds that one path. At most `GUEST_WRITES_PER_SECOND` per environment per second. Listen on the element (a capture listener on an ancestor still receives it). The path is guest-controlled text: show it with `textContent` (a valid path can end a single-quoted attribute). |
+<!-- generated:end -->
+
+<a id="guest-chosen-text"></a>**Guest-chosen text.** Every value the API hands you is classified as the library's, your own
+or the guest's (`GUEST_VALUES`, src/lib/guest-values.ts, which a test holds to each build's API report). The guest's text
+among them is below: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or
+`console` format-string sink, and do not forward it to a network sink, an error reporter or analytics (`fetch`,
+`navigator.sendBeacon`) as if it were your page's own event: whoever wrote the app reads that sink.
+
+<!-- generated:begin guest-text -->
+| Text the guest chooses | Where |
+| :--- | :--- |
+| the arguments of a host method you grant | `HostMethod` |
+| the result of `call()` and `callWithTimeout()` | `WebSandbox.call` |
+| `fileswritten`'s `detail.paths` | `WebSandboxEventMap.fileswritten.paths` |
+| a log line's `args` | `SandboxLog.args` |
+| a violation's `blockedURI` | `SandboxViolation.blockedURI` |
+| a violation's `sourceFile` | `SandboxViolation.sourceFile` |
+| a `fetch` record's `url` (it can be `javascript:`) | `FetchRecord.url` (the build with the network modes) |
+| a path `listFiles()` gives for a committed write | `FileInfo.path` |
+| the path of a guest's write (`listGuestWrites()`) | `GuestWrite.path` |
+| the message of a call the guest rejected | `RpcError.message` |
 <!-- generated:end -->
 
 The element's own startup message, the guest frame's port announcement (`{ type: 'SANDBOX_PORT' }` from the guest
@@ -1884,7 +1906,8 @@ element's whole life.
   of your page the app can run: a proxy hands it your page's network, cookies and storage.
 - **Everything the app can send your page is the app's data and attacker text**, not only the arguments of your methods:
   its `sandbox-log` lines, the details of `violation` events (`blockedURI`, `sourceFile`), the paths of its guest
-  writes (`fileswritten`, `listGuestWrites()`) and the height of its auto-resize. None of it is a request, and none can run
+  writes (`fileswritten`, `listGuestWrites()`) and the height of its auto-resize ([Guest-chosen text](#guest-chosen-text)
+  lists every text of the app's the API hands you). None of it is a request, and none can run
   code, but each is chosen by the app. Show it with `textContent` and never pass it to a URL or HTML sink, and do not
   forward it to a network sink, an error reporter or analytics (`fetch`, `navigator.sendBeacon`, a tracker's `capture()`)
   as if it were your page's own event: whoever wrote the app reads that sink, so what you forward is a channel from the app

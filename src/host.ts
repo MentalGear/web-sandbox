@@ -213,9 +213,10 @@ type GrantsAreTheSchemas = Holds<Same<Exclude<keyof SealedSandboxConfig, keyof S
  * capture phase runs down the whole path whatever `bubbles` says. The `detail` is frozen, deeply: every object and
  * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
  * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
- * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
- * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path of a guest's
- * write, which also chose its type: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
+ * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (every
+ * value of docs/API.md#guest-chosen-text, the list the registry of guest values gives: a log line's `args`, a violation's
+ * `blockedURI` and `sourceFile`, a fetch record's `url`, the path of a guest's write in `fileswritten` and
+ * `listGuestWrites()`, which also chose its type, and the others listed there): show it with `textContent`, never in an HTML,
  * URL (such as a link `href`), `eval`, template or `console` format-string sink, and do not forward it to a network sink,
  * an error reporter or analytics (`fetch`, `navigator.sendBeacon`) as if it were your page's own event: whoever wrote
  * the app reads that sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
