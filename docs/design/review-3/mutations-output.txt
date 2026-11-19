@@ -1,0 +1,26 @@
+Review 3: each mitigation reverted in the vulnerable form named, its named test run, the source restored
+(docs/design/review-3/mutate.py; the file is rewritten from its own text whatever the run does). At 7dfec16.
+
+M1  I4  src/lib/guest-writes.ts, allCurrent: a value is current while its PATH has an entry (by path, not by identity)
+        `if (overlay.get(entry.path) !== entry) return false;` -> `if (!overlay.has(entry.path)) return false;`
+        test/unit/guest-writes.test.ts                      -> 6 failed | 24 passed   (the test catches it)
+M2  I4  src/lib/guest-writes.ts, commit: store what is pending at the path now, not the listed entry's file
+        test/unit/guest-writes.test.ts                      -> 30 passed              (an equivalent mutant: allCurrent
+        has already required the path's entry to be the listed one, so the file is the same; not a gap)
+M3  I7  src/lib/structured-size.ts: a Blob or a File measured as 16 bytes instead of refused
+        test/unit/snapshot-kinds.test.ts                    -> 22 failed | 5 passed   (caught)
+M4  I8  src/lib/files.ts, CheckedFile.fromGuest: a `{ content, type }` from the guest taken with its type (the old rule)
+        test/unit/file-types.test.ts test/unit/guest-writes.test.ts -> 36 failed | 105 passed (caught)
+M5  I9  src/lib/guest-bytes.ts: image() falls back to a Blob typed by the path's extension
+        test/unit/guest-bytes.test.ts                       -> 10 failed | 117 passed (caught)
+M6  I9  src/lib/guest-bytes.ts, savedName: the path's last segment, never with `.download`
+        test/unit/guest-bytes.test.ts                       -> 23 failed | 104 passed (caught)
+M7  I6  src/lib/in-sandbox-view.ts: the link click listener without its isTrusted check
+        test/unit/view-links.test.ts                        -> 1 failed | 106 passed  (caught)
+M8  I6  src/lib/links.ts, listedLink: no bounds check on the index
+        test/unit/links.test.ts test/unit/links-network.test.ts -> 3 failed | 39 passed (caught)
+M9  I6  src/lib/in-sandbox-view.ts, markListed: an href that is not listed as written is looked up again as new URL(href).href
+        test/unit/view-links.test.ts                        -> 1 failed | 106 passed  (caught)
+
+Command form (from the checkout's root):
+  python3 docs/design/review-3/mutate.py NAME FILE 'OLD' 'NEW' TEST...

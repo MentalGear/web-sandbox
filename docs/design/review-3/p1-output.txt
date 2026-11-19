@@ -1,0 +1,33 @@
+chromium | image/png  | html                    | top-level: inert (image/png at blob:) | iframe: inert | object: inert | embed: inert
+chromium | image/png  | svg                     | top-level: inert (image/png at blob:) | iframe: inert | object: inert | embed: inert
+chromium | image/jpeg | html                    | top-level: inert (image/jpeg at blob:) | iframe: inert | object: inert | embed: inert
+chromium | image/jpeg | svg                     | top-level: inert (image/jpeg at blob:) | iframe: inert | object: inert | embed: inert
+chromium | image/gif  | html                    | top-level: inert (image/gif at blob:) | iframe: inert | object: inert | embed: inert
+chromium | image/gif  | svg                     | top-level: inert (image/gif at blob:) | iframe: inert | object: inert | embed: inert
+chromium | image/webp | html                    | top-level: inert (image/webp at blob:) | iframe: inert | object: inert | embed: inert
+chromium | image/webp | svg                     | top-level: inert (image/webp at blob:) | iframe: inert | object: inert | embed: inert
+chromium | image/avif | html                    | top-level: inert (image/avif at blob:) | iframe: inert | object: inert | embed: inert
+chromium | image/avif | svg                     | top-level: inert (image/avif at blob:) | iframe: inert | object: inert | embed: inert
+chromium | text/html  | html (positive control) | top-level: RAN (text/html at blob:) | iframe: RAN | object: RAN | embed: RAN
+firefox  | image/png  | html                    | top-level: inert (image/png at blob:) | iframe: inert | object: inert | embed: inert
+firefox  | image/png  | svg                     | top-level: inert (image/png at blob:) | iframe: inert | object: inert | embed: inert
+firefox  | image/jpeg | html                    | top-level: inert (image/jpeg at blob:) | iframe: inert | object: inert | embed: inert
+firefox  | image/jpeg | svg                     | top-level: inert (image/jpeg at blob:) | iframe: inert | object: inert | embed: inert
+firefox  | image/gif  | html                    | top-level: inert (image/gif at blob:) | iframe: inert | object: inert | embed: inert
+firefox  | image/gif  | svg                     | top-level: inert (image/gif at blob:) | iframe: inert | object: inert | embed: inert
+firefox  | image/webp | html                    | top-level: inert (image/webp at blob:) | iframe: inert | object: inert | embed: inert
+firefox  | image/webp | svg                     | top-level: inert (image/webp at blob:) | iframe: inert | object: inert | embed: inert
+firefox  | image/avif | html                    | top-level: inert (image/avif at blob:) | iframe: inert | object: inert | embed: inert
+firefox  | image/avif | svg                     | top-level: inert (image/avif at blob:) | iframe: inert | object: inert | embed: inert
+firefox  | text/html  | html (positive control) | top-level: RAN (text/html at blob:) | iframe: RAN | object: RAN | embed: RAN
+webkit   | image/png  | html                    | top-level: inert (image/png at blob:) | iframe: inert | object: inert | embed: inert
+webkit   | image/png  | svg                     | top-level: inert (image/png at blob:) | iframe: inert | object: inert | embed: inert
+webkit   | image/jpeg | html                    | top-level: inert (image/jpeg at blob:) | iframe: inert | object: inert | embed: inert
+webkit   | image/jpeg | svg                     | top-level: inert (image/jpeg at blob:) | iframe: inert | object: inert | embed: inert
+webkit   | image/gif  | html                    | top-level: inert (image/gif at blob:) | iframe: inert | object: inert | embed: inert
+webkit   | image/gif  | svg                     | top-level: inert (image/gif at blob:) | iframe: inert | object: inert | embed: inert
+webkit   | image/webp | html                    | top-level: inert (image/webp at blob:) | iframe: inert | object: inert | embed: inert
+webkit   | image/webp | svg                     | top-level: inert (image/webp at blob:) | iframe: inert | object: inert | embed: inert
+webkit   | image/avif | html                    | top-level: inert (image/avif at blob:) | iframe: inert | object: inert | embed: inert
+webkit   | image/avif | svg                     | top-level: inert (image/avif at blob:) | iframe: inert | object: inert | embed: inert
+webkit   | text/html  | html (positive control) | top-level: RAN (text/html at blob:) | iframe: RAN | object: RAN | embed: RAN

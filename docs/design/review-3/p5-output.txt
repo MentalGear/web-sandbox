@@ -1,0 +1,16 @@
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90m/home/user/web-sandbox/.claude/worktrees/agent-ae035dc88df4fd609[39m
+
+[90mstdout[2m | docs/design/review-3/i7-measure-kinds.test.ts[2m > [22m[2mI7 under attack: a Blob or a File anywhere in a snapshot is refused[2m > [22m[2mthe kinds beside them: an Error alone, a DOMException, a detached and a resizable buffer, a typed array over a resizable buffer
+[22m[39m[review-3] this environment's structuredClone of an Error: [object Error], its prototype is Object.prototype: false, own keys ["stack","message"]; the Error itself measures Infinity
+[review-3] a resizable buffer of 8 bytes measures 24; its clone keeps maxByteLength 1073741824, resizable true
+
+ [32m✓[39m docs/design/review-3/i7-measure-kinds.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m docs/design/review-3/i4-commit-attacks.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 1085[2mms[22m[39m
+     [33m[2m✓[22m[39m a commit the quota refuses (a stylesheet whose references cost more than the cap) changes neither the files nor the pending list, and the other value of the list commits alone [33m 775[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[32m28 passed[39m[22m[90m (28)[39m
+[2m   Start at [22m 20:04:15
+[2m   Duration [22m 2.22s[2m (transform 663ms, setup 0ms, import 534ms, tests 1.10s, environment 1.08s)[22m
+
