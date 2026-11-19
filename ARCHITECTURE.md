@@ -162,7 +162,7 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 
 ## Two builds: the network modes behind a flag
 
-<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eae8ac126fa -->
+<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eaec27526fa -->
 
 The package is built two ways, chosen by one flag that is off by default ([ADR-009](docs/ADR-009-network-modes-build-flag.md);
 `NETWORK_MODES_FLAG`, `src/lib/build-flag.ts`):
@@ -170,8 +170,8 @@ The package is built two ways, chosen by one flag that is off by default ([ADR-0
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 47 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 65 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 48 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 66 modules of `src/` |
 <!-- generated:end -->
 
 - **Two entries.** `src/index.ts` is the default build's and `src/network.ts` the network build's; both export
@@ -192,8 +192,8 @@ The package is built two ways, chosen by one flag that is off by default ([ADR-0
   prototype). In the default build nothing fills the slot and the element has none of the methods.
 - **The config.** The schema declares every option, the network ones too (their defaults and modes). In the default
   build a config that names a network mode or option is refused before any option is read
-  (`networkModesOffRefusal`, `src/lib/config-schema.ts`), with a reason that names the flag, and no rule of a network
-  option exists to run in any mode.
+  (`networkModesOffRefusal`, `src/lib/config-schema.ts`), with a reason that names the flag (`start()` throws it,
+  `setConfig()` ends the sandbox with it), and no rule of a network option exists to run in any mode.
 - **The bootstrap.** The hashed script is the view's and, in the network build, the fetch bridge frame's too; the
   default build's has the view alone, so each build has its own `viewScriptHash()`.
 - **What is shared stays shared.** The functions stringified into the guest's worker and the view, the broker, the
@@ -346,7 +346,7 @@ stateDiagram-v2
 | `disconnect` | disconnectedCallback, adoptedCallback | — | any | any | — |
 | `build` | reset(), load() | — | any | any | `why: 'reset' \| 'load'`, `ctx: BuildContext` |
 | `setConfig` | setConfig() | — | any | any | `same: boolean` |
-| `configured` | the applyConfig effect | — | any | any | `refusal: string \| null`, `ctx: BuildContext` |
+| `configured` | the applyConfig effect, start() | — | any | any | `refusal: string \| null`, `ctx: BuildContext` |
 | `filesChanged` | registerFiles(), unregisterFiles(), commitGuestWrites() | — | any | any | — |
 | `built` | the build effect | always | `loading` | any | `prepared: unknown` |
 | `buildFailed` | the build or attach effect | always | `loading` | any | `reason: string` |
@@ -417,6 +417,7 @@ the docs read) and the role its header comment gives.
 | `src/index.ts` | every build | Public entry point of the package, as published: the default build, which has sealed mode alone |
 | `src/network.ts` | network | Public entry point of the package built with the network modes |
 | `src/sealed.ts` | every build | The public API of sealed mode: what every build of the package exports |
+| `src/lib/app-start.ts` | every build | The reading of `start(app, grants)`'s two arguments (design 01, "start(app, grants)"; I2, I17) |
 | `src/lib/auto-resize.ts` | every build | Content auto-sizing, host side |
 | `src/lib/bridge-frame.ts` | network | The fetch bridge's frame, host side |
 | `src/lib/build-flag.ts` | every build | The build flag of the network modes |

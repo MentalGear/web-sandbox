@@ -56,13 +56,16 @@ different name of this class, and its `SyntaxError` for a name that is not a val
 
 ## The element
 
-<!-- describes: api:WebSandbox sig:7d76 -->
-The element has no observed attributes; everything is set through [`setConfig()`](#setconfigconfig) and the
-other methods. It has one property:
+<!-- describes: api:WebSandbox sig:2a86 -->
+The element has no observed attributes. An app is given to it once, with [`start(app, grants)`](#startapp-grants): the
+app's own content in the first argument, what you allow it in the second. The members that set an app up piece by piece
+([`setConfig()`](#setconfigconfig), [`load()`](#loadhtml), [`registerFiles()`](#registerfilesfiles),
+[`expose()`](#exposename-fn) and their removals) still work beside it. It has two properties:
 
 <!-- generated:begin api-element -->
 | Property | Type | Description |
 | :--- | :--- | :--- |
+| `started` | `boolean` (read-only) | Whether `start()` has given this element its app: `true` from its first success on, for the rest of the element's life. `state` cannot say it, since a new element and one with its app outside the document both read `'idle'`. A framework set-up does not branch on it to restart an element: an element that has an app may hold another app than the one you mean. Let the set-up own its element: create it, `start()` it and append it, and remove it in the clean-up, with the app and the grants as the set-up's dependencies. |
 | `state` | `'idle' \| 'loading' \| 'ready' \| 'terminated'` (read-only) | Where the element is in its lifecycle (`SandboxState`). It already has the new value when `ready` or `terminated` is dispatched. |
 <!-- generated:end -->
 
@@ -82,8 +85,8 @@ TypeScript: `document.createElement('web-sandbox')` is a `WebSandbox`, and `addE
 
 The element builds an environment only in the document of the window that defined it. Moved into another document
 (`adoptNode()`, an iframe's document), it tears its environment down and stays `idle` there, with one warning; moved
-back, it builds again. Its methods work there as anywhere (in every engine): `reset()`, `load()` and `setConfig()` keep
-what they are given for its return and build nothing, calls reject at once with `TERMINATED`.
+back, it builds again. Its methods work there as anywhere (in every engine): `start()`, `reset()`, `load()` and
+`setConfig()` keep what they are given for its return and build nothing, calls reject at once with `TERMINATED`.
 
 The guest can post messages to the host page's window (any frame can; it reaches your own `message` listeners).
 Act on a message only from a sender you know, by `event.source`, never by the message's shape. Do not give host
@@ -101,8 +104,8 @@ The package has two builds, chosen by one build flag that is off by default
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 47 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 65 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 48 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 66 modules of `src/` |
 <!-- generated:end -->
 
 - **The default build is sealed mode alone.** It is what `bun run build:lib` writes and what the package is as
@@ -523,6 +526,49 @@ Every method can be called in any state. Methods that build an environment do so
 the document; otherwise they take effect when it is inserted.
 
 <!-- generated:begin api-methods -->
+### `start(app, grants?)`
+
+```ts
+start(app: SandboxApp, grants?: SandboxGrants): void
+```
+
+Gives the element its app, once: the app's own content and what you allow it, validated whole before anything is
+stored. It builds at once while the element is in the document, otherwise when it is inserted.
+
+- **Two arguments.** `app` is what the app's author wrote (`html`, `entry`, `files`) and may come from data;
+ `grants` is yours (the host methods, `guestWrites`, `capabilities` and every other option). Each refuses a key of
+ the other and any key it does not know, so an app read from data carries no grant by accident. A grant is
+ whatever you pass as the second argument: nothing stops you from passing a stored manifest there, which hands its
+ author the grants.
+- **All or nothing.** Every option is checked for its shape and type, the files as one batch by the rules of
+ `registerFiles()`, an `entry` against the files given (in strict and sealed mode it must name a JavaScript file
+ of them), and each method. A refusal throws and leaves the element as it was: without an app, so a corrected one
+ can be started on it. What needs a parse of the guest's code (an `import()` in the entry) still ends the build,
+ with its reason.
+- **Copied.** The options are copied (structured clone), the files into the element's own store, the methods into
+ a frozen record: changing your objects afterwards changes nothing.
+- **Once.** A second call throws, whatever the element's state, and changes nothing; `started` is `true` from the
+ first success on. Reading the arguments may run your code (a getter, a `Proxy`): of two calls that overlap this
+ way, the one that finishes validating first binds and the other throws.
+- **Its lifecycle.** `reset()` rebuilds the same app, with its files as they are now, committed writes included;
+ `terminate()` ends it, and a later `reset()` starts it again; removing the element ends its environment and
+ inserting it again builds the same app.
+- **The other members.** `setConfig()`, `load()`, `registerFiles()`, `unregisterFiles()`, `expose()` and
+ `unexpose()` still work on such an element, as they do on any; `start()` takes the place of all of them.
+
+**Parameters**
+
+- `app`: The app: its markup, its entry and its files; see `SandboxApp`.
+- `grants`: What the embedder allows it: its host methods and options; see `SandboxGrants`. None when
+left out.
+
+**Throws:** A `TypeError` for a second call, an argument that is not an object, a key of the other argument or one
+neither takes, an option of the wrong shape or type, a mode or an option this build does not have (in the default
+build an option of the network modes, with the reason of the `networkModesOff` termination), an `entry` that names
+no JavaScript file of `files`, or a method that is not a function or has a name `expose()` refuses; a
+`FileError` with `code` `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED` for the files. Nothing is
+stored then.
+
 ### `setConfig(config)`
 
 ```ts
@@ -1144,7 +1190,7 @@ There is no `running` state: nothing reports that guest code is running or that 
 
 | From | Action | To |
 | :--- | :--- | :--- |
-| any | inserted into the document; `setConfig()`, `load()` or `reset()` while in it | `loading`, then `ready`, or `terminated` if the build is refused or fails: one `terminated` per attempt, except for an attempt made from a `terminated` listener that ends with the very reason being dispatched (the same refusal again), which ends `terminated` without another event |
+| any | inserted into the document; `start()`, `setConfig()`, `load()` or `reset()` while in it | `loading`, then `ready`, or `terminated` if the build is refused or fails: one `terminated` per attempt, except for an attempt made from a `terminated` listener that ends with the very reason being dispatched (the same refusal again), which ends `terminated` without another event |
 | any | removed from the document | `idle`, no event |
 | any but `terminated` | `terminate()`, watchdog, `workerExecutionTimeout`, the view's longest operation, integrity check | `terminated` |
 
@@ -1791,13 +1837,17 @@ engines, and each block here is generated from its file (`bun run docs:gen`), so
 
 - **`html`** is the app's initial view: markup the renderer cleans before it shows it. A `<script>` or an `on…` handler
   in it never runs; the code goes in `entry`.
-- **`entry`** is the app's JavaScript, a registered file that runs in the worker with `bridge`, `sandboxFiles` and
+- **`entry`** is the app's JavaScript, one of its files, that runs in the worker with `bridge`, `sandboxFiles` and
   [`sandboxView`](#sandboxview-strict-mode).
-- **CSS, images, fonts and media** are registered files, named by path in the markup (`href`, `src`, `poster`). The view
+- **CSS, images, fonts and media** are files of the app too, named by path in the markup (`href`, `src`, `poster`). The view
   shows the types listed under `sandboxView` (raster images, fonts, audio, video, CSS, WebVTT); an SVG, HTML or JSON file
   is the worker's, read with `sandboxFiles`, and a vector graphic is an inline `<svg>`.
-- Register the files before `setConfig()`: they reach the app at the next build. At most 1000 files and 8 MiB in all
-  ([Limits](#limits)).
+- The three go to [`start()`](#startapp-grants) as one value, the app (`{ html, entry, files }`), and what you allow it
+  (its host methods, `guestWrites`) as a second one, the grants: `start()` refuses a grant in the app, so a bundle read
+  from data carries none by accident. A grant is whatever you pass as the second argument, and nothing stops you from
+  passing a stored manifest there: write the grants in your own code, as `mountTodoApp` does. The files are validated as one batch, at most 1000 files and 8 MiB in all ([Limits](#limits)), and an
+  `entry` that names no JavaScript file of them throws. (With the members that set an app up piece by piece, the files
+  are registered with `registerFiles()` before `setConfig()`, and reach the app at the next build.)
 
 <!-- generated:begin example:sealed-app-html -->
 ```html
@@ -1824,14 +1874,13 @@ the app and removes the element. To run another app, mount it again: **an elemen
 
 <!-- generated:begin example:sealed-app-host -->
 ```js
-// The embedder's side: register the bundle, answer the app's calls, feed it data.
+// The embedder's side: start the bundle with what you allow it, answer the app's calls, feed it data.
 const MAX_TODOS = 1000; // the app stops adding at the same number (app.js)
 
-// An element is one app's for its life: its file registry, its exposed methods, its pending guest writes and every handle
-// a host method holds outlive an app that is stopped, so the next app on it would meet the first one's. So each mount makes
-// its own element in `container` and returns it with stop(), which ends the app and removes the element; to run another
-// app, call mountTodoApp again. `appId` is yours: your own id for this app, never a name the bundle gives itself. It keys
-// the app's state in your store, so one app is never handed another's.
+// An element runs one app, given once with start(): a second start() on it throws, so each mount makes its own element in
+// `container` and returns it with stop(), which ends the app and removes the element; to run another app, call
+// mountTodoApp again. `appId` is yours: your own id for this app, never a name the bundle gives itself. It keys the app's
+// state in your store, so one app is never handed another's.
 export async function mountTodoApp(container, { bundle, appId, store }) {
     const key = `todos:${appId}`;
     const sandbox = document.createElement('web-sandbox');
@@ -1845,30 +1894,36 @@ export async function mountTodoApp(container, { bundle, appId, store }) {
         sandbox.remove();
     };
 
+    // The app's call runs here with your page's rights, and its argument is the app's data: check its type and size, and
+    // keep a copy of what you expect, not the object itself. Array.from visits every index, so a sparse array cannot
+    // store holes.
+    const save = async (todos) => {
+        if (!Array.isArray(todos) || todos.length > MAX_TODOS) throw new Error(`save: expected at most ${MAX_TODOS} todos`);
+        const clean = Array.from(todos, (todo) => {
+            if (typeof todo?.text !== 'string' || todo.text.length > 200 || typeof todo.done !== 'boolean') throw new Error('save: bad todo');
+            return { text: todo.text, done: todo.done };
+        });
+        // A call that started before stop() runs on: only its answer is dropped. Check the flag right before the write.
+        if (!running) return;
+        await store.setItem(key, JSON.stringify(clean));
+    };
+
     try {
-        container.append(sandbox);
         const get = (name) => fetch(`${bundle}/${name}`);
-        sandbox.registerFiles({
-            'app.js': await (await get('app.js')).text(),
-            'app.css': await (await get('app.css')).text(),
-            'logo.png': new Uint8Array(await (await get('logo.png')).arrayBuffer()),
-        });
-
-        // The app's call runs here with your page's rights, and its argument is the app's data: check its type and size,
-        // and keep a copy of what you expect, not the object itself. Array.from visits every index, so a sparse array
-        // cannot store holes.
-        sandbox.expose('save', async (todos) => {
-            if (!Array.isArray(todos) || todos.length > MAX_TODOS) throw new Error(`save: expected at most ${MAX_TODOS} todos`);
-            const clean = Array.from(todos, (todo) => {
-                if (typeof todo?.text !== 'string' || todo.text.length > 200 || typeof todo.done !== 'boolean') throw new Error('save: bad todo');
-                return { text: todo.text, done: todo.done };
-            });
-            // A call that started before stop() runs on: only its answer is dropped. Check the flag right before the write.
-            if (!running) return;
-            await store.setItem(key, JSON.stringify(clean));
-        });
-
-        sandbox.setConfig({ entry: 'app.js', html: await (await get('app.html')).text(), guestWrites: true });
+        // The app: what the bundle holds; start() refuses a grant in it. No mode: sealed.
+        const app = {
+            html: await (await get('app.html')).text(),
+            entry: 'app.js',
+            files: {
+                'app.js': await (await get('app.js')).text(),
+                'app.css': await (await get('app.css')).text(),
+                'logo.png': new Uint8Array(await (await get('logo.png')).arrayBuffer()),
+            },
+        };
+        // The grants: what you allow this app, written here. A grant is whatever this second argument holds, so it is
+        // never read from the bundle.
+        sandbox.start(app, { methods: { save }, guestWrites: true });
+        container.append(sandbox);
         await sandbox.call('load', JSON.parse((await store.getItem(key)) ?? '[]')); // queued until the app is ready
     } catch (error) {
         stop(); // a mount that failed leaves nothing running
@@ -1936,7 +1991,7 @@ sandboxView.on('change', 'list', (event) => {
 
 The app publishes methods with `bridge.expose()` and the host calls them with `sandbox.call(name, ...args)`: `load` hands
 it the saved state, `push` a batch of todos. A call made while the sandbox is loading is queued and sent when it is ready,
-which is why `mountTodoApp` can call `load` right after `setConfig()`.
+which is why `mountTodoApp` can call `load` right after `start()`.
 
 - **A stream is `push(batch)` called at the host's own pace.** Await each call (`pushAll`): it resolves when the app's
   method returns, so return the app's work (`return show()`) and the next batch goes out only after the app took the
@@ -1956,7 +2011,8 @@ which is why `mountTodoApp` can call `load` right after `setConfig()`.
 
 ### App to host
 
-The host publishes methods with `sandbox.expose()` and the app calls them with `bridge.call(name, ...args)` (`save` above).
+The host gives its methods with `start()`'s grants (`methods: { save }`; or publishes them with `sandbox.expose()`) and
+the app calls them with `bridge.call(name, ...args)` (`save` above).
 
 **Security note for embedders: an exposed method runs with your page's full rights, and its arguments are the app's data.**
 
@@ -1996,7 +2052,8 @@ The host publishes methods with `sandbox.expose()` and the app calls them with `
 
   A result that cannot be copied reaches it as `RESULT_NOT_TRANSFERABLE` with the library's text. Each text the app
   does not receive is written to your page's console (`console.warn`, once per call).
-- **An element is one app's for its life; to run another app, use a new element.** The element is the unit of isolation:
+- **An element is one app's for its life; to run another app, use a new element.** `start()` gives an element its app
+  once, and a second `start()` on it throws. The element is the unit of isolation:
   its files, its exposed methods and every handle a host method holds (`sandbox.call`) belong to the element, not to the
   app. They survive `reset()`, `load()`, `setConfig()` and `terminate()`, so an app you load next on the same element can
   call the methods you exposed for the last one and read its files, and a late `call()` meant for the first app lands in
@@ -2695,17 +2752,20 @@ Types:
 | `FileErrorCode` | every build | Why a change to the files was refused: the `code` of a `FileError`. |
 | `FileInfo` | every build | One registered file, as `listFiles()` reports it. |
 | `GuestWrite` | every build | One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size` and a copy of the written bytes in `content`) or a removal. |
+| `HostMethod` | every build | A host method the guest calls with `bridge.call(name, ...args)`, given to `start()` in `SandboxGrants`. |
 | `NetworkModeEvents` | network | The events the network modes add to the element's (`WebSandboxEventMap`): in a build that has them, the element's event map holds these too. |
 | `NetworkSandboxOptions` | network | The options that open the network: `origins` and `fetchBridge`. |
 | `RpcError` | every build | The shape of every rejection of `call()` and `callWithTimeout()`: a plain `Error` with an own `code`. |
 | `RpcErrorCode` | every build | Why a call was refused: the `code` of an `RpcError`. |
 | `RpcLibraryCode` | every build | The codes a library method (a `sandbox:` name) reports, from one closed set disjoint from `RpcErrorCode`: the fetch bridge's `FETCH_…` codes and the guest writes' `FileErrorCode` values. |
 | `SafeCapability` | every build | A member of `SAFE_CAPABILITIES`: an entry of the `capabilities` option. |
+| `SandboxApp` | every build | The app `start()` runs: its own content, what its author wrote. |
 | `SandboxCapability` | network | A value that may end up in a frame's `sandbox` attribute: a `SafeCapability` or a member of `UNSAFE_SANDBOX_FLAGS`. |
 | `SandboxConfig` | every build | The configuration `setConfig()` takes: the config of one of the modes the build has (`SandboxConfigByMode`), a union keyed by `mode`. |
 | `SandboxConfigByMode` | every build | The configuration of each mode this build of the package has, by the mode's name. |
 | `SandboxConfigOptions` | every build | The options every mode takes, and the ones a mode's config narrows (`SealedSandboxConfig`, and in a build with the network modes the configurations of strict, cooperative and worker mode). |
 | `SandboxFiles` | every build | The guest's view of the registered files: the global `sandboxFiles`, present in every environment (empty when no file is registered). |
+| `SandboxGrants` | every build | What the embedder allows the app `start()` runs: the host methods, and every option that is not the app's own (`SandboxApp`), for the modes this build has, keyed by `mode` as `SandboxConfig` is. |
 | `SandboxLog` | every build | The `detail` of a `sandbox-log` event: one log line, frozen. |
 | `SandboxLogLevel` | every build | The level of a `SandboxLog` line. |
 | `SandboxOrigins` | network | The `origins` option: the exact origins the guest may load each kind of resource from, one list per kind. |
@@ -2732,16 +2792,19 @@ specs.
 
 ```js
 const sandbox = document.querySelector('web-sandbox');
-sandbox.expose('save', (record) => {
-    // one thing, to a destination you fixed, with the fields you expect (never `store.put({ ...record })`: the app would pick the key)
-    if (typeof record?.at !== 'number') throw new Error('save: bad record');
-    store.put({ id: 'last-save', at: record.at });
-});
-sandbox.setConfig({
-    mode: 'cooperative',
-    capabilities: ['allow-scripts'],
+sandbox.start({
     html: `<button id="b">Save</button>
            <script>b.onclick = () => bridge.call('save', { at: Date.now() });</script>`,
+}, {
+    mode: 'cooperative',
+    capabilities: ['allow-scripts'],
+    methods: {
+        save: (record) => {
+            // one thing, to a destination you fixed, with the fields you expect (never `store.put({ ...record })`: the app would pick the key)
+            if (typeof record?.at !== 'number') throw new Error('save: bad record');
+            store.put({ id: 'last-save', at: record.at });
+        },
+    },
 });
 ```
 
@@ -2762,19 +2825,20 @@ sandbox.addEventListener('ready', async () => {
 **Strict mode with files, a watchdog and the fetch bridge** (sealed mode, the default, has no `fetchBridge`):
 
 ```js
-sandbox.registerFiles({
-    'main.js': `
-        sandboxView.render('<button id="load">Load</button><ul id="list"></ul>');
-        sandboxView.on('click', 'load', async () => {
-            const items = await (await sandboxFetch('https://api.example/items')).json();
-            sandboxView.render(items.map((_, n) => '<li id="item-' + n + '"></li>').join(''), 'list');
-            // what the API returns is text, never markup: text() assigns it, so nothing needs escaping
-            items.forEach((item, n) => sandboxView.text('item-' + n, String(item.name)));
-        });`,
-});
-sandbox.setConfig({
-    mode: 'strict',
+sandbox.start({
     entry: 'main.js',
+    files: {
+        'main.js': `
+            sandboxView.render('<button id="load">Load</button><ul id="list"></ul>');
+            sandboxView.on('click', 'load', async () => {
+                const items = await (await sandboxFetch('https://api.example/items')).json();
+                sandboxView.render(items.map((_, n) => '<li id="item-' + n + '"></li>').join(''), 'list');
+                // what the API returns is text, never markup: text() assigns it, so nothing needs escaping
+                items.forEach((item, n) => sandboxView.text('item-' + n, String(item.name)));
+            });`,
+    },
+}, {
+    mode: 'strict',
     watchdogTimeout: 2000,
     fetchBridge: { allow: ['https://api.example'] },
 });
