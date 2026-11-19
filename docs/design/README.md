@@ -46,6 +46,7 @@ That one is built ([04](04-forms-and-autofill.md)) and is here because the serve
 | [05-build-order.md](05-build-order.md) | The order of the work, the tests each step brings, what is measured before what is promised |
 | [REVIEW-1.md](REVIEW-1.md) | The first adversarial review, of the design before it was revised; [review-1/](review-1/p1-output.txt) has its probes |
 | [REVIEW-2.md](REVIEW-2.md) | The second adversarial review, of the design after the first; [review-2/](review-2/p1-output.txt) has its probes |
+| [REVIEW-3.md](REVIEW-3.md) | The third adversarial review, of steps 1 and 2 as built (at `7dfec16`); [review-3/](review-3/p4-output.txt) has its probes and their output |
 
 ## The invariants
 
@@ -126,6 +127,19 @@ Each changes a public name or a promise the owner had accepted. The owner approv
 | 12 · I17's rung, and unclassified options | I17 restated; every option classified | [01](01-one-element-one-app.md#startapp-grants) |
 | 13 · host pages the design leaves out | Named as a cost | [03](03-served-document.md#the-public-surface); **waits for the owner** |
 | Not specified | The order to `'ready'`, the second load, the referrer, the reasons from a parse, no release inside step 3 | [03](03-served-document.md), [05](05-build-order.md) |
+
+## What review 3 found
+
+[REVIEW-3.md](REVIEW-3.md) attacked steps 1 and 2 as built. Eight of nine reverted mitigations failed their named
+test, and the ninth behaves as the code does; no test had been changed to fit the code.
+
+| Finding | Class | Answer |
+| :--- | :--- | :--- |
+| 1 · on Firefox one held key opens a tab per key repeat, and the guest picks each URL | a channel's bound fails open (data) | one request a user action, decided in the view ([02](02-what-an-app-hands-over.md)); being fixed |
+| 2 · the docs do not say the guest chooses the focus an Enter acts on | docs | with 1 |
+| 3 · a write whose rewrites pass the quota is recorded, and no commit can take it | correctness, docs | the comment and docs say what holds, with its test; the quota counts the bytes given from step 3.7 on |
+| 4 · `GUEST_VALUES` files sizes and a guest's choices within a closed set as the library's | docs (classification) | the rows take the guest as owner |
+| 5 · a resizable `ArrayBuffer` is measured by its length and keeps its maximum | availability | the measure refuses it; what the browser does before the library sees the message is a backlog item |
 
 ## What research 31 changed
 
