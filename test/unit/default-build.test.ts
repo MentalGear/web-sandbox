@@ -134,13 +134,14 @@ describe('the stringified sources: what no import shows', () => {
         const users = [...graphOf('src/host.ts').units].filter(([, text]) => text.includes('inSandboxScript.toString()')).map(([name]) => name);
         expect(users).toEqual(['this._getStrictWorkerSource']);
         expect(member('_getStrictWorkerSource')).toContain("(${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console,");
-        // with no network (the default build's only call: _prepareSealedFrame hands null), the features say `sealed`, have no gate list,
+        // with no network (the default build's only call: _prepareSealedFrame hands _viewInit null), the features say `sealed`, have no gate list,
         // and the bootstrap is given no request gate (a network module's function: only a build with a network hands it one)
         expect(member('_getStrictWorkerSource')).toContain("listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, sealed: true,");
         expect(member('_getStrictWorkerSource')).toContain("${network ? `, undefined, ${network.requestGateSource}` : ''});`");
         expect(code('src/host.ts')).not.toContain('request-gate');
         expect(stringifiers('requestGate').map(file => classOf(file))).toEqual(['network']);
-        expect(member('_prepareSealedFrame')).toMatch(/return this\._prepareViewFrame\(built, files, this\._sealedPolicy\(files\), null\);\s*$/);
+        // the sealed frame hands the view's init no network: its one call of what builds the worker's source
+        expect(member('_prepareSealedFrame')).toMatch(/strictInit: this\._viewInit\(files, null\), network: null \};\s*$/);
     });
 
     it("the default build's hashed bootstrap runs the view alone: it has no fetch bridge frame's part", () => {

@@ -119,7 +119,7 @@ const SHAPES: Record<HostPassId, readonly Shape[]> = {
         { name: "the worker's source of a long entry that holds </script>", n: 64 * 1024, make: n => { const el = element; const entry = '"</script><!--"; '.repeat(n / 16); return () => el._getStrictWorkerSource([], entry); } },
         { name: "the worker's source of many files", n: 120, make: n => { const el = element; const files = snapshotOf(manyFiles(n, '</script>'.repeat(20))); return () => el._getStrictWorkerSource(files, ''); } },
     ],
-    policyFromKinds: [{ name: 'the sealed policy of many files', n: 120, make: n => { const el = element; const files = snapshotOf(manyFiles(n)); return () => el._sealedPolicy(files); } }],
+    policyFromKinds: [{ name: "strict mode's view policy of many files", n: 120, make: n => { const el = element; const files = snapshotOf(manyFiles(n)); return () => el._guestPolicy(files, el._origins); } }],
     workerBuild: [{ name: "worker mode's bootstrap of many files", n: 120, make: n => { const el = element; const files = snapshotOf(manyFiles(n, '</script>'.repeat(20))); return () => el._getWorkerBootstrapScript(files, []); } }],
     cooperativeDocument: [{ name: "cooperative mode's inert parse of a long document", n: 2000, make: n => { const html = '<p class="a">x</p>'.repeat(n); return () => scriptInMarkup(html); } }],
     guestWrites: [{

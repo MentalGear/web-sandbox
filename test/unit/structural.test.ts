@@ -173,6 +173,7 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIEW_WRITTEN', 'type', "'VIEW_WRITTEN'"],
     ['VIEW_WRITTEN', 'id', 'm.id'],
     ['TRUSTED_TYPES_REFUSED', 'type', "'TRUSTED_TYPES_REFUSED'"],
+    ['VIEW_ANNOUNCE', 'type', "'VIEW_ANNOUNCE'"],
     ['VIEW_READY', 'type', "'VIEW_READY'"],
     ['VIEW_READY', 'width', 'g.innerWidth'],
     ['VIEW_READY', 'height', 'g.innerHeight'],

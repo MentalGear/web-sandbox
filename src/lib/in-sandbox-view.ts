@@ -13,6 +13,7 @@ import { VIOLATION_DIRECTIVES } from './violation';
 import { cssReferences, keepsUrl, withKeptReferences } from './css-references';
 import { styleMarkup, type StyleMarkup } from './style-markup';
 import { GUEST_IMAGE_TYPES } from './guest-bytes';
+import type { FrameType } from './frames';
 
 /**
  * Strict mode's view and worker prelude (ADR-005).
@@ -1836,6 +1837,10 @@ export interface ViewOptions {
  * page (event.source === parent.parent), in a capture listener that stops the event there; any other
  * message is ignored. A copy of this text that ever ran a second time in the same document would return
  * at once (the run counter), and a copy elsewhere would never receive INIT_VIEW (research 15, P1).
+ *
+ * It speaks first (design 03, "The start-up order"): once its listener is in place it posts one message to its
+ * parent's parent, VIEW_ANNOUNCE, which holds nothing of the view's; the host page posts INIT_VIEW only to the window
+ * that announced itself from the first frame of the element's frame (host.ts, _listenForAnnouncement).
  */
 export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, scanCss: typeof cssReferences, keepCss: typeof withKeptReferences, keepsUrlRule: typeof keepsUrl, options: ViewOptions, makeOutbox: typeof viewInputOutbox, styleProperty: typeof isStyleProperty, encodeStyles: typeof styleMarkup, controlNames: typeof viewControlNames) {
     const g = globalThis as any;
@@ -4013,7 +4018,17 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         }
         if (data.autoResize === true) startAutoResize();
     }, true);
+
+    // The announcement (VIEW_ANNOUNCEMENT_TYPE): the host page answers it with INIT_VIEW, posted to this window only if it
+    // is the first frame of the element's frame. No rendered markup exists yet, so `parent` is the browser's.
+    parent.parent.postMessage({ type: 'VIEW_ANNOUNCE' }, '*');
 }
+
+/**
+ * The view's announcement to the host page (FRAMES, VIEW_ANNOUNCE): the first message of sealed and strict mode's
+ * start-up, which the view posts to its parent's parent before it has a port.
+ */
+export const VIEW_ANNOUNCEMENT_TYPE = 'VIEW_ANNOUNCE' satisfies FrameType;
 
 /**
  * The worker's prelude in strict mode, after the comms script and sandboxFiles, before the guest's entry.
@@ -4697,13 +4712,15 @@ function bootstrap(): NonNullable<typeof cached> {
 
 /**
  * The CSP hash source of the library's bootstrap for this build of the package, to allow in the host page's own
- * Content-Security-Policy (R1:R4-5): the view of sealed and strict mode runs it and, in a build with the network modes,
- * so does the fetch bridge's frame.
+ * Content-Security-Policy for strict mode (R1:R4-5): strict mode's view runs it and, in a build with the network modes,
+ * so does the fetch bridge's frame. Sealed mode's view needs none in the host page's policy: it is the served file,
+ * whose own policy admits its bootstrap.
  *
  * @remarks
- * It is the very value the element puts in the `script-src` of its documents, which inherit the host page's policy
- * (docs/API.md#host-page-policy), so one hash admits them: the view in sealed and strict mode, and with `fetchBridge`
- * the frame that makes the bridge's requests, in every mode that has it (BD1:ISO-1). In the built package the bootstrap
+ * It is the very value the element puts in the `script-src` of its `srcdoc` documents, which inherit the host page's
+ * policy (docs/API.md#host-page-policy), so one hash admits them: strict mode's view, and with `fetchBridge` the frame
+ * that makes the bridge's requests, in every mode that has it (BD1:ISO-1). In the default build it is the hash of sealed
+ * mode's bootstrap, the text `sealed-document.html` holds and its policy admits; the host page lists it for nothing. In the built package the bootstrap
  * is a string literal of the bundle, so the hash is the same in a build step (importing the package needs no DOM) and in
  * the browser, however the embedder's app is bundled or minified. It changes only with the package's version and its
  * build: the default build's bootstrap has no bridge frame's part, so its hash is not the network build's

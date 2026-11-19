@@ -1,5 +1,6 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import type { Page } from '@playwright/test';
+import { waitInView } from './strict-view';
 
 // The build with the network modes (ADR-009), and every mode in one test, sealed mode among them, on the build that has them all.
 test.use({ build: 'network', otherBuildConfigs: true });
@@ -9,9 +10,10 @@ test.use({ build: 'network', otherBuildConfigs: true });
  * in a sandbox document confirms that the document is the one the library built (an opaque origin, about:srcdoc, the
  * base about:blank). Three things only a browser shows, on all three engines:
  *   - a host page whose Content-Security-Policy has `base-uri 'self'` or `'none'` refuses the `<base>` the wrapper sets
- *     (frames inherit the host page's policy), so the guest's base URL would be the host page's URL: the bootstrap stays
- *     inert, the guest's markup after it never runs, and the sandbox ends with the named reason, in strict, sealed, cooperative
- *     and worker mode and with the fetch bridge; with `about:` allowed (or the directive omitted) all of them run;
+ *     (srcdoc frames inherit the host page's policy), so the guest's base URL would be the host page's URL: the bootstrap
+ *     stays inert, the guest's markup after it never runs, and the sandbox ends with the named reason, in strict,
+ *     cooperative and worker mode and with the fetch bridge; with `about:` allowed (or the directive omitted) all of them
+ *     run. Sealed mode's view is the served file, which does not inherit the host page's policy: it runs under either;
  *   - a copy of a bootstrap placed outside a sandbox document (the host page, a frame of its own origin, a sandboxed
  *     frame under the host page's base, one loaded from a blob: URL) registers nothing and builds nothing, and the
  *     element ignores the refusal it posts, since it is not the element's frame;
@@ -63,7 +65,16 @@ async function configure(sandbox: SandboxDriver, config: object): Promise<HostEv
 
 test.describe('a host page policy with base-uri', () => {
     for (const csp of ["base-uri 'self'", "base-uri 'none'"]) {
-        for (const [name, config] of MODES) {
+        // sealed mode's view is the served file (design 03): the host page's base-uri does not reach it, and its base is the
+        // file's own about:blank
+        test(`${csp}, sealed: the channel is gone: the served view runs, with the file's base`, async ({ sandbox, page, browserName }) => {
+            await openWithPolicy(page, csp);
+            await sandbox.registerFiles({ 'main.js': ENTRY });
+            expect(await configure(sandbox, { mode: 'sealed', entry: 'main.js' })).toEqual([{ type: 'ready', reason: null }]);
+            expect(await waitInView(page, browserName, `document.getElementById('hello') && document.baseURI`)).toBe('about:blank');
+            expect(await sandbox.state()).toBe('ready');
+        });
+        for (const [name, config] of MODES.filter(([name]) => name !== 'sealed')) {
             test(`${csp}, ${name}: inert bootstrap, no guest script, and the sandbox ends with the named reason`, async ({ sandbox, page }) => {
                 await openWithPolicy(page, csp);
                 await sandbox.registerFiles({ 'main.js': ENTRY });

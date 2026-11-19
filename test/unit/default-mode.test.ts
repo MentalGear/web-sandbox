@@ -9,16 +9,20 @@ import { scriptInMarkup } from '@src/lib/markup-scripts';
 import { runBootstrap } from './sandbox-environment';
 import type { SandboxConfig } from '@src/host';
 import { startWith } from './start-app';
+import { isServed, servedViewFrame } from './served-view';
+import { sealedDocumentPolicy, sealedViewBootstrap } from '@src/lib/sealed-document';
 
 /**
- * Sealed mode is the default (ADR-008; T8 of docs/research/24_sealed_mode): a config that names no mode builds strict
- * mode's view with sealed mode's policy, and markup that would run script in cooperative mode is said, once per
- * element, to run none. Strict mode, named, builds the same view with its own policy: the same property, held for it.
+ * Sealed mode is the default (ADR-008; T8 of docs/research/24_sealed_mode): a config that names no mode builds sealed
+ * mode's view, the served file (design 03), whose document holds sealed mode's bootstrap under the file's constant
+ * policy, and markup that would run script in cooperative mode is said, once per element, to run none. Strict mode,
+ * named, builds its view as a srcdoc document with its own policy: the same property, held for it.
  */
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
 const wrapperOf = (el: HTMLElement) => el.shadowRoot!.querySelector('iframe');
-const innerSourceOf = (el: HTMLElement) => parse(wrapperOf(el)!.srcdoc).querySelector('iframe')!.getAttribute('srcdoc')!;
+// the view's document: the served file's C for sealed mode, the wrapper's srcdoc view for strict mode
+const innerSourceOf = (el: HTMLElement) => (isServed(wrapperOf(el)!) ? servedViewFrame() : parse(wrapperOf(el)!.srcdoc).querySelector('iframe')!).getAttribute('srcdoc')!;
 const innerOf = (el: HTMLElement) => parse(innerSourceOf(el));
 
 async function element() {
@@ -34,15 +38,20 @@ const scriptWarnings = (warn: { mock: { calls: unknown[][] } }) => warn.mock.cal
 // A registered JSON file: strict mode admits blob: in connect-src for it, sealed mode never does (connect-src 'none'),
 // so the two modes' policies differ and policy equality tells them apart.
 const FILES = { 'data.json': '{}' };
-const SEALED_POLICY = () => sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: viewBootstrapHash() });
+const SEALED_POLICY = () => sealedDocumentPolicy();
 const STRICT_POLICY = () => strictViewPolicy({ origins: NO_ORIGINS, fileKinds: new Set(['connect']), bootstrapHash: viewBootstrapHash(), scriptUnsafe: false });
 
-/** What the element built: the view's scripts, its policy, its body, the wrapper's flags, the frames of the shadow root. */
+/**
+ * What the element built: the view's scripts, its policy (a served view has none of its own: it runs under the file's),
+ * its body, the frame's flags, the frames of the shadow root, and whether the frame is the served file.
+ */
 function built(el: any) {
     const inner = innerOf(el);
+    const served = isServed(wrapperOf(el)!);
     return {
+        served,
         scripts: [...inner.querySelectorAll('script')].map(script => script.textContent),
-        policy: inner.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content'),
+        policy: served ? sealedDocumentPolicy() : inner.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content'),
         body: inner.body.children.length, // no guest bytes: the html travels to the view in INIT_VIEW
         flags: wrapperOf(el)!.getAttribute('sandbox'),
         frames: el.shadowRoot.querySelectorAll('iframe').length, // the wrapper only: no bridge frame
@@ -60,17 +69,18 @@ describe('T8: a config that names no mode is sealed', () => {
         startWith(el, config, { files: FILES });
         document.body.appendChild(el);
         expect(el._config.mode).toBe('sealed');
-        expect(built(el)).toEqual({ scripts: [viewBootstrapText()], policy: SEALED_POLICY(), body: 0, flags: 'allow-scripts allow-forms', frames: 1 });
+        expect(built(el)).toEqual({ served: true, scripts: [sealedViewBootstrap()], policy: SEALED_POLICY(), body: 0, flags: 'allow-scripts allow-forms', frames: 1 });
+        expect(innerOf(el).querySelector('meta[http-equiv="Content-Security-Policy"]')).toBeNull(); // one policy, the file's
         expect(Object.keys(el._strictInit)).not.toContain('origins'); // sealed mode's INIT_VIEW names no origins
     });
 
-    it.each([['mode only', { mode: 'strict' }], ['mode and html', { mode: 'strict', html: '<p>hi</p>' }]])("strict, named (%s): the same view and bootstrap, with strict mode's policy", async (_, config) => {
+    it.each([['mode only', { mode: 'strict' }], ['mode and html', { mode: 'strict', html: '<p>hi</p>' }]])("strict, named (%s): a srcdoc view the element writes, with the bootstrap and strict mode's policy", async (_, config) => {
         expect(STRICT_POLICY()).not.toBe(SEALED_POLICY());
         const el = await element();
         startWith(el, config, { files: FILES });
         document.body.appendChild(el);
         expect(el._config.mode).toBe('strict');
-        expect(built(el)).toEqual({ scripts: [viewBootstrapText()], policy: STRICT_POLICY(), body: 0, flags: 'allow-scripts allow-forms', frames: 1 });
+        expect(built(el)).toEqual({ served: false, scripts: [viewBootstrapText()], policy: STRICT_POLICY(), body: 0, flags: 'allow-scripts allow-forms', frames: 1 });
     });
 
     it("origins.scripts with mode 'strict' is dropped (strict takes none), with one warning; with mode 'cooperative' it is kept", async () => {

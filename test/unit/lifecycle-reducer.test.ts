@@ -110,11 +110,12 @@ describe('the reducer against the lifecycle model', () => {
 
 describe("the reducer's properties on fuzzed inputs", () => {
     const contexts: BuildContext[] = [
-        { buildsHere: true, blocked: null, strict: true, announces: false },
-        { buildsHere: true, blocked: null, strict: false, announces: true },
-        { buildsHere: true, blocked: null, strict: false, announces: false },
-        { buildsHere: true, blocked: ENTRY_IMPORT_REASON, strict: true, announces: false },
-        { buildsHere: false, blocked: null, strict: true, announces: false },
+        { buildsHere: true, blocked: null, strict: true, served: false, announces: false },
+        { buildsHere: true, blocked: null, strict: true, served: true, announces: false },
+        { buildsHere: true, blocked: null, strict: false, served: false, announces: true },
+        { buildsHere: true, blocked: null, strict: false, served: false, announces: false },
+        { buildsHere: true, blocked: ENTRY_IMPORT_REASON, strict: true, served: false, announces: false },
+        { buildsHere: false, blocked: null, strict: true, served: false, announces: false },
     ];
     function inputsFor(state: LcState): LcInput[] {
         // the current generation, and two that are not: made here only, as no code of the library's makes one
@@ -170,9 +171,11 @@ describe("the reducer's properties on fuzzed inputs", () => {
 
 // ---- a host that records what the executor asks of it ---------------------------------------------------------------
 
-const COOPERATIVE: BuildContext = { buildsHere: true, blocked: null, strict: false, announces: true };
-const NO_BOOTSTRAP: BuildContext = { buildsHere: true, blocked: null, strict: false, announces: false };
-const STRICT: BuildContext = { buildsHere: true, blocked: null, strict: true, announces: false };
+const COOPERATIVE: BuildContext = { buildsHere: true, blocked: null, strict: false, served: false, announces: true };
+const NO_BOOTSTRAP: BuildContext = { buildsHere: true, blocked: null, strict: false, served: false, announces: false };
+const STRICT: BuildContext = { buildsHere: true, blocked: null, strict: true, served: false, announces: false };
+// sealed mode: the view of strict mode in the served file (design 03)
+const SERVED: BuildContext = { buildsHere: true, blocked: null, strict: true, served: true, announces: false };
 // The state of an element that has its app (start()'s `start`): what the hand-written traces below build from.
 const BOUND: LcState = reduce(INITIAL_LIFECYCLE, { t: 'start' }).state;
 // Guest frame windows, as identities (frameLoad.guest, announced.source): the one that checked in, and another one.
@@ -337,14 +340,55 @@ describe('class L, finding by finding', () => {
     });
 
     describe('round 5, L-1: queued work leaves only at `ready`, in every mode', () => {
-        it("strict mode: the wrapper's load sends the view its ports and flushes nothing; the view's check-in flushes, with `ready`", () => {
-            const host = new RecordingHost();
-            host.step({ t: 'connect', ctx: STRICT });
-            const load = reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
-            expect(load.effects).toEqual([{ k: 'sendInitView', target: OTHER }]);
-            host.lc = load.state;
-            const ready = reduce(host.lc, { t: 'viewReady', gen: host.lc.gen, height: 100, stillStyleRefused: false });
-            expect(ready.effects.map(effect => effect.k)).toEqual(['checkView', 'stopLoadDeadline', 'flush', 'startWatchdogs', 'startAutoResize', 'dispatch']);
+        it("strict and sealed mode: the frame's load sends nothing and flushes nothing; the view's announcement sends it its ports, and its check-in flushes, with `ready`", () => {
+            for (const ctx of [STRICT, SERVED]) {
+                const host = new RecordingHost();
+                host.step({ t: 'connect', ctx });
+                const load = reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: ANNOUNCER });
+                expect(load.effects).toEqual([]);
+                host.lc = load.state;
+                const announced = reduce(host.lc, { t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER });
+                expect(announced.effects).toEqual([{ k: 'sendInitView', target: ANNOUNCER }]);
+                host.lc = announced.state;
+                const ready = reduce(host.lc, { t: 'viewReady', gen: host.lc.gen, height: 100, stillStyleRefused: false });
+                expect(ready.effects.map(effect => effect.k)).toEqual(['checkView', 'stopLoadDeadline', 'flush', 'startWatchdogs', 'startAutoResize', 'dispatch']);
+            }
+        });
+
+        it("the view's announcement may come before the frame's load, and then the load must hold the window that announced itself", () => {
+            for (const ctx of [STRICT, SERVED]) {
+                const host = new RecordingHost();
+                host.step({ t: 'connect', ctx });
+                const announced = reduce(host.lc, { t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER });
+                expect(announced.effects).toEqual([{ k: 'sendInitView', target: ANNOUNCER }]);
+                expect(reduce(announced.state, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: ANNOUNCER }).effects).toEqual([]);
+                const replaced = reduce(announced.state, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
+                expect(replaced.effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: reasonText('secondLoad') });
+                // a second announcement is a view that reloaded or rewrote its document
+                const again = reduce(announced.state, { t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER });
+                expect(again.effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: reasonText('secondAnnouncement') });
+            }
+        });
+
+        it("the served view: a load with no frame, or a deadline with no announcement, is the document that did not answer; strict mode's keeps its reasons", () => {
+            const after = (ctx: BuildContext, inputs: (gen: Generation) => LcInput[]) => {
+                const host = new RecordingHost();
+                host.step({ t: 'connect', ctx });
+                let state = host.lc;
+                const effects: Effect[] = [];
+                for (const input of inputs(state.gen)) {
+                    const output = reduce(state, input);
+                    state = output.state;
+                    effects.push(...output.effects);
+                }
+                return effects.filter(effect => effect.k === 'dispatch').map(effect => (effect as { reason?: string }).reason);
+            };
+            expect(after(SERVED, gen => [{ t: 'frameLoad', gen, stillOurs: true, guest: null }])).toEqual([reasonText('documentSilent')]);
+            expect(after(SERVED, gen => [{ t: 'frameLoad', gen, stillOurs: true, guest: ANNOUNCER }, { t: 'loadDeadline', gen }])).toEqual([reasonText('documentSilent')]);
+            expect(after(SERVED, gen => [{ t: 'loadDeadline', gen }])).toEqual([reasonText('documentSilent')]);
+            expect(after(SERVED, gen => [{ t: 'viewAnnounced', gen, source: ANNOUNCER }, { t: 'loadDeadline', gen }])).toEqual([reasonText('loadTimeout')]);
+            expect(after(STRICT, gen => [{ t: 'frameLoad', gen, stillOurs: true, guest: null }])).toEqual([reasonText('frameMissing')]);
+            expect(after(STRICT, gen => [{ t: 'frameLoad', gen, stillOurs: true, guest: ANNOUNCER }, { t: 'loadDeadline', gen }])).toEqual([reasonText('startupBlocked')]);
         });
         it('in a run of each mode, every flush is the one right before its `ready`', () => {
             for (const mode of ['strict', 'cooperative', 'worker'] as const) {
@@ -661,7 +705,7 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
         // module, through the element's `_step`
         const stepped = new Set([...elementSource().matchAll(/(?:\bstep\((?:this|element), |this\._step\()\{ t: '(\w+)'/g)].map(match => match[1]!));
         // `start`: start(), which binds the app it validated whole, then builds from it as reset() does
-        expect([...stepped].sort()).toEqual(['announced', 'build', 'connect', 'disconnect', 'frameLoad', 'loadDeadline', 'start', 'terminate', 'viewReady']);
+        expect([...stepped].sort()).toEqual(['announced', 'build', 'connect', 'disconnect', 'frameLoad', 'loadDeadline', 'start', 'terminate', 'viewAnnounced', 'viewReady']);
         // removed, each a second path or a second store of the lifecycle (PRs B to D)
         expect(host).not.toMatch(/_endEnvironment|private initialize\(|function stop\(|_buildInputs|_configRefusal|_isCurrentConfig|_enterState|_enterReady|_finishBuild|_completeBuild|_frameLoaded|_expectAnnouncement|_guestWindow|notYet/);
         // the class itself never calls its `_step` (the network modes' methods' entry, and the tests': the platform's inputs by hand)

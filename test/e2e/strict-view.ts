@@ -209,6 +209,19 @@ export async function inFrames<T = unknown>(page: Page, browserName: string, exp
     return results;
 }
 
+/**
+ * The policy the view runs under, as the browser holds it: the view's own `<meta>` (strict mode's srcdoc view), else the
+ * served file's, which the view inherits and holds none of its own beside (sealed mode, design 03); 'no-context' when
+ * there is no view.
+ */
+export async function viewPolicy(page: Page, browserName: string): Promise<string | 'no-context'> {
+    const META = `(document.querySelector('meta[http-equiv="Content-Security-Policy"]') || { content: null }).content`;
+    const own = await inView<string | null>(page, browserName, META);
+    if (own !== null) return own;
+    const file = (await inFrames<string | null>(page, browserName, META, path => path === 'main/wrapper')).find(f => f.path === 'main/wrapper');
+    return file && file.value !== 'no-context' && file.value !== null ? file.value : 'no-context';
+}
+
 /** Evaluates `expression` in the view (main/wrapper/view); 'no-context' when there is none. */
 export async function inView<T = unknown>(page: Page, browserName: string, expression: string): Promise<T | 'no-context'> {
     const found = (await inFrames<T>(page, browserName, expression, path => path === 'main/wrapper/view')).find(f => f.path === 'main/wrapper/view');

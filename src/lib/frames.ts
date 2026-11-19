@@ -18,11 +18,11 @@ export interface ChannelRow {
 }
 
 export const CHANNELS = {
-    'announcement': { kind: 'window message', summary: "A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), and any bootstrap's refusal of an environment other than the one built." },
+    'announcement': { kind: 'window message', summary: "A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), the view's announcement, and any bootstrap's refusal of an environment other than the one built." },
     'logic-port': { kind: 'MessagePort', summary: 'The host and the guest: calls both ways, execute(), liveness, and the guest bootstrap\'s lines and reports.' },
     'view-port': { kind: 'MessagePort', summary: "Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness, and the user's click on a listed link." },
     'render-port': { kind: 'MessagePort', summary: "Strict mode: the view and the guest's worker; the host is not on this path." },
-    'view-init': { kind: 'window message', summary: 'Strict mode: the host hands the view its two ports, once per build.' },
+    'view-init': { kind: 'window message', summary: 'Strict and sealed mode: the host hands the view its two ports, once per build, in answer to its announcement.' },
     'worker': { kind: 'worker message', summary: 'A frame and the worker it spawned: the worker gets its ports, and worker mode\'s worker says it started.' },
     'bridge-init': { kind: 'window message', summary: "The fetch bridge: the host hands the bridge's frame its port, once per build." },
     'bridge-port': { kind: 'MessagePort', summary: "The fetch bridge: the host and the bridge's frame, which makes every request the host decided; the guest is not on this path." },
@@ -88,8 +88,13 @@ export const FRAMES = {
         routes: [{ channel: 'worker', from: ['worker'], to: ['worker-frame'] }],
         fields: NONE,
     },
+    VIEW_ANNOUNCE: {
+        purpose: "The view speaks first (design 03, \"The start-up order\"): it announces itself to its parent's parent before it has a port, and the host page posts INIT_VIEW only to the window that announced itself from the first frame of the element's frame. It holds nothing of the view's.",
+        routes: [{ channel: 'announcement', from: ['view'], to: ['host'] }],
+        fields: NONE,
+    },
     INIT_VIEW: {
-        purpose: "The host hands the view the logic and view ports, at the wrapper's load, with what the build shows.",
+        purpose: "The host hands the view the logic and view ports, at the view's announcement, with what the build shows: posted to the window that announced itself, which is the first frame of the element's frame.",
         routes: [{ channel: 'view-init', from: ['host'], to: ['view'] }],
         fields: {
             workerSource: { bound: 'host', how: "the worker's source: the prelude and the embedder's entry" },

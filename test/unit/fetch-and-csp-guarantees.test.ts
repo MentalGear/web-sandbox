@@ -10,6 +10,7 @@ import { admitsAll, linkKinds } from '@src/lib/load-kinds';
 import { isViewFileType, RENDER_RULES, type RenderSwitches, sanitizeRender } from '@src/lib/in-sandbox-view';
 import { keptCss } from '@src/lib/css-references';
 import { startWith, type AppSetup } from './start-app';
+import { viewPolicyOf } from './served-view';
 
 // the renderer with every switch on: what it keeps besides its rules is not what this file tests
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
@@ -38,11 +39,8 @@ afterEach(() => {
 });
 
 // The guest policy the element built, as a browser reads it (guest srcdoc inside the wrapper srcdoc).
-const policyOf = (el: HTMLElement): string => {
-    const wrapper = el.shadowRoot!.querySelector('iframe')!.srcdoc;
-    const guest = new DOMParser().parseFromString(wrapper, 'text/html').querySelector('iframe')!.getAttribute('srcdoc')!;
-    return new DOMParser().parseFromString(guest, 'text/html').querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
-};
+// the policy the guest's document runs under: the served file's for sealed mode, the srcdoc document's otherwise
+const policyOf = (el: HTMLElement): string => viewPolicyOf(el);
 
 // ---- CB3 ------------------------------------------------------------------------------------------------
 

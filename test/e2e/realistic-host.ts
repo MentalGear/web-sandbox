@@ -85,8 +85,9 @@ export const POLICY_HASHES = {
 
 /** What the page's `script-src` and `style-src` carry for a mode (docs/API.md#host-page-policy). */
 export function policyProfile(mode: HostMode, viewHash: string): { script: string[]; style: string[] } {
-    // sealed mode is strict mode's view and worker: the same profile
-    if (mode === 'strict' || mode === 'sealed') return { script: [viewHash], style: [POLICY_HASHES.wrapperStyle, POLICY_HASHES.animationStyle] };
+    // sealed mode's view is the served file, under its own policy: the page's needs nothing for it (but frame-src, below)
+    if (mode === 'sealed') return { script: [], style: [] };
+    if (mode === 'strict') return { script: [viewHash], style: [POLICY_HASHES.wrapperStyle, POLICY_HASHES.animationStyle] };
     return { script: ["'unsafe-inline'"], style: ["'unsafe-inline'"] };
 }
 
@@ -102,6 +103,8 @@ export function hostDirectives(options: HostOptions & { session: string; viewHas
         'style-src': ["'self'", ...profile.style],
         'img-src': ["'self'", 'data:', 'blob:'],
         'connect-src': ["'self'"],
+        // sealed mode's view: the served file, on the page's own origin (docs/API.md#host-page-policy)
+        'frame-src': ["'self'"],
         'object-src': ["'none'"],
         'base-uri': ["'self'", 'about:'],
         'form-action': ["'self'"],

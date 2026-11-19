@@ -48,7 +48,7 @@ const NEVER_MADE: Readonly<Record<string, string>> = {
     'ready -connect-> terminated': STANDING_IS_CONNECTED,
     'loading -build-> idle': BUILD_WHERE_IT_BUILDS,
     'ready -build-> idle': BUILD_WHERE_IT_BUILDS,
-    'ready -viewReady-> ready': "unreachable by the element: the view checks in once, at the INIT_VIEW the element sends at the wrapper's one load (a second load ends the build); lifecycle-reducer.test.ts makes it by hand (\"the view's check-in counts only while loading\")",
+    'ready -viewReady-> ready': "unreachable by the element: the view checks in once, at the INIT_VIEW the element sends at its one announcement (a second announcement ends the build); lifecycle-reducer.test.ts makes it by hand (\"the view's check-in counts only while loading\")",
     'ready -loadDeadline-> ready': "unreachable by the element: enterReady stops the load deadline (stopLoadDeadline), and the fake element's too; lifecycle-reducer.test.ts makes it by hand (\"the load deadline: …\"), the reducer's own bound were a stop missed",
     'loading -build-> terminated': "not reached by the model: a rebuild of a bound app is refused only for what a commit changed in the files, and a loading build's overlay is new and empty; the model's guests write only when called, a call made while loading waits for `ready`, and the strict view starts the worker that runs the entry only after its check-in",
     'loading -buildFailed-> terminated': "not reached by the model: the build or attach effect throwing (a host page's Trusted Types default policy that throws); its host pages have none, and the fake element's build does not throw; policy-guarantees.test.ts and lifecycle-edge-cases.test.ts make it",
@@ -57,6 +57,8 @@ const NEVER_MADE: Readonly<Record<string, string>> = {
     'loading -announced-> loading': "not reached by the model: worker mode's refusal (R2:C-5), a worker the host page's policy refused, keeps `loading` until its termination; the model's host pages have no policy",
     'loading -announced-> terminated': NOT_THE_MODELS_GUEST,
     'ready -announced-> terminated': NOT_THE_MODELS_GUEST,
+    'loading -viewAnnounced-> terminated': "not reached by the model: its views announce themselves once; lifecycle-reducer.test.ts makes a second announcement by hand",
+    'ready -viewAnnounced-> terminated': "not reached by the model: its views announce themselves once, before their check-in; lifecycle-reducer.test.ts makes a second announcement by hand",
     'loading -frameLoad-> terminated': NOT_THE_MODELS_GUEST,
     'ready -frameLoad-> terminated': NOT_THE_MODELS_GUEST,
 };

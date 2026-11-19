@@ -1,11 +1,14 @@
 /**
  * The host page's context, as data (S74, class A): every piece of it that a document of the sandbox can inherit, and for
- * each one how the library neutralises it or that it documents it. A sandbox document is a `srcdoc` frame, so it starts
- * with a copy of its parent's policy container (CSP list, Trusted Types requirement, embedder policy, referrer policy),
+ * each one how the library neutralises it or that it documents it. A sandbox document of strict, cooperative and worker
+ * mode is a `srcdoc` frame, so it starts with a copy of its parent's policy container (CSP list, Trusted Types requirement,
+ * embedder policy, referrer policy),
  * the base URL, the cookie jar's site, the Service Worker's scope and the browser's shared UI surfaces; an engine may
  * answer a realm of the sandbox from its per-origin records of the host page (permission grants, BD5:ISO-1); the
- * library's host code runs in the host page's realm. A finding that the sandbox "inherited X" is a missing row of this table, so
- * the fix adds the row (CONTRIBUTING.md, "Fixing a finding").
+ * library's host code runs in the host page's realm. Sealed mode's view is the served file (design 03), a document of its
+ * own URL: it inherits none of the host page's policy container, and the sealed column of each policy row says what takes
+ * its place. A finding that the sandbox "inherited X" is a missing row of this table, so the fix adds the row
+ * (CONTRIBUTING.md, "Fixing a finding").
  *
  * Values first: this table is the one list. `test/unit/inherited-context.test.ts` fails on a row that names no test
  * file that exists, and a row of the environment check (environment-check.ts) that no row points to. docs/THREAT-MODEL.md
@@ -87,7 +90,7 @@ export const INHERITED_CONTEXT = {
         by: ['reason', 'documented'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/e2e/directive-matrix.spec.ts'],
-        sealed: { standing: 'remains', note: "the view's bootstrap, by its hash" },
+        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6); the file's own policy admits the view's bootstrap by its hash" },
     },
     cspWorker: {
         channel: "The host page's CSP `worker-src` (and `script-src`, `child-src`, `default-src` as its fallbacks)",
@@ -96,7 +99,7 @@ export const INHERITED_CONTEXT = {
         by: ['reason', 'documented'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/directive-matrix.spec.ts'],
-        sealed: { standing: 'remains' },
+        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6)" },
     },
     cspStyle: {
         channel: "The host page's CSP `style-src` (and its fallbacks)",
@@ -105,7 +108,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'warn', 'documented'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/e2e/directive-matrix.spec.ts', 'test/e2e/sealed-host-policy.spec.ts', 'test/unit/inline-styles.test.ts', 'test/e2e/sealed-reach.spec.ts'],
-        sealed: { standing: 'remains' },
+        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6); the file sizes the view with a stylesheet of its own, by its hash" },
     },
     cspBaseUri: {
         channel: "The host page's CSP `base-uri`, and with it the document's base URL (a refused `<base>` leaves the host page's URL)",
@@ -115,7 +118,7 @@ export const INHERITED_CONTEXT = {
         engines: ALL,
         environmentChecks: ['base'],
         tests: ['test/e2e/environment-check.spec.ts', 'test/unit/environment-check.test.ts', 'test/unit/environment-gate.test.ts', 'test/e2e/directive-matrix.spec.ts'],
-        sealed: { standing: 'remains', note: "defence in depth: the view's policy admits no network source, so a wrong base can load nothing" },
+        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6); the file sets its own `<base href=\"about:blank\">` before its policy, and the check stays; defence in depth: the view's policy admits no network source, so a wrong base can load nothing" },
     },
     cspFetch: {
         channel: "The host page's CSP fetch directives (`img-src`, `connect-src`, `font-src`, `media-src`, `default-src`, `frame-src`): a copy narrows `origins`, in some engines and not in others (connect-facts.ts)",
@@ -124,10 +127,10 @@ export const INHERITED_CONTEXT = {
         by: ['refuse', 'documented'],
         engines: ALL,
         tests: ['test/unit/host-connect.test.ts', 'test/unit/host-policy-source.test.ts', 'test/unit/host.test.ts', 'test/unit/connect-facts.test.ts', 'test/e2e/connect-uniform.spec.ts', 'test/e2e/no-plaintext.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/unit/policy-guarantees.test.ts', 'test/unit/request-gate.test.ts', 'test/e2e/request-gate.spec.ts', 'test/unit/sealed-build.test.ts', 'test/e2e/directive-matrix.spec.ts', 'test/e2e/sealed-no-network.spec.ts', 'test/e2e/sealed-reach.spec.ts'],
-        sealed: { standing: 'reduced', note: "no origin is narrowed and no `connect-src` is read: the view's policy has no network source, the worker has no `fetch`, `XMLHttpRequest` or `WebSocket`, and the view keeps no URL of the guest's but a registered file's it minted (keepsUrl, BD7:ISO-1), whatever its scheme. Left: the page's `img-src`, `font-src`, `media-src` and `style-src` must admit `blob:` for registered files of that kind, or those loads are refused in the view and reported as `violation`" },
+        sealed: { standing: 'reduced', note: "no origin is narrowed and no `connect-src` is read: the view's policy has no network source, the worker has no `fetch`, `XMLHttpRequest` or `WebSocket`, and the view keeps no URL of the guest's but a registered file's it minted (keepsUrl, BD7:ISO-1), whatever its scheme. The served view does not inherit the host page's fetch directives; what is left is a policy on the file's own response that refuses `blob:` (design 05, step 3.6): those loads are then refused in the view and reported as `violation`" },
         residuals: {
             blobLoads: {
-                what: "a registered file's load in the view (a `blob:` URL the view minted) is checked against the page's `img-src`, `font-src`, `media-src` or `style-src`: one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show",
+                what: "a registered file's load in the view (a `blob:` URL the view minted) is checked against the `img-src`, `font-src`, `media-src` or `style-src` of a policy on the served file's own response (the host page's no longer reaches the view: test/e2e/sealed-reach.spec.ts shows that channel gone): one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show",
                 tests: ['test/e2e/sealed-reach.spec.ts'],
             },
         },
@@ -139,7 +142,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'refuse', 'reason', 'documented'],
         engines: ['chromium', 'firefox'],
         tests: ['test/e2e/sealed-host-policy.spec.ts', 'test/unit/code-from-strings.test.ts', 'test/unit/entry-imports.test.ts', 'src/lib/in-sandbox-script.test.ts', 'test/unit/sealed-mode.test.ts', 'test/unit/egress.test.ts'],
-        sealed: { standing: 'remains', note: "the worker reaches no refusing check of it, by construction, and reads no field of a violation; the view runs no guest code" },
+        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6); the worker reaches no refusing check of a policy, by construction, and reads no field of a violation; the view runs no guest code" },
     },
     cspReporting: {
         channel: "The host page's CSP reporting endpoints (`report-uri`, `report-to`): every refusing check of the inherited list makes the browser POST a report to the page's endpoint, with fields of the refused action (the blocked URL with its path and query, a sample of a script or a style with `'report-sample'`, and Chromium's Trusted Types sample without it)",
@@ -148,10 +151,10 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'refuse', 'reason', 'documented'],
         engines: ['chromium', 'firefox'],
         tests: ['test/e2e/sealed-host-policy.spec.ts', 'test/e2e/sealed-no-network.spec.ts', 'test/unit/entry-imports.test.ts', 'test/unit/code-from-strings.test.ts', 'test/unit/inline-styles.test.ts', 'test/e2e/sealed-reach.spec.ts', 'test/e2e/view-urls.spec.ts', 'test/unit/url-keep-rule.test.ts', 'test/unit/host-passes.test.ts', 'test/e2e/host-realm-passes.spec.ts'],
-        sealed: { standing: 'reduced', note: "no report from the worker, none of a guest style, and none of a URL the guest wrote; the view's `blob:` loads of registered files remain, on a page whose policy refuses `blob:`, each report naming only `blob`" },
+        sealed: { standing: 'reduced', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6): no report from the worker, none of a guest style, and none of a URL the guest wrote; the view's `blob:` loads of registered files remain, under a policy on the file's response that refuses `blob:` and names an endpoint, each report naming only `blob`" },
         residuals: {
             blobLoads: {
-                what: "each refusal of a registered file's load in the view is reported to the page's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice",
+                what: "each refusal of a registered file's load in the view, under a policy on the served file's response, is reported to that policy's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice",
                 tests: ['test/e2e/sealed-reach.spec.ts', 'test/e2e/view-urls.spec.ts'],
             },
         },
@@ -163,7 +166,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'reason', 'refuse'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/trusted-types-uniform.spec.ts', 'test/e2e/directive-matrix.spec.ts', 'test/unit/host-trusted-types.test.ts'],
-        sealed: { standing: 'remains', note: '`hostContentSecurityPolicy` serves only this in sealed mode' },
+        sealed: { standing: 'remains', note: "the served view inherits no Trusted Types requirement of the host page's, and the element writes no HTML for it, so `hostContentSecurityPolicy` is read for nothing in sealed mode; a requirement on the file's own response is the policy row of step 3.6" },
     },
     trustedTypesDefault: {
         channel: "The host page's Trusted Types default policy (host code that runs inside a library sink)",
@@ -172,7 +175,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'reason'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/trusted-types-uniform.spec.ts'],
-        sealed: { standing: 'remains' },
+        sealed: { standing: 'remains', note: "the element writes no string to a sink for sealed mode's view: it sets the frame's URL, so the host page's default policy is never asked" },
     },
     coep: {
         channel: "The host page's Cross-Origin-Embedder-Policy and cross-origin isolation (`require-corp`, `credentialless`; COOP)",

@@ -1,4 +1,6 @@
-import { test, expect, startAs } from './fixture';
+import { test, expect, startAs, ORIGIN } from './fixture';
+import { pageDocumentUrl } from './library';
+import { servedFilePolicy } from './served-file';
 import type { Page } from '@playwright/test';
 import type { SandboxConfig } from '@src/host';
 import { CROSSING_TEXTS } from '@src/lib/minted-errors';
@@ -12,10 +14,13 @@ import { reasonText } from '@src/lib/reasons';
  * listener sees nothing, while the same request from strict mode with the listener in `origins` reaches it (positive
  * control); and a sealed config that names `origins` or `fetchBridge`, with the mode written or left out, is refused
  * with its reason: start() throws it, and the element it was given to is never inserted. Evidence from outside the library
- * (strict-view.ts): the frames, the view's policy and body.
+ * (strict-view.ts): the frames, the served file's URL and policy, and the view's body.
  */
 
 const recorder = useRecorder();
+
+/** The sources of a policy that name the network: a scheme, a host, `*`, `'self'` or `data:` (a hash admits a text). */
+const networkSourcesOf = (policy: string) => policy.split(';').flatMap(part => part.trim().split(/\s+/).slice(1)).filter(source => /^(https?:|wss?:|data:|\*|'self')|\./.test(source) && !source.startsWith("'sha256-"));
 
 const REASON = "origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'`";
 
@@ -45,14 +50,18 @@ test.describe('sealed mode', () => {
         expect(await sandbox.call('add', 3)).toBe(5);
         await waitInView(page, browserName, `document.getElementById('count').textContent === '5'`);
         expect((await inFrames(page, browserName, '1')).map(f => f.path)).toEqual(['main', 'main/wrapper', 'main/wrapper/view']);
-        const view = await inView<{ scripts: number; policy: string; color: string }>(page, browserName, `({
+        // the view's frame is the served file (design 03): its policy is the file's one <meta>, which the view inherits
+        const file = (await inFrames<{ url: string; policy: string }>(page, browserName, `({ url: location.href, policy: document.querySelector('meta[http-equiv="Content-Security-Policy"]').content })`, path => path === 'main/wrapper')).find(f => f.path === 'main/wrapper')!.value;
+        expect(file).toEqual({ url: `${ORIGIN}${pageDocumentUrl('default')}`, policy: servedFilePolicy() });
+        expect(networkSourcesOf(servedFilePolicy())).toEqual([]);
+        const view = await inView<{ scripts: number; policies: number; color: string }>(page, browserName, `({
             scripts: document.scripts.length,
-            policy: document.querySelector('meta[http-equiv="Content-Security-Policy"]').content,
+            policies: document.querySelectorAll('meta[http-equiv="Content-Security-Policy"]').length,
             color: getComputedStyle(document.getElementById('hello')).color,
         })`);
         expect(view).toEqual({
             scripts: 1,
-            policy: expect.stringMatching(/^default-src 'none'; script-src 'sha256-[A-Za-z0-9+/]{43}='; script-src-attr 'none'; style-src 'unsafe-inline' blob:; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:;/),
+            policies: 0, // one policy, the file's
             color: 'rgb(1, 2, 3)', // the registered stylesheet, through its blob: URL
         });
         expect(await sandbox.state()).toBe('ready');

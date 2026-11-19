@@ -5,6 +5,8 @@ import type { SandboxConfig } from '@src/host';
 import type { StrictSandboxConfig } from '@src/lib/network-types';
 import { VIEW_MODES, type ViewMode } from './view-modes';
 import { asStrings } from './guest-value';
+import type { Page } from '@playwright/test';
+import { reasonText } from '@src/lib/reasons';
 
 // The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
 test.use({ build: 'network' });
@@ -502,21 +504,34 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
     test.use({ build: buildOfMode(mode) });
-    test('A5: a view that is gone (reloaded, so it never gets its ports back) ends the sandbox with "the sandbox view stopped responding"', async ({ sandbox, page, browserName }) => {
+    const watchTermination = (page: Page) => page.evaluate(() => {
+        const s = document.querySelector('web-sandbox') as any;
+        (window as any).termination = null;
+        (window as any).started = performance.now();
+        s.addEventListener('terminated', (e: CustomEvent) => { (window as any).termination = { reason: e.detail.reason, after: performance.now() - (window as any).started }; }, { once: true });
+    });
+
+    test('A5: a view that stops answering ends the sandbox with "the sandbox view stopped responding"', async ({ sandbox, page, browserName }) => {
         test.setTimeout(30000);
         expect(await sandbox.mount(inMode(mode))).toBe('ready');
-        await page.evaluate(() => {
-            const s = document.querySelector('web-sandbox') as any;
-            (window as any).termination = null;
-            (window as any).started = performance.now();
-            s.addEventListener('terminated', (e: CustomEvent) => { (window as any).termination = { reason: e.detail.reason, after: performance.now() - (window as any).started }; }, { once: true });
-        });
-        await inView(page, browserName, 'location.reload()');
+        await watchTermination(page);
+        // the view's document drops everything it posts (the test's own code, not the guest's): its liveness answers stop
+        await inView(page, browserName, 'MessagePort.prototype.postMessage = function () {}; true');
         await page.waitForFunction(() => (window as any).termination !== null, null, { timeout: 12000 });
         const termination = await page.evaluate(() => (window as any).termination);
         expect(termination.reason).toBe('the sandbox view stopped responding');
         // VIEW_LIVENESS_TIMEOUT_MS (5 s): between one and 1.25 budgets after the last answer, plus slack
         expect(termination.after).toBeLessThan(5000 * 1.25 + 2000);
+    });
+
+    test('A5: a view that is gone (reloaded) announces itself again, and that ends the sandbox at once: no port reaches its new document', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount(inMode(mode))).toBe('ready');
+        await watchTermination(page);
+        await inView(page, browserName, 'location.reload()');
+        await page.waitForFunction(() => (window as any).termination !== null, null, { timeout: 12000 });
+        const termination = await page.evaluate(() => (window as any).termination);
+        expect(termination.reason).toBe(reasonText('secondAnnouncement'));
+        expect(termination.after).toBeLessThan(3000); // its announcement, not the liveness budget
     });
 });
 

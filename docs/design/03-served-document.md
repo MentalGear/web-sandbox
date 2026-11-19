@@ -196,6 +196,31 @@ F with its row in `POLICY_DIRECTIVES`; a quirks-mode F and a script that sizes C
 with `allow-same-origin` on F's frame, the guard's `window.stop()` kept the host page's `load` event from firing for
 30 seconds; 3.2 and 3.4 measure it, since a guarded case ends with "the document did not answer".
 
+**As built (step 3.2).** What holds now, where the text above was silent or the code had to decide:
+
+- C fills F by F's one stylesheet, the wrapper's sizing rule (`SEALED_DOCUMENT_STYLE`), admitted by its hash (`POLICY_DIRECTIVES`,
+  `style-src`); C fills F and auto-resize sizes the element through it on all three engines (`test/e2e/served-view.spec.ts`).
+- The element's shadow root is open, as it was. What keeps a page that frames the host page from F's frame is that the
+  frame is in a shadow tree, which `window.frames` does not list, open or closed: measured on all three engines, the
+  framing page read the host page's `length` as 0 and found no window at index 0, and a frame in the light DOM was found
+  (the spec's positive control, and the same spec fails with the element's frame moved to the light DOM). A closed root
+  would add nothing against the host page's own scripts, which reach the element's fields ([01](01-one-element-one-app.md#what-leaves-the-element)).
+- The view speaks first in strict mode too: the two views run one bootstrap function, so both announce themselves
+  (`VIEW_ANNOUNCE`, its type alone; 3.4 adds the version and the verdicts) and the host page answers only the first frame
+  of the element's frame (the reducer's `viewAnnounced`). A view that announces itself twice, or once its build is
+  ready, ends the build (`secondAnnouncement`); a reloaded view ends it at once this way, before the
+  liveness budget could. A served frame that loads a document with no frame ends at once with "the document did not answer",
+  as does a deadline with no announcement.
+- A second load of F ends the build with `secondLoad` on Chromium and WebKit; on Firefox the reloaded view's second
+  announcement arrives first and ends it with `secondAnnouncement`.
+- In the build with the network modes, an element registered without `documentUrl` runs the network modes only, and
+  `start()` of a sealed app throws with the reason `noDocumentUrl`.
+- The guarded cases did not hold the host page's `load` here: the twelve ways wait for the navigation's commit, not
+  `load`, so the WebKit observation above (30 s with `allow-same-origin` on F) is not measured again; the element never
+  frames F so.
+- Under the host page's `Cross-Origin-Embedder-Policy: require-corp` (without COOP), measured with the directive matrix:
+  see docs/API.md#host-page-policy.
+
 **What the constant policy gives up.** Today's per-build policy admits `blob:` only for the kinds of file the app
 registered. A constant policy admits it for all four kinds, and the renderer's URL rule (`keepsUrl`) is then the only
 thing that keeps a `blob:` URL of the wrong kind out: that narrowing moves from the policy to a check.

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, RENDER_RULES, RENDER_URL_ATTRIBUTES, type RenderContext, type RenderSwitches, sanitizeRender, VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, viewBootstrapSource, viewBootstrapText } from './in-sandbox-view';
+import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, RENDER_RULES, RENDER_URL_ATTRIBUTES, type RenderContext, type RenderSwitches, sanitizeRender, VIEW_ANNOUNCEMENT_TYPE, VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, viewBootstrapSource, viewBootstrapText } from './in-sandbox-view';
 import { REFERENCES } from './markup-references';
 
 import { inSandboxFiles } from './in-sandbox-files';
@@ -270,7 +270,9 @@ describe('the view bootstrap', () => {
         expect(viewBootstrapText()).toContain(JSON.stringify(RENDER_REMOVED_ELEMENTS));
     });
 
-    it('is inert without INIT_VIEW: no worker, no render, nothing posted; only one from parent.parent with two ports is accepted, once; a second run of the text does nothing', async () => {
+    it('is inert without INIT_VIEW: no worker, no render, nothing posted but its one announcement to parent.parent; only one INIT_VIEW from parent.parent with two ports is accepted, once; a second run of the text does nothing', async () => {
+        // jsdom: parent.parent === window. The view speaks first (design 03): one VIEW_ANNOUNCE, with nothing in it
+        const announced = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
         const constructed: { source: string; posted: unknown[] }[] = [];
         (globalThis as any).Worker = class {
             onerror: unknown = null;
@@ -281,6 +283,8 @@ describe('the view bootstrap', () => {
         runBootstrap(text);
         runBootstrap(text); // a copy that runs again in the same document returns at once
         expect((globalThis as any).__sandboxViewRuns).toBe(2);
+        expect(announced.mock.calls).toEqual([[{ type: VIEW_ANNOUNCEMENT_TYPE }, '*']]);
+        announced.mockRestore();
 
         const send = (init: MessageEventInit) => window.dispatchEvent(new MessageEvent('message', init));
         const ports = () => { const a = new MessageChannel(), b = new MessageChannel(); return [a.port1, b.port1]; };

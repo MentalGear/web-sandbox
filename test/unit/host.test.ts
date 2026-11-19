@@ -1,3 +1,4 @@
+import { viewPolicyOf } from './served-view';
 import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi } from 'vitest';
 import { ALLOWED_CAPABILITIES } from '@src/csp-directives';
@@ -265,9 +266,8 @@ describe('the scriptUnsafe guard rail (backlog S4)', () => {
     }
     el.reset();
     expect(scriptUnsafeWarnings(warn)).toEqual([]);
-    const wrapper = new DOMParser().parseFromString(el.shadowRoot!.querySelector('iframe')!.srcdoc, 'text/html');
-    const guest = new DOMParser().parseFromString(wrapper.querySelector('iframe')!.getAttribute('srcdoc')!, 'text/html');
-    expect(guest.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')).not.toContain('unsafe-eval');
+    // the view's policy (a sealed view's is the served file's) admits no code from strings
+    expect(viewPolicyOf(el)).not.toContain('unsafe-eval');
     el.remove();
     warn.mockRestore();
   });

@@ -22,8 +22,10 @@ test.use({ build: 'network' });
  * same page with the directive at the base's value works.
  *
  * Every case runs in sealed mode too (docs/research/24_sealed_mode, step 3): strict mode's view and worker with no network, so
- * no fetch bridge. Its outcome is the table's, and its `sandboxFetch()` is refused in the guest whatever the page's policy
- * (FETCH_NOT_ALLOWED: nothing reaches the server): a host page's directive narrows sealed mode the same way on every engine.
+ * no fetch bridge, in the served file (design 03), whose document the host page's policy does not reach. Its outcome is the
+ * table's sealed one (strict mode's where the case names none: the page's policy decides only whether the element may
+ * frame the file), and its `sandboxFetch()` is refused in the guest whatever the page's policy (FETCH_NOT_ALLOWED: nothing
+ * reaches the server).
  */
 
 const WARNINGS: Record<MatrixWarning, string> = {
@@ -48,7 +50,7 @@ async function runCase(
     label: string,
     hostOptions: Pick<HostOptions, 'directives' | 'headers'>,
 ) {
-    const outcome: Outcome = outcomeOn(matrixCase, browserName);
+    const outcome: Outcome = outcomeOn(matrixCase, browserName, mode);
     const row = matrixCase.row;
     const host = await RealisticHost.open(sandbox, { mode, ...hostOptions });
     // (the page's own first build, before the sandbox below, can already have ended on a policy that refuses the library's)

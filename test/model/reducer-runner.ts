@@ -261,7 +261,8 @@ export class FakeElement implements LifecycleHost {
         const strict = hasStrictView(mode);
         const capabilities = (this.config.capabilities ?? []) as readonly string[];
         const announces = mode === 'worker' || (mode === 'cooperative' && capabilities.includes('allow-scripts'));
-        return { buildsHere: this.parent === 'own' && this.ownerDoc === 'own', blocked: unknownModeReason(mode) ?? this.entryRefusal(), strict, announces };
+        // the model's strict mode is the network build's, whose view is a srcdoc document (sealed mode's is the served file)
+        return { buildsHere: this.parent === 'own' && this.ownerDoc === 'own', blocked: unknownModeReason(mode) ?? this.entryRefusal(), strict, served: mode === 'sealed', announces };
     }
 
     // host.ts, `_buildRefusal`: the entry as the files hold it now
@@ -309,11 +310,17 @@ export class FakeElement implements LifecycleHost {
         this.writes = this.config.guestWrites === true ? createGuestWrites({ store: this.files, built: this.files.copy(), minted: this.minted, now: () => this.now }) : null;
         this.lastBuildAt = this.now;
         this.log.push(`build #${frame.id}${frame.silent ? ' (silent)' : ''}`);
-        // the wrapper's one load, and the guest's announcement, in either order (S46: usually the announcement first)
+        // the wrapper's one load, and the guest's or the view's announcement, in either order (S46: usually the
+        // announcement first)
         this.schedule(this.rng.int(1, 20), () => frame.onload?.());
         if (ctx.announces && !frame.silent) {
             this.schedule(this.rng.int(1, 20), () => {
                 this.step({ t: 'announced', gen: frame.gen, valid: true, refusal: null, port: { frame: frame.id }, source: frame.guest });
+            });
+        }
+        if (ctx.strict && !frame.silent) {
+            this.schedule(this.rng.int(1, 20), () => {
+                this.step({ t: 'viewAnnounced', gen: frame.gen, source: frame.guest });
             });
         }
     }

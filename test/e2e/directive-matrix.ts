@@ -1,8 +1,11 @@
 /**
  * The directive matrix as values (S74, class A; test/e2e/directive-matrix.spec.ts runs it): for each Content-Security-Policy
- * directive a host page might set, the outcome of a strict-mode sandbox (with the fetch bridge) on a host page whose policy
- * has that directive at a restrictive value. A sandbox either works normally or ends with a named termination reason, never a
- * silent partial state; a degraded sandbox is only allowed with a warning the table names.
+ * directive a host page might set, the outcome of a strict-mode sandbox (with the fetch bridge) and of a sealed one on a host
+ * page whose policy has that directive at a restrictive value. A sandbox either works normally or ends with a named
+ * termination reason, never a silent partial state; a degraded sandbox is only allowed with a warning the table names.
+ * Sealed mode's view is the served file (design 03), a document the host page's policy does not reach: there the page's
+ * policy decides only whether the element may frame the file (`frame-src`, and its fallbacks), so a case names sealed
+ * mode's outcome where it is not strict mode's (`sealed`).
  *
  * Values first: `CSP_DIRECTIVES` is the closed list; every directive is either in `EXCLUDED` (with why the matrix cannot
  * run it) or has cases in `DIRECTIVE_CASES`, and the types fail until a new directive is classified. A case names the
@@ -63,6 +66,10 @@ export interface MatrixCase {
     readonly outcome: Outcome;
     /** The engines whose outcome differs, with it. */
     readonly engines?: Partial<Record<MatrixEngine, Outcome>>;
+    /** Sealed mode's outcome where it is not strict mode's, on every engine but those of `sealedEngines`. */
+    readonly sealed?: Outcome;
+    /** The engines whose sealed outcome differs from `sealed` (or from the case's outcome), with it. */
+    readonly sealedEngines?: Partial<Record<MatrixEngine, Outcome>>;
     /** Why, where the outcome is not what the directive's name suggests. */
     readonly note?: string;
 }
@@ -83,9 +90,14 @@ export const EXCLUDED = {
 
 /**
  * The cases. The host's base policy is the realistic one (test/e2e/realistic-host.ts: the hash, `worker-src 'self' blob:`, the
- * style hashes, `base-uri 'self' about:`, Trusted Types with the library's policy named, `connect-src 'self'` and the host's own
- * origin), and a case replaces one directive of it. A `script-src` case keeps `'self'` (the host page's own script must run).
+ * style hashes, `base-uri 'self' about:`, `frame-src 'self'` for the served file, Trusted Types with the library's policy
+ * named, `connect-src 'self'` and the host's own origin), and a case replaces one directive of it. A `script-src` case keeps
+ * `'self'` (the host page's own script must run).
  */
+// Sealed mode's outcome where the host page's directive governs a document the served view does not inherit from it
+const SERVED = works();
+// Sealed mode's outcome where the directive refuses the element's frame of the served file
+const UNFRAMED = ends('documentSilent');
 export const DIRECTIVE_CASES = {
     'child-src': [{ value: "'none'", row: 'cspFetch', outcome: works(), note: 'a srcdoc frame loads no URL, so no frame directive refuses it' }],
     'connect-src': [
@@ -95,28 +107,28 @@ export const DIRECTIVE_CASES = {
     'default-src': [{ value: "'none'", row: 'cspFetch', outcome: works(), note: "the base names every directive the library needs, so the fallback decides nothing" }],
     'fenced-frame-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],
     'font-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],
-    'frame-src': [{ value: "'none'", row: 'cspFetch', outcome: works(), note: 'a srcdoc frame loads no URL' }],
+    'frame-src': [{ value: "'none'", row: 'cspFetch', outcome: works(), sealed: UNFRAMED, note: "a srcdoc frame loads no URL; sealed mode's frame loads the served file, which the directive refuses: the view never announces itself" }],
     'img-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],
     'manifest-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],
     'media-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],
     'object-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],
     'prefetch-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],
-    'script-src': [{ value: "'self'", row: 'cspScript', outcome: ends('startupBlocked'), note: "the view bootstrap's hash is missing" }],
-    'script-src-elem': [{ value: "'self'", row: 'cspScript', outcome: ends('startupBlocked'), note: "script elements are the bootstrap's kind" }],
+    'script-src': [{ value: "'self'", row: 'cspScript', outcome: ends('startupBlocked'), sealed: SERVED, note: "the view bootstrap's hash is missing; sealed mode's view runs under the file's policy" }],
+    'script-src-elem': [{ value: "'self'", row: 'cspScript', outcome: ends('startupBlocked'), sealed: SERVED, note: "script elements are the bootstrap's kind" }],
     'script-src-attr': [{ value: "'none'", row: 'cspScript', outcome: works(), note: 'the library uses no inline event handler' }],
     'style-src': [
-        { value: "'none'", row: 'cspStyle', outcome: works('ok', 'wrapperStyle'), note: 'the wrapper style is refused: the frame is 150 px high, and the element says so once' },
-        { value: "'self'", row: 'cspStyle', outcome: works('ok', 'wrapperStyle'), note: 'the same' },
+        { value: "'none'", row: 'cspStyle', outcome: works('ok', 'wrapperStyle'), sealed: SERVED, note: "the wrapper style is refused: the frame is 150 px high, and the element says so once; sealed mode's file sizes the view under its own policy" },
+        { value: "'self'", row: 'cspStyle', outcome: works('ok', 'wrapperStyle'), sealed: SERVED, note: 'the same' },
     ],
-    'style-src-elem': [{ value: "'self'", row: 'cspStyle', outcome: works('ok', 'wrapperStyle'), note: 'the wrapper style is a style element' }],
+    'style-src-elem': [{ value: "'self'", row: 'cspStyle', outcome: works('ok', 'wrapperStyle'), sealed: SERVED, note: 'the wrapper style is a style element' }],
     'style-src-attr': [{ value: "'none'", row: 'cspStyle', outcome: works(), note: 'the library styles nothing by attribute' }],
     'worker-src': [
-        { value: "'none'", row: 'cspWorker', outcome: ends('workerRefused') },
-        { value: "'self'", row: 'cspWorker', outcome: ends('workerRefused'), note: 'blob: is missing' },
+        { value: "'none'", row: 'cspWorker', outcome: ends('workerRefused'), sealed: SERVED },
+        { value: "'self'", row: 'cspWorker', outcome: ends('workerRefused'), sealed: SERVED, note: 'blob: is missing' },
     ],
     'base-uri': [
-        { value: "'none'", row: 'cspBaseUri', outcome: ends('environmentBase') },
-        { value: "'self'", row: 'cspBaseUri', outcome: ends('environmentBase'), note: 'about: is missing' },
+        { value: "'none'", row: 'cspBaseUri', outcome: ends('environmentBase'), sealed: SERVED, note: "sealed mode's file sets its base under its own policy" },
+        { value: "'self'", row: 'cspBaseUri', outcome: ends('environmentBase'), sealed: SERVED, note: 'about: is missing' },
     ],
     'sandbox': [{ value: 'allow-scripts allow-same-origin', row: 'documentOrigin', outcome: works(), note: "the host page's own sandbox flags (no allow-forms, popups, modals) are inherited by the frames" }],
     'form-action': [{ value: "'none'", row: 'uiSurfaces', outcome: works() }],
@@ -125,8 +137,8 @@ export const DIRECTIVE_CASES = {
     'report-uri': [{ value: '/nowhere', row: 'trustedTypesRequirement', outcome: works() }],
     'require-trusted-types-for': [{ value: "'script'", row: 'trustedTypesRequirement', outcome: works(), note: "the base already enforces it; the library's writes go through its policy" }],
     'trusted-types': [
-        { value: "'none'", row: 'trustedTypesRequirement', outcome: ends('trustedTypes'), note: "every engine has Trusted Types and applies the page's directive; a browser without them would take it from hostContentSecurityPolicy (test/e2e/trusted-types-uniform.spec.ts)" },
-        { value: 'other', row: 'trustedTypesRequirement', outcome: ends('trustedTypes') },
+        { value: "'none'", row: 'trustedTypesRequirement', outcome: ends('trustedTypes'), sealed: SERVED, note: "every engine has Trusted Types and applies the page's directive; a browser without them would take it from hostContentSecurityPolicy (test/e2e/trusted-types-uniform.spec.ts); the element writes no HTML for sealed mode's view, whose document has no requirement of the page's" },
+        { value: 'other', row: 'trustedTypesRequirement', outcome: ends('trustedTypes'), sealed: SERVED },
         { value: 'web-sandbox', row: 'trustedTypesDefault', outcome: works(), note: "the library's policy named alone: the host's own default policy is not created" },
     ],
 } as const satisfies Record<Exclude<CspDirective, keyof typeof EXCLUDED>, readonly MatrixCase[]>;
@@ -150,8 +162,12 @@ export const HEADER_CASES = [
     { header: 'permissions-policy', value: 'fullscreen=(), clipboard-write=(), autoplay=()', row: 'permissionsPolicy', outcome: works() },
 ] as const satisfies readonly (MatrixCase & { header: 'cross-origin-embedder-policy' | 'cross-origin-opener-policy' | 'referrer-policy' | 'permissions-policy'; also?: { readonly 'cross-origin-opener-policy': 'same-origin' } })[];
 
-/** The outcome of a case on an engine. */
-export const outcomeOn = (matrixCase: MatrixCase, engine: MatrixEngine): Outcome => matrixCase.engines?.[engine] ?? matrixCase.outcome;
+/** The outcome of a case on an engine, in strict mode or in sealed mode. */
+export function outcomeOn(matrixCase: MatrixCase, engine: MatrixEngine, mode: 'strict' | 'sealed' = 'strict'): Outcome {
+    const strict = matrixCase.engines?.[engine] ?? matrixCase.outcome;
+    if (mode === 'strict') return strict;
+    return matrixCase.sealedEngines?.[engine] ?? matrixCase.sealed ?? strict;
+}
 
 /** Every row a case of the matrix covers. */
 export const matrixRows = (): Set<InheritedContextId> => new Set<InheritedContextId>([

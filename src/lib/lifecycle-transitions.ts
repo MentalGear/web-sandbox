@@ -38,11 +38,12 @@ const WINDOW_A = Object.freeze({ window: 'A' });
 const WINDOW_B = Object.freeze({ window: 'B' });
 const REASON = 'R';
 const CONTEXTS: readonly BuildContext[] = [
-    { buildsHere: false, blocked: null, strict: false, announces: false },
-    { buildsHere: true, blocked: REASON, strict: false, announces: false },
-    { buildsHere: true, blocked: null, strict: true, announces: false },
-    { buildsHere: true, blocked: null, strict: false, announces: true },
-    { buildsHere: true, blocked: null, strict: false, announces: false },
+    { buildsHere: false, blocked: null, strict: false, served: false, announces: false },
+    { buildsHere: true, blocked: REASON, strict: false, served: false, announces: false },
+    { buildsHere: true, blocked: null, strict: true, served: false, announces: false },
+    { buildsHere: true, blocked: null, strict: true, served: true, announces: false },
+    { buildsHere: true, blocked: null, strict: false, served: false, announces: true },
+    { buildsHere: true, blocked: null, strict: false, served: false, announces: false },
 ];
 
 /** The values a field of the declared type takes in the exploration. One reason for every string: the no-repeat rule compares them. */

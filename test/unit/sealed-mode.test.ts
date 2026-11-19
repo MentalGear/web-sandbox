@@ -9,6 +9,8 @@ import { NO_ORIGINS } from '@src/lib/csp/origins';
 import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
 import { reasonText, TERMINATION_REASONS } from '@src/lib/reasons';
 import { startWith } from './start-app';
+import { frameAndViewFlags, isServed, viewPolicyOf } from './served-view';
+import { sealedDocumentPolicy } from '@src/lib/sealed-document';
 import { UNSAFE_CAPABILITIES } from '@src/csp-directives';
 
 /**
@@ -23,7 +25,8 @@ const REASON = "origins and fetchBridge open the network, which sealed mode (the
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
 const wrapperOf = (el: HTMLElement) => el.shadowRoot!.querySelector('iframe');
 const innerSourceOf = (el: HTMLElement) => parse(wrapperOf(el)!.srcdoc).querySelector('iframe')!.getAttribute('srcdoc')!;
-const policyOf = (el: HTMLElement) => parse(innerSourceOf(el)).querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
+// the policy the view runs under: the served file's constant one in sealed mode, the srcdoc view's in strict mode
+const policyOf = (el: HTMLElement) => viewPolicyOf(el);
 // A build's 'terminated' comes in a task of its own (R1:R3-2).
 const settled = () => new Promise(resolve => setTimeout(resolve, 0));
 
@@ -234,13 +237,15 @@ describe('T3: sealedViewPolicy can carry no network source', () => {
         }
     });
 
-    it('the element builds it: a sealed view has the sealed policy, with blob: for its files and guest writes, and its worker admits no request', async () => {
+    it("the element builds no policy for it: a sealed view is the served file, under the file's constant policy whatever its files (blob: for the four kinds, connect-src 'none'), and its worker admits no request", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
         startWith(el, { mode: 'sealed', entry: 'main.js' }, { files: { 'main.js': 'void 0', 'a.css': 'p{}', 'b.png': 'x', 'c.json': '{}' } });
         expect(el.state).toBe('loading');
-        const kinds = new Set<SealedFileKind>(['styles', 'images']);
-        expect(policyOf(el)).toBe(sealedViewPolicy({ fileKinds: kinds, bootstrapHash: HASH }));
+        expect(isServed(wrapperOf(el)!)).toBe(true);
+        expect(policyOf(el)).toBe(sealedDocumentPolicy());
+        for (const name of ['img-src', 'font-src', 'media-src']) expect(directives(policyOf(el)).get(name), name).toEqual(['blob:']);
+        expect(directives(policyOf(el)).get('connect-src')).toEqual(["'none'"]);
         expect([...fileKinds(['application/json'])]).toEqual(['connect']); // what strict would add blob: to connect-src for
         expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(1); // no bridge frame
         expect(Object.keys(el._strictInit)).not.toContain('origins'); // T4, test/unit/sealed-build.test.ts
@@ -248,7 +253,7 @@ describe('T3: sealedViewPolicy can carry no network source', () => {
         expect(el._strictInit.workerSource).not.toContain('function requestGate(');
         expect(wrapperOf(el)!.getAttribute('sandbox')).toBe('allow-scripts allow-forms');
         const writing = startWith(await mount(), { mode: 'sealed', guestWrites: true });
-        expect(directives(policyOf(writing)).get('img-src')).toEqual(['blob:']);
+        expect(policyOf(writing)).toBe(sealedDocumentPolicy());
     });
 });
 
@@ -292,8 +297,8 @@ describe('TST-1: the sandbox flags of a sealed view are exactly these, whatever 
         startWith(el, { ...withMode, capabilities: SEALED_FLAGS });
         const flags = (frame: Element | null) => (frame?.getAttribute('sandbox') ?? '').split(' ').filter(Boolean).sort();
         expect(flags(wrapperOf(el))).toEqual(SEALED_FLAGS);
-        const view = parse(wrapperOf(el)!.srcdoc).querySelector('iframe');
-        expect(flags(view), 'the view frame inside the wrapper').toEqual(SEALED_FLAGS);
+        // the view inside the frame: a srcdoc view's attribute, or the served file's narrowed by the frame's
+        expect((frameAndViewFlags(el)[1] ?? '').split(' ').filter(Boolean).sort(), 'the view frame inside the frame').toEqual(SEALED_FLAGS);
     });
 });
 

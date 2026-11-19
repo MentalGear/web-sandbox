@@ -41,7 +41,7 @@ describe('INHERITED_CONTEXT coverage by the realistic host and the directive mat
         for (const mode of ['strict', 'cooperative', 'worker']) expect(SPEC, mode).toContain(`mode: '${mode}'`);
         expect(MATRIX_SPEC).toContain('Object.entries(DIRECTIVE_CASES)');
         expect(MATRIX_SPEC).toContain('of HEADER_CASES');
-        expect(MATRIX_SPEC).toContain('outcomeOn(matrixCase, browserName)');
+        expect(MATRIX_SPEC).toContain('outcomeOn(matrixCase, browserName, mode)'); // each mode's outcome, sealed mode's served view among them
     });
 });
 

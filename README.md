@@ -124,15 +124,16 @@ for the build with the network modes), or build the package
 the browser ([Host page policy](docs/API.md#host-page-policy)). `bun run dev` serves the playground on port 4444 only
 (`strictPort`).
 
-**Your page's own policy applies inside the sandbox.** Its frames are `srcdoc` documents, which inherit the host
-page's Content-Security-Policy, Trusted Types and Cross-Origin-Embedder-Policy. A host policy that refuses what the
-sandbox needs ends the build with a reason that names it; what to allow, per mode, is in
-[API.md](docs/API.md#host-page-policy). Sealed and strict mode need the view bootstrap's hash in your `script-src`,
-`blob:` in your `worker-src`, and the hashes of the library's two styles (or `'unsafe-inline'`) in your `style-src`, and
-nothing for the guest's own styles: the view applies them through the CSSOM, which your `style-src` does not check, so
-your report endpoint hears nothing of them. Cooperative and worker mode need `'unsafe-inline'` in your `script-src`, which
-browsers ignore next to a hash or a nonce: they cost a page its own nonce- or hash-based script policy, so prefer sealed
-mode (the default) or strict mode.
+**Your page's own policy.** Sealed mode's view is the served file, whose one policy is its own `<meta>`: your page's
+policy does not reach it, and needs only to admit `documentUrl` in `frame-src`. The frames of the other modes are
+`srcdoc` documents, which inherit the host page's Content-Security-Policy, Trusted Types and
+Cross-Origin-Embedder-Policy. A host policy that refuses what the sandbox needs ends the build with a reason that names
+it; what to allow, per mode, is in [API.md](docs/API.md#host-page-policy). Strict mode needs the view bootstrap's hash in
+your `script-src`, `blob:` in your `worker-src`, and the hashes of the library's two styles (or `'unsafe-inline'`) in
+your `style-src`, and nothing for the guest's own styles: the view applies them through the CSSOM, which your
+`style-src` does not check, so your report endpoint hears nothing of them. Cooperative and worker mode need
+`'unsafe-inline'` in your `script-src`, which browsers ignore next to a hash or a nonce: they cost a page its own nonce-
+or hash-based script policy, so prefer sealed mode (the default) or strict mode.
 
 ### Modes
 

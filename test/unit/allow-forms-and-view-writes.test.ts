@@ -1,3 +1,4 @@
+import { frameAndViewFlags } from './served-view';
 import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_SANDBOX_FLAGS } from '@src/csp-directives';
@@ -13,10 +14,8 @@ import { startWith } from './start-app';
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
 const wrapperOf = (el: HTMLElement) => el.shadowRoot!.querySelector('iframe')!;
-const flagsOf = (el: HTMLElement) => {
-    const wrapper = wrapperOf(el);
-    return [wrapper.getAttribute('sandbox'), parse(wrapper.srcdoc).querySelector('iframe')!.getAttribute('sandbox')];
-};
+// the element's frame's flags and the view's: a served view's are its static attribute narrowed by its frame's (served-view.ts)
+const flagsOf = (el: HTMLElement) => frameAndViewFlags(el);
 
 async function mount(config: Record<string, unknown>) {
     const { defineWebSandbox } = await import('@src/host');
@@ -75,7 +74,7 @@ describe('R2-2: allow-forms is an unsafe capability (cooperative and worker mode
         const messages = warnings();
         expect(flagsOf(await mount({ mode: 'strict' }))).toEqual(['allow-scripts allow-forms', 'allow-scripts allow-forms']);
         expect(flagsOf(await mount({ mode: 'strict', capabilities: ['allow-forms', 'allow-orientation-lock'] }))).toEqual(['allow-scripts allow-forms allow-orientation-lock', 'allow-scripts allow-forms allow-orientation-lock']);
-        expect(flagsOf(await mount({ capabilities: ['allow-forms'] }))).toEqual(['allow-scripts allow-forms', 'allow-scripts allow-forms']); // no mode: strict
+        expect(flagsOf(await mount({ capabilities: ['allow-forms'] }))).toEqual(['allow-scripts allow-forms', 'allow-scripts allow-forms']); // no mode: sealed, the served view
         expect(messages().filter(message => message.includes('allow-forms'))).toEqual([]);
         expect(flagsOf(await mount({ mode: 'strict', unsafeCapabilities: ['allow-forms'] }))).toEqual(['allow-scripts allow-forms', 'allow-scripts allow-forms']);
         expect(messages().filter(message => message.includes('allow-forms'))).toEqual(['[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: allow-forms.']);

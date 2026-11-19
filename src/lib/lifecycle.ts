@@ -11,8 +11,8 @@
  * generation it was armed in (`terminate{gen}`); the binding of the element's one app (start(): `start`); every build
  * (connect, start(), reset(): `connect`, `build`, and the build effect's `built` and `buildFailed`), the element's
  * removal and adoption (`disconnect`) and the load deadline (`loadDeadline`); and the completion of a build and
- * the `ready` gate (the wrapper's load, `frameLoad`; the guest's announcement, `announced`; the view's check-in,
- * `viewReady`). The executor is the one writer of `_lc`, and makes the lifecycle's two events;
+ * the `ready` gate (the frame's load, `frameLoad`; the guest's announcement, `announced`; the view's announcement,
+ * `viewAnnounced`, and its check-in, `viewReady`). The executor is the one writer of `_lc`, and makes the lifecycle's two events;
  * test/unit/lifecycle-reducer.test.ts holds host.ts to it by its source ("class L in host.ts").
  *
  * Class L's invariant (research 18): each transition is reachable by one path, guarded by one predicate; events are
@@ -46,14 +46,16 @@ import { mintUncodedError } from './minted-errors';
  * What a build reads besides the reducer's own state, asked of the host at the moment the build starts: whether the
  * element may build where it is (host.ts, buildsHere: in the defining realm's document, and connected; R2:L-1), the
  * refusal the config and the files give (an unknown mode, AR:A4; a strict entry that names no JavaScript file of the
- * files, R2:L-4; a cross-origin isolated host page; an entry that calls import()), and the two facts of the build that its completion depends on: strict
- * mode (the view checks in on its port, VIEW_READY) and whether the guest frame runs a bootstrap that announces its
- * port (`allow-scripts` in cooperative mode, always in worker mode; BR:CB1).
+ * files, R2:L-4; a cross-origin isolated host page; an entry that calls import()), and the facts of the build that its completion depends on: strict
+ * mode (the view announces itself, then checks in on its port, VIEW_READY), whether the view is the served file
+ * (sealed mode: design 03, which names what a silent file means), and whether the guest frame runs a bootstrap that
+ * announces its port (`allow-scripts` in cooperative mode, always in worker mode; BR:CB1).
  */
 export interface BuildContext {
     buildsHere: boolean;
     blocked: string | null;
     strict: boolean;
+    served: boolean;
     announces: boolean;
 }
 
@@ -69,11 +71,14 @@ export interface Notice {
  */
 export interface BuildProgress {
     readonly strict: boolean;
+    readonly served: boolean;
     readonly announces: boolean;
-    readonly frameLoaded: boolean; // the wrapper's one load arrived
-    readonly accepted: boolean; // the one announcement this build accepts arrived (a port, or worker mode's refusal)
-    // The window the accepted announcement came from, when it carried a port (the guest checked in), else null: the
-    // guest frame the wrapper's load must hold (S46). Opaque here, compared by identity only; released with the build.
+    readonly frameLoaded: boolean; // the frame's one load arrived (the wrapper's, or the served file's)
+    // the one announcement this build accepts arrived (a port, worker mode's refusal, or the view's announcement)
+    readonly accepted: boolean;
+    // The window the accepted announcement came from, when it carried a port (the guest checked in) or was the view's,
+    // else null: the guest frame the frame's load must hold (S46). Opaque here, compared by identity only; released with
+    // the build.
     readonly announcer: unknown;
 }
 
@@ -214,6 +219,10 @@ export const LC_INPUTS = {
     // `stillOurs` whether, in the microtask, the frame is still the element's and both are connected; `guest` the guest
     // frame's window, or null (R2:L-6, S46): compared with the build's `announcer` by identity.
     frameLoad: { from: "the wrapper's load event", stamped: 'always', states: STANDING, app: 'bound', fields: { stillOurs: field<boolean>('boolean'), guest: field<unknown>('window | null') } },
+    // The view's announcement (design 03, "Who receives the first port"): heard by the host page's listener only from the
+    // window that is the first frame of the element's frame (`source`), in sealed and strict mode, before any port. The
+    // view gets its ports in answer (`sendInitView`), once per build.
+    viewAnnounced: { from: "the host page's message listener", stamped: 'always', states: STANDING, app: 'bound', modes: ['strict'], fields: { source: field<unknown>('window') } },
     // The guest frame's announcement (BR:CB1). `valid`: trusted, and exactly one port or worker mode's refusal; `refusal`:
     // the reason worker mode's frame gave for a worker that could not start (R2:C-5), else null; `source`:
     // the window it came from (the guest frame's: the host's listener hears no other). A strict build listens for none.
@@ -252,7 +261,7 @@ export const LC_EFFECTS = {
     attach: { summary: "the prepared build becomes the element's", fields: { prepared: /* @__PURE__ */ field<unknown>('unknown') } },
     startLoadDeadline: { summary: 'arms the load deadline (LOAD_TIMEOUT_MS)' },
     stopLoadDeadline: { summary: 'stops the load deadline' },
-    sendInitView: { summary: "strict mode, at the wrapper's load: the view (`target`) gets its ports (`_setupStrictChannels`)", fields: { target: /* @__PURE__ */ field<unknown>('window') } },
+    sendInitView: { summary: "strict and sealed mode, at the view's announcement: the view (`target`, the window that announced itself) gets its ports (`_setupStrictChannels`)", fields: { target: /* @__PURE__ */ field<unknown>('window') } },
     openChannel: { summary: 'cooperative and worker mode: the announced port, or none (`_setupChannel`)', fields: { port: /* @__PURE__ */ field<unknown>('unknown') } },
     closePort: { summary: 'an announced port no build takes', fields: { port: /* @__PURE__ */ field<unknown>('unknown') } },
     checkView: { summary: "the view's size and still-style warnings (R3-1)", fields: { height: /* @__PURE__ */ field<unknown>('unknown'), stillStyleRefused: /* @__PURE__ */ field<boolean>('boolean') } },
@@ -376,7 +385,7 @@ function initialize(state: LcCommon, ctx: BuildContext): LcOutput {
         const refused = endBuild(torn, refusal);
         return { state: refused.state, effects: [...effects, ...refused.effects] };
     }
-    const build: BuildProgress = { strict: ctx.strict, announces: ctx.announces, frameLoaded: false, accepted: false, announcer: null };
+    const build: BuildProgress = { strict: ctx.strict, served: ctx.served, announces: ctx.announces, frameLoaded: false, accepted: false, announcer: null };
     effects.push({ k: 'build' });
     return { state: { ...torn, state: 'loading', build, pending: null }, effects };
 }
@@ -403,11 +412,13 @@ function finishBuild(state: StandingState, port: unknown): LcOutput {
     return enterReady(state, [{ k: 'openChannel', port }]);
 }
 
-// The wrapper's load. The wrapper is written once and has no script, so it
-// loads exactly once: a second load means something navigated or reloaded it. A guest that checked in already must be
-// the one the load holds (S46). Then: a bootstrap's check-in completes the build, after this load; strict mode hands the
-// view its ports and completes at VIEW_READY, never on this load alone (R1:R3-1: it also fires for a view whose bootstrap
-// the host page refused); a guest with no bootstrap completes now.
+// The frame's load: the wrapper's, which is written once and has no script, or the served file's (design 03, "One
+// load"), so it loads exactly once: a second load means something navigated or reloaded it. A guest or a view that
+// announced itself already must be the one the load holds (S46). Then: a bootstrap's check-in completes the build, after
+// this load; strict and sealed mode's view gets its ports at its own announcement, which may come before this load or
+// after it, and the build completes at VIEW_READY, never on this load alone (R1:R3-1: it also fires for a view whose
+// bootstrap never ran); a guest with no bootstrap completes now. A served file that loaded a document with no frame
+// (another page at documentUrl, or a file whose guard stopped it) holds no view that could ever announce itself.
 function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>): LcOutput {
     if (!input.stillOurs || !standing(state)) return unchanged(state);
     const build = state.build;
@@ -415,10 +426,20 @@ function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>):
     if (build.frameLoaded) return guarded(terminateNow(state, reasonText('secondLoad')));
     const loaded: StandingState = { ...state, build: { ...build, frameLoaded: true } };
     if (build.announcer !== null) return guarded(input.guest === build.announcer ? unchanged(loaded) : terminateNow(loaded, reasonText('secondLoad')));
-    if (input.guest === null) return guarded(terminateNow(loaded, reasonText('frameMissing')));
-    if (build.announces) return guarded(unchanged(loaded));
-    if (build.strict) return { state: loaded, effects: [{ k: 'sendInitView', target: input.guest }], guarded: true };
+    if (input.guest === null) return guarded(terminateNow(loaded, reasonText(build.served ? 'documentSilent' : 'frameMissing')));
+    if (build.announces || build.strict) return guarded(unchanged(loaded));
     return finishBuild(loaded, null);
+}
+
+// The view's announcement, from the first frame of the element's frame (the host's listener hears no other window): the
+// view gets its ports, posted to the window that spoke (design 03, "Who receives the first port"). One per build, and
+// only while it is loading: a view that announces itself again (or once its build is ready, which only a view that
+// announced itself reaches) reloaded or rewrote its document, and ends the build, as a guest frame's second announcement
+// does.
+function viewAnnounced(state: LcState, input: Extract<LcInput, { t: 'viewAnnounced' }>): LcOutput {
+    if (state.state !== 'loading' || state.build.accepted) return terminateNow(state, reasonText('secondAnnouncement'));
+    const announced: StandingState = { ...state, build: { ...state.build, accepted: true, announcer: input.source } };
+    return { state: announced, effects: [{ k: 'sendInitView', target: input.source }], guarded: true };
 }
 
 // The guest frame's announcement: exactly one per environment, from a build that expects one. Any other (a second one,
@@ -454,15 +475,18 @@ function terminate(state: LcState, input: Extract<LcInput, { t: 'terminate' }>):
     return { state, effects };
 }
 
-// Why a build is still `loading` at its deadline: once the wrapper has loaded, the frame that runs the library's startup
-// script (the strict view, or the guest's bootstrap) has loaded too, and that script runs first: had it run, it would
-// have checked in. So the host page's policy stopped it (R1:R3-1). Before the wrapper's load, the frame did not finish
-// loading. A deadline bounds `loading` only, of the build it was started for (LM-2): the input carries that build's
-// generation, and it acts only while that build is `loading`; `enterReady` stops it as well, but the bound does not rest
-// on a timer stopped.
+// Why a build is still `loading` at its deadline. A served view that never announced itself is "the document did not
+// answer" (design 03, "The start-up order", step 6): from outside the frame a missing file, another page at documentUrl,
+// a header that refuses the framing or the view's script and a host page's frame-src that refuses the file look alike.
+// Otherwise: once the wrapper has loaded, the frame that runs the library's startup script (the strict view, or the
+// guest's bootstrap) has loaded too, and that script runs first: had it run, it would have checked in. So the host
+// page's policy stopped it (R1:R3-1). Before the wrapper's load, the frame did not finish loading. A deadline bounds
+// `loading` only, of the build it was started for (LM-2): the input carries that build's generation, and it acts only
+// while that build is `loading`; `enterReady` stops it as well, but the bound does not rest on a timer stopped.
 function loadDeadline(state: LcState): LcOutput {
     if (state.state !== 'loading') return unchanged(state);
     const build = state.build;
+    if (build.served) return terminateNow(state, reasonText(build.accepted ? 'loadTimeout' : 'documentSilent'));
     const scripted = build.strict || build.announces;
     return terminateNow(state, build.frameLoaded && scripted ? reasonText('startupBlocked') : reasonText('loadTimeout'));
 }
@@ -547,6 +571,8 @@ export function reduce(state: LcState, input: LcInput): LcOutput {
             return frameLoad(state, input);
         case 'announced':
             return announced(state, input);
+        case 'viewAnnounced':
+            return viewAnnounced(state, input);
         case 'viewReady':
             // host.ts, `_onViewMessage` VIEW_READY: the view's check-in, the first frame on the port only its bootstrap
             // holds (R1:R3-1). Guarded, like the two other completions (see LcOutput.guarded).

@@ -219,7 +219,7 @@ Each test runs against its build: a unit test of a network mode imports `@src/ne
 
 ## Channels and frames
 
-<!-- describes: channels, frames sig:1bdcaade -->
+<!-- describes: channels, frames sig:165bc1ba -->
 
 Realms talk on channels, and every message on them is a frame of a declared type. A frame is declared once, with the
 channels it may cross, the realms at its ends, and for each field what bounds it. What a frame carries out of a guest
@@ -239,11 +239,11 @@ How a field is bounded:
 <!-- generated:begin channels -->
 | Channel | Kind | Spoken in | What it is for | Frame types |
 | :--- | :--- | :--- | :--- | :--- |
-| `announcement` | window message | `host`, `cooperative`, `worker-frame`, `view`, `bridge-frame` | A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), and any bootstrap's refusal of an environment other than the one built. | 2 |
+| `announcement` | window message | `host`, `cooperative`, `worker-frame`, `view`, `bridge-frame` | A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), the view's announcement, and any bootstrap's refusal of an environment other than the one built. | 3 |
 | `logic-port` | MessagePort | `host`, `cooperative`, `worker`, `strict-worker` | The host and the guest: calls both ways, execute(), liveness, and the guest bootstrap's lines and reports. | 9 |
 | `view-port` | MessagePort | `host`, `view` | Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness, and the user's click on a listed link. | 17 |
 | `render-port` | MessagePort | `view`, `strict-worker` | Strict mode: the view and the guest's worker; the host is not on this path. | 8 |
-| `view-init` | window message | `host`, `view` | Strict mode: the host hands the view its two ports, once per build. | 1 |
+| `view-init` | window message | `host`, `view` | Strict and sealed mode: the host hands the view its two ports, once per build, in answer to its announcement. | 1 |
 | `worker` | worker message | `worker-frame`, `worker`, `view`, `strict-worker` | A frame and the worker it spawned: the worker gets its ports, and worker mode's worker says it started. | 3 |
 | `bridge-init` | window message | `host`, `bridge-frame` | The fetch bridge: the host hands the bridge's frame its port, once per build. | 1 |
 | `bridge-port` | MessagePort | `host`, `bridge-frame` | The fetch bridge: the host and the bridge's frame, which makes every request the host decided; the guest is not on this path. | 8 |
@@ -256,7 +256,8 @@ How a field is bounded:
 | `ENVIRONMENT_REFUSED` | `announcement`: cooperative, worker-frame, view, bridge-frame → host | `refused` (constant) | A bootstrap found its document other than the one the library built (environment-check.ts) and stayed inert: the sandbox ends with the reason of the check that failed. No port. |
 | `INIT_PORT` | `worker`: worker-frame → worker | — | Worker mode's frame hands its worker the logic port. |
 | `WORKER_STARTED` | `worker`: worker → worker-frame | — | Worker mode's worker attached its port: the frame may announce it. |
-| `INIT_VIEW` | `view-init`: host → view | `workerSource` (host), `entryDone` (host), `viewFiles` (host), `html` (host), `autoResize` (host), `allowAnimations` (host), `allowAutoplay` (host), `origins` (host), `links` (host) | The host hands the view the logic and view ports, at the wrapper's load, with what the build shows. |
+| `VIEW_ANNOUNCE` | `announcement`: view → host | — | The view speaks first (design 03, "The start-up order"): it announces itself to its parent's parent before it has a port, and the host page posts INIT_VIEW only to the window that announced itself from the first frame of the element's frame. It holds nothing of the view's. |
+| `INIT_VIEW` | `view-init`: host → view | `workerSource` (host), `entryDone` (host), `viewFiles` (host), `html` (host), `autoResize` (host), `allowAnimations` (host), `allowAutoplay` (host), `origins` (host), `links` (host) | The host hands the view the logic and view ports, at the view's announcement, with what the build shows: posted to the window that announced itself, which is the first frame of the element's frame. |
 | `INIT_WORKER` | `worker`: view → strict-worker | — | The view hands the guest's worker the logic port and the render port. |
 | `EXECUTE` | `logic-port`: host → cooperative, worker, strict-worker | `code` (host) | execute(): code for the guest to run. |
 | `PING` | `logic-port`: host → cooperative, worker, strict-worker | `n` (not a string) | A liveness probe of the host's: the watchdog's (n > 0) or workerExecutionTimeout's (n < 0). |
@@ -302,7 +303,7 @@ How a field is bounded:
 
 ## The lifecycle: one reducer, one executor
 
-<!-- describes: lifecycle:states, lifecycle:inputs, lifecycle:effects, lifecycle:transitions sig:204ee8507ef58b0a -->
+<!-- describes: lifecycle:states, lifecycle:inputs, lifecycle:effects, lifecycle:transitions sig:204e433c7ef5b51d -->
 
 The element's `state` is not kept by the code that reacts to the DOM. Every platform callback, timer, embedder call and
 build result is an **input** to one pure function, `reduce(state, input)`, which returns the next state and a list of
@@ -326,8 +327,8 @@ environment is gone, with a reason). See [ADR-003](docs/ADR-003-lifecycle-and-li
 | State | Inputs that can arrive in it |
 | :--- | :--- |
 | `idle` | `connect`, `disconnect`, `start`, `build`, `terminate`, `dispatchStarted`, `dispatchEnded` |
-| `loading` | `connect`, `disconnect`, `start`, `build`, `built`, `buildFailed`, `terminate`, `loadDeadline`, `frameLoad`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
-| `ready` | `connect`, `disconnect`, `start`, `build`, `terminate`, `loadDeadline`, `frameLoad`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
+| `loading` | `connect`, `disconnect`, `start`, `build`, `built`, `buildFailed`, `terminate`, `loadDeadline`, `frameLoad`, `viewAnnounced`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
+| `ready` | `connect`, `disconnect`, `start`, `build`, `terminate`, `loadDeadline`, `frameLoad`, `viewAnnounced`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
 | `terminated` | `connect`, `disconnect`, `start`, `build`, `buildTerminationDue`, `terminate`, `dispatchStarted`, `dispatchEnded` |
 <!-- generated:end -->
 
@@ -338,11 +339,11 @@ stateDiagram-v2
     idle --> idle: build, connect, disconnect, dispatchEnded, dispatchStarted, start, terminate
     idle --> loading: build, connect
     idle --> terminated: build, connect, terminate
-    loading --> loading: announced, build, built, connect, dispatchEnded, dispatchStarted, frameLoad, terminate
+    loading --> loading: announced, build, built, connect, dispatchEnded, dispatchStarted, frameLoad, terminate, viewAnnounced
     loading --> ready: announced, frameLoad, viewReady
-    loading --> terminated: announced, build, buildFailed, connect, frameLoad, loadDeadline, terminate
+    loading --> terminated: announced, build, buildFailed, connect, frameLoad, loadDeadline, terminate, viewAnnounced
     loading --> idle: build, connect, disconnect
-    ready --> terminated: announced, build, connect, frameLoad, terminate
+    ready --> terminated: announced, build, connect, frameLoad, terminate, viewAnnounced
     ready --> idle: build, connect, disconnect
     ready --> loading: build, connect
     ready --> ready: dispatchEnded, dispatchStarted, frameLoad, loadDeadline, terminate, viewReady
@@ -365,6 +366,7 @@ stateDiagram-v2
 | `terminate` | terminate(), the element's own terminations, the executor | when armed in an environment | any | any | `reason: string`, `notices?: readonly Notice[]` |
 | `loadDeadline` | the load deadline | always | `loading`, `ready` | any | — |
 | `frameLoad` | the wrapper's load event | always | `loading`, `ready` | any | `stillOurs: boolean`, `guest: window \| null` |
+| `viewAnnounced` | the host page's message listener | always | `loading`, `ready` | `strict` | `source: window` |
 | `announced` | the host page's message listener | always | `loading`, `ready` | `cooperative`, `worker` | `valid: boolean`, `refusal: string \| null`, `port: unknown`, `source: window` |
 | `viewReady` | the view port's VIEW_READY | always | `loading`, `ready` | `strict` | `height: unknown`, `stillStyleRefused: boolean` |
 | `dispatchStarted` | the executor | — | any | any | `reason: string` |
@@ -380,7 +382,7 @@ stateDiagram-v2
 | `attach` | the prepared build becomes the element's | `prepared: unknown` |
 | `startLoadDeadline` | arms the load deadline (LOAD_TIMEOUT_MS) | — |
 | `stopLoadDeadline` | stops the load deadline | — |
-| `sendInitView` | strict mode, at the wrapper's load: the view (`target`) gets its ports (`_setupStrictChannels`) | `target: window` |
+| `sendInitView` | strict and sealed mode, at the view's announcement: the view (`target`, the window that announced itself) gets its ports (`_setupStrictChannels`) | `target: window` |
 | `openChannel` | cooperative and worker mode: the announced port, or none (`_setupChannel`) | `port: unknown` |
 | `closePort` | an announced port no build takes | `port: unknown` |
 | `checkView` | the view's size and still-style warnings (R3-1) | `height: unknown`, `stillStyleRefused: boolean` |
