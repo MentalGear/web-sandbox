@@ -1,0 +1,8 @@
+{
+  "name": "research-34-electron",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "electron": "^45.4.1"
+  }
+}
