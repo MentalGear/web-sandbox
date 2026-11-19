@@ -150,6 +150,36 @@ test.describe('sealed mode: nothing else opens a tab', () => {
         expect(await opens(page)).toEqual([[A, '_blank', 'noopener,noreferrer']]);
     });
 
+    // A held key (docs/design/REVIEW-3.md, finding 1): a keydown, nine auto-repeats and a keyup on the marked link the
+    // guest focused, the guest moving the focus to the other marked link on every keydown it hears. The host page calls
+    // window.open once, for the link focused when the key went down, on every engine.
+    test('a held Enter on a focused marked link, the guest moving the focus on every keydown: one window.open, for the first press', async ({ sandbox, page, context, browserName }) => {
+        const A = `${recorder.allowed}/link/held-a`;
+        const B = `${recorder.allowed}/link/held-b`;
+        await recordOpens(page);
+        await sandbox.open();
+        const tabs = tabsOf(context);
+        await sandbox.registerFiles({ 'main.js': `
+            bridge.expose('focus', () => { sandboxView.set('a', { focus: true }); return true; });
+            sandboxView.on('keydown', 'a', () => sandboxView.set('b', { focus: true }));
+            sandboxView.on('keydown', 'b', () => sandboxView.set('a', { focus: true }));` });
+        expect(await sandbox.mount({ mode: 'sealed', entry: 'main.js', links: [A, B], html: markup(A, B, `${recorder.blocked}/unlisted`) })).toBe('ready');
+        await waitInView(page, browserName, `!!document.getElementById('ready')`);
+        await click(page, 'off'); // the view has the user's focus, so set({ focus }) may move it
+        await sandbox.call('focus');
+        await waitInView(page, browserName, `document.activeElement && document.activeElement.id === 'a'`);
+        expect(await opens(page)).toEqual([]);
+        await page.keyboard.down('Enter');
+        for (let i = 0; i < 9; i++) {
+            await page.waitForTimeout(80);
+            await page.keyboard.down('Enter'); // Playwright marks a second down of a held key as a repeat
+        }
+        await page.keyboard.up('Enter');
+        await page.waitForTimeout(2000);
+        expect(await opens(page)).toEqual([[A, '_blank', 'noopener,noreferrer']]);
+        expect(tabs.length).toBe(1);
+    });
+
     test('the playground\'s preset: a guest that asks for its link without the user\'s click on it opens nothing', async ({ sandbox, page, context, browserName }) => {
         const preset = fromPreset('links-without-the-click');
         const target = `${recorder.allowed}/preset`;
@@ -176,13 +206,14 @@ test.describe('sealed mode: nothing else opens a tab', () => {
 // request walks from the target to its link, at most VIEW_MAX_DEPTH elements. Measured in the view's own document, as the
 // renderer's other passes are (strict-view-budget.spec.ts, S73): one render of VIEW_RENDER_MAX_LENGTH characters of links
 // whose hrefs each miss every listed URL, one of them by its last character only (every comparison made), parsed and cleaned with no list and
-// with MAX_LINKS URLs; and the walk from an element VIEW_MAX_DEPTH deep, through the getters the view captures.
+// with MAX_LINKS URLs; the walk from an element VIEW_MAX_DEPTH deep, through the getters the view captures; and the
+// held-key listeners (docs/design/REVIEW-3.md, finding 1): a trusted keydown's and keyup's flag, and its read by the click.
 test.describe('sealed mode: the cost', () => {
     test('marking adds little to a render\'s parse and clean, and the click\'s walk is bounded by the depth', async ({ sandbox, page, browserName }) => {
         test.setTimeout(60000);
         expect(await sandbox.mount({ mode: 'sealed', html: '<div id="a"></div>' })).toBe('ready');
         await waitInView(page, browserName, `!!document.getElementById('a')`);
-        type Cost = { anchors: number; length: number; none: number; full: number; marked: number; walk: number; depth: number };
+        type Cost = { anchors: number; length: number; none: number; full: number; marked: number; walk: number; depth: number; keys: number; sent: number; without: number; withListeners: number };
         await inView(page, browserName, `(window.__links = null, setTimeout(() => {
             const sanitize = (${sanitizeRender.toString()});
             const rules = ${JSON.stringify(RENDER_RULES)};
@@ -230,15 +261,39 @@ test.describe('sealed mode: the cost', () => {
                 return -1;
             };
             const walked = timed(() => { for (let i = 0; i < 100; i++) walk(); }) / 100;
-            window.__links = { anchors, length: html.length, none: timed(() => cleaned([])), full: timed(() => cleaned(listed)), marked: cleaned(listed), walk: walked, depth };
+            // the held-key listeners as the view has them, on the events a held key raises: a keydown, its click, a keyup
+            let keyHeld = false;
+            const onKeydown = (event) => { if (!event.isTrusted) return; keyHeld = event.repeat === true; };
+            const onKeyup = (event) => { if (event.isTrusted) keyHeld = false; };
+            const onClick = (event) => (!event.isTrusted || keyHeld) ? -1 : 0;
+            // a dispatched event is never trusted, so the events are stand-ins with the members the listeners read
+            const press = { isTrusted: true, repeat: true }, release = { isTrusted: true }, clicked = { isTrusted: true };
+            let sent = 0;
+            const keys = timed(() => { for (let i = 0; i < 100000; i++) { onKeydown(press); sent += onClick(clicked) + 1; onKeyup(release); } }) / 100000;
+            // and what three more listeners on the window cost the browser's dispatch of a keydown, a click and a keyup
+            const target = document.getElementById('a');
+            const raised = [new KeyboardEvent('keydown', { bubbles: true }), new MouseEvent('click', { bubbles: true }), new KeyboardEvent('keyup', { bubbles: true })];
+            const dispatched = () => timed(() => { for (let i = 0; i < 1000; i++) for (let e = 0; e < 3; e++) target.dispatchEvent(raised[e]); }) / 1000;
+            const without = dispatched();
+            addEventListener('keydown', onKeydown, true);
+            addEventListener('keyup', onKeyup, true);
+            addEventListener('click', onClick, true);
+            const withListeners = dispatched();
+            removeEventListener('keydown', onKeydown, true);
+            removeEventListener('keyup', onKeyup, true);
+            removeEventListener('click', onClick, true);
+            window.__links = { anchors, length: html.length, none: timed(() => cleaned([])), full: timed(() => cleaned(listed)), marked: cleaned(listed), walk: walked, depth, keys, sent, without, withListeners };
         }, 0), true)`);
         const cost = await waitInView<Cost>(page, browserName, `window.__links`, 50000);
-        console.log(`MEASURED ${browserName} links: a ${cost.length}-character render of ${cost.anchors} links, parsed and cleaned: ${cost.none.toFixed(2)} ms with no list, ${cost.full.toFixed(2)} ms with ${MAX_LINKS} listed URLs, all missed (+${Math.round(((cost.full - cost.none) / cost.none) * 100)}%); the click's walk from ${cost.depth} deep: ${(cost.walk * 1000).toFixed(1)} µs; best of 3 rounds of 10`);
+        console.log(`MEASURED ${browserName} links: a ${cost.length}-character render of ${cost.anchors} links, parsed and cleaned: ${cost.none.toFixed(2)} ms with no list, ${cost.full.toFixed(2)} ms with ${MAX_LINKS} listed URLs, all missed (+${Math.round(((cost.full - cost.none) / cost.none) * 100)}%); the click's walk from ${cost.depth} deep: ${(cost.walk * 1000).toFixed(1)} µs; the held-key listeners: ${(cost.keys * 1e6).toFixed(1)} ns a keydown, its click and its keyup, and their dispatch ${(cost.without * 1000).toFixed(2)} µs without them, ${(cost.withListeners * 1000).toFixed(2)} µs with them; best of 3 rounds of 10`);
         expect(cost.length).toBeLessThanOrEqual(VIEW_RENDER_MAX_LENGTH);
         expect(cost.marked).toBe(0);
         expect(cost.depth).toBe(VIEW_MAX_DEPTH);
         // the spec's own bounds (no documented share: the marking runs in the flush, which the view's time budget charges)
         expect(cost.full).toBeLessThan(cost.none * 1.5);
         expect(cost.walk).toBeLessThan(1);
+        expect(cost.sent).toBe(0); // a click during a repeat is no request
+        expect(cost.keys).toBeLessThan(0.01);
+        expect(cost.withListeners).toBeLessThan(0.05);
     });
 });

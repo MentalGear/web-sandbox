@@ -135,7 +135,7 @@ test, and the ninth behaves as the code does; no test had been changed to fit th
 
 | Finding | Class | Answer |
 | :--- | :--- | :--- |
-| 1 · on Firefox one held key opens a tab per key repeat, and the guest picks each URL | a channel's bound fails open (data) | one request a user action, decided in the view ([02](02-what-an-app-hands-over.md)); being fixed |
+| 1 · on Firefox one held key opens a tab per key repeat, and the guest picks each URL | a channel's bound fails open (data) | one request a user action, decided in the view: no click is a request while a key is held (`in-sandbox-view.ts`, the held-key flag; `test/unit/view-links.test.ts`); at the host, at most `LINK_TABS_PER_SECOND` tabs in any one-second window per element (`links.ts`, `createLinkTabLimiter`; `test/unit/links.test.ts`); the held key on Firefox and Chromium in `test/e2e/links-popup-blocker.spec.ts`, on three engines in `test/e2e/links.spec.ts` ([02](02-what-an-app-hands-over.md)) |
 | 2 · the docs do not say the guest chooses the focus an Enter acts on | docs | with 1 |
 | 3 · a write whose rewrites pass the quota is recorded, and no commit can take it | correctness, docs | the comment and docs say what holds, with its test; the quota counts the bytes given from step 3.7 on |
 | 4 · `GUEST_VALUES` files sizes and a guest's choices within a closed set as the library's | docs (classification) | the rows take the guest as owner |

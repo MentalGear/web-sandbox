@@ -221,6 +221,61 @@ test.describe('the popup blocker on', () => {
         }
     });
 
+    // A held key (docs/design/REVIEW-3.md, finding 1, its probe 4): a keydown, nine auto-repeated keydowns (Playwright
+    // marks a second down of a held key as a repeat) and a keyup. Firefox raises a trusted click on the focused link for
+    // every repeat and allows each its tab; the view sends a request for the first press only.
+    const holdEnter = async (page: Page, repeatEveryMs: number) => {
+        await page.keyboard.down('Enter');
+        for (let i = 0; i < 9; i++) {
+            await page.waitForTimeout(repeatEveryMs);
+            await page.keyboard.down('Enter');
+        }
+        await page.keyboard.up('Enter');
+        await page.waitForTimeout(3000); // what a late repeat would still open
+    };
+
+    test('one held Enter on the marked link the guest focused, long after any click, opens exactly one tab', async ({ browserName }) => {
+        const A = `${recorder.allowed}/link/a`;
+        const { page, close } = await openBrowser(browserName);
+        try {
+            const entry = `sandboxView.on('click', 'off', () => { sandboxView.set('a', { focus: true }); bridge.call('rendered'); }); setTimeout(() => bridge.call('rendered'), 0);`;
+            await started(page, { links: [A], html: MARKUP(A, `${recorder.allowed}/unlisted`), entry });
+            await click(page, 'off'); // gives the view the user's focus; the guest moves it to the link
+            await expect.poll(() => reports().filter(report => report === '/rendered').length).toBe(2);
+            await page.waitForTimeout(5500); // the click's activation is over
+            expect(openReports()).toEqual([]);
+            await holdEnter(page, 40);
+            expect(openReports()).toEqual([`/open?url=${A}&target=_blank&features=noopener,noreferrer`]);
+            expect(tabsAt('/link/')).toEqual(['/link/a']);
+        } finally {
+            await close();
+        }
+    });
+
+    test('one held Enter, two marked links, the guest moving the focus on every keydown it hears: one tab, at the link focused when the key went down', async ({ browserName }) => {
+        const A = `${recorder.allowed}/link/a`;
+        const B = `${recorder.allowed}/link/b`;
+        const { page, close } = await openBrowser(browserName);
+        try {
+            const html = `<a id="a" href="${A}" style="${BOX};left:10px;top:10px">A</a><a id="b" href="${B}" style="${BOX};left:10px;top:60px">B</a><p id="off" style="${BOX};left:150px;top:130px">off</p>`;
+            const entry = `
+                sandboxView.on('click', 'off', () => { sandboxView.set('a', { focus: true }); bridge.call('rendered'); });
+                sandboxView.on('keydown', 'a', () => sandboxView.set('b', { focus: true }));
+                sandboxView.on('keydown', 'b', () => sandboxView.set('a', { focus: true }));
+                setTimeout(() => bridge.call('rendered'), 0);`;
+            await started(page, { links: [A, B], html, entry });
+            await click(page, 'off');
+            await expect.poll(() => reports().filter(report => report === '/rendered').length).toBe(2);
+            await page.waitForTimeout(5500);
+            expect(openReports()).toEqual([]);
+            await holdEnter(page, 80); // a slow repeat, so the guest's focus lands between repeats
+            expect(openReports()).toEqual([`/open?url=${A}&target=_blank&features=noopener,noreferrer`]);
+            expect(tabsAt('/link/')).toEqual(['/link/a']);
+        } finally {
+            await close();
+        }
+    });
+
     // Research 33: a real href in the view reached the listed host before the click (Chromium: a press connects; Firefox:
     // a press connects, and a press held one second fetches the page). The marked link's href is the inert one, so a press
     // held past that second, released off the link (no click), reaches nothing; the host page's own link with a real href,

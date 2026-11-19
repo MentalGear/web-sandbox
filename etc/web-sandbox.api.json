@@ -981,6 +981,33 @@
         },
         {
           "kind": "Variable",
+          "canonicalReference": "web-sandbox!LINK_TABS_PER_SECOND:var",
+          "docComment": "/**\n * The most tabs one element opens for its listed links in any one-second window, whatever the browser counts as a user\n * activation. A request past it opens nothing and is not queued.\n *\n * @remarks\n *\n * The host page's own bound on `links`, beside the view's one request a user action: an engine may allow a tab for each\n * auto-repeated keydown of a held key (Firefox does, about 30 a second; docs/design/REVIEW-3.md, finding 1). Two, so that\n * what a user does on purpose still opens: a double click on a link (two clicks), or two links clicked one after the\n * other. Counted per element, for its life.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "LINK_TABS_PER_SECOND = "
+            },
+            {
+              "kind": "Content",
+              "text": "2"
+            }
+          ],
+          "fileUrlPath": "dist/lib/links.d.ts",
+          "initializerTokenRange": {
+            "startIndex": 1,
+            "endIndex": 2
+          },
+          "isReadonly": true,
+          "releaseTag": "Public",
+          "name": "LINK_TABS_PER_SECOND",
+          "variableTypeTokenRange": {
+            "startIndex": 0,
+            "endIndex": 0
+          }
+        },
+        {
+          "kind": "Variable",
           "canonicalReference": "web-sandbox!LOAD_TIMEOUT_MS:var",
           "docComment": "/**\n * How long, in ms, a build may stay `loading` before the sandbox terminates; the reason names the host page's policy\n * when the frame loaded and its startup script never checked in (BR:CB3). Counted in host ticks, so a stall of the host\n * page never counts.\n *\n * @remarks\n *\n * It bounds the wait for the guest's check-in, which comes before the guest's own subresources and scripts: a guest\n * page with slow images, or one that never finishes its document, is `ready`. Where no bootstrap runs (no\n * `allow-scripts`) it bounds the wait for the frame's one load, and the guest's subresources count. The value is\n * {@link VIEW_LIVENESS_TIMEOUT_MS}.\n */\n",
           "excerptTokens": [
@@ -1117,7 +1144,7 @@
         {
           "kind": "Variable",
           "canonicalReference": "web-sandbox!MAX_LINKS:var",
-          "docComment": "/**\n * The most URLs `links` may list (design 02): an index of the list carries at most log₂(32) = 5 bits a click.\n */\n",
+          "docComment": "/**\n * The most URLs `links` may list (design 02): an index of the list carries at most log₂(32) = 5 bits a user action.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",

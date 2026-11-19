@@ -18,7 +18,7 @@ import { DEFAULT_FETCH_TIMEOUT_MS, DEFAULT_MAX_BYTES, DEFAULT_MAX_CONCURRENT, MA
 import { MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES } from './files';
 import { MAX_RESPONSE_HEAD } from './in-bridge-frame';
 import { GUEST_WRITE_BYTES_PER_SECOND, GUEST_WRITES_PER_SECOND } from './guest-writes';
-import { MAX_LINK_LENGTH, MAX_LINKS } from './links';
+import { LINK_TABS_PER_SECOND, MAX_LINK_LENGTH, MAX_LINKS } from './links';
 import {
     VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_INPUT_IN_FLIGHT, VIEW_SET_STYLE_LIMITS, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS,
     VIEW_MAX_OPERATION_MS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_CHARACTERS_PER_SECOND,
@@ -79,6 +79,7 @@ export const LIMITS = {
     AUTO_RESIZE_MAX_UPDATES_PER_SECOND: { value: AUTO_RESIZE_MAX_UPDATES_PER_SECOND, unit: 'count', label: 'Auto-size: height changes per second (and at most one per frame)', enforced: 'auto-resize.ts, the host', exported: true },
     MAX_LINKS: { value: MAX_LINKS, unit: 'count', label: 'URLs of `links`', enforced: 'links.ts, readLinks (at start())', exported: true },
     MAX_LINK_LENGTH: { value: MAX_LINK_LENGTH, unit: 'characters', label: 'Characters of a URL of `links`', enforced: 'links.ts, readLinks (at start())', exported: false },
+    LINK_TABS_PER_SECOND: { value: LINK_TABS_PER_SECOND, unit: 'count', label: 'Tabs one element opens for `links` in any one-second window', enforced: 'host.ts, _openListedLink (links.ts, createLinkTabLimiter)', exported: true },
     VIEW_RENDER_MAX_LENGTH: { value: VIEW_RENDER_MAX_LENGTH, unit: 'characters', label: 'Strict: characters per `sandboxView.render()`, `text()` or `set()` value, and of `html` (the initial view)', enforced: `${PRELUDE}; config-schema.ts, htmlRefusal (html, at start())`, exported: true },
     VIEW_TARGET_MAX_LENGTH: { value: VIEW_TARGET_MAX_LENGTH, unit: 'characters', label: 'Strict: characters of a render or event target id', enforced: PRELUDE, exported: false },
     VIEW_MAX_ELEMENTS: { value: VIEW_MAX_ELEMENTS, unit: 'count', label: 'Strict: elements in the view', enforced: `${VIEW}, sanitizeRender`, exported: false },

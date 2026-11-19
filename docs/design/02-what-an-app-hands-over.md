@@ -45,6 +45,13 @@ The app writes an ordinary link in its markup:
   control inside it, the view sends the host page one message: the link's index in the list, an integer. Pressing Enter on a focused link is such a click; an
   `auxclick` (the middle button) sends nothing. The view still cancels the click's default, as it does for every link.
   The app's worker has nothing to call, and no method of the guest's opens a link.
+- **One request a user action.** While a key is held, no click is a request: the view sets its flag on a trusted
+  keydown that repeats, and clears it on a trusted keyup, on a trusted keydown that is a new press and when its window
+  loses focus. Firefox raises a trusted click, and allows a tab, for every auto-repeated keydown of a held Enter on a
+  focused link ([REVIEW-3.md](REVIEW-3.md), finding 1); the first press is one request and its repeats none, whatever
+  link has the focus by then.
+- **The host page bounds what it opens, whatever the browser allows.** At most `LINK_TABS_PER_SECOND` (2) tabs for one
+  element in any one-second window; a request past it opens nothing and is not queued.
 - **The host page opens its own copy.** It checks that the index is an integer within the element's list and calls
   `window.open(links[index], '_blank', 'noopener,noreferrer')` in the task of that message. The URL it opens is the
   string the embedder listed; nothing of the guest's is part of it.
@@ -71,9 +78,10 @@ link carries.
 
 **Measured** (research 30, popup blocker verifiably on, Chromium 159 and Firefox 159): a host page's `window.open` opened
 the tab in every run after a click in the view, across the ports and the worker, and in the library as it is today with
-the request as a call from the worker; one tab per click; no tab without a click. **Not measured:** this design's shape
-(the view's own message, in the served file); Safari and any WebKit with a popup blocker (Playwright's WebKit has
-none); touch and keyboard activation.
+the request as a call from the worker; one tab per click; no tab without a click. With this design's shape and a held
+Enter ([REVIEW-3.md](REVIEW-3.md), finding 1): Firefox opened a tab for each auto-repeat, and Chromium one; with the
+held-key flag, one on both (`test/e2e/links-popup-blocker.spec.ts`). **Not measured:** Safari and any WebKit with a
+popup blocker (Playwright's WebKit has none); touch activation.
 
 **What it leaves.**
 
@@ -83,8 +91,9 @@ none); touch and keyboard activation.
   guest script (a renderer bug) could send any index of the list within the browser's 5 seconds of any click: any
   listed URL, never another one.
 - A listed URL on a server the app's author reads is a signal, sent when the user clicks: which link, and when. The
-  app can change a link's `href` before every click, so each click carries a choice among the listed URLs: log₂(n) bits
-  for n links, 5 bits at `MAX_LINKS`, and the time. The egress table's row for `links` states it.
+  app can change a link's `href` before every click, so each user action carries a choice among the listed URLs:
+  log₂(n) bits for n links, 5 bits at `MAX_LINKS`, at most `LINK_TABS_PER_SECOND` such choices in any second, and the
+  time. The egress table's row for `links` states it.
 - The host page cannot see that the browser blocked a tab: with `noopener`, `window.open` returns `null` either way.
 - It is sealed mode's first way out that is not the embedder's own code, so it gets a row in the egress table and a
   budget (`CHANNEL_BUDGETS`).

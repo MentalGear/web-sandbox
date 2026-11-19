@@ -83,6 +83,9 @@ export type GuestWrite = {
 export type HostMethod = (...args: unknown[]) => unknown;
 
 // @public
+export const LINK_TABS_PER_SECOND = 2;
+
+// @public
 export const LOAD_TIMEOUT_MS = 5000;
 
 // @public

@@ -27,7 +27,7 @@ export { VIEW_INPUT_IN_FLIGHT, VIEW_RENDER_MAX_LENGTH, VIEW_SET_STYLE_LIMITS, VI
 export type { FileContent, FileEntry, FileInfo, FileError, FileErrorCode, SandboxFiles } from "./lib/files";
 export type { GuestWrite } from "./lib/guest-writes";
 export { GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND } from "./lib/guest-writes";
-export { MAX_LINKS } from "./lib/links";
+export { LINK_TABS_PER_SECOND, MAX_LINKS } from "./lib/links";
 export type { GuestBytes, GuestImageType } from "./lib/guest-bytes";
 export { GUEST_IMAGE_TYPES } from "./lib/guest-bytes";
 

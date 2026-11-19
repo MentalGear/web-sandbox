@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LINK_RULES, LINK_WINDOW_FEATURES, listedLink, MAX_LINK_LENGTH, MAX_LINKS, readLinks, type LinkRule } from '@src/lib/links';
+import { createLinkTabLimiter, LINK_RULES, LINK_TABS_PER_SECOND, LINK_WINDOW_FEATURES, listedLink, MAX_LINK_LENGTH, MAX_LINKS, readLinks, type LinkRule } from '@src/lib/links';
 import { CONFIG_SCHEMA, normaliseConfig, NO_HOST_PAGE } from '@src/lib/config-schema';
 import { fixedDetail, reasonText, TERMINATION_REASONS } from '@src/lib/reasons';
 import { FRAMES } from '@src/lib/frames';
@@ -186,6 +186,55 @@ describe("the view's request at the host (VIEW_LINK, listedLink)", () => {
         expect(open).not.toHaveBeenCalled();
         el._onViewMessage(current, { type: 'VIEW_LINK', index: 0 });
         expect(open).toHaveBeenCalledTimes(1);
+        old.close();
+        current.close();
+    });
+
+    // The host page's own bound (docs/design/REVIEW-3.md, finding 1): whatever the browser counts as an activation, one
+    // element opens at most LINK_TABS_PER_SECOND tabs in any one-second window; a request past it opens nothing, later.
+    it(`at most LINK_TABS_PER_SECOND (${LINK_TABS_PER_SECOND}) tabs in any one-second window, by a fake clock; one past it opens nothing and is not queued`, () => {
+        let now = 10_000;
+        const limiter = createLinkTabLimiter(() => now);
+        const admitted: number[] = [];
+        // 30 requests a second, a key repeat's rate, for two seconds
+        for (let i = 0; i < 60; i++, now += 1000 / 30) if (limiter.admit()) admitted.push(Math.round(now - 10_000));
+        expect(LINK_TABS_PER_SECOND).toBe(2);
+        expect(admitted).toEqual([0, 33, 1000, 1033]);
+        // any one-second window holds at most the bound (the sliding window of rate-limit.ts)
+        for (const start of admitted) expect(admitted.filter(t => t >= start && t < start + 1000).length).toBeLessThanOrEqual(LINK_TABS_PER_SECOND);
+        // a double click (two clicks 200 ms apart), a second after the last: both open
+        now += 1000;
+        expect([limiter.admit(), (now += 200, limiter.admit())]).toEqual([true, true]);
+    });
+
+    it('a held key\'s ten requests within a second open LINK_TABS_PER_SECOND tabs at the element, and nothing later; a request after the window opens again', async () => {
+        let now = 50_000;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
+        const { el, view, open } = await element([A, B]);
+        for (let i = 0; i < 10; i++, now += 33) el._onViewMessage(view, { type: 'VIEW_LINK', index: i % 2 });
+        expect(open.mock.calls).toEqual([[A, '_blank', 'noopener,noreferrer'], [B, '_blank', 'noopener,noreferrer']]);
+        now += 1000;
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(open).toHaveBeenCalledTimes(2); // nothing was queued
+        el._onViewMessage(view, { type: 'VIEW_LINK', index: 1 });
+        expect(open).toHaveBeenCalledTimes(3);
+        view.close();
+    });
+
+    it('the bound is the element\'s for its life: a reset opens no new window', async () => {
+        let now = 70_000;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
+        const { el, view: old, open } = await element([A]);
+        el._onViewMessage(old, { type: 'VIEW_LINK', index: 0 });
+        el._onViewMessage(old, { type: 'VIEW_LINK', index: 0 });
+        el.reset();
+        const current = new MessageChannel().port1;
+        el._viewPort = current;
+        el._onViewMessage(current, { type: 'VIEW_LINK', index: 0 });
+        expect(open).toHaveBeenCalledTimes(2);
+        now += 1000;
+        el._onViewMessage(current, { type: 'VIEW_LINK', index: 0 });
+        expect(open).toHaveBeenCalledTimes(3);
         old.close();
         current.close();
     });

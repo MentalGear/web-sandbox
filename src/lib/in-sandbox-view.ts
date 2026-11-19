@@ -2004,8 +2004,27 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         }
         return -1;
     };
-    addEventListener('click', (event: Event) => {
+    // One user action is one request, whatever the engine counts as an activation (docs/design/REVIEW-3.md, finding 1):
+    // Firefox raises a trusted click on the focused link for every auto-repeated keydown of a held Enter, and allows each
+    // its tab, and the app can move the focus among its marked links between repeats. So while a key is held, no click
+    // is a request: `keyHeld` is set by a trusted keydown that is a repeat (`repeat`, set by the platform on a
+    // trusted event; the view runs no guest code), and cleared by a trusted keyup, by a trusted keydown
+    // that is a new press, and when the view's window loses focus (its keyup then goes elsewhere). The first press of
+    // a key is one click, and its repeats are none, whatever link has the focus by then; a pointer's click while another
+    // key repeats is none either, and the next one after its keyup is a request again.
+    let keyHeld = false;
+    addEventListener('keydown', (event: Event) => {
         if (!event.isTrusted) return;
+        keyHeld = (event as KeyboardEvent).repeat === true;
+    }, true);
+    addEventListener('keyup', (event: Event) => {
+        if (event.isTrusted) keyHeld = false;
+    }, true);
+    addEventListener('blur', (event: Event) => {
+        if (event.isTrusted) keyHeld = false; // not in capture: the window's own blur, not an element's
+    });
+    addEventListener('click', (event: Event) => {
+        if (!event.isTrusted || keyHeld) return;
         let index = -1;
         try {
             index = requestedLink(event.target);

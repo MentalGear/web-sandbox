@@ -549,6 +549,11 @@ sandbox.start({ html, entry: 'main.js', files }, { links: ['https://docs.example
   the browser's popup blocker allows it for the click. Enter on a focused link is such a click; a middle click
   (`auxclick`), a script's `click()` and a dispatched event are not. The app's worker has nothing to call: no method of
   the guest's opens a link. The view still cancels the click, so the view itself navigates nowhere.
+- **One request a user action.** While a key is held, no click is a request: the first press of Enter on a focused
+  link is one click, and its auto-repeats, which Firefox turns into a click and a tab each, are none, whichever link
+  has the focus by then; a pointer's click during another key's repeat is none either. Your page also opens at most
+  `LINK_TABS_PER_SECOND` (2) tabs for one element in any one-second window, whatever the browser allows; a request past
+  it opens nothing and is not queued.
 - **What the link shows.** The marked link's `href` in the view is the inert one, so the browser's status bar and
   "copy link address" do not show the URL. The URL itself as the `href` would reach its site before any click:
   Chromium connects to the listed host on a pointer press, and Firefox resolves it when the link is rendered and
@@ -2143,6 +2148,7 @@ input](#sandboxview-strict-mode) describes them, and [research 23](research/23_v
 | Auto-size: height changes per second (and at most one per frame) | 30 | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` |
 | URLs of `links` | 32 | `MAX_LINKS` |
 | Characters of a URL of `links` | 2048 | — |
+| Tabs one element opens for `links` in any one-second window | 2 | `LINK_TABS_PER_SECOND` |
 | Strict: characters per `sandboxView.render()`, `text()` or `set()` value, and of `html` (the initial view) | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
 | Strict: elements in the view | 50000 | — |
@@ -2228,7 +2234,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Strict: the view's loads (URL attributes, CSS, and what the browser reports) | `VIEW_URLS_PER_SECOND` (200) a second, each charged before it can start; `VIEW_MAX_URLS` (1000) URL attributes in the body; `VIEW_MAX_DISTINCT_URLS` (10000) distinct URLs over the view's life | what the policy's origins serve: no budget of the library's | none of its own: the rate | a rate: at most `VIEW_URLS_PER_SECOND` (200) loads a second; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none: `blob:` loads of registered files and guest writes only; the view's policy has no network source, and the renderer drops every network URL before the browser sees it | test/e2e/worker-port-and-view-cost.spec.ts (M-2); test/e2e/strict-view-budget.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts; test/unit/sealed-build.test.ts; test/e2e/sealed-no-network.spec.ts |
 | Strict: the view's events, to the guest's `sandboxView.on` handlers | of the types a handler listens to: the discrete ones as they are raised (by the user; `focusin` and `focusout` also by the guest's `set({ focus })`, one `set` a flush); pointer moves, wheel and scroll events coalesced to one per pointer or element, sent at most once per animation frame while fewer than `VIEW_INPUT_IN_FLIGHT` (1) frames are unacknowledged; `VIEW_EVENT_LIMITS.maxIds` (32) ids and `VIEW_EVENT_LIMITS.maxFields` (1000) form fields a detail | each string cut at `VIEW_EVENT_LIMITS.maxString` (65536) characters, all of one frame at `VIEW_EVENT_LIMITS.maxTotal` (262144); the rest numbers and constants | the event path charged to the view's `VIEW_APPLY_MS_PER_SECOND` (200) ms a second; continuous events wait while that budget is in debt | within the view's share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged, with its operations; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none | test/e2e/strict-events.spec.ts; test/e2e/strict-pointer-events.spec.ts; test/e2e/strict-scroll-and-wheel.spec.ts; test/e2e/strict-focus-events.spec.ts; test/unit/view-input.test.ts |
 | Strict: the view's overrun notices (VIEW_FIRST_OVERRUN, VIEW_OVERRUN), to `sandbox-log` and `terminated` | a first overrun's at most once per 9 s of its debt, and one host line an environment; the second ends the sandbox | none: no field | none of its own: the count | a stall past `VIEW_MAX_OPERATION_MS` (2000) ms at most once per `VIEW_OVERRUN_WINDOW_MS` (300000) ms beyond the first; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none | test/unit/strict-view-budget.test.ts (the repeated-overrun rule); test/e2e/view-bound.spec.ts |
-| Strict and sealed: the user's click on a link the view marked (`links`), to a new tab of a listed URL | one request a trusted click on a marked link, sent by the view; the browser opens at most one tab a click, and none without one; at most `MAX_LINKS` (32) URLs listed | an index of the list, an integer: a choice among the listed URLs, at most log₂ of their number in bits a click (5 at `MAX_LINKS` (32)); no text of the guest's is part of the URL | the user's click: each request is the click on the link itself; the app chooses which listed URL each link carries before it, and the browser allows the tab for its 5 seconds of activation | one `window.open` a request, and a tab only for a click; the marking (each link's href looked up once among the listed URLs) and the click's walk to its link (at most `VIEW_MAX_DEPTH` (256) elements) run in the view, within its share of at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | only the URLs the embedder lists in `links`: each a new tab of the browser's, opened by the host page with no opener and no referrer, on the user's click; what a listed site's server learns is which listed URL the click carried, and when | test/unit/links.test.ts; test/unit/view-links.test.ts; test/e2e/links.spec.ts; test/e2e/links-popup-blocker.spec.ts |
+| Strict and sealed: the user's click on a link the view marked (`links`), to a new tab of a listed URL | one request a user action: a trusted click on a marked link, sent by the view, and none while a key is held (a repeat's click is none); at most `LINK_TABS_PER_SECOND` (2) tabs in any one-second window per element, counted by the host page, whatever the browser allows; none without a user activation; at most `MAX_LINKS` (32) URLs listed | an index of the list, an integer: a choice among the listed URLs, at most log₂ of their number in bits a user action (5 at `MAX_LINKS` (32)), and at most `LINK_TABS_PER_SECOND` (2) times that in any second; no text of the guest's is part of the URL | the user's click: each request is the click on the link itself; the app chooses which listed URL each link carries before it, and the browser allows the tab for its 5 seconds of activation | one `window.open` a request, and a tab only for a click; the marking (each link's href looked up once among the listed URLs) and the click's walk to its link (at most `VIEW_MAX_DEPTH` (256) elements) run in the view, within its share of at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | only the URLs the embedder lists in `links`: each a new tab of the browser's, opened by the host page with no opener and no referrer, on the user's click; what a listed site's server learns is which listed URL the click carried, and when | test/unit/links.test.ts; test/unit/view-links.test.ts; test/e2e/links.spec.ts; test/e2e/links-popup-blocker.spec.ts |
 | Cooperative: the guest's own document | none: the guest runs on the host page's thread wherever the engine puts its frame there | none | none: one loop can freeze the host page ([Modes](#modes)) | unbounded: a cooperative-mode limit | not a channel of sealed mode | README (cooperative-mode limits) |
 <!-- generated:end -->
 
@@ -2236,7 +2242,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 counts and bytes above bound); and where the view shares the host page's thread it cannot run during a stall of the view
 ([(b)](#b-the-single-operation-bound)).
 
-<!-- describes: budgets sig:3442 -->
+<!-- describes: budgets sig:dd61 -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;
@@ -2245,7 +2251,10 @@ strict view's figures are in [its own section](#the-views-cost-to-the-host-page)
 shared 4-core VM, 2026-11-19, `test/e2e/links.spec.ts`): a render of 262 075 characters of 4 765 links, every one
 looked up among 32 listed URLs and missing them all, parsed and cleaned in 20.9 ms against 20.4 ms with no list on
 Chromium, 23.3 ms against 23.7 ms on Firefox and 26.8 ms against 25.2 ms on WebKit, inside the view's time budget; the
-walk of a click from an element 256 deep to its link, 38 to 58 µs.
+walk of a click from an element 256 deep to its link, 38 to 58 µs. The view's held-key listeners (a keydown's, a
+keyup's and the click's check of the flag; same builds and VM, 2026-11-19): 0.3 to 3 ns for the three bodies, and
+0.5 µs (Chromium) to 1.1 µs (Firefox, WebKit) more on the dispatch of a keydown, a click and a keyup, and up to
+3.1 µs (Firefox) in a run beside another suite's.
 
 ---
 
@@ -2670,12 +2679,13 @@ Values:
 | `GUEST_IMAGE_TYPES` | every build | The types `GuestBytes`'s `image()` can answer a `Blob` of: the raster images, which a browser only decodes, and opened on their own are an image, never a document. |
 | `GUEST_WRITE_BYTES_PER_SECOND` | every build | Most bytes of written content recorded per environment in any one-second window (`guestWrites`); later writes are refused with `FILES_BUSY`. |
 | `GUEST_WRITES_PER_SECOND` | every build | Most guest write and remove requests handled per environment in any one-second window (`guestWrites`); later ones are refused with `FILES_BUSY`. |
+| `LINK_TABS_PER_SECOND` | every build | The most tabs one element opens for its listed links in any one-second window, whatever the browser counts as a user activation. |
 | `LOAD_TIMEOUT_MS` | every build | How long, in ms, a build may stay `loading` before the sandbox terminates; the reason names the host page's policy when the frame loaded and its startup script never checked in. |
 | `LOG_EVENTS_PER_SECOND` | every build | Most guest lines dispatched as `sandbox-log` per environment in any one-second window (a sliding window). |
 | `LOG_MAX_ARGS` | every build | Most arguments one `SandboxLog` line keeps; later ones are dropped. |
 | `LOG_MAX_STRING` | every build | Longest string argument of a `SandboxLog` line, in UTF-16 code units; a longer one is cut. |
 | `MAX_INBOUND_IN_FLIGHT` | every build | Most calls from the other side that run at once on one channel: a further request is answered `BUSY` at once and its method is not called. |
-| `MAX_LINKS` | every build | The most URLs `links` may list (design 02): an index of the list carries at most log₂(32) = 5 bits a click. |
+| `MAX_LINKS` | every build | The most URLs `links` may list (design 02): an index of the list carries at most log₂(32) = 5 bits a user action. |
 | `SAFE_CAPABILITIES` | every build | The values the `capabilities` option accepts: sandbox flags that keep the guest inside the frame. |
 | `UNSAFE_CAPABILITIES` | network | The values the `unsafeCapabilities` option accepts: each reaches outside the frame and warns once when enabled. |
 | `UNSAFE_PERMISSIONS` | network | The Permissions Policy features among `UNSAFE_CAPABILITIES`, granted through the frames' `allow` attribute. |

@@ -101,9 +101,9 @@ describe("the click is the request (inSandboxView, run as stringified)", () => {
         const acks: any[] = [];
         render.onmessage = (event) => acks.push(event.data);
         render.postMessage({ type: 'VIEW_STARTED' });
-        const fire = (type: string, target: Element | null, trusted = true) => {
+        const fire = (type: string, target: EventTarget | null, trusted = true, fields: Record<string, unknown> = {}) => {
             expect(target, 'the target exists').not.toBeNull();
-            const event = { isTrusted: trusted, type, target, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, timeStamp: 1, button: 0, buttons: 0, clientX: 1, clientY: 1, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
+            const event = { isTrusted: trusted, type, target, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, timeStamp: 1, button: 0, buttons: 0, clientX: 1, clientY: 1, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: 'Enter', repeat: false, ...fields };
             for (const listener of listeners[type] ?? []) listener(event);
             return event;
         };
@@ -225,6 +225,99 @@ describe("the click is the request (inSandboxView, run as stringified)", () => {
         view.fire('click', view.byId('bold'));
         await settle();
         expect(view.links()).toEqual([]);
+    });
+
+    // A held key (docs/design/REVIEW-3.md, finding 1): Firefox raises a trusted click on the focused link for every
+    // repeated keydown. The flag's every transition, as the platform raises the events: a keydown, its repeats, its keyup.
+    describe('one request a user action: no click is a request while a key is held', () => {
+        const press = (view: Awaited<ReturnType<typeof startView>>, target: Element | null, repeat: boolean, trusted = true) => view.fire('keydown', target, trusted, { repeat });
+
+        it('a held key over a marked link (a keydown, nine repeats, each followed by its click, then the keyup) sends exactly one VIEW_LINK', async () => {
+            const view = await startView(`<a id="a" href="${A}">a</a>`);
+            const a = view.byId('a');
+            press(view, a, false);
+            view.fire('click', a);
+            for (let i = 0; i < 9; i++) {
+                press(view, a, true);
+                view.fire('click', a);
+            }
+            view.fire('keyup', a);
+            await settle();
+            expect(view.links()).toEqual([{ type: 'VIEW_LINK', index: 0 }]);
+        });
+
+        it('the guest moving the focus between repeats changes nothing: the URL is the one under the first press', async () => {
+            const view = await startView(`<a id="a" href="${A}">a</a><a id="b" href="${B}">b</a>`);
+            press(view, view.byId('a'), false);
+            view.fire('click', view.byId('a'));
+            for (let i = 0; i < 9; i++) {
+                const link = view.byId(i % 2 ? 'a' : 'b');
+                press(view, link, true);
+                view.fire('click', link);
+            }
+            await settle();
+            expect(view.links()).toEqual([{ type: 'VIEW_LINK', index: 0 }]);
+        });
+
+        it('a pointer click while another key repeats sends nothing; after its keyup, the next click sends again', async () => {
+            const view = await startView(`<a id="a" href="${A}">a</a><p id="off">off</p>`);
+            press(view, view.byId('off'), false);
+            press(view, view.byId('off'), true);
+            view.fire('click', view.byId('a'));
+            await settle();
+            expect(view.links()).toEqual([]);
+            view.fire('keyup', view.byId('off'));
+            view.fire('click', view.byId('a'));
+            await settle();
+            expect(view.links()).toEqual([{ type: 'VIEW_LINK', index: 0 }]);
+        });
+
+        it('a new press (a keydown that is no repeat) ends the hold: its click is a request', async () => {
+            const view = await startView(`<a id="a" href="${A}">a</a>`);
+            press(view, view.byId('a'), true);
+            view.fire('click', view.byId('a'));
+            press(view, view.byId('a'), false);
+            view.fire('click', view.byId('a'));
+            await settle();
+            expect(view.links()).toEqual([{ type: 'VIEW_LINK', index: 0 }]);
+        });
+
+        it('the window losing focus ends the hold (its keyup goes elsewhere)', async () => {
+            const view = await startView(`<a id="a" href="${A}">a</a>`);
+            press(view, view.byId('a'), true);
+            view.fire('click', view.byId('a'));
+            await settle();
+            expect(view.links()).toEqual([]);
+            view.fire('blur', window);
+            view.fire('click', view.byId('a'));
+            await settle();
+            expect(view.links()).toEqual([{ type: 'VIEW_LINK', index: 0 }]);
+        });
+
+        it('an untrusted keydown, keyup or blur changes nothing: neither starts a hold nor ends one', async () => {
+            const view = await startView(`<a id="a" href="${A}">a</a>`);
+            press(view, view.byId('a'), true, false); // an untrusted repeat starts no hold
+            view.fire('click', view.byId('a'));
+            await settle();
+            expect(view.links()).toEqual([{ type: 'VIEW_LINK', index: 0 }]);
+            press(view, view.byId('a'), true); // a trusted one does
+            press(view, view.byId('a'), false, false); // an untrusted new press ends nothing
+            view.fire('keyup', view.byId('a'), false);
+            view.fire('blur', window, false);
+            view.fire('click', view.byId('a'));
+            await settle();
+            expect(view.links()).toHaveLength(1);
+            // the real dispatch of the document's own untrusted events, too
+            view.byId('a')!.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter' }));
+            window.dispatchEvent(new FocusEvent('blur'));
+            view.fire('click', view.byId('a'));
+            await settle();
+            expect(view.links()).toHaveLength(1);
+            view.fire('keyup', view.byId('a')); // positive control: the trusted keyup ends it
+            view.fire('click', view.byId('a'));
+            await settle();
+            expect(view.links()).toHaveLength(2);
+        });
     });
 
     it('with no links, no click sends anything', async () => {

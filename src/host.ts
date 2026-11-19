@@ -15,7 +15,7 @@ import { LOAD_KINDS } from "./lib/load-kinds";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
 import { crossingText, mintError, mintUncodedError } from "./lib/minted-errors";
 import { createBroker, type BudgetRefusal } from "./lib/rpc";
-import { LINK_WINDOW_FEATURES, listedLink } from "./lib/links";
+import { createLinkTabLimiter, LINK_WINDOW_FEATURES, listedLink } from "./lib/links";
 import { createSizeOf } from "./lib/structured-size";
 import { keepOnlyWorkerGlobals, removeSecureContextOnly, SEALED_WORKER_GLOBALS, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from "./lib/worker-globals";
 import { dynamicImportAt } from "./lib/entry-imports";
@@ -711,6 +711,7 @@ export class WebSandbox extends ElementBase {
     // Every GuestWrite this element's listGuestWrites() returned, to its entry: what commitGuestWrites() takes (I4).
     // One map for the element's life, so a value of an earlier environment is this element's and stale, not foreign.
     private readonly _mintedWrites: MintedWrites = new WeakMap();
+    private readonly _linkTabs = createLinkTabLimiter(); // the tabs this element opens for `links`, per second, for its life (LINK_TABS_PER_SECOND)
     private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
     private _logLimiter = createLogLimiter(); // guest 'sandbox-log' events per second for the current environment (sandbox-log.ts)
     // The per-second budget of the guest's calls (R3:M-2): what the config gives (the config schema, callBudgetOf), and this
@@ -1454,11 +1455,14 @@ export class WebSandbox extends ElementBase {
      * is checked against this element's own list (listedLink: an integer within it, else nothing opens), and the URL
      * opened is that list's string, in the task of this message, so the browser's popup blocker still sees the click: no
      * text of the guest's is part of it. `noopener` and `noreferrer` give the tab no handle on this page and no referrer;
-     * `window.open` then answers null whether or not the browser opened the tab.
+     * `window.open` then answers null whether or not the browser opened the tab. At most LINK_TABS_PER_SECOND open in any
+     * one-second window, whatever the browser allows (docs/design/REVIEW-3.md, finding 1): a request past it opens nothing
+     * and is not queued.
      */
     private _openListedLink(index: unknown) {
         const url = listedLink(this._config.links, index);
         if (url === null) return;
+        if (!this._linkTabs.admit()) return;
         window.open(url, '_blank', LINK_WINDOW_FEATURES);
     }
 
