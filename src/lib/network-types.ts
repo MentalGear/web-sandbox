@@ -77,6 +77,8 @@ export interface CooperativeSandboxConfig extends SandboxConfigOptions, NetworkS
     allowAnimations?: never;
     /** Strict and sealed mode only: ignored with a warning at run time. */
     allowAutoplay?: never;
+    /** Strict and sealed mode only (the view marks the listed links): ignored with a warning at run time. */
+    links?: never;
     /** Worker, strict and sealed mode only (the guest document may share the host's thread, so no timer could fire; R1:R3-6): ignored. */
     workerExecutionTimeout?: never;
 }
@@ -107,6 +109,8 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions, NetworkSandbo
     allowAnimations?: never;
     /** Strict and sealed mode only: ignored with a warning at run time. */
     allowAutoplay?: never;
+    /** Strict and sealed mode only (the view marks the listed links): ignored with a warning at run time. */
+    links?: never;
     /** A worker has no document (R1:R3-6): ignored. */
     html?: never;
     /** A worker has no document to measure (R1:R3-6): no effect, with a warning at run time. */

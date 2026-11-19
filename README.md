@@ -338,7 +338,7 @@ them); the sandbox logs a warning for each one enabled. A popup, for example, is
 governs, so its URL is an exfiltration channel ([research 13](docs/research/13_popup_exfiltration/README.md)). Without
 `allow-popups` guest code opens no window, but in cooperative mode the user still can: a Ctrl-, Shift- or
 middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox, as for any sandboxed
-frame (strict mode's links are inert). On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups`
+frame (strict mode's links are inert, and open only the URLs the embedder lists in `links`, on the user's click). On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups`
 lets the guest open has no opener: the guest's `window.open()` returns `null`, though the page opens. `allow-forms` is among them because a submission opened in a new tab that way
 is not checked against `form-action` in Chromium. Strict mode's view always has `allow-scripts allow-forms`: no guest
 script runs there, and it cancels every submit.
@@ -696,8 +696,10 @@ sandbox.start({ entry: 'main.js', files }, { mode: 'strict', watchdogTimeout: 20
     where focus went, and no pointer coordinate outside its own box (a press that began in it is clamped to its edge),
     coalesces the continuous ones, holds them while the worker has not taken the last ones, and charges their cost to
     its time budget; links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
-    the browser's own link actions (copy, open in a new tab, drag) carry no guest URL (open external URLs through
-    a host method of the grants); the watchdog stops a looping guest on every
+    the browser's own link actions (copy, open in a new tab, drag) carry no guest URL; an external URL opens only as
+    one the embedder lists in the grants' `links`: the view marks a link whose `href` is one of them, character for
+    character, and on the user's click on it the host page opens its own copy in a new tab, with no opener and no
+    referrer (a click carries which listed URL the app gave the link, and when: [Links](docs/API.md#links)); the watchdog stops a looping guest on every
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
     directive apart, and cannot be forged; the view renders no `blob:` content but registered files and raster-image
     guest writes, decoded only (the worker's own source URL is revoked once its script ran).

@@ -105,8 +105,8 @@ The package has two builds, chosen by one build flag that is off by default
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 48 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 66 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 49 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 67 modules of `src/` |
 <!-- generated:end -->
 
 - **The default build is sealed mode alone.** It is what `bun run build:lib` writes and what the package is as
@@ -141,7 +141,7 @@ WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib
 
 ## Configuration
 
-<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig, api:SealedSandboxConfig, api:NetworkSandboxOptions sig:bf365a2567392117daecdf0556d2f2f1cb46 -->
+<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig, api:SealedSandboxConfig, api:NetworkSandboxOptions sig:77eb5a256739bdaadaec720bd168f2f1cb46 -->
 [`start(app, grants)`](#startapp-grants) takes the options of a `SandboxConfig` as its two arguments: `html` and `entry`
 in the app (`SandboxApp`), every other option in the grants (`SandboxGrants`). A `SandboxConfig` is the configuration of
 one of the modes the [build](#builds) has (`SandboxConfigByMode`), a union keyed by `mode`. The default build has `SealedSandboxConfig`
@@ -154,12 +154,13 @@ network option, are [refused](#builds). Strict mode's `origins` has no `scripts`
 `mode: 'strict'`, so `{ origins }` without it does not type-check). How `start()` reads them (each argument its own
 keys, over the defaults, copied, validated whole, and what it refuses) is under [`start()`](#startapp-grants) below.
 
-- `SandboxConfig` narrows each mode: `entry`, `allowAnimations` and `allowAutoplay` only in strict and sealed mode, `workerExecutionTimeout` not in cooperative mode (sealed mode has no `execute()`, so it ignores it),
+- `SandboxConfig` narrows each mode: `entry`, `allowAnimations`, `allowAutoplay` and `links` only in strict and sealed mode, `workerExecutionTimeout` not in cooperative mode (sealed mode has no `execute()`, so it ignores it),
   `html` and `autoResize` not in worker mode, `unsafeCapabilities` not in strict or sealed mode, `origins` and
   `fetchBridge` not in sealed mode. Options from JSON are held to the same rules at run time: an option outside its
   modes (the Modes column) is ignored and takes its default, with one warning for `entry`, `allowAnimations`,
-  `allowAutoplay`, `unsafeCapabilities` and `autoResize`, silently for `html` and `workerExecutionTimeout`. A value an
-  option cannot take, in a mode that reads it, makes `start()` throw a `TypeError` that names the option.
+  `allowAutoplay`, `links`, `unsafeCapabilities` and `autoResize`, silently for `html` and `workerExecutionTimeout`. A value an
+  option cannot take, in a mode that reads it, makes `start()` throw a `TypeError` that names the option; `links` that
+  break a rule do so in every mode.
 - Sealed grants that name `origins` or `fetchBridge` (with any value but `undefined`), with `mode: 'sealed'` written
   or with no `mode`, are not ignored but refused, since either would open the network the mode does not have:
   `start()` throws, with the message
@@ -196,6 +197,7 @@ keys, over the defaults, copied, validated whole, and what it refuses) is under 
 | `allowAnimations` | `boolean` | `false` | strict, sealed | Whether CSS animations and transitions run in the view. **While `true`, they run on your page's main thread wherever the browser runs the view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation), and the view's time budget does not bound them: a guest can keep your page 80–98% busy.** `false` removes them (elements show their end state). Left out or `false` removes them; a value that is not a boolean makes `start()` throw a `TypeError` in strict and sealed mode. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `allowAutoplay` | `boolean` | `false` | strict, sealed | Whether `<video autoplay>` and `<audio autoplay>` in the view start on their own; while `false` the `autoplay` attribute is removed and media plays only when the user starts it. With `true`, playing media costs your page's main thread where the view shares it (measured up to +6 points for 20 looping videos), outside the time budget. Left out or `false` keeps it off; a value that is not a boolean makes `start()` throw a `TypeError` in strict and sealed mode. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `guestWrites` | `boolean` | `false` | all | A boolean (anything else makes `start()` throw a `TypeError`). The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwriteswrites-options). See [Guest writes](#guest-writes). |
+| `links` | `readonly string[]` | `[]` (no link opens) | strict, sealed | The `https:` URLs the user's click on a link of the app's opens, each in a new tab with no opener and no referrer: the app writes `<a href="…">` with a listed URL, character for character, and the element opens its own copy. At most `MAX_LINKS` (32) URLs, each equal to its own serialisation and without credentials; a list that breaks a rule makes `start()` throw a `TypeError` that names the rule, in every mode. Ignored with a warning in other modes. See [Links](#links). |
 <!-- generated:end -->
 
 ### `origins`
@@ -519,6 +521,45 @@ What neither switch removes: a pointer moving over many elements with `:hover` r
 (80–100% of the thread while the pointer moves; one operation's cost, driven by the user); animated images (GIF,
 APNG, WebP: WebKit +22 points for 2 000); indeterminate `<progress>` (up to +4 points for 5 000). See
 [Modes](#modes).
+
+### `links`
+
+Strict and sealed mode: the URLs the user's click on a link of the app's opens. You list them in the grants; the app
+writes an ordinary link to one of them in its markup:
+
+```ts
+sandbox.start({ html, entry: 'main.js', files }, { links: ['https://docs.example.com/guide'] });
+```
+
+```html
+<a href="https://docs.example.com/guide">Read the guide</a>
+```
+
+- **The list.** At most `MAX_LINKS` URLs, no two equal, each a string of at most 2048 characters that parses as a
+  URL, has the scheme `https:`, has no user name or password and is equal to its own serialisation
+  (`new URL(url).href === url`), so that a URL has one spelling. A list that breaks a rule makes `start()` throw a
+  `TypeError` with the message `links is refused: …` and the rule, in every mode, and nothing of it is kept. Left out,
+  no link opens.
+- **What the view marks.** An HTML `a` whose `href` is a listed URL, compared as strings, character for character,
+  with no parsing or normalising of what the app wrote. An `area`, an SVG `a` and a MathML element are never marked;
+  every other `href` is inert, as it is without `links`.
+- **The click is the request.** On the user's click on a marked link, or on anything inside it but a form control, a
+  label or a summary, the view sends your page the link's index in the list, and the element calls
+  `window.open(url, '_blank', 'noopener,noreferrer')` with your own copy of that URL, in the task of that message, so
+  the browser's popup blocker allows it for the click. Enter on a focused link is such a click; a middle click
+  (`auxclick`), a script's `click()` and a dispatched event are not. The app's worker has nothing to call: no method of
+  the guest's opens a link. The view still cancels the click, so the view itself navigates nowhere.
+- **What the link shows.** The marked link's `href` in the view is the inert one, so the browser's status bar and
+  "copy link address" do not show the URL. The URL itself as the `href` would reach its site before any click:
+  Chromium connects to the listed host on a pointer press, and Firefox resolves it when the link is rendered and
+  fetches the page on a press held one second ([research 33](research/33_link_href/README.md)).
+- **You cannot see a blocked tab.** With `noopener`, `window.open` returns `null` whether the browser opened the tab
+  or not; a browser set to block every popup, or an extension, can still stop it.
+
+What the app still chooses, and so what each click tells a listed site's server: which links it shows and how they
+look (it can dress one up as something else, or cover its whole box with one), and which listed URL each link carries
+at the moment of the click. A click is a choice among the listed URLs, at most log₂ of their number in bits (5 at
+`MAX_LINKS`), and its time ([Budgets](#budgets)). List only URLs whose sites may learn that.
 
 ---
 
@@ -1056,6 +1097,7 @@ message names the option and what it takes. For the options it refuses as a whol
 | `` origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'` `` | In a build with the network modes: `mode` is `'sealed'` or left out (sealed mode is the default), and the grants name `origins` or `fetchBridge` (with any value but `undefined`). |
 | `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1) `` | `mode` is `'sealed'` or left out, and `scriptUnsafe` is `true`. A string run as code is checked against the host page's policy, which the guest's worker inherits, and a refusal reports the page's policy text to the guest and the string to the page's report endpoint; sealed mode runs none, and strict mode, which runs them, is one of the network modes ([Builds](#builds)). |
 | `html is longer than 262144 characters, the most the view renders at once: render the rest from the entry` | Strict and sealed mode: the app's `html` is longer than `VIEW_RENDER_MAX_LENGTH` (262144) characters, the most one render takes (the initial view is one). It is refused before anything reads it. Render the rest from the entry, in renders of that size. |
+| `links is refused: …` | The grant `links` breaks one of its rules, which the reason names after the colon: a list, of at most `MAX_LINKS` entries, each a string of at most 2048 characters that parses as a URL, has the scheme `https:`, has no user name or password and is equal to its own serialisation (`new URL(entry).href`), no two equal. Nothing of the list is kept. |
 | `the configuration could not be used (…)` | An option's rule failed on its value with an error that is not one of start()'s own refusals (each of which says the option and what it takes); the error's name follows, as in `(RangeError)`. |
 <!-- generated:end -->
 
@@ -1697,6 +1739,7 @@ What changes for an embed written when strict mode was the default:
 | no `mode`, with `origins` or `fetchBridge`, or any config with `mode: 'strict'`, `'cooperative'` or `'worker'`, in the default build (the package as published: [Builds](#builds)) | refused: `start()` throws, nothing is stored, with the message `strict, cooperative and worker mode, origins and fetchBridge are the network modes, which this build of the package does not have: build it with WEB_SANDBOX_NETWORK_MODES=1 (WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib)`; in TypeScript, a type error | build the package with the flag, or drop the network options and stay in sealed mode |
 | no `mode`, with `scriptUnsafe: true` (which `execute()` needs) | refused: `start()` throws, nothing is stored, with the message `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1) ``; in TypeScript, a type error. Sealed mode runs only the app's `entry`: without `scriptUnsafe`, `execute()` does nothing | add `mode: 'strict'`, in a build with the network modes |
 | no `mode` (or `mode: 'strict'`), with `html` longer than 262144 characters (`VIEW_RENDER_MAX_LENGTH`) | refused in both modes: `start()` throws, nothing is stored, with the message `html is longer than 262144 characters, the most the view renders at once: render the rest from the entry` | render the rest from the entry, in renders of at most that size |
+| no `mode` (or `mode: 'strict'`), with `links` that break one of its rules | refused in both modes: `start()` throws, nothing is stored, with the message `links is refused: …` and the rule (see [Links](#links)) | list each URL as `new URL(url).href` spells it, `https:` and without credentials, at most `MAX_LINKS` of them |
 | `mode: 'strict'`, `'cooperative'` or `'worker'`, in a build with the network modes | unchanged | nothing |
 | TypeScript that types a config with no mode as `StrictSandboxConfig` | `mode` is required there | add `mode: 'strict'`, or type it `SealedSandboxConfig` |
 | a host page policy that lists origins for the sandbox in `img-src`, `connect-src` and so on | sealed mode needs none of them | keep `blob:`; drop the origins if nothing else of the page needs them |
@@ -2044,7 +2087,7 @@ input](#sandboxview-strict-mode) describes them, and [research 23](research/23_v
 | Use WebAssembly (`WebAssembly` is removed from the worker, [research 24](research/24_sealed_mode/README.md)) | write the code in JavaScript. A module **you** wrote and trust may run in your page and hand its results over with `call()` as copies of exactly the bytes they cover (a view arrives with a buffer of its own bytes, not the module's heap). Never the app's own module: running the app's code in your page gives it your page's rights, and the JavaScript glue a toolchain such as Emscripten ships would run as your page |
 | Evaluate strings (`eval`, `new Function`, a timer given a string: each throws the library's `EvalError`) or call `execute()` | write the code in the entry. `mode: 'strict'` with `scriptUnsafe`, for testing: sealed mode refuses it, because a string run as code is checked against your page's policy, which reports the refusal with its text to the guest and with the string to your report endpoint |
 | Load a module with `import()` (the build refuses an entry whose text holds `import` followed by `(`, in a string or a comment too, with the reason `entryImport`) | bundle the modules into the entry |
-| Open a link or a window | an exposed method that takes a key and opens the address you hold for it (the `openExternal` example) |
+| Open a link or a window by itself | list the URL in [`links`](#links): the user's click on a link to it opens it in a new tab; or an exposed method that takes a key and opens the address you hold for it (the `openExternal` example), which lets the app choose the moment within the browser's 5 seconds of any click ([research 30](research/30_links_popup/README.md)) |
 | Be stopped by a deadline of `execute()` (`workerExecutionTimeout` is ignored: sealed mode has no `execute()`) | an app that loops is bounded by `watchdogTimeout` (the sandbox ends when the worker stops answering), and `terminate()` ends it at any time |
 
 ---
@@ -2077,6 +2120,8 @@ input](#sandboxview-strict-mode) describes them, and [research 23](research/23_v
 | `violation` events per environment (strict mode: per source, and per directive for the view) | 100 | `VIOLATION_EVENT_LIMIT` |
 | Auto-size: tallest height (px) | 100000 | `AUTO_RESIZE_MAX_HEIGHT` |
 | Auto-size: height changes per second (and at most one per frame) | 30 | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` |
+| URLs of `links` | 32 | `MAX_LINKS` |
+| Characters of a URL of `links` | 2048 | — |
 | Strict: characters per `sandboxView.render()`, `text()` or `set()` value, and of `html` (the initial view) | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
 | Strict: elements in the view | 50000 | — |
@@ -2135,7 +2180,7 @@ own walks of a delivered value follow its own keys, never an array's `length`.
 
 Every channel through which guest activity makes the host page, the view or the network do work, with its bounds in
 count, bytes and time, the constant behind each, the bound on what it costs the host page, what it reaches of the network
-in sealed mode (nothing), and the test that checks it.
+in sealed mode (nothing, but the URLs you list in [`links`](#links), on the user's click), and the test that checks it.
 A channel with no bound in one of the three says why in that cell. The table is `CHANNEL_BUDGETS` of
 `src/lib/egress.ts` rendered with the code's values (`test/unit/budgets.test.ts` keeps the rest equal), next to the egress
 table of every surface those channels cross: a surface that relays, budgets or caps and is no channel's fails that test.
@@ -2162,6 +2207,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Strict: the view's loads (URL attributes, CSS, and what the browser reports) | `VIEW_URLS_PER_SECOND` (200) a second, each charged before it can start; `VIEW_MAX_URLS` (1000) URL attributes in the body; `VIEW_MAX_DISTINCT_URLS` (10000) distinct URLs over the view's life | what the policy's origins serve: no budget of the library's | none of its own: the rate | a rate: at most `VIEW_URLS_PER_SECOND` (200) loads a second; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none: `blob:` loads of registered files and guest writes only; the view's policy has no network source, and the renderer drops every network URL before the browser sees it | test/e2e/worker-port-and-view-cost.spec.ts (M-2); test/e2e/strict-view-budget.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts; test/unit/sealed-build.test.ts; test/e2e/sealed-no-network.spec.ts |
 | Strict: the view's events, to the guest's `sandboxView.on` handlers | of the types a handler listens to: the discrete ones as they are raised (by the user; `focusin` and `focusout` also by the guest's `set({ focus })`, one `set` a flush); pointer moves, wheel and scroll events coalesced to one per pointer or element, sent at most once per animation frame while fewer than `VIEW_INPUT_IN_FLIGHT` (1) frames are unacknowledged; `VIEW_EVENT_LIMITS.maxIds` (32) ids and `VIEW_EVENT_LIMITS.maxFields` (1000) form fields a detail | each string cut at `VIEW_EVENT_LIMITS.maxString` (65536) characters, all of one frame at `VIEW_EVENT_LIMITS.maxTotal` (262144); the rest numbers and constants | the event path charged to the view's `VIEW_APPLY_MS_PER_SECOND` (200) ms a second; continuous events wait while that budget is in debt | within the view's share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged, with its operations; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none | test/e2e/strict-events.spec.ts; test/e2e/strict-pointer-events.spec.ts; test/e2e/strict-scroll-and-wheel.spec.ts; test/e2e/strict-focus-events.spec.ts; test/unit/view-input.test.ts |
 | Strict: the view's overrun notices (VIEW_FIRST_OVERRUN, VIEW_OVERRUN), to `sandbox-log` and `terminated` | a first overrun's at most once per 9 s of its debt, and one host line an environment; the second ends the sandbox | none: no field | none of its own: the count | a stall past `VIEW_MAX_OPERATION_MS` (2000) ms at most once per `VIEW_OVERRUN_WINDOW_MS` (300000) ms beyond the first; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | none | test/unit/strict-view-budget.test.ts (the repeated-overrun rule); test/e2e/view-bound.spec.ts |
+| Strict and sealed: the user's click on a link the view marked (`links`), to a new tab of a listed URL | one request a trusted click on a marked link, sent by the view; the browser opens at most one tab a click, and none without one; at most `MAX_LINKS` (32) URLs listed | an index of the list, an integer: a choice among the listed URLs, at most log₂ of their number in bits a click (5 at `MAX_LINKS` (32)); no text of the guest's is part of the URL | the user's click: each request is the click on the link itself; the app chooses which listed URL each link carries before it, and the browser allows the tab for its 5 seconds of activation | one `window.open` a request, and a tab only for a click; the marking (each link's href looked up once among the listed URLs) and the click's walk to its link (at most `VIEW_MAX_DEPTH` (256) elements) run in the view, within its share of at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | only the URLs the embedder lists in `links`: each a new tab of the browser's, opened by the host page with no opener and no referrer, on the user's click; what a listed site's server learns is which listed URL the click carried, and when | test/unit/links.test.ts; test/unit/view-links.test.ts; test/e2e/links.spec.ts; test/e2e/links-popup-blocker.spec.ts |
 | Cooperative: the guest's own document | none: the guest runs on the host page's thread wherever the engine puts its frame there | none | none: one loop can freeze the host page ([Modes](#modes)) | unbounded: a cooperative-mode limit | not a channel of sealed mode | README (cooperative-mode limits) |
 <!-- generated:end -->
 
@@ -2169,12 +2215,16 @@ or a constant. Measured figures stand in the note under the table, with their da
 counts and bytes above bound); and where the view shares the host page's thread it cannot run during a stall of the view
 ([(b)](#b-the-single-operation-bound)).
 
-<!-- describes: budgets sig:843a -->
+<!-- describes: budgets sig:3442 -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;
 1 Mi characters a second, 6% busy. One rejection of 16 Mi characters took about 0.5 s, after which the sandbox ended. The
-strict view's figures are in [its own section](#the-views-cost-to-the-host-page).
+strict view's figures are in [its own section](#the-views-cost-to-the-host-page). The marking of `links` (Playwright 1.65.1's builds,
+shared 4-core VM, 2026-11-19, `test/e2e/links.spec.ts`): a render of 262 075 characters of 4 765 links, every one
+looked up among 32 listed URLs and missing them all, parsed and cleaned in 20.9 ms against 20.4 ms with no list on
+Chromium, 23.3 ms against 23.7 ms on Firefox and 26.8 ms against 25.2 ms on WebKit, inside the view's time budget; the
+walk of a click from an element 256 deep to its link, 38 to 58 µs.
 
 ---
 
@@ -2603,6 +2653,7 @@ Values:
 | `LOG_MAX_ARGS` | every build | Most arguments one `SandboxLog` line keeps; later ones are dropped. |
 | `LOG_MAX_STRING` | every build | Longest string argument of a `SandboxLog` line, in UTF-16 code units; a longer one is cut. |
 | `MAX_INBOUND_IN_FLIGHT` | every build | Most calls from the other side that run at once on one channel: a further request is answered `BUSY` at once and its method is not called. |
+| `MAX_LINKS` | every build | The most URLs `links` may list (design 02): an index of the list carries at most log₂(32) = 5 bits a click. |
 | `SAFE_CAPABILITIES` | every build | The values the `capabilities` option accepts: sandbox flags that keep the guest inside the frame. |
 | `UNSAFE_CAPABILITIES` | network | The values the `unsafeCapabilities` option accepts: each reaches outside the frame and warns once when enabled. |
 | `UNSAFE_PERMISSIONS` | network | The Permissions Policy features among `UNSAFE_CAPABILITIES`, granted through the frames' `allow` attribute. |

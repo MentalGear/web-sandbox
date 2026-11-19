@@ -564,6 +564,30 @@ console.log('POPUP ' + outcome);`,
         },
         rules: { mode: "cooperative", capabilities: ["allow-scripts"] }
     },
+    "links-without-the-click": {
+        id: "links-without-the-click",
+        label: "Security Test: Links Without the Click",
+        category: "security",
+        run: "markup",
+        target: "https://docs.example.com/guide",
+        // `links` (design 02, I6): the embedder lists the URL, and the app links to it. The popup blocker allows a tab for 5
+        // seconds after a click anywhere on the page (research 30), so an app that could ask for its link would pick the
+        // moment after any click. Here it tries everything it has once the user clicks the grey area: it focuses the link,
+        // moves it, and calls every name a request could have. No tab opens; the user's own click on the link opens it.
+        code: `<a id="real" href="https://docs.example.com/guide" style="position:absolute;left:10px;top:10px;width:100px;height:40px;display:block">Read the guide</a>
+<div id="bg" style="position:absolute;left:0;right:0;top:60px;bottom:0;background:#eee">Click here: the app then asks for its link without your click on it</div>
+<p id="decoy" style="position:absolute;left:0;bottom:0;margin:0">no tab opens until you click the link</p>`,
+        files: {
+            "main.js": `sandboxView.on('click', 'bg', async () => {
+  sandboxView.set('real', { focus: true });
+  for (const name of ['sandbox:open', 'sandbox:link', 'open']) {
+    try { await bridge.call(name, 0); } catch (error) { console.log(name, error.code); }
+  }
+  console.log('asked without the click: no tab opened');
+});`,
+        },
+        rules: { mode: "sealed", entry: "main.js", links: ["https://docs.example.com/guide"], watchdogTimeout: 2000 },
+    },
 } satisfies Record<string, Preset>;
 
 export type PresetId = keyof typeof PRESETS;

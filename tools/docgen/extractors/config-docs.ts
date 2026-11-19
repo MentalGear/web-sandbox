@@ -3,7 +3,7 @@
  * option's type and what it does. The option, its default and its modes come from CONFIG_SCHEMA (`documented`, `modes`).
  * The keys are the schema's options but the removed ones, so a new option fails to type-check here until it has a row;
  * the order is the table's. In `what`, `{safeCapabilities}` and `{unsafeCapabilities}` stand for the lists in
- * src/csp-directives.ts, and `{VIEW_RENDER_MAX_LENGTH}` for that limit's value. Prose, edited here and rendered by
+ * src/csp-directives.ts, and `{VIEW_RENDER_MAX_LENGTH}` and `{MAX_LINKS}` for those limits' values. Prose, edited here and rendered by
  * extractors/config.ts.
  */
 import type { OptionName, CONFIG_SCHEMA } from '../../../src/lib/config-schema';
@@ -54,4 +54,6 @@ export const OPTION_WORDS: Record<Documented, OptionWords> = {
         what: "Whether `<video autoplay>` and `<audio autoplay>` in the view start on their own; while `false` the `autoplay` attribute is removed and media plays only when the user starts it. With `true`, playing media costs your page's main thread where the view shares it (measured up to +6 points for 20 looping videos), outside the time budget. Left out or `false` keeps it off; a value that is not a boolean makes `start()` throw a `TypeError` in strict and sealed mode. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay)." },
     guestWrites: { type: "`boolean`",
         what: "A boolean (anything else makes `start()` throw a `TypeError`). The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwriteswrites-options). See [Guest writes](#guest-writes)." },
+    links: { type: "`readonly string[]`",
+        what: "The `https:` URLs the user's click on a link of the app's opens, each in a new tab with no opener and no referrer: the app writes `<a href=\"…\">` with a listed URL, character for character, and the element opens its own copy. At most `MAX_LINKS` ({MAX_LINKS}) URLs, each equal to its own serialisation and without credentials; a list that breaks a rule makes `start()` throw a `TypeError` that names the rule, in every mode. Ignored with a warning in other modes. See [Links](#links)." },
 };

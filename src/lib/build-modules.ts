@@ -63,6 +63,7 @@ export const BUILD_MODULES = {
     'src/lib/lifecycle-transitions.ts': 'data',
     'src/lib/lifecycle.ts': 'sealed',
     'src/lib/limits.ts': 'data',
+    'src/lib/links.ts': 'sealed',
     'src/lib/load-kinds.ts': 'sealed',
     'src/lib/long-timer.ts': 'sealed',
     'src/lib/markup-references.ts': 'network',

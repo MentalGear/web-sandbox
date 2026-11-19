@@ -158,6 +158,8 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIOLATION', 'sourceFile', 'cutText(sourceFile, options.violationMaxString)'],
     ['VIOLATION', 'lineNumber', 'lineNumber'],
     ['VIOLATION', 'columnNumber', 'columnNumber'],
+    ['VIEW_LINK', 'type', "'VIEW_LINK'"],
+    ['VIEW_LINK', 'index', 'index'],
     ['VIEW_EVENT', 'type', "'VIEW_EVENT'"],
     ['VIEW_EVENT', 'details', 'details'],
     ['VIEW_FIRST_OVERRUN', 'type', "'VIEW_FIRST_OVERRUN'"],

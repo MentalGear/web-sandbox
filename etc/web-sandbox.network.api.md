@@ -21,6 +21,7 @@ export interface CooperativeSandboxConfig extends SandboxConfigOptions, NetworkS
     allowAnimations?: never;
     allowAutoplay?: never;
     entry?: never;
+    links?: never;
     mode: 'cooperative';
     unsafeCapabilities?: UnsafeCapability[];
     workerExecutionTimeout?: never;
@@ -140,6 +141,9 @@ export const LOG_MAX_STRING = 65536;
 export const MAX_INBOUND_IN_FLIGHT = 256;
 
 // @public
+export const MAX_LINKS = 32;
+
+// @public
 export interface NetworkModeEvents {
     fetch: CustomEvent<FetchRecord>;
 }
@@ -199,6 +203,7 @@ export interface SandboxConfigOptions {
     guestWrites?: boolean;
     hostContentSecurityPolicy?: string | false;
     html?: string;
+    links?: readonly string[];
     scriptUnsafe?: boolean;
     watchdogTimeout?: number;
     workerExecutionTimeout?: number;
@@ -374,6 +379,7 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions, NetworkSandbo
     autoResize?: never;
     entry?: never;
     html?: never;
+    links?: never;
     mode: 'worker';
     unsafeCapabilities?: UnsafeCapability[];
 }

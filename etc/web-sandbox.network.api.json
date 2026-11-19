@@ -430,6 +430,33 @@
             },
             {
               "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!CooperativeSandboxConfig#links:member",
+              "docComment": "/**\n * Strict and sealed mode only (the view marks the listed links): ignored with a warning at run time.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "links?: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "never"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "links",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            },
+            {
+              "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!CooperativeSandboxConfig#mode:member",
               "docComment": "/**\n * Names the mode.\n */\n",
               "excerptTokens": [
@@ -1402,6 +1429,33 @@
           }
         },
         {
+          "kind": "Variable",
+          "canonicalReference": "web-sandbox!MAX_LINKS:var",
+          "docComment": "/**\n * The most URLs `links` may list (design 02): an index of the list carries at most log₂(32) = 5 bits a click.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "MAX_LINKS = "
+            },
+            {
+              "kind": "Content",
+              "text": "32"
+            }
+          ],
+          "fileUrlPath": "dist/lib/links.d.ts",
+          "initializerTokenRange": {
+            "startIndex": 1,
+            "endIndex": 2
+          },
+          "isReadonly": true,
+          "releaseTag": "Public",
+          "name": "MAX_LINKS",
+          "variableTypeTokenRange": {
+            "startIndex": 0,
+            "endIndex": 0
+          }
+        },
+        {
           "kind": "Interface",
           "canonicalReference": "web-sandbox!NetworkModeEvents:interface",
           "docComment": "/**\n * The events the network modes add to the element's ({@link WebSandboxEventMap}): in a build that has them, the\n * element's event map holds these too.\n */\n",
@@ -2256,6 +2310,33 @@
               "isOptional": true,
               "releaseTag": "Public",
               "name": "html",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            },
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SandboxConfigOptions#links:member",
+              "docComment": "/**\n * Strict and sealed mode only: the URLs the user's click on a link of the app's opens, each in a new tab with no\n * opener and no referrer. The app writes an ordinary `<a href=\"…\">` whose `href` is one of them, character for\n * character; the element opens your own copy of the URL, so nothing of the guest's is part of what it opens.\n * Ignored with a warning in other modes.\n *\n * @remarks\n *\n * Each entry is a string of at most 2048 characters that parses as a URL, has the scheme `https:`, has no user name\n * or password, and is equal to its own serialisation (`new URL(entry).href === entry`), so that a URL has one\n * spelling; at most {@link MAX_LINKS} entries, no two equal. A list that breaks a rule makes `start()` throw a\n * `TypeError` whose message names the rule (the reason `linksRefused`), in every mode, and nothing of it is kept.\n *\n * The view marks an HTML `a` whose `href` is a listed URL, compared as strings with no parsing or normalising; an\n * `area`, an SVG `a` and a MathML element are never marked, and every other `href` stays inert. A marked link's\n * `href` in the view is the inert one too, so the status bar and \"copy link address\" do not show the URL (a listed\n * URL as the `href` would reach its site on a press, before any click: docs/research/33_link_href). The request is\n * the user's trusted `click` on a marked link or inside one, not on a form control inside it (Enter on a focused link\n * is such a click; a middle click is not): the view sends the link's index in the list, and the element calls\n * `window.open(url, '_blank', 'noopener,noreferrer')` in the task of that message, where the browser's popup blocker\n * allows it for the click. The guest's worker has nothing to call. The app chooses which listed URL each link carries\n * and how it looks, so each click carries a choice among the listed URLs to their sites, and its time\n * (docs/API.md#budgets). The element cannot see a tab the browser blocked: with `noopener`, `window.open` returns\n * `null` either way.\n *\n * @defaultValue none: no link opens\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "links?: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "readonly string[]"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "links",
               "propertyTypeTokenRange": {
                 "startIndex": 1,
                 "endIndex": 2
@@ -5593,6 +5674,33 @@
               "isOptional": true,
               "releaseTag": "Public",
               "name": "html",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            },
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!WorkerSandboxConfig#links:member",
+              "docComment": "/**\n * Strict and sealed mode only (the view marks the listed links): ignored with a warning at run time.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "links?: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "never"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "links",
               "propertyTypeTokenRange": {
                 "startIndex": 1,
                 "endIndex": 2

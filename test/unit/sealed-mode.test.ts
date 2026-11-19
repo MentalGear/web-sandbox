@@ -178,7 +178,7 @@ describe('T2: the schema: no network option reaches sealed mode', () => {
         const every = {
             mode: 'sealed', html: '<p>x</p>', capabilities: ['allow-scripts'], unsafeCapabilities: ['allow-popups'], scriptUnsafe: false,
             hostContentSecurityPolicy: "default-src 'self'", entry: 'main.js', watchdogTimeout: 10, workerExecutionTimeout: 10, autoResize: true,
-            callLimits: { maxPerSecond: 5 }, allowAnimations: true, allowAutoplay: true, guestWrites: true,
+            callLimits: { maxPerSecond: 5 }, allowAnimations: true, allowAutoplay: true, guestWrites: true, links: ['https://docs.example/guide'],
         };
         expect(Object.keys(every).sort()).toEqual(CONFIG_OPTIONS.filter(name => !(NETWORK_OPTIONS as readonly string[]).includes(name)).sort());
         for (const config of [{ mode: 'sealed' }, every]) {

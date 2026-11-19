@@ -113,7 +113,7 @@ describe('BD5:DOC-2: a reason never carries a value of the configuration', () =>
 
     it('every templated reason, filled by each producer from hostile input, holds none of it', () => {
         const templated = (Object.keys(TERMINATION_REASONS) as ReasonId[]).filter(id => TERMINATION_REASONS[id].text.includes('…'));
-        expect(templated.sort()).toEqual(['buildFailed', 'configRefused', 'unknownMode']);
+        expect(templated.sort()).toEqual(['buildFailed', 'configRefused', 'linksRefused', 'unknownMode']);
         for (const id of templated) {
             for (const value of HOSTILE) {
                 const details = [errorName({ name: value }), renamedModeNote(value), refusalDetail({ option: value })];

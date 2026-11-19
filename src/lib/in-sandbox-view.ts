@@ -787,6 +787,15 @@ export const RENDER_NETWORK_DROPPED = [['video', 'poster']] as const;
  */
 export const INERT_HREF = 'about:blank#';
 
+/**
+ * The HTML elements a click inside a marked link is for instead of the link (`links`; design 02, I6): each has an
+ * activation of its own (a form control, an option of one, a label that clicks its control, a summary that opens its
+ * details), so the view sends no request for a click on one of them or inside one, between the target and the link. Every
+ * other element a link holds is part of the link: a click on it is a click on the link. Only elements of RENDER_ELEMENTS
+ * (the renderer keeps no other); test/unit/view-links.test.ts clicks each of them inside a marked link.
+ */
+export const VIEW_LINK_CLICK_STOPS = ['input', 'button', 'select', 'option', 'optgroup', 'textarea', 'label', 'summary'] as const;
+
 /** The only rel tokens a kept <link> may have. */
 const LINK_RELATIONS = ['stylesheet', 'icon'] as const;
 
@@ -890,6 +899,16 @@ export interface RenderContext {
      * back.
      */
     controlName?: (guest: string | null) => string;
+    /**
+     * The embedder's `links` (INIT_VIEW; design 02, I6): an HTML `a` whose `href`, as the guest wrote it, is one of them
+     * character for character is marked. None given: no link is marked.
+     */
+    links?: readonly (string | null)[];
+    /**
+     * Filled by the renderer when given: each HTML `a` it marked, with the index of its `href` in `links`. The view keeps
+     * the marks of a render it applies (inSandboxView, `linkIndex`); the guest has no way to write one.
+     */
+    marked?: [link: Element, index: number][];
 }
 
 /**
@@ -960,7 +979,9 @@ export const RENDER_RULES: RenderRules = {
  *      stylesheet. An element named style, which the encoded markup never holds, goes with its content: no <style>
  *      element is ever kept;
  *   6. every href that makes a hyperlink becomes rules.inertHref (S24): HTML <a> and <area>, SVG <a> (href and
- *      xlink:href) and any MathML element;
+ *      xlink:href) and any MathML element; an HTML <a> whose href, as the guest wrote it, is one of context.links
+ *      character for character (a string comparison: nothing is parsed or normalised) is marked first, with its index
+ *      (context.marked; design 02, I6), and an <area>, an SVG <a> and a MathML element never are;
  *   7. every attribute outside rules.attributes goes; so does a URL attribute (rules.urls) whose URL `keeps` refuses
  *      (keepsUrl: only a URL the view minted, A8, BD7:ISO-1), unless it is an http(s) URL of an origin the view's policy
  *      admits for the load the element makes (context.origins; R4:M-2) where rules.networkDropped does not forbid one (a
@@ -1369,6 +1390,20 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         return local === markup.noframes ? 'noframes' : local;
     };
 
+    // An HTML <a> whose href is a URL of `links` (context.links; design 02, I6): marked with that URL's index. The href is
+    // read as the guest wrote it and looked up as a string, character for character, with no parsing or normalising, so
+    // "the same URL" has the one spelling the embedder listed (links.ts): one lookup per link, in a record without a
+    // prototype, whatever the list's length.
+    const listed = context.links || [];
+    const listedAt: Record<string, number> = Object.create(null);
+    for (let i = listed.length - 1; i >= 0; i--) if (typeof listed[i] === 'string') listedAt[listed[i]!] = i;
+    const markListed = (element: Element) => {
+        const href = get(element, 'href');
+        if (href === null || !context.marked) return;
+        const at = listedAt[href];
+        if (at !== undefined) context.marked[context.marked.length] = [element, at];
+    };
+
     const KEEP = 0, REMOVE = 1, UNWRAP = 2;
     const verdict = (namespace: unknown, name: string) => {
         if (namespace === HTML) {
@@ -1410,8 +1445,10 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             if (name === 'link' && (href === '' || !keeps(href))) return false; // a file it names, or no <link>
         }
         if ((html || namespace === SVG) && name === 'style') cleanSheet(element);
-        // a hyperlink keeps being a link, but its href is the constant, never the guest's URL (S24)
+        // a hyperlink keeps being a link, but its href is the constant, never the guest's URL (S24); an HTML <a> whose
+        // href is a listed URL is marked before (markListed)
         if ((html && (name === 'a' || name === 'area')) || (namespace === SVG && name === 'a') || namespace === MATHML) {
+            if (html && name === 'a') markListed(element);
             if (has(element, 'href')) set(element, 'href', rules.inertHref);
             if (namespace === SVG && call(E.hasAttributeNS, element, [XLINK, 'href'])) call(E.setAttributeNS, element, [XLINK, 'xlink:href', rules.inertHref]);
         }
@@ -1781,6 +1818,8 @@ export interface ViewOptions {
     namePrefixDigits: number;
     /** VIEW_VALUE_KINDS: the kind of each input type in the view's value model. */
     values: { readonly [Kind in keyof typeof VIEW_VALUE_KINDS]: readonly string[] };
+    /** VIEW_LINK_CLICK_STOPS: the elements a click inside a marked link is for instead of the link. */
+    linkStops: readonly string[];
 }
 
 /**
@@ -1922,11 +1961,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // (HTML and SVG <a>, <area>, anything with an href) and of every submit is cancelled. Fragment links are
     // no exception: the view inherits the wrapper's about:blank base, so "#x" names about:blank#x, a navigation.
     const XLINK = 'http://www.w3.org/1999/xlink';
+    const isLink = (element: Element) => {
+        const name = call(localNameOf, element, []);
+        return name === 'a' || name === 'area' || call(E.hasAttribute, element, ['href']) || call(E.hasAttributeNS, element, [XLINK, 'href']);
+    };
     const insideLink = (node: any) => {
-        for (let n = node; n && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
-            const name = call(localNameOf, n, []);
-            if (name === 'a' || name === 'area' || call(E.hasAttribute, n, ['href']) || call(E.hasAttributeNS, n, [XLINK, 'href'])) return true;
-        }
+        for (let n = node; n && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) if (isLink(n)) return true;
         return false;
     };
     const cancelLink = (event: Event) => {
@@ -1939,6 +1979,34 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     addEventListener('click', cancelLink, true);
     addEventListener('auxclick', cancelLink, true);
     addEventListener('submit', (event: Event) => event.preventDefault(), true);
+
+    // The click is the request (`links`; design 02, I6). The renderer marks an HTML <a> whose href was a listed URL, and
+    // the view keeps each mark here, by element, for the renders it applies (`apply`): no attribute holds it, so nothing
+    // the guest renders can forge one, and a later render of the same href is a new element with a mark of its own. On a
+    // trusted `click`, the user's (a pointer's, or Enter on a focused link: the platform's click, isTrusted, which no
+    // `click()` or dispatched event is), the nearest link of its target, up from the target, is the link clicked: when
+    // it is marked, and no element of options.linkStops (a form control, a label, a summary) comes first, the view sends
+    // the host page that link's index, and nothing else (VIEW_LINK). An `auxclick` (the middle button) sends nothing;
+    // the click's default is cancelled above all the same, so the view navigates nowhere. The guest's worker has no
+    // message that asks for a link.
+    const linkIndex = new WeakMap<Element, number>();
+    const requestedLink = (node: any): number => {
+        for (let n = node; n && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
+            if (call(namespaceOfElement, n, []) === 'http://www.w3.org/1999/xhtml' && options.linkStops.indexOf(call(localNameOf, n, [])) >= 0) return -1;
+            if (!isLink(n)) continue;
+            const index = linkIndex.get(n);
+            return index === undefined ? -1 : index;
+        }
+        return -1;
+    };
+    addEventListener('click', (event: Event) => {
+        if (!event.isTrusted) return;
+        let index = -1;
+        try {
+            index = requestedLink(event.target);
+        } catch {}
+        if (index >= 0) toHost({ type: 'VIEW_LINK', index });
+    }, true);
 
     // Events for the worker's sandboxView.on() handlers: only the types it subscribed to (VIEW_LISTEN), only
     // trusted ones (no guest code runs here, but the rule is stated, not assumed), capture-delegated on the
@@ -2657,6 +2725,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // The origins the view's policy admits per kind of load (INIT_VIEW, from `origins`; R4:M-2), as lists of
     // strings, and nothing until then: the renderer drops an http(s) URL outside them.
     let viewOrigins: Record<string, string[]> = Object.create(null);
+    // The embedder's `links` (INIT_VIEW; design 02, I6), its strings only, and none until then: the renderer marks an HTML
+    // <a> whose href is one of them (RenderContext.links).
+    // An entry that is not a string (which start() never stores) keeps its index and matches no href.
+    let viewLinks: (string | null)[] = [];
+    const linksOf = (given: unknown): (string | null)[] => {
+        const out: (string | null)[] = [];
+        if (!Array.isArray(given)) return out;
+        for (let i = 0; i < given.length; i++) out.push(typeof given[i] === 'string' ? given[i] : null);
+        return out;
+    };
     const originsOf = (given: unknown) => {
         const out: Record<string, string[]> = Object.create(null);
         if (!given || typeof given !== 'object') return out;
@@ -3077,6 +3155,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const context: RenderContext = { target: String(call(localNameOf, target, [])), animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0, loads: [], css: [], dropped: [], sheets: [] };
         if (input.markup) context.markup = input.markup;
         context.controlName = names.name;
+        context.links = viewLinks;
+        context.marked = [];
         const room = { elements: options.render.maxElements - (before.elements - ownElements), depth: options.render.maxDepth - depth, urls: options.render.maxUrls - (before.urls - ownUrls) };
         let kept = sanitize(template.content, fileOf, keepsMarkup, keptCss, options.render, switches, room, context);
         if (inStyle(target)) {
@@ -3088,6 +3168,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             context.loads.length = 0;
             context.css!.length = 0;
             context.sheets!.length = 0;
+            context.marked!.length = 0;
         }
         const fresh = newLoads(context.loads, template.content, context.sheets!, context.css!);
         // The characters the body would hold (R1:R1-1): its serialization outside the target, plus the cleaned fragment's
@@ -3099,6 +3180,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (!switches.animations) stillNamedIn(context.sheets!); // the still rules its stylesheets need, before they apply
         const css = cssLoadsOf(template.content, target, context.css!, context.sheets!); // before the move empties the fragment
         call(E.replaceChildren, target, [template.content]);
+        for (let i = 0; i < context.marked!.length; i++) linkIndex.set(context.marked![i]![0], context.marked![i]![1]);
         settle(target);
         sheetsAfter(target, context.sheets!);
         urlWork += context.urls;
@@ -3668,6 +3750,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         // host page's policy refused it, the guest's stylesheets go instead, and the check-in says so (the host warns).
         switches = { animations: data.allowAnimations === true, autoplay: data.allowAutoplay === true, stylesheets: true };
         viewOrigins = originsOf(data.origins);
+        viewLinks = linksOf(data.links);
         const stillRefused = !switches.animations && !stillStyleInForce();
         if (stillRefused) switches.stylesheets = false;
         viewPort.postMessage(stillRefused
@@ -4486,6 +4569,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     still: { pseudoElements: VIEW_STILL_PSEUDO_ELEMENTS, declarations: VIEW_STILL_DECLARATIONS },
     namePrefixDigits: VIEW_NAME_PREFIX_DIGITS,
     values: VIEW_VALUE_KINDS,
+    linkStops: VIEW_LINK_CLICK_STOPS,
 };
 
 // The bootstrap's text and its hash, with the bridge frame's part they were built for (the network modes', or none).

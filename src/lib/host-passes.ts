@@ -39,7 +39,7 @@ export const GUEST_CONTENT = {
     calls: "the guest's RPC frames: its requests and answers, with their values",
     lines: "the guest's log lines and uncaught errors",
     violations: "the violation reports of the guest's realm and of the view",
-    viewFrames: "the view's frames: its check-in, its notes, the content's height, the guest's error texts it relays",
+    viewFrames: "the view's frames: its check-in, its notes, the content's height, the guest's error texts it relays, a link's request",
     fetches: "strict mode's `sandboxFetch()` requests, and the responses the bridge's frame gets for them",
     announcement: "cooperative and worker mode: the guest frame's announcement and its port",
 } as const;
@@ -231,9 +231,9 @@ export const HOST_PASSES = {
         cost: 'linear in the report, whose strings VIOLATION_MAX_STRING caps',
     },
     viewFrames: {
-        does: "the view's frames: its check-in's numbers, the notes of what it dropped of the initial view (three constants, which decide the element's warning), the guest's error texts, cut again (viewErrorLine)",
+        does: "the view's frames: its check-in's numbers, the notes of what it dropped of the initial view (three constants, which decide the element's warning), the guest's error texts, cut again (viewErrorLine), and a link's request: its index, an integer within the element's own `links`, opens that list's URL (listedLink), never a string of the view's",
         takes: ['viewFrames'], modes: VIEW_MODES, rule: 'pure',
-        units: ['src/host.ts#this._onViewMessage', 'src/host.ts#this._warnAboutStrictHtml', 'src/host.ts#dropsScript', 'src/host.ts#viewErrorLine', 'src/host.ts#uncaughtLine'],
+        units: ['src/host.ts#this._onViewMessage', 'src/host.ts#this._warnAboutStrictHtml', 'src/host.ts#dropsScript', 'src/host.ts#viewErrorLine', 'src/host.ts#uncaughtLine', 'src/host.ts#this._openListedLink', 'src/lib/links.ts#listedLink'],
         cost: "constant, or linear in a text the view cut to guestText.maxLength",
     },
     fetchBridge: {

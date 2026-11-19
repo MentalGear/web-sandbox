@@ -35,6 +35,7 @@ import { defineData, hasOwnField, ownField, type Complete, type Holds } from './
 import { watchdogBudget } from './watchdog';
 import { fixedDetail, joinDetails, reasonText, type LibraryDetail } from './reasons';
 import { mintUncodedError } from './minted-errors';
+import { LINK_RULES, NO_LINKS, readLinks } from './links';
 
 /** The per-second budget of the calls the guest makes, per environment: what both ends count. */
 export interface CallBudget {
@@ -277,6 +278,8 @@ export interface StoredConfig {
     watchdogTimeout: number;
     autoResize: boolean;
     guestWrites: boolean;
+    /** The URLs a click on a marked link opens (links.ts), in the embedder's order: none where the mode has no view. */
+    links: readonly string[];
     allowAnimations: boolean;
     allowAutoplay: boolean;
     /** The host page's policy as the embedder gave it, `false` (the page sends none), or absent: the connect lists are dropped (host-connect.ts, hostReach). */
@@ -402,6 +405,13 @@ const delay = (name: 'watchdogTimeout' | 'workerExecutionTimeout', off: string) 
     return ms;
 };
 
+/** `links` read by its rules (links.ts): the list, or a refusal of the config that names the rule it breaks. */
+const linksOf = (given: unknown): readonly string[] => {
+    const read = readLinks(given);
+    if ('refused' in read) throw mintUncodedError(ConfigRefusal, reasonText('linksRefused', fixedDetail(LINK_RULES[read.refused])));
+    return read.links;
+};
+
 /** One of the view's switches (strict mode): its default when left out, the boolean it is, else false with a warning. */
 const viewSwitch = (name: ViewSwitch) => ({ given, mode, invalid }: OptionInput): boolean => {
     if (given === undefined) return VIEW_SWITCHES[name];
@@ -522,6 +532,14 @@ export const CONFIG_SCHEMA = {
     workerExecutionTimeout: { owner: 'embedder', default: 0, documented: '`0` (off)', modes: ['strict', 'worker'], ignoredIn: (mode) => mode === 'cooperative' || mode === 'sealed', read: delay('workerExecutionTimeout', 'no execute() deadline applies') },
     watchdogTimeout: { owner: 'embedder', default: 0, documented: '`0` (off)', modes: ALL_MODES, read: delay('watchdogTimeout', 'no watchdog runs') },
     guestWrites: { owner: 'embedder', default: false, documented: '`false`', modes: ALL_MODES, read: literalTrue('guestWrites') },
+    // the view marks a link whose href is one of them, and the user's click on it opens the listed URL (design 02, I6;
+    // links.ts): a list that breaks a rule refuses the config in every mode, before anything of it is stored
+    links: {
+        owner: 'embedder',
+        default: NO_LINKS, documented: '`[]` (no link opens)', modes: STRICT_VIEW_MODES, ignoredIn: noStrictView,
+        read: ({ given }) => linksOf(given),
+        ignoredWarning: ({ given }) => (given !== undefined ? '[Sandbox] "links" is used only in strict and sealed mode and was ignored: no link opens.' : null),
+    },
 } satisfies Record<string, OptionRule>;
 
 export type OptionName = keyof typeof CONFIG_SCHEMA;
@@ -682,11 +700,11 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
         name: 'the stored config holds only the schema\'s options, own data on plain prototypes (no assigned or inherited key)',
         holds: ({ config }) => plainData(config, Object.prototype)
             && Object.keys(config).every(key => (CONFIG_OPTIONS as readonly string[]).includes(key) && !PARSED_APART.includes(key as OptionName))
-            && [config.capabilities, config.unsafeCapabilities].every(list => Array.isArray(list) && plainData(list, Array.prototype)),
+            && [config.capabilities, config.unsafeCapabilities, config.links].every(list => Array.isArray(list) && plainData(list, Array.prototype)),
     },
     {
-        name: 'every stored option has its type: switches are booleans, html a string, entry a string or nothing, hostContentSecurityPolicy a string, false or nothing, delays 0 or a finite number > 0',
-        holds: ({ config }) => [config.scriptUnsafe, config.autoResize, config.guestWrites, config.allowAnimations, config.allowAutoplay].every(value => typeof value === 'boolean')
+        name: 'every stored option has its type: switches are booleans, html a string, entry a string or nothing, hostContentSecurityPolicy a string, false or nothing, delays 0 or a finite number > 0, links a list of strings',
+        holds: ({ config }) => config.links.every(link => typeof link === 'string') && [config.scriptUnsafe, config.autoResize, config.guestWrites, config.allowAnimations, config.allowAutoplay].every(value => typeof value === 'boolean')
             && typeof config.html === 'string' && (config.entry === undefined || typeof config.entry === 'string')
             && isDelay(config.watchdogTimeout) && isDelay(config.workerExecutionTimeout)
             && (config.hostContentSecurityPolicy === undefined || config.hostContentSecurityPolicy === false || typeof config.hostContentSecurityPolicy === 'string'),
@@ -697,7 +715,7 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
             && config.unsafeCapabilities.every(capability => (UNSAFE_CAPABILITIES as readonly string[]).includes(capability)),
     },
     {
-        name: 'an option outside its modes holds its default (entry, allowAnimations, allowAutoplay outside strict and sealed; unsafeCapabilities in strict and sealed; html and autoResize in worker; workerExecutionTimeout in cooperative and sealed)',
+        name: 'an option outside its modes holds its default (entry, allowAnimations, allowAutoplay, links outside strict and sealed; unsafeCapabilities in strict and sealed; html and autoResize in worker; workerExecutionTimeout in cooperative and sealed)',
         holds: ({ config }) => CONFIG_OPTIONS.every(name => PARSED_APART.includes(name) || !ignoredIn(name, config.mode) || sameValue((config as unknown as Record<string, unknown>)[name], RULES[name].default)),
     },
     {

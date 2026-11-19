@@ -16,6 +16,7 @@ import { VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDE
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
 import { NETWORK_MODES_FLAG } from './build-flag';
+import { MAX_LINK_LENGTH } from './links';
 
 export interface ReasonRow {
     /** The reason, with `…` where it varies. */
@@ -56,6 +57,8 @@ export const TERMINATION_REASONS = {
     sealedNetwork: { text: "origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'`", decidedBy: 'start' },
     sealedScriptUnsafe: { text: `scriptUnsafe runs strings as code, which sealed mode (the default) does not: set \`mode: 'strict'\`, in a build with the network modes (${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on})`, decidedBy: 'start' },
     htmlTooLong: { text: `html is longer than ${VIEW_RENDER_MAX_LENGTH} characters, the most the view renders at once: render the rest from the entry`, decidedBy: 'start' },
+    // `links` (links.ts): the rule a list breaks, in the library's words (LINK_RULES), never the URL
+    linksRefused: { text: 'links is refused: …', decidedBy: 'start' },
     configRefused: { text: 'the configuration could not be used (…)', decidedBy: 'start' },
     buildFailed: { text: 'the environment could not be built (…)', decidedBy: 'host' },
     executionTimeout: { text: 'the executed code ran longer than workerExecutionTimeout', decidedBy: 'host' },
@@ -89,6 +92,7 @@ export const reasonCauses = () => ({
     sealedNetwork: "In a build with the network modes: `mode` is `'sealed'` or left out (sealed mode is the default), and the grants name `origins` or `fetchBridge` (with any value but `undefined`).",
     sealedScriptUnsafe: "`mode` is `'sealed'` or left out, and `scriptUnsafe` is `true`. A string run as code is checked against the host page's policy, which the guest's worker inherits, and a refusal reports the page's policy text to the guest and the string to the page's report endpoint; sealed mode runs none, and strict mode, which runs them, is one of the network modes ([Builds](#builds)).",
     htmlTooLong: `Strict and sealed mode: the app's \`html\` is longer than \`VIEW_RENDER_MAX_LENGTH\` (${VIEW_RENDER_MAX_LENGTH}) characters, the most one render takes (the initial view is one). It is refused before anything reads it. Render the rest from the entry, in renders of that size.`,
+    linksRefused: `The grant \`links\` breaks one of its rules, which the reason names after the colon: a list, of at most \`MAX_LINKS\` entries, each a string of at most ${MAX_LINK_LENGTH} characters that parses as a URL, has the scheme \`https:\`, has no user name or password and is equal to its own serialisation (\`new URL(entry).href\`), no two equal. Nothing of the list is kept.`,
     configRefused: "An option's rule failed on its value with an error that is not one of start()'s own refusals (each of which says the option and what it takes); the error's name follows, as in `(RangeError)`.",
     buildFailed: 'Building the frame failed.',
     executionTimeout: "The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline.",

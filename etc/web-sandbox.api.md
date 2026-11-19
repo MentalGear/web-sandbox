@@ -83,6 +83,9 @@ export const LOG_MAX_STRING = 65536;
 export const MAX_INBOUND_IN_FLIGHT = 256;
 
 // @public
+export const MAX_LINKS = 32;
+
+// @public
 export interface RpcError extends Error {
     code: RpcErrorCode;
 }
@@ -123,6 +126,7 @@ export interface SandboxConfigOptions {
     guestWrites?: boolean;
     hostContentSecurityPolicy?: string | false;
     html?: string;
+    links?: readonly string[];
     scriptUnsafe?: boolean;
     watchdogTimeout?: number;
     workerExecutionTimeout?: number;

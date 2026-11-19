@@ -429,6 +429,14 @@ export const ENGINE_DIFFERENCES = {
         why: "A tooling limit; the spec records it as an annotation where it applies",
         tests: [`${E2E}fetch-bridge-isolation.spec.ts`],
     },
+    'popup-blocker': {
+        what: "Whether a spec can switch the browser's popup blocker on (the suite, not the library)",
+        chromium: "On in the full build (`channel: 'chromium'`) launched without Playwright's `--disable-popup-blocking`; the headless shell, Playwright's default, has none",
+        firefox: "On with `dom.disable_open_during_load` (Playwright's preferences switch it off)",
+        webkit: "Playwright's builds have none: a `window.open` with no gesture opens a tab (research 30)",
+        why: "A tooling limit. The spec of `links` with the blocker on launches Chromium and Firefox with it and skips WebKit; test/e2e/links.spec.ts holds on all three engines that the host page calls `window.open` only for the user's click on a marked link. Safari's blocker is not measured",
+        tests: [`${E2E}links-popup-blocker.spec.ts`],
+    },
 } as const satisfies Record<string, EngineDifference>;
 
 export type EngineDifferenceId = keyof typeof ENGINE_DIFFERENCES;

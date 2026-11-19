@@ -90,7 +90,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:bfeab45f42cb49d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:bfeaa00142cb49d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
@@ -98,13 +98,15 @@ there (sealed mode's has no `fetch`, `XMLHttpRequest` or `WebSocket` at all; str
 keeps loads without credentials: [API.md](docs/API.md#the-views-loads)), moves it into its document, applies the guest's styles through the CSSOM (never as an inline style, which the host page's policy would check: [API.md](docs/API.md#guest-styles)), names the guest's form controls itself and forwards a control's value only as the user entered it, so the browser's autofill reaches no guest ([API.md](docs/API.md#forms-and-the-browsers-autofill)), and enforces the view's budgets. They talk on the render port, which the host is not on, so the host's own code never
 carries a render (the view's work still runs on the host page's thread where the browser places the view there, and is
 bounded: [API.md](docs/API.md#the-views-cost-to-the-host-page)). The host talks to each on a port of its own, and watches the view for liveness always and
-the worker's with `watchdogTimeout`. The guest can therefore draw but not script, and a flood of drawing is bounded where
+the worker's with `watchdogTimeout`. The view's port also carries the user's click on a link the embedder listed
+(`links`): the link's index, which the host turns into its own copy of the URL and opens in a new tab
+([API.md](docs/API.md#links)). The guest can therefore draw but not script, and a flood of drawing is bounded where
 it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render path,
 [ADR-002](docs/ADR-002-host-guest-broker.md).
 
 ## Sealed mode: strict mode with no network
 
-<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818ebf36e1937e47 -->
+<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e77ebe1932960 -->
 
 Sealed mode, the default (no `mode`, or `mode: 'sealed'`), is strict mode's view and worker with no network
 ([research 24](docs/research/24_sealed_mode/README.md), [ADR-008](docs/ADR-008-sealed-mode.md)). It is not strict mode
@@ -140,6 +142,11 @@ with its network options left empty: the sealed path never reaches the code that
   names of the view's and `autocomplete="off"`, and it forwards a control's value only as the user entered it, so no store
   of the browser's autofill reaches the guest from a field the user is not in
   ([API.md](docs/API.md#forms-and-the-browsers-autofill)).
+- **Links.** The one way out of sealed mode that is not the embedder's own code is a grant of the embedder's:
+  `links` (`src/lib/links.ts`). The view marks an HTML `a` whose `href` is a listed URL, character for character, keeps
+  every `href` inert, and on the user's trusted click on a marked link sends the host page the link's index; the host
+  page opens its own copy of that URL in a new tab, with no opener and no referrer. Nothing of the guest's is part of
+  the URL, and the guest's worker has nothing to call.
 - **The host page.** The one value of the page's a sealed build reads is `crossOriginIsolated`, only to refuse (as in
   every mode); `hostContentSecurityPolicy` serves only Trusted Types where the browser has none. Which inherited channels
   remain in sealed mode is the sealed column of the [host page's context](docs/THREAT-MODEL.md#the-host-pages-context),
@@ -162,7 +169,7 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 
 ## Two builds: the network modes behind a flag
 
-<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eae583a8ed4 -->
+<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eae00ee8ed4 -->
 
 The package is built two ways, chosen by one flag that is off by default ([ADR-009](docs/ADR-009-network-modes-build-flag.md);
 `NETWORK_MODES_FLAG`, `src/lib/build-flag.ts`):
@@ -170,8 +177,8 @@ The package is built two ways, chosen by one flag that is off by default ([ADR-0
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 48 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 66 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 49 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 67 modules of `src/` |
 <!-- generated:end -->
 
 - **Two entries.** `src/index.ts` is the default build's and `src/network.ts` the network build's; both export
@@ -212,7 +219,7 @@ Each test runs against its build: a unit test of a network mode imports `@src/ne
 
 ## Channels and frames
 
-<!-- describes: channels, frames sig:37948eea -->
+<!-- describes: channels, frames sig:1bdcaade -->
 
 Realms talk on channels, and every message on them is a frame of a declared type. A frame is declared once, with the
 channels it may cross, the realms at its ends, and for each field what bounds it. What a frame carries out of a guest
@@ -234,7 +241,7 @@ How a field is bounded:
 | :--- | :--- | :--- | :--- | :--- |
 | `announcement` | window message | `host`, `cooperative`, `worker-frame`, `view`, `bridge-frame` | A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), and any bootstrap's refusal of an environment other than the one built. | 2 |
 | `logic-port` | MessagePort | `host`, `cooperative`, `worker`, `strict-worker` | The host and the guest: calls both ways, execute(), liveness, and the guest bootstrap's lines and reports. | 9 |
-| `view-port` | MessagePort | `host`, `view` | Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness. | 16 |
+| `view-port` | MessagePort | `host`, `view` | Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness, and the user's click on a listed link. | 17 |
 | `render-port` | MessagePort | `view`, `strict-worker` | Strict mode: the view and the guest's worker; the host is not on this path. | 8 |
 | `view-init` | window message | `host`, `view` | Strict mode: the host hands the view its two ports, once per build. | 1 |
 | `worker` | worker message | `worker-frame`, `worker`, `view`, `strict-worker` | A frame and the worker it spawned: the worker gets its ports, and worker mode's worker says it started. | 3 |
@@ -249,7 +256,7 @@ How a field is bounded:
 | `ENVIRONMENT_REFUSED` | `announcement`: cooperative, worker-frame, view, bridge-frame → host | `refused` (constant) | A bootstrap found its document other than the one the library built (environment-check.ts) and stayed inert: the sandbox ends with the reason of the check that failed. No port. |
 | `INIT_PORT` | `worker`: worker-frame → worker | — | Worker mode's frame hands its worker the logic port. |
 | `WORKER_STARTED` | `worker`: worker → worker-frame | — | Worker mode's worker attached its port: the frame may announce it. |
-| `INIT_VIEW` | `view-init`: host → view | `workerSource` (host), `entryDone` (host), `viewFiles` (host), `html` (host), `autoResize` (host), `allowAnimations` (host), `allowAutoplay` (host), `origins` (host) | The host hands the view the logic and view ports, at the wrapper's load, with what the build shows. |
+| `INIT_VIEW` | `view-init`: host → view | `workerSource` (host), `entryDone` (host), `viewFiles` (host), `html` (host), `autoResize` (host), `allowAnimations` (host), `allowAutoplay` (host), `origins` (host), `links` (host) | The host hands the view the logic and view ports, at the wrapper's load, with what the build shows. |
 | `INIT_WORKER` | `worker`: view → strict-worker | — | The view hands the guest's worker the logic port and the render port. |
 | `EXECUTE` | `logic-port`: host → cooperative, worker, strict-worker | `code` (host) | execute(): code for the guest to run. |
 | `PING` | `logic-port`: host → cooperative, worker, strict-worker | `n` (not a string) | A liveness probe of the host's: the watchdog's (n > 0) or workerExecutionTimeout's (n < 0). |
@@ -262,6 +269,7 @@ How a field is bounded:
 | `UNCAUGHT_PAST_BUDGET` | `logic-port`: worker, strict-worker → host<br>`view-port`: view → host | — | The guest raised more uncaught errors and rejections in a second than their budget: the sandbox ends. |
 | `VIEW_READY` | `view-port`: view → host | `width` (not a string), `height` (not a string), `stillStyleRefused` (not a string) | The view's check-in, its first frame: the strict build is ready. |
 | `VIEW_INITIAL` | `view-port`: view → host | `dropped` (constant) | What the initial view (the configuration's `html`) dropped that the author may not expect: the element warns once from it, and reads no markup itself (BD7:LIM-1). Posted once a build, after the initial render, when it dropped something. |
+| `VIEW_LINK` | `view-port`: view → host | `index` (not a string) | The user's trusted click on a link the view marked (`links`; design 02, I6): the request for that listed URL, which the host opens in a new tab in the task of this frame. The guest's worker has nothing to send it with. |
 | `VIEW_PING` | `view-port`: host → view | `n` (not a string) | The view's liveness probe (VIEW_LIVENESS_TIMEOUT_MS). |
 | `VIEW_PONG` | `view-port`: view → host | `n` (not a string) | The view's answer to a VIEW_PING. |
 | `VIEW_WRITE` | `view-port`: host → view | `id` (host), `path` (host), `mime` (host), `bytes` (host) | A guest write the host recorded, for the view to show (a raster image gets a URL of its own there). |
@@ -389,14 +397,16 @@ stateDiagram-v2
 
 ## Budgets
 
-<!-- describes: budgets:channels sig:7e47 -->
+<!-- describes: budgets:channels sig:2960 -->
 
 Everything the guest can make the host page, the view or the network do goes through a **channel**, and every channel has
 a bound in count, bytes and time. The surfaces a guest can reach are listed once (the egress table), each with how it is
 handled and the modes that have it (sealed mode has every surface of strict mode's but the bridge frame's); the bounds
 are listed once per channel (`CHANNEL_BUDGETS`), each naming the constants behind it in the limits registry, and what it
 reaches of the network in sealed mode, which is nothing from the guest's worker (the view's loads that the host page's
-own policy refuses are reported to the page's endpoint: the CSP channel's row); a test fails on a surface that relays, budgets or caps and
+own policy refuses are reported to the page's endpoint: the CSP channel's row), and from the view only the URLs the
+embedder lists in `links`, each opened by the host page on the user's click on a marked link (a choice among them, and
+its time); a test fails on a surface that relays, budgets or caps and
 belongs to no channel. A bound that depends on the
 platform (the view shares the host page's thread on Firefox, WebKit and Android) is stated as a bound, with the embedder's
 way out: `terminate()`, or removing the element. One gap is open (owner, 2026-10-21: backlogged, not
@@ -455,6 +465,7 @@ the docs read) and the role its header comment gives.
 | `src/lib/lifecycle-transitions.ts` | none (a registry) | The transitions the lifecycle reducer can make |
 | `src/lib/lifecycle.ts` | every build | The lifecycle of `<web-sandbox>` as one pure reducer, and the executor that applies its effects |
 | `src/lib/limits.ts` | none (a registry) | The limits registry: every numeric bound the docs state, once, with its value, what it bounds and where it is enforced |
+| `src/lib/links.ts` | every build | `links`, the embedder's list of URLs a click opens (design 02, "links |
 | `src/lib/load-kinds.ts` | every build | Which file types each kind of load admits: the one table that both the policy and reference resolution read |
 | `src/lib/long-timer.ts` | every build | The one timer for a delay that a config or a caller chooses |
 | `src/lib/markup-references.ts` | network | Markup references to registered files |

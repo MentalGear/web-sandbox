@@ -15,6 +15,7 @@ import { LOAD_KINDS } from "./lib/load-kinds";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
 import { crossingText, mintError, mintUncodedError } from "./lib/minted-errors";
 import { createBroker, type BudgetRefusal } from "./lib/rpc";
+import { LINK_WINDOW_FEATURES, listedLink } from "./lib/links";
 import { createSizeOf } from "./lib/structured-size";
 import { keepOnlyWorkerGlobals, removeSecureContextOnly, SEALED_WORKER_GLOBALS, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from "./lib/worker-globals";
 import { dynamicImportAt } from "./lib/entry-imports";
@@ -461,6 +462,33 @@ export interface SandboxConfigOptions {
      * @defaultValue `false`
      */
     guestWrites?: boolean;
+    /**
+     * Strict and sealed mode only: the URLs the user's click on a link of the app's opens, each in a new tab with no
+     * opener and no referrer. The app writes an ordinary `<a href="…">` whose `href` is one of them, character for
+     * character; the element opens your own copy of the URL, so nothing of the guest's is part of what it opens.
+     * Ignored with a warning in other modes.
+     *
+     * @remarks
+     * Each entry is a string of at most 2048 characters that parses as a URL, has the scheme `https:`, has no user name
+     * or password, and is equal to its own serialisation (`new URL(entry).href === entry`), so that a URL has one
+     * spelling; at most {@link MAX_LINKS} entries, no two equal. A list that breaks a rule makes `start()` throw a
+     * `TypeError` whose message names the rule (the reason `linksRefused`), in every mode, and nothing of it is kept.
+     *
+     * The view marks an HTML `a` whose `href` is a listed URL, compared as strings with no parsing or normalising; an
+     * `area`, an SVG `a` and a MathML element are never marked, and every other `href` stays inert. A marked link's
+     * `href` in the view is the inert one too, so the status bar and "copy link address" do not show the URL (a listed
+     * URL as the `href` would reach its site on a press, before any click: docs/research/33_link_href). The request is
+     * the user's trusted `click` on a marked link or inside one, not on a form control inside it (Enter on a focused link
+     * is such a click; a middle click is not): the view sends the link's index in the list, and the element calls
+     * `window.open(url, '_blank', 'noopener,noreferrer')` in the task of that message, where the browser's popup blocker
+     * allows it for the click. The guest's worker has nothing to call. The app chooses which listed URL each link carries
+     * and how it looks, so each click carries a choice among the listed URLs to their sites, and its time
+     * (docs/API.md#budgets). The element cannot see a tab the browser blocked: with `noopener`, `window.open` returns
+     * `null` either way.
+     *
+     * @defaultValue none: no link opens
+     */
+    links?: readonly string[];
     /**
      * The per-second budget of the calls the guest makes, per environment and in every mode. A call past it is refused
      * with `BUSY` by the guest's `bridge` before sending, and by the element if it arrives anyway. A field left out takes
@@ -1327,6 +1355,10 @@ export class WebSandbox extends ElementBase {
             step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true });
             return;
         }
+        if (data?.type === 'VIEW_LINK') {
+            this._openListedLink(data.index);
+            return;
+        }
         if (data?.type === 'VIEW_INITIAL') {
             this._warnAboutStrictHtml(data.dropped); // what the initial view dropped: its scripts and handlers, once per element
             return;
@@ -1413,6 +1445,20 @@ export class WebSandbox extends ElementBase {
             const line = viewErrorLine(data.message);
             step(this, { t: 'terminate', reason: reasonText('entryFailed'), gen, notices: [hostNotice(hostLine('entryFailed')), { level: 'error', text: line, source: 'guest' }] });
         }
+    }
+
+    /**
+     * The view's request for a listed link (VIEW_LINK; design 02, I6): the user's trusted click on a link the view marked.
+     * Only the view posts on its port, and only the current environment's port reaches here (_onViewMessage). The index
+     * is checked against this element's own list (listedLink: an integer within it, else nothing opens), and the URL
+     * opened is that list's string, in the task of this message, so the browser's popup blocker still sees the click: no
+     * text of the guest's is part of it. `noopener` and `noreferrer` give the tab no handle on this page and no referrer;
+     * `window.open` then answers null whether or not the browser opened the tab.
+     */
+    private _openListedLink(index: unknown) {
+        const url = listedLink(this._config.links, index);
+        if (url === null) return;
+        window.open(url, '_blank', LINK_WINDOW_FEATURES);
     }
 
     // The view's height against the frame's (R1:R3-1): a view 150 px high in a taller frame means the host page's style-src
@@ -1799,6 +1845,7 @@ export class WebSandbox extends ElementBase {
             autoResize: this._autoResizeEnabled(),
             allowAnimations: this._config.allowAnimations === true,
             allowAutoplay: this._config.allowAutoplay === true,
+            links: [...this._config.links],
         };
         if (network) strictInit.origins = { images: [...network.origins.images], media: [...network.origins.media] };
         const view = buildViewDocument(policy, viewBootstrapText());

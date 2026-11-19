@@ -273,7 +273,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'documented'],
         engines: ALL,
         tests: ['test/e2e/guest-realm-hardening.spec.ts', 'test/e2e/strict.spec.ts'],
-        sealed: { standing: 'not-applicable', because: 'no-guest-document', note: "cooperative and worker mode only; the view's focus rule (`set({ focus })`) stays" },
+        sealed: { standing: 'not-applicable', because: 'no-guest-document', note: "cooperative and worker mode only; the view's focus rule (`set({ focus })`) stays, and `links`: the user's click on a link the view marked has the host page open a URL the embedder lists in a new tab, with no opener and no referrer (design 02, I6)" },
     },
     autofill: {
         channel: "The browser's autofill stores, which are the user's and not the host page's alone: the history of what the user typed into fields on any site (keyed by a field's name, or its id when it has none), saved addresses and payment cards, saved logins; and what a password manager's extension fills from script (docs/research/29_autofill)",

@@ -20,7 +20,7 @@ export interface ChannelRow {
 export const CHANNELS = {
     'announcement': { kind: 'window message', summary: "A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), and any bootstrap's refusal of an environment other than the one built." },
     'logic-port': { kind: 'MessagePort', summary: 'The host and the guest: calls both ways, execute(), liveness, and the guest bootstrap\'s lines and reports.' },
-    'view-port': { kind: 'MessagePort', summary: "Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness." },
+    'view-port': { kind: 'MessagePort', summary: "Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness, and the user's click on a listed link." },
     'render-port': { kind: 'MessagePort', summary: "Strict mode: the view and the guest's worker; the host is not on this path." },
     'view-init': { kind: 'window message', summary: 'Strict mode: the host hands the view its two ports, once per build.' },
     'worker': { kind: 'worker message', summary: 'A frame and the worker it spawned: the worker gets its ports, and worker mode\'s worker says it started.' },
@@ -100,6 +100,7 @@ export const FRAMES = {
             allowAnimations: { bound: 'host', how: "the embedder's switch" },
             allowAutoplay: { bound: 'host', how: "the embedder's switch" },
             origins: { bound: 'host', how: "the policy's image and media origins" },
+            links: { bound: 'host', how: "the embedder's `links`, as start() checked them (links.ts): the URLs the renderer marks a link for" },
         },
     },
     INIT_WORKER: {
@@ -189,6 +190,11 @@ export const FRAMES = {
         purpose: "What the initial view (the configuration's `html`) dropped that the author may not expect: the element warns once from it, and reads no markup itself (BD7:LIM-1). Posted once a build, after the initial render, when it dropped something.",
         routes: [{ channel: 'view-port', from: ['view'], to: ['host'] }],
         fields: { dropped: { bound: 'constant', how: "at most 'script', 'handler' and 'reference' (RenderContext.dropped), once each" } },
+    },
+    VIEW_LINK: {
+        purpose: "The user's trusted click on a link the view marked (`links`; design 02, I6): the request for that listed URL, which the host opens in a new tab in the task of this frame. The guest's worker has nothing to send it with.",
+        routes: [{ channel: 'view-port', from: ['view'], to: ['host'] }],
+        fields: { index: { bound: 'not a string', how: "the link's index in the list INIT_VIEW gave, from the view's own marks; the host opens nothing unless it is an integer within the element's own list (listedLink)" } },
     },
     VIEW_PING: {
         purpose: "The view's liveness probe (VIEW_LIVENESS_TIMEOUT_MS).",

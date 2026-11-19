@@ -30,6 +30,9 @@ export interface StrictInit {
     autoResize: boolean;
     allowAnimations: boolean;
     allowAutoplay: boolean;
+    // `links`, the embedder's list (links.ts): the view marks an HTML `a` whose href is one of them, and sends the index of
+    // the one the user clicks (VIEW_LINK). The host opens its own copy, never the view's.
+    links: string[];
     // The origins the view's policy admits for the loads its markup makes, by kind key (R4:M-2): the
     // renderer drops an http(s) URL outside them, so the browser never processes a refusal. Sealed mode has no
     // origins, so its INIT_VIEW has no such field: the renderer then admits no http(s) URL at all.

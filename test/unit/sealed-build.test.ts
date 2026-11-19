@@ -403,7 +403,7 @@ describe('T5: the call graph of the sealed build path reaches no network code', 
 
 // ---- T6: the egress table's sealed column
 
-describe("T6: the egress table's sealed column: every surface of sealed mode is strict mode's but the bridge's, and no channel reaches the network", () => {
+describe("T6: the egress table's sealed column: every surface of sealed mode is strict mode's but the bridge's, and no channel reaches the network but the embedder's links", () => {
     it('the sealed column is the strict column without the bridge frame: every row that lists sealed is strict\'s, and no bridge-frame row lists it', () => {
         const key = (row: (typeof EGRESS)[number]) => `${row.realm}|${row.surface}|${row.owner}`;
         const sealed = EGRESS.filter(row => row.modes.includes('sealed')).map(key).sort();
@@ -424,9 +424,12 @@ describe("T6: the egress table's sealed column: every surface of sealed mode is 
         expect(strict.shadowRoot.querySelectorAll('iframe')).toHaveLength(2);
     });
 
-    it("every channel says what it reaches of the network in sealed mode, none, and the build bears out the two that could: the view's loads and sandboxFetch()", async () => {
-        for (const row of CHANNEL_BUDGETS) expect(row.sealed, row.channel).toMatch(/^(none\b|not a channel of sealed mode$)/);
+    it("every channel says what it reaches of the network in sealed mode, none but the embedder's links, and the build bears out the two that could: the view's loads and sandboxFetch()", async () => {
+        for (const row of CHANNEL_BUDGETS) expect(row.sealed, row.channel).toMatch(/^(none\b|only\b|not a channel of sealed mode$)/);
         const channel = (start: string) => CHANNEL_BUDGETS.find(row => row.channel.startsWith(start))!;
+        // the one channel that reaches beyond the host page is the embedder's own grant, the URLs of `links` (design 02, I6)
+        expect(CHANNEL_BUDGETS.filter(row => row.sealed.startsWith('only')).map(row => row.channel)).toEqual([channel('Strict and sealed: the user\'s click on a link the view marked').channel]);
+        expect(channel('Strict and sealed: the user\'s click on a link the view marked').sealed).toContain('only the URLs the embedder lists in `links`');
         expect(channel('`sandboxFetch()`').sealed).toContain('rejects in the guest');
         expect(channel("Strict: the view's loads").sealed).toContain('`blob:`');
         // the view's loads: no network source in the sealed view's policy; strict mode's lists its origins (positive control)
