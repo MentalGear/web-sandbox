@@ -207,9 +207,10 @@ export class RealisticHost {
         if (options.guestCode !== 'execute' && options.ttDefault !== false) query.set('tt-default', '1');
         await page.goto(`${options.origin ?? ORIGIN}${REALISTIC_HOST_PATH}/page?${query}`);
         await page.waitForFunction(() => (window as any).harnessReady === true);
-        // the element's first build (no script to run) has finished: its 'ready' is not a later build's (a host policy can end it
-        // already: a Trusted Types list that does not name the library's policy)
-        await page.waitForFunction(() => ['ready', 'terminated'].includes((document.querySelector('web-sandbox') as any).state));
+        // the element's first build (no script to run) has finished, or it has none (the default build's element has no app
+        // and stays idle): its 'ready' is not a later build's (a host policy can end the network build's already: a
+        // Trusted Types list that does not name the library's policy)
+        await page.waitForFunction(() => ['idle', 'ready', 'terminated'].includes((document.querySelector('web-sandbox') as any).state));
         // The host site's cookies. An engine that refuses a `Secure` cookie on an http page (WebKit) is given it by the
         // context instead: the page is a test server's, a production page is https.
         if (options.cookies !== false) {

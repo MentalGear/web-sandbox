@@ -781,12 +781,15 @@ The browser calls these when the element is inserted, removed or moved; you do n
 
 ## Events
 
-<!-- describes: events, api:WebSandboxEventMap, api:NetworkModeEvents sig:b3e52b64585b -->
+<!-- describes: events, api:WebSandboxEventMap, api:NetworkModeEvents sig:6cd62b64585b -->
 <!-- generated:begin api-events -->
 The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.
 
-Every event is a `CustomEvent` dispatched on the element and none is `composed`. The bubbling ones reach a listener on
-`window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and
+Every event is a `CustomEvent` dispatched on the element and none is `composed`. Listen on the element itself: the
+events whose detail carries the guest's data (`sandbox-log`, `violation`, `fileswritten`, `fileschanged`) do not
+bubble, so a bubbling listener on a shared ancestor or on `window` hears no app's data, nor does any other event but
+the network build's `fetch`. A listener added for the capture phase on an ancestor still receives each of them: the
+capture phase runs down the whole path whatever `bubbles` says. The `detail` is frozen, deeply: every object and
 array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
 `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
 clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
@@ -802,11 +805,11 @@ library's text, which never quotes a value of your configuration, or the text yo
 | :--- | :--- | :--- | :--- |
 | `ready` | none | no | The guest checked in and `state` is now `'ready'`. Once per environment. In cooperative mode the guest document may still be loading (see [Ready and the startup gate](#ready-and-the-startup-gate)). Without `allow-scripts` no guest script runs: `ready` comes with the frame's load, and calls time out. |
 | `terminated` | `{ reason: string }` | no | The sandbox was terminated: `state` is `'terminated'` and `detail.reason` says why. Once per termination, for a call to `terminate()`, a budget or liveness check that ended the guest, a failed frame check, or a build that failed (that one in a task of its own, and not at all if another build started meanwhile). Removing the element ends its environment without this event. Branch on `state` and the event, not on the reason's text. |
-| `sandbox-log` | `SandboxLog` | yes | A log line from the guest's console or written by the element; see `SandboxLog`. Guest lines are limited to `LOG_EVENTS_PER_SECOND` per environment per second. |
-| `violation` | `SandboxViolation` | yes | The guest's policy refused a load; see `SandboxViolation`. At most `VIOLATION_EVENT_LIMIT` per environment. A report is a claim by the guest, not a host fact. |
+| `sandbox-log` | `SandboxLog` | no | A log line from the guest's console or written by the element; see `SandboxLog`. Guest lines are limited to `LOG_EVENTS_PER_SECOND` per environment per second. Listen on the element (a capture listener on an ancestor still receives it). |
+| `violation` | `SandboxViolation` | no | The guest's policy refused a load; see `SandboxViolation`. At most `VIOLATION_EVENT_LIMIT` per environment. A report is a claim by the guest, not a host fact. Listen on the element (a capture listener on an ancestor still receives it). |
 | `fetch` | `FetchRecord` | yes | A `sandboxFetch()` request settled, refusals included; see `FetchRecord`. Dispatched only with `fetchBridge` configured, so only in a build with the network modes. Without it `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
 | `fileschanged` | `{ paths: string[] }` | no | `commitGuestWrites()` changed the files; `detail.paths` lists the paths that changed. Dispatched synchronously, once per call that changed something. |
-| `fileswritten` | `{ paths: string[] }` | yes | The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths` holds that one path. At most `GUEST_WRITES_PER_SECOND` per environment per second. The path is guest-controlled text: show it with `textContent` (a valid path can end a single-quoted attribute). |
+| `fileswritten` | `{ paths: string[] }` | no | The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths` holds that one path. At most `GUEST_WRITES_PER_SECOND` per environment per second. Listen on the element (a capture listener on an ancestor still receives it). The path is guest-controlled text: show it with `textContent` (a valid path can end a single-quoted attribute). |
 <!-- generated:end -->
 
 The element's own startup message, the guest frame's port announcement (`{ type: 'SANDBOX_PORT' }` from the guest

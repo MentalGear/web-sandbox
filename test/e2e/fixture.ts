@@ -170,7 +170,7 @@ export class SandboxDriver {
     /**
      * Starts a second <web-sandbox id="second"> after the harness's, with BASELINE_CONFIG merged with `config` and
      * `files` as its app's files, and waits for it to settle; a second call takes the place of the first one's. It has
-     * no host method. Its log lines land in sandboxLogs too (they bubble to window).
+     * no host method. Its log lines land in sandboxLogs too (the harness hears them on window, in the capture phase).
      */
     async mountSecond(config: MountConfig = {}, files: Record<string, FileSpec> = {}): Promise<MountResult> {
         return this.page.evaluate(({ merged, files }) => startFresh(merged, { id: 'second', files: sandboxFileEntries(files), methods: {} }), { merged: mounted(config) as any, files });

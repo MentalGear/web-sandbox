@@ -95,7 +95,7 @@ embedder also allows direct connections.
      is the cancel; chunks never go on the broker port.
    - **Concurrency**: at most `maxConcurrent` (4 by default, at most 16) requests in flight per sandbox; one more is refused
      with `FETCH_BUSY`. So the host's memory for the bridge is bounded by about 3 × `maxConcurrent` × `maxBytes`: a response is held as the chunks read and as the joined body, and the result is cloned for the guest (a bound, not a measurement).
-5. **Every request is logged.** The element dispatches a `fetch` event, bubbling like `violation`, once per request when it
+5. **Every request is logged.** The element dispatches a `fetch` event, which bubbles, once per request when it
    settles: `{ method, url, outcome, bytes, durationMs, … }`, with `outcome` one of `ok` (a response was handed over; has
    `status`), `refused` (no request made; has `code`, and `reason` for an unlisted origin), `failed` (`fetch()` was called and no
    response was handed over; has `code`, and `status` when one arrived) and `aborted` (torn down; `code` is `FETCH_FAILED`). The

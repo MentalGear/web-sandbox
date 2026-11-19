@@ -127,6 +127,7 @@ function startFresh(old: WebSandbox, rules: Record<string, unknown>, files: Reco
     fresh.id = old.id;
     fresh.setAttribute('style', old.getAttribute('style') ?? '');
     fresh.addEventListener('ready', onReady);
+    fresh.addEventListener('sandbox-log', onSandboxLog);
     const [app, grants] = splitRules(html === undefined ? rules : { ...rules, html }, files);
     fresh.start(app, grants as never);
     old.replaceWith(fresh);
@@ -197,8 +198,9 @@ window.appendLocalLog = (msg: string) => {
     appendLog({ source: 'playground', message: msg, level: 'log' });
 };
 
-// Log events are dispatched on each sandbox element and bubble up to window; event.target names the sandbox
-window.addEventListener('sandbox-log', (event) => {
+// Log events are dispatched on each sandbox element and do not bubble: every element gets this listener when it is
+// started (startFresh); event.target names the sandbox
+function onSandboxLog(event: Event) {
     const data = (event as CustomEvent<LogEntry>).detail;
     // Map sandbox log format to UI log format if needed
     // Sandbox: { type: 'LOG', level: 'info', args: [...] }
@@ -217,7 +219,7 @@ window.addEventListener('sandbox-log', (event) => {
     };
     capturedLogs.push(logEntry);
     appendLog(logEntry);
-});
+}
 
 window.addEventListener('load', () => {
     const loaded = window.playground.loadState();

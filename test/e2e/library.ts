@@ -45,24 +45,12 @@ export function buildSettled(element: HTMLElement): Promise<void> {
  * own start() (on a fresh element that takes this one's place: the fixture's startFresh()) is the first build that
  * matters. The build with the network modes has a mode for that, started before the insertion: cooperative mode without
  * allow-scripts runs no script of the library's. The default build has sealed mode alone, whose view is a script, so
- * there the element gets no app, and a build on insertion is ended at once, before its frame can load, and leaves no
- * trace a spec would read as its own: not the console's line, nor the fixture's record of the termination.
+ * there the element gets no app: an element with no app builds nothing (it stays `idle`), and leaves no trace a spec
+ * would read as its own.
  */
-export function insertInert(element: HTMLElement & { start(app: object, grants?: object): void; terminate(): void }): void {
-    if (pageBuild() === 'network') {
-        element.start({}, { mode: 'cooperative' });
-        document.body.appendChild(element);
-        return;
-    }
+export function insertInert(element: HTMLElement & { start(app: object, grants?: object): void }): void {
+    if (pageBuild() === 'network') element.start({}, { mode: 'cooperative' });
     document.body.appendChild(element);
-    const warn = console.warn;
-    console.warn = () => {};
-    try {
-        element.terminate();
-    } finally {
-        console.warn = warn;
-    }
-    (window as unknown as { sandboxTerminations?: unknown[] }).sandboxTerminations?.splice(0);
 }
 
 /** The entry of the page's build, imported: the default build's page never loads the network build's. */

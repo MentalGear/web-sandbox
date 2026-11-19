@@ -15,16 +15,18 @@
 
         defineWebSandbox();
 
+        // The events that carry guest data do not bubble (design 01, I5): the harness hears every sandbox's in the capture
+        // phase, which runs down the whole path whatever `bubbles` says
         window.sandboxLogs = [];
         window.addEventListener('sandbox-log', (event) => {
             const args = event.detail?.args || [];
             window.sandboxLogs.push(args.map(String).join(' '));
-        });
+        }, true);
         // CSP violations the guest reports (backlog S5): the evidence channel egress specs assert on
         window.sandboxViolations = [];
         window.addEventListener('violation', (event) => {
             window.sandboxViolations.push({ sandbox: event.target.id || 'main', ...event.detail });
-        });
+        }, true);
         // Every request through the fetch bridge (backlog B5), as the host reports it
         window.sandboxFetches = [];
         window.addEventListener('fetch', (event) => {
@@ -34,8 +36,8 @@
         window.sandboxWrites = [];
         window.addEventListener('fileswritten', (event) => {
             window.sandboxWrites.push({ sandbox: event.target.id || 'main', paths: [...event.detail.paths], at: performance.now() });
-        });
-        // the element below was upgraded by defineWebSandbox() and builds its default environment: a spec starts once that has settled
+        }, true);
+        // the element below was upgraded by defineWebSandbox(); it has no app, so it builds nothing until a spec starts one
         await customElements.whenDefined('web-sandbox');
         await buildSettled(document.querySelector('web-sandbox'));
         window.harnessReady = true;

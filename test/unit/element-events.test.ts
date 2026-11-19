@@ -34,6 +34,37 @@ afterEach(() => {
     document.body.replaceChildren();
 });
 
+describe('an event that carries guest data does not bubble (design 01, I5)', () => {
+    it("every event of the table says whether it carries guest data; none that does bubbles, in the default build's events", () => {
+        for (const [type, row] of Object.entries(ELEMENT_EVENTS)) {
+            expect(typeof row.guestData, type).toBe('boolean');
+            if (row.guestData && row.builds === 'every') expect(row.bubbles, `${type} carries guest data`).toBe(false);
+        }
+        // the three that design 01 lists, and the commit's paths
+        const guestData = Object.entries(ELEMENT_EVENTS).filter(([, row]) => row.guestData).map(([type]) => type);
+        expect(guestData.sort()).toEqual(['fetch', 'fileschanged', 'fileswritten', 'sandbox-log', 'violation']);
+        // the network build's `fetch` carries guest data (the URL the guest asked for) and bubbles: design 01's table lists
+        // the default build's events, and whether `fetch` bubbles waits for the owner; it is the one such event
+        const bubbling = Object.entries(ELEMENT_EVENTS).filter(([, row]) => row.guestData && row.bubbles).map(([type]) => type);
+        expect(bubbling).toEqual(['fetch']);
+        expect(ELEMENT_EVENTS.fetch.builds).toBe('network');
+    });
+
+    it('what holds and what does not: a listener on the element and a capture listener on an ancestor receive each one; a bubbling listener on an ancestor receives none', () => {
+        const el = document.createElement('web-sandbox');
+        document.body.appendChild(el);
+        for (const [type, row] of Object.entries(ELEMENT_EVENTS) as [keyof typeof ELEMENT_EVENTS, (typeof ELEMENT_EVENTS)[keyof typeof ELEMENT_EVENTS]][]) {
+            if (!row.guestData || row.bubbles) continue;
+            const heard: string[] = [];
+            const on = (where: string) => () => heard.push(where);
+            const listeners: [EventTarget, string, boolean][] = [[el, 'element', false], [document.body, 'body, bubbling', false], [window, 'window, bubbling', false], [window, 'window, capture', true]];
+            for (const [target, where, capture] of listeners) target.addEventListener(type, on(where), capture);
+            el.dispatchEvent(elementEvent(type, { paths: ['x'] }));
+            expect(heard.sort(), type).toEqual(['element', 'window, capture']);
+        }
+    });
+});
+
 describe('one constructor for every event the element dispatches', () => {
     it('the source: no `new CustomEvent` in src/ outside src/lib/element-events.ts, and every dispatch in host.ts takes an elementEvent()', () => {
         const offenders: string[] = [];
@@ -67,7 +98,7 @@ describe('one constructor for every event the element dispatches', () => {
         expect([detail, detail.list, shared, shared.deep, shared.deep[1], map, [...map.keys()][0], [...map.values()][0], ([...map.values()][0] as any).value, detail.set, [...detail.set][0], cyclic].every(frozen)).toBe(true);
         bytes[0] = 9;
         expect(bytes[0]).toBe(9);
-        expect(event.bubbles).toBe(true);
+        expect(event.bubbles).toBe(false);
         expect(elementEvent('terminated', { reason: 'r' }).bubbles).toBe(false);
         expect(elementEvent('ready').detail).toBeNull();
     });

@@ -295,7 +295,7 @@ describe('no directive a <meta> policy discards is ever emitted (backlog S7)', (
 });
 
 describe("the element's 'violation' event (backlog S5)", () => {
-  it('dispatches a validated detail that bubbles, caps events per environment with one warning, and the cap resets with the environment', async () => {
+  it('dispatches a validated detail on the element, not bubbling, caps events per environment with one warning, and the cap resets with the environment', async () => {
     const { defineWebSandbox } = await import('@src/host');
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
@@ -303,7 +303,10 @@ describe("the element's 'violation' event (backlog S5)", () => {
     el.start({}); // an app, so that reset() builds the next environment
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const heard: unknown[] = [];
-    const onWindow = (e: Event) => { if (e.target === el) heard.push((e as CustomEvent).detail); };
+    const bubbled: unknown[] = [];
+    const onElement = (e: Event) => { if (e.target === el && !e.bubbles) heard.push((e as CustomEvent).detail); };
+    const onWindow = (e: Event) => bubbled.push((e as CustomEvent).detail);
+    el.addEventListener('violation', onElement);
     window.addEventListener('violation', onWindow);
 
     el._dispatchViolation({ type: 'VIOLATION', directive: 'img-src', blockedURI: 'https://a.test/x', lineNumber: 2, forged: true });
@@ -317,6 +320,7 @@ describe("the element's 'violation' event (backlog S5)", () => {
     el.reset();
     el._dispatchViolation({ directive: 'connect-src', blockedURI: 'after-reset' });
     expect(heard).toHaveLength(101);
+    expect(bubbled).toEqual([]); // a bubbling listener on window hears none
 
     window.removeEventListener('violation', onWindow);
     el.remove();

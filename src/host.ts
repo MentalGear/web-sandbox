@@ -204,8 +204,11 @@ type GrantsAreTheSchemas = Holds<Same<Exclude<keyof SealedSandboxConfig, keyof S
  * The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.
  *
  * @remarks
- * Every event is a `CustomEvent` dispatched on the element and none is `composed`. The bubbling ones reach a listener on
- * `window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and
+ * Every event is a `CustomEvent` dispatched on the element and none is `composed`. Listen on the element itself: the
+ * events whose detail carries the guest's data (`sandbox-log`, `violation`, `fileswritten`, `fileschanged`) do not
+ * bubble, so a bubbling listener on a shared ancestor or on `window` hears no app's data, nor does any other event but
+ * the network build's `fetch`. A listener added for the capture phase on an ancestor still receives each of them: the
+ * capture phase runs down the whole path whatever `bubbles` says. The `detail` is frozen, deeply: every object and
  * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
  * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
  * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
@@ -241,14 +244,16 @@ export interface WebSandboxEventMap extends HTMLElementEventMap {
      * A log line from the guest's console or written by the element; see {@link SandboxLog}.
      *
      * @remarks
-     * Guest lines are limited to {@link LOG_EVENTS_PER_SECOND} per environment per second. Bubbles.
+     * Guest lines are limited to {@link LOG_EVENTS_PER_SECOND} per environment per second. Does not bubble. Listen on
+     * the element (a capture listener on an ancestor still receives it).
      */
     'sandbox-log': CustomEvent<SandboxLog>;
     /**
      * The guest's policy refused a load; see {@link SandboxViolation}.
      *
      * @remarks
-     * At most {@link VIOLATION_EVENT_LIMIT} per environment. A report is a claim by the guest, not a host fact. Bubbles.
+     * At most {@link VIOLATION_EVENT_LIMIT} per environment. A report is a claim by the guest, not a host fact.
+     * Does not bubble. Listen on the element (a capture listener on an ancestor still receives it).
      */
     violation: CustomEvent<SandboxViolation>;
     /**
@@ -263,7 +268,8 @@ export interface WebSandboxEventMap extends HTMLElementEventMap {
      * holds that one path.
      *
      * @remarks
-     * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles. The path is guest-controlled text: show
+     * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Does not bubble. Listen on the element (a
+     * capture listener on an ancestor still receives it). The path is guest-controlled text: show
      * it with `textContent` (a valid path can end a single-quoted attribute).
      */
     fileswritten: CustomEvent<{ readonly paths: readonly string[] }>;
@@ -1031,8 +1037,8 @@ export class WebSandbox extends ElementBase {
         port.postMessage({ type: 'VIEW_WRITE', id, ...change }, change.bytes ? [change.bytes.buffer] : []);
     }
 
-    // One guest change the host recorded: dispatched on the element and bubbling, like the other events a guest
-    // causes. At most GUEST_WRITES_PER_SECOND per environment (guest-writes.ts).
+    // One guest change the host recorded: dispatched on the element, not bubbling, like the other events that carry guest
+    // data (ELEMENT_EVENTS; I5). At most GUEST_WRITES_PER_SECOND per environment (guest-writes.ts).
     private _dispatchFilesWritten(path: string) {
         this.dispatchEvent(elementEvent('fileswritten', { paths: [path] }));
     }
@@ -1424,11 +1430,11 @@ export class WebSandbox extends ElementBase {
         if (skipped > 0) console.warn(`[Sandbox] skipped ${skipped} queued frame(s) that could not be posted (not transferable).`);
     }
 
-    // Log lines are dispatched on the element and bubble, so one event serves both kinds of listener:
-    // one on the element hears only its own sandbox, and one on window (the playground, the e2e harness)
-    // hears every sandbox and tells them apart by event.target. Not composed: the element sits in the
-    // embedding page's DOM, and an event of ours has no business crossing a consumer's shadow boundary.
-    // The name stays namespaced because it bubbles: a generic 'log' would collide with other code on window.
+    // Log lines are dispatched on the element and do not bubble (ELEMENT_EVENTS; I5): they carry the guest's data, so a
+    // listener on the element hears only its own sandbox, and a bubbling one on a shared ancestor hears no app's lines.
+    // Not composed: the element sits in the embedding page's DOM, and an event of ours has no business crossing a
+    // consumer's shadow boundary. The name is namespaced: a capture listener on window still receives it, beside other
+    // code's events there.
     // Every detail is normalised and labelled with where it came from (sandbox-log.ts, AR:B3), here, from the
     // raw line and its source: no caller can hand this a detail of its own making.
     private _dispatchLog(line: unknown, source: 'guest' | 'host') {
@@ -1480,8 +1486,8 @@ export class WebSandbox extends ElementBase {
         this._dispatchLog({ level, args: [text] }, 'host');
     }
 
-    // A CSP violation reported by the guest (S5): dispatched on the element and bubbling, like
-    // sandbox-log. The detail is guest-supplied, so it is validated and clamped (violation.ts) and the
+    // A CSP violation reported by the guest (S5): dispatched on the element, not bubbling, like sandbox-log
+    // (ELEMENT_EVENTS; I5). The detail is guest-supplied, so it is validated and clamped (violation.ts) and the
     // number of events per environment is capped: past VIOLATION_EVENT_LIMIT reports are dropped, with one
     // warning, so a guest cannot make the host run embedder listeners without bound.
     // In strict mode each port has its own count, labelled by where the report arrived (ADR-005): the view's

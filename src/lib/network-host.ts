@@ -367,8 +367,9 @@ export class NetworkMethods {
         console.warn(`[Sandbox] ${BRIDGE_FRAME_REFUSED}: every sandboxFetch() request is refused.`);
     }
 
-    // Every request through the bridge, once, when it settled: dispatched on the element and bubbling, like
-    // 'violation'. The record is built by the host from validated fields (fetch-bridge.ts).
+    // Every request through the bridge, once, when it settled: dispatched on the element, and bubbling (ELEMENT_EVENTS:
+    // the one event that carries guest data and bubbles, until the owner decides). The record is built by the host from
+    // validated fields (fetch-bridge.ts).
     private _dispatchFetch(record: FetchRecord) {
         this.dispatchEvent(elementEvent('fetch', record));
     }

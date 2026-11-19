@@ -68,8 +68,8 @@ describe('the config: only a literal true turns guest writes on', () => {
     });
 
     it('guestWrites: true → an overlay, and the feature reaches the bootstrap (positive control)', async () => {
-        const heard = events(document.body);
         const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], guestWrites: true });
+        const heard = events(el); // 'fileswritten' does not bubble: heard on the element
         expect(el._config.guestWrites).toBe(true);
         expect(el.shadowRoot.querySelector('iframe').srcdoc).toContain('guestWrites&quot;:true'); // inside the guest srcdoc attribute
         const { answers, send, close } = connect(el);
@@ -77,7 +77,7 @@ describe('the config: only a literal true turns guest writes on', () => {
         await settle();
         expect(answers).toEqual([{ type: 'RPC_RES', id: 1, ok: true, value: { path: 'a.txt', change: 'write', type: 'text/plain', size: 1 } }]);
         expect(el.listGuestWrites()).toMatchObject([{ path: 'a.txt', change: 'write', type: 'text/plain', size: 1 }]);
-        expect(heard).toEqual([['a.txt']]); // 'fileswritten' bubbles
+        expect(heard).toEqual([['a.txt']]);
         close();
     });
 

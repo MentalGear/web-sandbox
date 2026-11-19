@@ -14,11 +14,12 @@ Three needs meet in the element's lifecycle:
 
 ## Decision
 
-1. **One bubbling event on the element.** `sandbox-log` is dispatched on the sandbox element with `bubbles: true`.
-   A listener on the element hears only that sandbox; a listener on `window` hears every sandbox, with the element as
-   `event.target`, and `SandboxDevTools` listens on its element. Not `composed`: the element lives in the embedding
-   page's DOM, and the library's events have no reason to cross a consumer's shadow boundary. The name stays
-   namespaced because it bubbles: a generic `log` would collide with other code listening on `window`.
+1. **One event on the element.** `sandbox-log` is dispatched on the sandbox element, and does not bubble: it carries
+   the guest's data, and a bubbling listener on a shared ancestor would mix one app's lines with another's (design 01,
+   I5). A listener on the element hears only that sandbox, and `SandboxDevTools` listens on its element; a capture
+   listener on `window` still hears every sandbox, with the element as `event.target`. Not `composed`: the element
+   lives in the embedding page's DOM, and the library's events have no reason to cross a consumer's shadow boundary.
+   The name stays namespaced: a generic `log` would collide with other code listening on `window`.
 2. **Four states, no `running`.** `state` is `idle`, `loading`, `ready` or `terminated`. A listener of `ready` or
    `terminated` always reads the state its event announces: the state is stored before any effect runs, and the event
    is dispatched after it. There is no `running` state because nothing could make it true: `execute()` is

@@ -109,7 +109,7 @@ test.describe('R4-2, R4-6, R4-7: uncaught errors and unhandled rejections reach 
             expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');
             // a plain object with its own name, message and stack (a cloned Error has no own enumerable fields)
             const detail = page.evaluate(() => new Promise(resolve => {
-                window.addEventListener('sandbox-log', (event: any) => {
+                document.querySelector('web-sandbox')!.addEventListener('sandbox-log', (event: any) => {
                     const arg = event.detail.args[1];
                     if (event.detail.args[0] === 'R47') resolve({ plain: Object.getPrototypeOf(arg) === Object.prototype, keys: Object.keys(arg).sort(), name: arg.name, message: arg.message, stack: typeof arg.stack });
                 });

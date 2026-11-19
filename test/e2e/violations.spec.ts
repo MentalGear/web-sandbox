@@ -45,13 +45,13 @@ test.describe('1. a refused load is reported on the host', () => {
             if (detail.lineNumber !== undefined) expect(detail.lineNumber).toBeGreaterThan(0);
         }
 
-        // dispatched on the element itself, bubbling (the harness hears it on window)
+        // dispatched on the element itself, not bubbling (the harness hears it on window in the capture phase)
         const onElement = await page.evaluate(() => new Promise<{ bubbles: boolean; isElement: boolean; directive: string }>(resolve => {
             const el = document.querySelector('web-sandbox')!;
             el.addEventListener('violation', (e) => resolve({ bubbles: e.bubbles, isElement: e.target === el, directive: (e as CustomEvent).detail.directive }), { once: true });
             (el as any).execute(`new Image().src = 'https://attacker.test/again'`);
         }));
-        expect(onElement).toEqual({ bubbles: true, isElement: true, directive: 'img-src' });
+        expect(onElement).toEqual({ bubbles: false, isElement: true, directive: 'img-src' });
     });
 
     test('a second sandbox reports its own violations, told apart by event.target', async ({ sandbox }) => {

@@ -14,11 +14,12 @@
 
         defineWebSandbox('packaged-sandbox');
         window.sandboxLogs = [];
+        // sandbox-log does not bubble (design 01, I5): the harness hears it in the capture phase
         window.addEventListener('sandbox-log', (event) => {
             window.sandboxLogs.push((event.detail?.args || []).map(String).join(' '));
-        });
+        }, true);
         window.viewScriptHash = viewScriptHash;
-        // the element below builds its default environment as it is upgraded: a spec starts once that has settled
+        // the element below has no app, so it builds nothing as it is upgraded; a build a spec starts is its own
         const element = document.querySelector('packaged-sandbox');
         if (element.state === 'loading') {
             await new Promise(resolve => {

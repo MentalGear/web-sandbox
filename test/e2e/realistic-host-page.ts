@@ -88,9 +88,10 @@ if (params.get('sw') !== '0' && 'serviceWorker' in navigator && appPolicy) {
 defineWebSandbox();
 w.sandboxLogs = [];
 w.sandboxEvents = [];
-window.addEventListener('sandbox-log', (event: any) => { w.sandboxLogs.push((event.detail?.args || []).map(String).join(' ')); });
+// the events that carry guest data do not bubble (design 01, I5): heard in the capture phase
+window.addEventListener('sandbox-log', (event: any) => { w.sandboxLogs.push((event.detail?.args || []).map(String).join(' ')); }, true);
 w.sandboxViolations = [];
-window.addEventListener('violation', (event: any) => { w.sandboxViolations.push({ sandbox: event.target.id || 'main', ...event.detail }); });
+window.addEventListener('violation', (event: any) => { w.sandboxViolations.push({ sandbox: event.target.id || 'main', ...event.detail }); }, true);
 w.sandboxFetches = [];
 window.addEventListener('fetch', (event: any) => { w.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail }); });
 w.sandboxWrites = [];
@@ -106,7 +107,7 @@ w.sandboxAdopt = (element: HTMLElement) => {
 };
 // Inserted so that the build on insertion has nothing a host policy could refuse, and a spec's own start() is the
 // first build that matters (library.ts, insertInert: each build's way).
-const element = document.createElement('web-sandbox') as HTMLElement & { start(app: object, grants?: object): void; terminate(): void };
+const element = document.createElement('web-sandbox') as HTMLElement & { start(app: object, grants?: object): void };
 insertInert(element);
 w.sandboxAdopt(element);
 w.viewScriptHash = viewScriptHash;

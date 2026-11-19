@@ -237,8 +237,11 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 *   **A build that is refused** (an entry that calls `import()`, one the files no longer hold, a host page that is
     cross-origin isolated) sets `state` to `terminated` at once and dispatches `terminated` in a task, like `ready`, so
     a listener added right after the call hears it.
-*   **Events** are dispatched on the element. `sandbox-log` (guest `console` output and errors) bubbles,
-    so a listener on `window` hears every sandbox on the page and `event.target` says which one. Its detail
+*   **Events** are dispatched on the element: listen on it. The ones that carry the guest's data (`sandbox-log`,
+    `violation`, `fileswritten`, `fileschanged`) do not bubble, so a bubbling listener on a shared ancestor or on `window`
+    hears no app's data; a listener added for the capture phase on an ancestor still receives them (the capture phase
+    runs down the whole path whatever `bubbles` says), with the element as `event.target`. `sandbox-log` carries guest
+    `console` output and errors. Its detail
     is `{ type: 'LOG', level, args, source }` (type `SandboxLog`): `level` is `log`, `info`, `warn` or
     `error`; `source` is `'host'` for the element's own lines (an execution timeout, an entry that failed, guest lines
     it dropped past its per-second window) and
@@ -255,8 +258,8 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     arrive once it is. `args` are the guest's data: read them, don't merge them into your objects with
     `Object.assign` (an own `__proto__` key survives the copy).
 *   **`violation`** reports a load the guest policy refused: `{ directive, blockedURI }`, plus
-    `sourceFile`, `lineNumber` and `columnNumber` when the browser gives them. It bubbles like
-    `sandbox-log`. The guest's bootstrap listens before any guest code runs, but every field comes from
+    `sourceFile`, `lineNumber` and `columnNumber` when the browser gives them. Like `sandbox-log`, it does not
+    bubble. The guest's bootstrap listens before any guest code runs, but every field comes from
     the guest and guest code can suppress its own reports, so an event is evidence that the guest tried
     something; no event proves nothing. A frame the guest creates reports to itself, not here. A `fetch()`,
     `XMLHttpRequest` or `WebSocket` to an origin `origins.connect` does not list (in strict mode, any `WebSocket`) is

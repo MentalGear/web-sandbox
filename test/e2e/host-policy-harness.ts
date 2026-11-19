@@ -28,13 +28,14 @@ defineWebSandbox();
 const w = window as any;
 w.sandboxLogs = [];
 w.sandboxEvents = [];
+// the events that carry guest data do not bubble (design 01, I5): heard in the capture phase
 window.addEventListener('sandbox-log', (event: any) => {
     w.sandboxLogs.push((event.detail?.args || []).map(String).join(' '));
-});
+}, true);
 w.sandboxViolations = [];
 window.addEventListener('violation', (event: any) => {
     w.sandboxViolations.push({ sandbox: event.target.id || 'main', ...event.detail });
-});
+}, true);
 w.sandboxFetches = [];
 w.sandboxWrites = [];
 // Each element the page shows is sized and heard the same way: this one, and each fresh one a spec starts in its place
@@ -50,7 +51,7 @@ w.sandboxAdopt = (element: HTMLElement) => {
 };
 // Inserted so that the build on insertion has nothing a host policy could refuse, and a spec's own start() is the
 // first build that matters (library.ts, insertInert: each build's way).
-const element = document.createElement('web-sandbox') as HTMLElement & { start(app: object, grants?: object): void; terminate(): void };
+const element = document.createElement('web-sandbox') as HTMLElement & { start(app: object, grants?: object): void };
 insertInert(element);
 w.sandboxAdopt(element);
 w.viewScriptHash = viewScriptHash; // what an embedder reads for its own policy (docs/API.md, host page policy)
