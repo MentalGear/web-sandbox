@@ -171,6 +171,34 @@ describe('W3: a removal mark never outlives the stored file it names', () => {
     });
 });
 
+describe('one diff (class D): a commit takes a change off the pending list, never out of the guest\'s view', () => {
+    // The guest's sandboxFiles changes only through the host's answers, so a committed write is still what it sees.
+    it('a committed write: removing it is recorded as a removal of the stored file, the view stops showing it, and a second removal is none', () => {
+        const store = new FileStore(() => {});
+        store.register({ 'a.txt': 'a' });
+        const writes = createGuestWrites({ store, built: store.copy() });
+        expect(writes.handle({ change: 'write', path: 'n.txt', entry: 'n' })).toMatchObject({ path: 'n.txt', change: 'write' });
+        expect(writes.commit(['n.txt'], false)).toEqual(['n.txt']);
+        expect(writes.list()).toEqual([]);
+        expect(writes.record({ change: 'remove', path: 'n.txt' })).toEqual({ answer: { path: 'n.txt', change: 'remove' }, diff: { listed: true, view: true, shown: null } });
+        expect(writes.list()).toEqual([{ path: 'n.txt', change: 'remove' }]);
+        expect(writes.handle({ change: 'remove', path: 'n.txt' })).toEqual({ path: 'n.txt', change: 'none' });
+        expect(writes.commit(['n.txt'], false)).toEqual(['n.txt']);
+        expect(store.list().map(file => file.path)).toEqual(['a.txt']);
+    });
+
+    it('the same bytes written again after their commit change what is listed, not what the guest sees; a committed removal stays removed (positive control)', () => {
+        const store = new FileStore(() => {});
+        store.register({ 'a.txt': 'a' });
+        const writes = createGuestWrites({ store, built: store.copy() });
+        writes.handle({ change: 'write', path: 'n.txt', entry: 'n' });
+        writes.handle({ change: 'remove', path: 'a.txt' });
+        expect(writes.commit(['n.txt', 'a.txt'], false)).toEqual(['a.txt', 'n.txt']);
+        expect(writes.record({ change: 'write', path: 'n.txt', entry: 'n' }).diff).toMatchObject({ listed: true, view: false });
+        expect(writes.handle({ change: 'remove', path: 'a.txt' })).toEqual({ path: 'a.txt', change: 'none' });
+    });
+});
+
 describe('W4: sandboxFiles.write() and remove() always return a promise', () => {
     it('an entry whose inspection throws (a revoked Proxy) rejects, never throws synchronously', async () => {
         const sent: unknown[] = [];

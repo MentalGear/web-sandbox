@@ -185,7 +185,7 @@ export interface Env {
     fetch: boolean;
     watchdog: number;
     execTimeout: number;
-    built: Record<string, string>; // the files this build delivered
+    built: Record<string, string>; // the guest's own view less its pending changes: the files this build delivered, with its committed changes
 }
 
 export type Pending = { change: 'write'; text: string } | { change: 'remove' };
@@ -532,6 +532,7 @@ export class LifecycleModel {
         for (const path of chosen) {
             const change = writes.get(path)!;
             writes.delete(path);
+            this.settleInGuestView(path, change);
             if (change.change === 'write') {
                 if (this.files[path] !== change.text) changed.push(path);
                 this.files[path] = change.text;
@@ -541,6 +542,18 @@ export class LifecycleModel {
             }
         }
         if (changed.length) frame.expected.push({ type: 'fileschanged', paths: changed });
+    }
+
+    // A committed change leaves the pending list but not the guest's view: the guest made it and still sees it, so it
+    // moves into what the writing environment holds as built (a later removal there is checked against it).
+    private settleInGuestView(path: string, change: Pending) {
+        const env = this.writesEnv;
+        if (!env) return;
+        if (change.change === 'write') {
+            env.built[path] = change.text;
+            return;
+        }
+        delete env.built[path];
     }
 
     /** After the runner performed the command: what it threw, how many warnings, the element's state. */

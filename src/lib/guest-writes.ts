@@ -18,8 +18,10 @@
  *     if the host registered more in between; a refused commit changes neither the store nor the overlay.
  *   - The host is the single source of truth. A refused request changes nothing here; the guest's own view
  *     (in-sandbox-files.ts) changes only after this module's answer.
- *   - Removal marks are bounded by the build and by the store, with one predicate (`markable`) for recording and for
- *     listing: a removal is recorded only for a path the build delivered and the store still holds (one the overlay
+ *   - Removal marks are bounded by the guest's base and by the store, with one predicate (`markable`) for recording and
+ *     for listing. The base is what the build delivered with the guest's own committed writes over it: a commit takes a
+ *     change off the pending list, never out of the guest's view. A removal is recorded only for a path of the base the
+ *     store still holds (one the overlay
  *     wrote is then simply forgotten); a path the guest cannot see is answered `change: 'none'` (the guest rejects
  *     NOT_FOUND) and records nothing. A mark whose path the host unregistered later is forgotten before the marks are
  *     listed or committed, so a listed mark always names a stored file. A removal of a path the build delivered and
@@ -155,7 +157,11 @@ const COMMIT_CALLER = 'commitGuestWrites()';
 export function createGuestWrites({ store, built = store, now = () => performance.now() }: GuestWritesOptions): GuestWrites {
     // path → the write (a CheckedFile) or a removal mark (null). Never holds a refused request.
     const overlay = new Map<string, CheckedFile | null>();
-    // Paths of the build the guest removed from its own view (its answer said 'remove'), marked or not: a second removal
+    // Writes the host committed: off the pending list, still in the guest's view, which changes only through the host's
+    // answers. The guest's base is the build's files with these over them.
+    const committed = new Map<string, CheckedFile>();
+    const inBase = (path: string) => committed.has(path) || built.has(path);
+    // Paths of the guest's base it removed from its own view (its answer said 'remove'), marked or not: a second removal
     // is 'none', as the guest's sandboxFiles does not list the path. A write to the path brings it back.
     const removedInView = new Set<string>();
     // The one predicate a removal mark is recorded by and kept by (R5:L-4): it names a file the store holds.
@@ -177,6 +183,7 @@ export function createGuestWrites({ store, built = store, now = () => performanc
             if (pending === path || change === null) continue;
             put.set(pending, change);
         }
+        for (const [kept, file] of committed) if (kept !== path && !overlay.has(kept) && !removedInView.has(kept)) put.set(kept, file);
         for (const removed of removedInView) if (removed !== path && !put.has(removed)) remove.push(removed);
         put.set(path, file);
         return { put, remove };
@@ -196,12 +203,12 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         if (change === 'remove') {
             checkPath(path, REMOVE_CALLER);
             const written = overlay.get(path);
-            const inBuild = built.has(path);
-            // what the guest sees: what it wrote, else what the build delivered and it did not remove
-            if (!written && (!inBuild || removedInView.has(path))) return { path, change: 'none' };
-            if (inBuild) removedInView.add(path);
+            const based = inBase(path);
+            // what the guest sees: what it wrote, else its base's file it did not remove
+            if (!written && (!based || removedInView.has(path))) return { path, change: 'none' };
+            if (based) removedInView.add(path);
             // A file the overlay wrote over nothing is forgotten, not marked: a mark only ever names a stored path.
-            if (inBuild && markable(path)) overlay.set(path, null);
+            if (based && markable(path)) overlay.set(path, null);
             else overlay.delete(path);
             return { path, change: 'remove' };
         }
@@ -234,12 +241,13 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         if (change === null) return markable(path) ? 'remove' : null;
         return change;
     };
-    // What the guest's own sandboxFiles holds at `path`, which is what the strict view may show: what it wrote, else the
-    // build's file it did not remove, else nothing.
+    // What the guest's own sandboxFiles holds at `path`, which is what the strict view may show: what it wrote, else its
+    // base's file it did not remove (a committed write of its own, else the build's), else nothing.
     const shownAt = (path: string): Shown => {
         const written = overlay.get(path);
         if (written) return written;
-        return built.has(path) && !removedInView.has(path) ? 'built' : null;
+        if (removedInView.has(path)) return null;
+        return committed.get(path) ?? (built.has(path) ? 'built' : null);
     };
     // Two states of a path are the same when they hold the same thing: a file by its type and bytes (writing the same
     // bytes again changes nothing anyone can see), anything else by itself.
@@ -306,8 +314,14 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         }
         // Every check before any change: apply() throws and changes nothing, and the overlay is untouched then.
         const changed = store.apply({ put, remove }, COMMIT_CALLER);
-        for (const path of put.keys()) overlay.delete(path);
-        for (const path of remove) overlay.delete(path);
+        for (const [path, file] of put) {
+            overlay.delete(path);
+            committed.set(path, file);
+        }
+        for (const path of remove) {
+            overlay.delete(path);
+            committed.delete(path);
+        }
         return changed;
     };
 
