@@ -84,7 +84,7 @@ describe('start() reads it (CONFIG_SCHEMA.links)', () => {
         const hostile = 'javascript:alert("<img src=x onerror=1>")';
         let caught: unknown;
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const fresh = document.createElement('web-sandbox') as any;
         document.body.appendChild(fresh);
         try {

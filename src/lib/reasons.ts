@@ -23,15 +23,19 @@ export interface ReasonRow {
     readonly text: string;
     /**
      * Where it is decided: the element (host.ts) or the lifecycle reducer (lifecycle.ts), as a `terminated` reason; or
-     * start(), as the message of the TypeError it throws, which is never a termination.
+     * start() or defineWebSandbox(), as the message of the TypeError it throws, which is never a termination.
      */
-    readonly decidedBy: 'host' | 'lifecycle' | 'start';
+    readonly decidedBy: 'host' | 'lifecycle' | 'start' | 'define';
 }
 
 // The repeated-overrun rule in words (in-sandbox-view.ts, viewBudget; S72, class P).
 const OVERRUN_MS = VIEW_MAX_OPERATION_MS;
 const OVERRUN_MINUTES = VIEW_OVERRUN_WINDOW_MS / 60000;
 const HOST_PAGE_POLICY = 'see docs/API.md#host-page-policy';
+const REGISTRATION = 'see docs/API.md#registering-the-element';
+// The served file's name (sealed-document.ts, SEALED_DOCUMENT_FILE, in a registry no build imports;
+// test/unit/document-url.test.ts keeps the two equal).
+const SEALED_DOCUMENT = 'sealed-document.html';
 
 export const TERMINATION_REASONS = {
     host: { text: 'terminated by the host', decidedBy: 'host' },
@@ -67,6 +71,14 @@ export const TERMINATION_REASONS = {
     loadTimeout: { text: 'the sandbox did not finish loading', decidedBy: 'lifecycle' },
     frameMissing: { text: 'the guest frame is missing', decidedBy: 'lifecycle' },
     uncaughtBudget: { text: 'the guest raised more uncaught errors or unhandled rejections in one second than their budget allows', decidedBy: 'host' },
+    // Sealed mode's view is the served file (design 03): the frame of documentUrl, whose view speaks first
+    documentSilent: { text: `the document at documentUrl did not answer: the file is missing, the server answers its path with another page, a header on it refuses the framing or the view's script, or the host page's frame-src does not admit it (${REGISTRATION})`, decidedBy: 'lifecycle' },
+    noDocumentUrl: { text: `sealed mode's view is the served ${SEALED_DOCUMENT}, and this element was registered without documentUrl: pass it to defineWebSandbox() (${REGISTRATION})`, decidedBy: 'start' },
+    // defineWebSandbox(): the definition, read before anything is defined or stored
+    definitionRefused: { text: 'defineWebSandbox() takes one object, { tagName, documentUrl }, whose tagName is a string when given', decidedBy: 'define' },
+    documentUrlMissing: { text: `documentUrl is required: the URL where the page serves ${SEALED_DOCUMENT}, the view of sealed mode (${REGISTRATION})`, decidedBy: 'define' },
+    documentUrlRefused: { text: 'documentUrl is refused: …', decidedBy: 'define' },
+    documentUrlChanged: { text: 'the element is already defined with another documentUrl', decidedBy: 'define' },
 } as const satisfies Record<string, ReasonRow>;
 
 export type ReasonId = keyof typeof TERMINATION_REASONS;
@@ -101,6 +113,12 @@ export const reasonCauses = () => ({
     loadTimeout: 'The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included).',
     frameMissing: "The library's frame has no guest frame.",
     uncaughtBudget: 'Worker, strict and sealed mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)).',
+    documentSilent: "Sealed mode: no view announced itself from the first frame of the element's frame within `LOAD_TIMEOUT_MS`, or the frame loaded a document with no frame in it. From outside the frame the causes look alike: the file is not at `documentUrl`, the server answers that path with another page (an app's fallback page), a header on the file refuses the framing (`X-Frame-Options`, `frame-ancestors`) or the view's script, or the host page's own `frame-src` does not admit `documentUrl` (see [Registering the element](#registering-the-element) and [Host page policy](#host-page-policy)).",
+    noDocumentUrl: "In a build with the network modes: `mode` is `'sealed'` or left out, and the element was registered without `documentUrl`. Sealed mode has no view but the served file; strict, cooperative and worker mode need none.",
+    definitionRefused: '`defineWebSandbox()` was given something other than an object, or a `tagName` that is not a string.',
+    documentUrlMissing: 'In the default build, `defineWebSandbox()` was given no `documentUrl`: sealed mode, the only mode of that build, has no view without it.',
+    documentUrlRefused: "`documentUrl` breaks one of its rules, which the message names after the colon: a string or a `URL`, resolved against the document's own URL (`document.URL`, never a `<base>`), with the scheme `http:` or `https:`, no user name or password, and no fragment. A query and any path are the embedder's.",
+    documentUrlChanged: 'The tag is already defined by this element with another `documentUrl` (or without one). A second definition with the same one does nothing.',
 }) as const satisfies Record<ReasonId, string>;
 
 /** The reasons the lifecycle reducer decides. */

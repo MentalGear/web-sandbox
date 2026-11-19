@@ -169,7 +169,7 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 
 ## Two builds: the network modes behind a flag
 
-<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eaefa7c8ed4 -->
+<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eaedc458ed4 -->
 
 The package is built two ways, chosen by one flag that is off by default ([ADR-009](docs/ADR-009-network-modes-build-flag.md);
 `NETWORK_MODES_FLAG`, `src/lib/build-flag.ts`):
@@ -177,8 +177,8 @@ The package is built two ways, chosen by one flag that is off by default ([ADR-0
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 50 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 68 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 51 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 69 modules of `src/` |
 <!-- generated:end -->
 
 - **Two entries.** `src/index.ts` is the default build's and `src/network.ts` the network build's; both export
@@ -441,6 +441,7 @@ the docs read) and the role its header comment gives.
 | `src/lib/connect-facts.ts` | none (a registry) | What each engine does with a `connect-src` source, as one table |
 | `src/lib/cookie-facts.ts` | network | Which cookies each engine sends with a request of the sandbox, as one table |
 | `src/lib/css-references.ts` | every build | URL references in CSS |
+| `src/lib/document-url.ts` | every build | `documentUrl` (design 03, "The public surface"): where the embedder serves `sealed-document.html`, sealed mode's view |
 | `src/lib/egress.ts` | every build | The egress table |
 | `src/lib/element-events.ts` | every build | The element's events |
 | `src/lib/engine-ledger.ts` | none (a registry) | The engine-difference ledger |

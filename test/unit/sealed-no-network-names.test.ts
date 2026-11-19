@@ -108,7 +108,7 @@ describe("a sealed worker's source and its bootstrap name none of them", () => {
 
     it("the source of a sealed build's worker holds the bootstrap with `sealed`, a list without the names, and no request gate", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
         startWith(el, { mode: 'sealed', entry: 'main.js' }, { files: { 'main.js': 'void 0' } });

@@ -8,7 +8,7 @@
 //   - the element, which the specs configure.
 // A script of the page, not the harness's: it has no inline script and no inline style, so the strict policy of the
 // fixture runs it. The element's size is set through the CSSOM, which no style-src governs.
-import { buildSettled, insertInert, loadLibrary } from './library';
+import { buildSettled, insertInert, loadLibrary, pageDocumentUrl } from './library';
 
 // the build the test asked for (library.ts): the default build, or the one with the network modes
 const { defineWebSandbox, viewScriptHash } = await loadLibrary();
@@ -85,7 +85,8 @@ if (params.get('sw') !== '0' && 'serviceWorker' in navigator && appPolicy) {
 }
 
 // ---- the element and the events the specs read ------------------------------------------------------------------------
-defineWebSandbox();
+// sealed mode's view: the build's own sealed-document.html, on the page's origin, which its policy admits in frame-src
+defineWebSandbox({ documentUrl: pageDocumentUrl() });
 w.sandboxLogs = [];
 w.sandboxEvents = [];
 // the events that carry guest data do not bubble (design 01, I5): heard in the capture phase

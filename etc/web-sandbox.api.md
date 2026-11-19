@@ -17,7 +17,7 @@ export interface CallLimits {
 }
 
 // @public
-export function defineWebSandbox(tagName?: string): typeof WebSandbox;
+export function defineWebSandbox(definition: WebSandboxDefinition): typeof WebSandbox;
 
 // @public
 export const EXECUTION_TIMEOUT_GRACE_MS = 1000;
@@ -209,6 +209,12 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
 }
 
 // @public
+export interface SealedSandboxDefinition {
+    readonly documentUrl: string | URL;
+    readonly tagName?: string;
+}
+
+// @public
 export const VIEW_INPUT_IN_FLIGHT = 1;
 
 // @public
@@ -258,6 +264,14 @@ export class WebSandbox extends HTMLElement {
     get started(): boolean;
     get state(): SandboxState;
     terminate(reason?: string): void;
+}
+
+// @public
+export type WebSandboxDefinition = WebSandboxDefinitionByBuild[keyof WebSandboxDefinitionByBuild];
+
+// @public
+export interface WebSandboxDefinitionByBuild {
+    sealed: SealedSandboxDefinition;
 }
 
 // @public

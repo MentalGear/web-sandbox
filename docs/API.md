@@ -26,30 +26,67 @@ leaves to you, read the [threat model](THREAT-MODEL.md).
 
 ## Registering the element
 
-<!-- describes: api:defineWebSandbox sig:8e1b -->
+<!-- describes: api:defineWebSandbox sig:eb5d -->
 ```ts
 import { defineWebSandbox } from 'web-sandbox';
 
-defineWebSandbox();                  // <web-sandbox>
-defineWebSandbox('my-sandbox');      // or a tag name of your own (instead, not as well)
+defineWebSandbox({ documentUrl: '/static/sealed-document.html' });                        // <web-sandbox>
+defineWebSandbox({ tagName: 'my-sandbox', documentUrl: '/static/sealed-document.html' }); // or a tag of your own (instead, not as well)
 ```
+
+Sealed mode's view is a static file the package ships, `sealed-document.html`: the package exports it as
+`web-sandbox/sealed-document.html` (`dist/sealed-document.html`). Serve it unchanged, from the origin that serves the
+library (copy it into the directory your site serves static files from), and give its URL once, here: every element of
+the page frames it.
+
+- **Where it is resolved.** A relative `documentUrl` is resolved against the document's own URL (`document.URL`), never
+  its base URL: a `<base>` in the page, which injected markup can add without any script, does not move it.
+- **What it may be.** `http:` or `https:`, with no user name, password or fragment; a query and any path are yours (a URL
+  that changes with the library's version keeps an old copy out of a cache). Anything else throws a `TypeError` that names
+  the rule.
+- **Once.** A second definition of the same tag with the same `documentUrl` does nothing, and with another one throws.
+- **Who is trusted with it.** Whoever answers `documentUrl` receives every app's files, its ports and, through them, the
+  reach of its host methods: the host that serves it is trusted as the host of the library's own script is. On the origin
+  that serves the library it adds no one.
+- **The host page's policy** must admit it in `frame-src` ([Host page policy](#host-page-policy)).
+- **In the build with the network modes** it may be left out (`defineWebSandbox({})`): strict, cooperative and worker
+  mode keep documents of their own, and `start()` of a sealed app on such an element throws.
+
+<a id="define-refusals"></a>**`defineWebSandbox()`'s refusals.** Each is a `TypeError` whose message is
+`[Sandbox] defineWebSandbox(): ` and the text below; nothing is defined or stored.
+
+<!-- generated:begin define-refusals -->
+| Message | Cause |
+| :--- | :--- |
+| `defineWebSandbox() takes one object, { tagName, documentUrl }, whose tagName is a string when given` | `defineWebSandbox()` was given something other than an object, or a `tagName` that is not a string. |
+| `documentUrl is required: the URL where the page serves sealed-document.html, the view of sealed mode (see docs/API.md#registering-the-element)` | In the default build, `defineWebSandbox()` was given no `documentUrl`: sealed mode, the only mode of that build, has no view without it. |
+| `documentUrl is refused: …` | `documentUrl` breaks one of its rules, which the message names after the colon: a string or a `URL`, resolved against the document's own URL (`document.URL`, never a `<base>`), with the scheme `http:` or `https:`, no user name or password, and no fragment. A query and any path are the embedder's. |
+| `the element is already defined with another documentUrl` | The tag is already defined by this element with another `documentUrl` (or without one). A second definition with the same one does nothing. |
+<!-- generated:end -->
 
 <!-- generated:begin api-define -->
 ```ts
-function defineWebSandbox(tagName?: string): typeof WebSandbox
+function defineWebSandbox(definition: WebSandboxDefinition): typeof WebSandbox
 ```
 
-Registers `WebSandbox` as a custom element under `tagName` and returns the class. Importing the package
-registers nothing, so you pick the name. Calling it again with the same name does nothing.
+Registers `WebSandbox` as a custom element and returns the class. Importing the package registers nothing, so you name
+the file sealed mode's view is served from, and may pick the tag.
+
+The definition is read and checked whole before anything is defined. A second call for a tag this element already
+has does nothing when its `documentUrl` is the same, and throws when it differs. In a build with the network modes an
+element registered without `documentUrl` runs those modes only: `start()` of a sealed app throws.
 
 **Parameters**
 
-- `tagName`: The tag name; `'web-sandbox'` when left out. The class can be registered under one name only.
+- `definition`: The tag name and the served file's URL; see `WebSandboxDefinition`.
 
 **Returns:** The `WebSandbox` class.
 
-**Throws:** An `Error` if the name is already defined by another element; the browser's `NotSupportedError` for a second,
-different name of this class, and its `SyntaxError` for a name that is not a valid custom element name.
+**Throws:** A `TypeError` for a definition that is not an object or whose `tagName` is not a string, for a missing
+`documentUrl` (in the default build), for one that breaks its rules (the message names the rule), and for a tag this
+element already has with another `documentUrl`; an `Error` if the name is already defined by another element; the
+browser's `NotSupportedError` for a second, different name of this class, and its `SyntaxError` for a name that is not
+a valid custom element name.
 <!-- generated:end -->
 
 ---
@@ -105,8 +142,8 @@ The package has two builds, chosen by one build flag that is off by default
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 50 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 68 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 51 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 69 modules of `src/` |
 <!-- generated:end -->
 
 - **The default build is sealed mode alone.** It is what `bun run build:lib` writes and what the package is as
@@ -1088,6 +1125,7 @@ type FetchRecord = {
 | `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included). |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 | `the guest raised more uncaught errors or unhandled rejections in one second than their budget allows` | Worker, strict and sealed mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)). |
+| `the document at documentUrl did not answer: the file is missing, the server answers its path with another page, a header on it refuses the framing or the view's script, or the host page's frame-src does not admit it (see docs/API.md#registering-the-element)` | Sealed mode: no view announced itself from the first frame of the element's frame within `LOAD_TIMEOUT_MS`, or the frame loaded a document with no frame in it. From outside the frame the causes look alike: the file is not at `documentUrl`, the server answers that path with another page (an app's fallback page), a header on the file refuses the framing (`X-Frame-Options`, `frame-ancestors`) or the view's script, or the host page's own `frame-src` does not admit `documentUrl` (see [Registering the element](#registering-the-element) and [Host page policy](#host-page-policy)). |
 <!-- generated:end -->
 
 Branch on `state` and the event, not on these texts. A reason names the problem, never a value: it is a fixed text
@@ -1112,6 +1150,7 @@ message names the option and what it takes. For the options it refuses as a whol
 | `html is longer than 262144 characters, the most the view renders at once: render the rest from the entry` | Strict and sealed mode: the app's `html` is longer than `VIEW_RENDER_MAX_LENGTH` (262144) characters, the most one render takes (the initial view is one). It is refused before anything reads it. Render the rest from the entry, in renders of that size. |
 | `links is refused: …` | The grant `links` breaks one of its rules, which the reason names after the colon: a list, of at most `MAX_LINKS` entries, each a string of at most 2048 characters that parses as a URL, has the scheme `https:`, has no user name or password and is equal to its own serialisation (`new URL(entry).href`), no two equal. Nothing of the list is kept. |
 | `the configuration could not be used (…)` | An option's rule failed on its value with an error that is not one of start()'s own refusals (each of which says the option and what it takes); the error's name follows, as in `(RangeError)`. |
+| `sealed mode's view is the served sealed-document.html, and this element was registered without documentUrl: pass it to defineWebSandbox() (see docs/API.md#registering-the-element)` | In a build with the network modes: `mode` is `'sealed'` or left out, and the element was registered without `documentUrl`. Sealed mode has no view but the served file; strict, cooperative and worker mode need none. |
 <!-- generated:end -->
 
 ---
@@ -1791,6 +1830,7 @@ What changes for an embed written when strict mode was the default:
 | no `mode`, with `scriptUnsafe: true` (which `execute()` needs) | refused: `start()` throws, nothing is stored, with the message `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1) ``; in TypeScript, a type error. Sealed mode runs only the app's `entry`: without `scriptUnsafe`, `execute()` does nothing | add `mode: 'strict'`, in a build with the network modes |
 | no `mode` (or `mode: 'strict'`), with `html` longer than 262144 characters (`VIEW_RENDER_MAX_LENGTH`) | refused in both modes: `start()` throws, nothing is stored, with the message `html is longer than 262144 characters, the most the view renders at once: render the rest from the entry` | render the rest from the entry, in renders of at most that size |
 | no `mode` (or `mode: 'strict'`), with `links` that break one of its rules | refused in both modes: `start()` throws, nothing is stored, with the message `links is refused: …` and the rule (see [Links](#links)) | list each URL as `new URL(url).href` spells it, `https:` and without credentials, at most `MAX_LINKS` of them |
+| no `mode`, in a build with the network modes, on an element registered without `documentUrl` (`defineWebSandbox({})`) | refused: `start()` throws, nothing is stored, with the message `sealed mode's view is the served sealed-document.html, and this element was registered without documentUrl: pass it to defineWebSandbox() (see docs/API.md#registering-the-element)` | serve the file and pass its URL to `defineWebSandbox()`, or name a network mode |
 | `mode: 'strict'`, `'cooperative'` or `'worker'`, in a build with the network modes | unchanged | nothing |
 | TypeScript that types a config with no mode as `StrictSandboxConfig` | `mode` is required there | add `mode: 'strict'`, or type it `SealedSandboxConfig` |
 | a host page policy that lists origins for the sandbox in `img-src`, `connect-src` and so on | sealed mode needs none of them | keep `blob:`; drop the origins if nothing else of the page needs them |
@@ -2702,7 +2742,7 @@ Values:
 <!-- generated:begin api-exports-values -->
 | Export | Build | What it is |
 | :--- | :--- | :--- |
-| `defineWebSandbox` | every build | Registers `WebSandbox` as a custom element under `tagName` and returns the class. |
+| `defineWebSandbox` | every build | Registers `WebSandbox` as a custom element and returns the class. |
 | `viewScriptHash` | every build | The CSP hash source of the library's bootstrap for this build of the package, to allow in the host page's own Content-Security-Policy: the view of sealed and strict mode runs it and, in a build with the network modes, so does the fetch bridge's frame. |
 | `SandboxDevTools` | every build | Logs one sandbox's `sandbox-log` lines to the host page's console, safely: the values go after a fixed first argument, so a guest string is never read as a console format string. |
 | `WebSandbox` | every build | The `<web-sandbox>` custom element: one app, given once with `start()`, run in a sandboxed environment that `reset()` rebuilds. |
@@ -2756,6 +2796,7 @@ Types:
 | `HostMethod` | every build | A host method the guest calls with `bridge.call(name, ...args)`, given to `start()` in `SandboxGrants`. |
 | `NetworkModeEvents` | network | The events the network modes add to the element's (`WebSandboxEventMap`): in a build that has them, the element's event map holds these too. |
 | `NetworkModeMethods` | network | The methods the network modes add to the element (`WebSandbox`): in a build that has them, the element has these too, and in the default build it has none of them. |
+| `NetworkSandboxDefinition` | network | The definition of an element that runs the network modes only, in the build with them: no `documentUrl`, since strict, cooperative and worker mode keep documents of their own. |
 | `NetworkSandboxOptions` | network | The options that open the network: `origins` and `fetchBridge`. |
 | `RpcError` | every build | The shape of every rejection of `call()` and `callWithTimeout()`: a plain `Error` with an own `code`. |
 | `RpcErrorCode` | every build | Why a call was refused: the `code` of an `RpcError`. |
@@ -2774,10 +2815,13 @@ Types:
 | `SandboxState` | every build | Where the element is in its lifecycle; read it from `state`. |
 | `SandboxViolation` | every build | The `detail` of a `violation` event: the guest's policy refused a load. |
 | `SealedSandboxConfig` | every build | The configuration of sealed mode, the default ([ADR-008](ADR-008-sealed-mode.md)): strict mode with no network. |
+| `SealedSandboxDefinition` | every build | The element's tag name, and where the page serves sealed mode's view. |
 | `StrictSandboxConfig` | network | The configuration of strict mode ([ADR-005](ADR-005-strict-mode.md)): sealed mode's view and worker, with the network options. |
 | `StrictSandboxOrigins` | network | `SandboxOrigins` in strict mode: no `scripts`, since the view runs only the library's bootstrap ([ADR-005](ADR-005-strict-mode.md)). |
 | `UnsafeCapability` | network | A member of `UNSAFE_CAPABILITIES`: an entry of the `unsafeCapabilities` option. |
 | `UnsafePermission` | network | A member of `UNSAFE_PERMISSIONS`: a capability granted through the frames' `allow` attribute, not a sandbox flag. |
+| `WebSandboxDefinition` | every build | What `defineWebSandbox` takes in this build: one of the definitions of `WebSandboxDefinitionByBuild`. |
+| `WebSandboxDefinitionByBuild` | every build | The definitions `defineWebSandbox` takes, by the build that takes them. |
 | `WebSandboxEventMap` | every build | The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`. |
 | `WorkerSandboxConfig` | network | The configuration of worker mode: guest code runs in a worker inside the frame. |
 <!-- generated:end -->

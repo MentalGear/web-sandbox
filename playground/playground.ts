@@ -2,7 +2,8 @@ import "./playground-state.ts"
 
 // the build with the network modes: the presets show every mode (ADR-009)
 import { WebSandbox, defineWebSandbox } from '@src/network.ts';
-defineWebSandbox();
+// sealed mode's view: the served file, which `bun run dev` builds into dist/ before the dev server starts (vite.config.ts serves it unchanged)
+defineWebSandbox({ documentUrl: '/dist/sealed-document.html' });
 
 import { SandboxDevTools } from '@src/devtools.ts';
 import { DEFAULT_PRESET, PRESETS, type Preset } from '@src/lib/presets.ts';

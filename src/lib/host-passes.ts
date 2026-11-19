@@ -110,7 +110,7 @@ export const HOST_PASSES = {
         units: [
             'src/host.ts#this.start', 'src/host.ts#this._bind',
             'src/lib/app-start.ts#readStart', 'src/lib/app-start.ts#readArgument', 'src/lib/app-start.ts#checkKey', 'src/lib/app-start.ts#readOptions', 'src/lib/app-start.ts#copiedOptions', 'src/lib/app-start.ts#copied',
-            'src/lib/app-start.ts#readFiles', 'src/lib/app-start.ts#checkEntry', 'src/lib/app-start.ts#refusal', 'src/lib/app-start.ts#startRefusal',
+            'src/lib/app-start.ts#readFiles', 'src/lib/app-start.ts#checkEntry', 'src/lib/app-start.ts#checkServedView', 'src/lib/app-start.ts#refusal', 'src/lib/app-start.ts#startRefusal',
             'src/lib/config-schema.ts#unknownModeReason', 'src/lib/config-schema.ts#isSandboxMode', 'src/lib/config-schema.ts#renamedModeNote',
             'src/lib/reasons.ts#reasonText', 'src/lib/reasons.ts#joinDetails', 'src/lib/reasons.ts#errorName', 'src/lib/reasons.ts#branded',
             'src/lib/csp/origin-kinds.ts#shown', 'src/lib/minted-errors.ts#mintUncodedError', 'src/lib/minted-errors.ts#failedText',

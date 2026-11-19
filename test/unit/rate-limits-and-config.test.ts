@@ -22,7 +22,7 @@ import { startWith, type AppSetup } from './start-app';
 
 async function mount(config?: Record<string, unknown>, setup: AppSetup = {}) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     if (config) startWith(el, config, setup);

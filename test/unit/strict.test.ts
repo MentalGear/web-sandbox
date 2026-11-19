@@ -18,7 +18,7 @@ const policyOf = (el: HTMLElement) => viewOf(el).querySelector('meta[http-equiv=
 
 async function mount(config: Record<string, unknown>, files?: Record<string, string>) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     startWith(el, config, { files });

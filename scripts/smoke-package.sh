@@ -28,7 +28,9 @@ const unnamed: SandboxConfig = { html: '<p>hi</p>', origins: { images: ['https:/
 const bridged: SandboxConfig = { fetchBridge: { allow: [] } };
 // @ts-expect-error 'iframe' is no mode: were the package's types `any`, this line would not be an error
 const renamed: SandboxConfig = { mode: 'iframe' };
-const element: typeof WebSandbox = defineWebSandbox('consumer-sandbox');
+const element: typeof WebSandbox = defineWebSandbox({ tagName: 'consumer-sandbox', documentUrl: '/sealed-document.html' });
+// @ts-expect-error the default build's sealed mode has no view without the served file: documentUrl is required
+defineWebSandbox({ tagName: 'consumer-sandbox' });
 console.log(element.name, SAFE_CAPABILITIES.length, sealed, named, strict, cooperative, worker, unnamed, bridged, renamed);
 TS
 }
@@ -49,8 +51,10 @@ const renamed: SandboxConfig = { mode: 'iframe' };
 const scripted: SandboxConfig = { mode: 'strict', origins: { scripts: ['https://cdn.example'] } };
 // the network modes' event is in the element's event map, by declaration merging
 const fetched: WebSandboxEventMap['fetch'] | null = null;
-const element: typeof WebSandbox = defineWebSandbox('consumer-sandbox');
-console.log(element.name, SAFE_CAPABILITIES.length, UNSAFE_CAPABILITIES.length, sealed, strict, typed, unnamed, config, renamed, scripted, fetched);
+const element: typeof WebSandbox = defineWebSandbox({ tagName: 'consumer-sandbox', documentUrl: new URL('/sealed-document.html', location.href) });
+// the network modes keep documents of their own: a registration without documentUrl runs them, and refuses sealed mode
+const networkOnly: typeof WebSandbox = defineWebSandbox({ tagName: 'network-only-sandbox' });
+console.log(element.name, networkOnly.name, SAFE_CAPABILITIES.length, UNSAFE_CAPABILITIES.length, sealed, strict, typed, unnamed, config, renamed, scripted, fetched);
 TS
 }
 

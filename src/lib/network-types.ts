@@ -169,7 +169,26 @@ export interface NetworkModeMethods {
     execute(code: string): void;
 }
 
+/**
+ * The definition of an element that runs the network modes only, in the build with them: no `documentUrl`, since strict,
+ * cooperative and worker mode keep documents of their own. `start()` of a sealed app on such an element throws.
+ */
+export interface NetworkSandboxDefinition {
+    /**
+     * The tag name. The class can be registered under one name only.
+     *
+     * @defaultValue `'web-sandbox'`
+     */
+    readonly tagName?: string;
+    /** Left out: the element has no served view, so it runs no sealed app. */
+    readonly documentUrl?: undefined;
+}
+
 declare module '../host' {
+    interface WebSandboxDefinitionByBuild {
+        /** The build with the network modes: an element that runs them only ({@link NetworkSandboxDefinition}). */
+        network: NetworkSandboxDefinition;
+    }
     interface SandboxConfigByMode {
         /** Strict mode: sealed mode's view and worker, with the network options ({@link StrictSandboxConfig}). */
         strict: StrictSandboxConfig;

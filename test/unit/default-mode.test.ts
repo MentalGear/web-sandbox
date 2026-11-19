@@ -23,7 +23,7 @@ const innerOf = (el: HTMLElement) => parse(innerSourceOf(el));
 
 async function element() {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     return document.createElement('web-sandbox') as any;
 }
 

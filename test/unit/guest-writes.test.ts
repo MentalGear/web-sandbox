@@ -12,7 +12,7 @@ import { commitAt } from './guest-commit';
 
 async function mount(config?: Record<string, unknown>) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     if (config) startWith(el, config);
@@ -49,7 +49,7 @@ afterEach(() => {
 describe('the config: only a literal true turns guest writes on', () => {
     it.each([['true'], [1], [{}]])('guestWrites: %j → start() refuses it with a TypeError: no app, no overlay', async (guestWrites) => {
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         expect(() => startWith(el, { capabilities: ['allow-scripts'], guestWrites })).toThrow(/guestWrites must be a boolean/);
         expect([el.started, el._guestWrites]).toEqual([false, null]);
@@ -85,7 +85,7 @@ describe('the config: only a literal true turns guest writes on', () => {
     it('start() cannot take the reserved name: a host method named sandbox:write is refused and never runs', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
         const forged = vi.fn(() => 'forged');

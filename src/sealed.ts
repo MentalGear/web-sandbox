@@ -1,7 +1,7 @@
 /**
  * The public API of sealed mode: what every build of the package exports. The default build's entry (index.ts) exports
  * exactly this; the network build's (network.ts) adds the network modes' types and values (ADR-009).
- * Importing it registers nothing: call defineWebSandbox() (optionally with your own tag name).
+ * Importing it registers nothing: call defineWebSandbox() with the URL of the served file (and optionally a tag name).
  */
 export { WebSandbox, defineWebSandbox, EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_MS, VIEW_LIVENESS_TIMEOUT_MS } from "./host";
 export type {
@@ -14,6 +14,9 @@ export type {
     SandboxGrants,
     SandboxState,
     SealedSandboxConfig,
+    SealedSandboxDefinition,
+    WebSandboxDefinition,
+    WebSandboxDefinitionByBuild,
     WebSandboxEventMap,
 } from "./host";
 export type { RpcError, RpcErrorCode, RpcLibraryCode } from "./lib/rpc";

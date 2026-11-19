@@ -87,7 +87,7 @@ const networkSources = (policy: string) => [...directives(policy).values()].flat
 
 async function mount() {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     return el;

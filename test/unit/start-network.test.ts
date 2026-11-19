@@ -9,7 +9,7 @@ import { reasonText } from '@src/lib/reasons';
  * a new one. The default build's part is test/unit/start.test.ts.
  */
 
-defineWebSandbox();
+defineWebSandbox({ documentUrl: '/sealed-document.html' });
 
 const newElement = () => document.createElement('web-sandbox') as any;
 const snapshot = (el: any) => ({ state: el.state, started: el.started, files: el.listFiles(), config: structuredClone(el._config), origins: el._origins, fetchPolicy: el._fetchPolicy, gen: el._lc.gen });

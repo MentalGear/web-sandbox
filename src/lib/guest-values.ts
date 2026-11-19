@@ -61,6 +61,7 @@ const LIBRARY_CONSTANT = { owner: 'library', why: 'a constant of the library', b
 const NETWORK_CONSTANT = { owner: 'library', why: 'a constant of the library', builds: 'network' } as const;
 const LIBRARY_SET = { owner: 'library', why: 'a closed set of the library\'s strings', builds: 'every' } as const;
 const NETWORK_SET = { owner: 'library', why: 'a closed set of the library\'s strings', builds: 'network' } as const;
+const DEFINITION = { handed: false, why: 'the definition given to defineWebSandbox() once; never handed back', builds: 'every' } as const;
 const NOTHING = { owner: 'library', why: 'returns nothing; what it throws is the library\'s' } as const;
 const CONFIGURATION = { handed: false, why: "the embedder's configuration, read by start(); never handed back", builds: 'every' } as const;
 const NETWORK_CONFIGURATION = { handed: false, why: "the embedder's configuration, read by start(); never handed back", builds: 'network' } as const;
@@ -113,6 +114,7 @@ export const GUEST_VALUES = {
     FetchBridgeConfig: NETWORK_CONFIGURATION,
     FileContent: { handed: false, why: "the content of an app's file, given to start(); the library hands back copies as `Uint8Array`", builds: 'every' },
     FileEntry: { handed: false, why: "an app's file, given to start(); what comes back is FileInfo", builds: 'every' },
+    NetworkSandboxDefinition: { handed: false, why: 'the definition given to defineWebSandbox() once; never handed back', builds: 'network' },
     NetworkSandboxOptions: NETWORK_CONFIGURATION,
     SandboxApp: { handed: false, why: "the app, given to start() once; never handed back", builds: 'every' },
     SandboxConfig: CONFIGURATION,
@@ -122,9 +124,12 @@ export const GUEST_VALUES = {
     SandboxGrants: { handed: false, why: "the embedder's grants, given to start() once; never handed back", builds: 'every' },
     SandboxOrigins: NETWORK_CONFIGURATION,
     SealedSandboxConfig: CONFIGURATION,
+    SealedSandboxDefinition: DEFINITION,
     StrictSandboxConfig: NETWORK_CONFIGURATION,
     StrictSandboxOrigins: NETWORK_CONFIGURATION,
     WorkerSandboxConfig: NETWORK_CONFIGURATION,
+    WebSandboxDefinition: DEFINITION,
+    WebSandboxDefinitionByBuild: DEFINITION,
 
     // ---- what the guest hands the embedder's code
     HostMethod: {

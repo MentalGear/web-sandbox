@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
-import { realpathSync } from 'fs';
+import { readFileSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { realisticHostMiddleware, REALISTIC_HOST_PATH } from './test/e2e/realistic-host-server';
 
@@ -27,6 +27,13 @@ function withoutDevClient(html: string): string {
   if (parts.length !== 2) throw new Error(`the e2e server expected the dev client's tag once in the page, and found it ${parts.length - 1} times`);
   return parts.join('');
 }
+
+// Each build's sealed-document.html (scripts/build-lib.ts writes it into dist/ and dist-network/), served as the static
+// file it is: the bytes on disk, with a content type and nothing else, never through Vite's HTML transform, which would
+// insert its client's script ahead of the file's policy (research 32 found most dev servers rewrite a served .html;
+// test/e2e/served-document.spec.ts compares what this answers with the file, byte for byte). Read at each request, so
+// it is the file as the last build wrote it.
+const SERVED_DOCUMENTS = ['/dist/sealed-document.html', '/dist-network/sealed-document.html'] as const;
 
 export default defineConfig({
   root: '.',
@@ -73,6 +80,13 @@ export default defineConfig({
           res.end(`web-sandbox e2e server for ${root}\n`);
         });
       }
+      server.middlewares.use((req, res, next) => {
+        const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+        if (!(SERVED_DOCUMENTS as readonly string[]).includes(path)) return next();
+        res.setHeader('content-type', 'text/html');
+        res.setHeader('cache-control', 'no-store');
+        res.end(readFileSync(join(__dirname, path)));
+      });
       // Test endpoint (fetch bridge specs, backlog B5): answers with the request's method and headers, so a
       // spec can see what reached the harness origin, outside the browser. Same origin as the harness, so a
       // credentialed request here carries the harness's cookies in every engine. CORS for any origin: the bridge's

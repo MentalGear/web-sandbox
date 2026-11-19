@@ -9,10 +9,11 @@
         server builds beside it (playwright.config.ts). The fixture names the build the test asked for (window.sandboxBuild).
     -->
     <script type="module">
-        const bundle = window.sandboxBuild === 'network' ? '/dist-network/index.js' : '/dist/index.js';
-        const { defineWebSandbox, viewScriptHash } = await import(/* @vite-ignore */ bundle);
+        const directory = window.sandboxBuild === 'network' ? '/dist-network' : '/dist';
+        const { defineWebSandbox, viewScriptHash } = await import(/* @vite-ignore */ `${directory}/index.js`);
 
-        defineWebSandbox('packaged-sandbox');
+        // the bundle's own sealed-document.html, beside it
+        defineWebSandbox({ tagName: 'packaged-sandbox', documentUrl: `${directory}/sealed-document.html` });
         window.sandboxLogs = [];
         // sandbox-log does not bubble (design 01, I5): the harness hears it in the capture phase
         window.addEventListener('sandbox-log', (event) => {

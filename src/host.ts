@@ -32,6 +32,7 @@ import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, NO_HOST_PAGE, STRICT_VIEW_FLAGS, unknownModeReason, type AppOptionName, type CallBudget, type EmbedderOptionName, type StoredConfig } from "./lib/config-schema";
 import { readStart, type StartValues } from "./lib/app-start";
+import { documentAddress, readDocumentUrl, registeredDocumentUrl, storeRegistration } from "./lib/document-url";
 import type { Holds } from "./lib/utils";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
@@ -2230,17 +2231,91 @@ function adopted(element: WebSandbox) {
 }
 
 /**
- * Registers `WebSandbox` as a custom element under `tagName` and returns the class. Importing the package
- * registers nothing, so you pick the name. Calling it again with the same name does nothing.
- *
- * @param tagName - The tag name; `'web-sandbox'` when left out. The class can be registered under one name only.
- * @returns The `WebSandbox` class.
- * @throws An `Error` if the name is already defined by another element; the browser's `NotSupportedError` for a second,
- * different name of this class, and its `SyntaxError` for a name that is not a valid custom element name.
+ * What {@link defineWebSandbox} takes in this build: one of the definitions of {@link WebSandboxDefinitionByBuild}.
  */
-export function defineWebSandbox(tagName = 'web-sandbox'): typeof WebSandbox {
+export type WebSandboxDefinition = WebSandboxDefinitionByBuild[keyof WebSandboxDefinitionByBuild];
+
+/**
+ * The definitions {@link defineWebSandbox} takes, by the build that takes them.
+ *
+ * @remarks
+ * The package as published has sealed mode alone, whose view is the served file, so its definition requires
+ * `documentUrl` ({@link SealedSandboxDefinition}). A build with the network modes (ADR-009; docs/API.md#builds) adds a
+ * definition without it here, for an element that runs only those modes, which keep documents of their own.
+ */
+export interface WebSandboxDefinitionByBuild {
+    /** Every build: an element that can run sealed mode ({@link SealedSandboxDefinition}). */
+    sealed: SealedSandboxDefinition;
+}
+
+/**
+ * The element's tag name, and where the page serves sealed mode's view.
+ */
+export interface SealedSandboxDefinition {
+    /**
+     * The tag name. The class can be registered under one name only.
+     *
+     * @defaultValue `'web-sandbox'`
+     */
+    readonly tagName?: string;
+    /**
+     * Where the page serves `sealed-document.html`, the file the package exports as `web-sandbox/sealed-document.html`:
+     * sealed mode's view, which every element of the page frames. Serve it unchanged, with no response header that sets
+     * a policy on it.
+     *
+     * @remarks
+     * A relative URL is resolved against the document's own URL (`document.URL`), never against its base URL, so a
+     * `<base>` element in the page does not move it. It must be `http:` or `https:` and carry no user name, password or
+     * fragment; a query and any path are yours, so a URL that changes with the library's version keeps an old copy out of
+     * a cache. Whoever answers it receives every app's files and the reach of its host methods: serve it from the origin
+     * that serves the library (docs/API.md#registering-the-element). The host page's own policy must admit it in
+     * `frame-src`.
+     */
+    readonly documentUrl: string | URL;
+}
+
+/**
+ * Registers `WebSandbox` as a custom element and returns the class. Importing the package registers nothing, so you name
+ * the file sealed mode's view is served from, and may pick the tag.
+ *
+ * @remarks
+ * The definition is read and checked whole before anything is defined. A second call for a tag this element already
+ * has does nothing when its `documentUrl` is the same, and throws when it differs. In a build with the network modes an
+ * element registered without `documentUrl` runs those modes only: `start()` of a sealed app throws.
+ *
+ * @param definition - The tag name and the served file's URL; see {@link WebSandboxDefinition}.
+ * @returns The `WebSandbox` class.
+ * @throws A `TypeError` for a definition that is not an object or whose `tagName` is not a string, for a missing
+ * `documentUrl` (in the default build), for one that breaks its rules (the message names the rule), and for a tag this
+ * element already has with another `documentUrl`; an `Error` if the name is already defined by another element; the
+ * browser's `NotSupportedError` for a second, different name of this class, and its `SyntaxError` for a name that is not
+ * a valid custom element name.
+ */
+export function defineWebSandbox(definition: WebSandboxDefinition): typeof WebSandbox {
+    // sanitised first (the tag name, the URL resolved against the document's own URL and checked), then the element is
+    // defined, then the URL stored
+    const { tagName, documentUrl } = readDefinition(definition);
     const existing = customElements.get(tagName);
     if (existing && existing !== WebSandbox) throw mintUncodedError(Error, `<${tagName}> is already defined by another element`);
-    if (!existing) customElements.define(tagName, WebSandbox);
+    if (existing) {
+        if (registeredDocumentUrl() !== documentUrl) throw definitionRefusal(reasonText('documentUrlChanged'));
+        return WebSandbox;
+    }
+    customElements.define(tagName, WebSandbox);
+    storeRegistration(documentUrl);
     return WebSandbox;
 }
+
+// What defineWebSandbox() was given, read once per field: the tag name, and the served file's URL, resolved and checked,
+// or null (only where the build has the network modes).
+function readDefinition(definition: unknown): { tagName: string; documentUrl: string | null } {
+    if (typeof definition !== 'object' || definition === null || Array.isArray(definition)) throw definitionRefusal(reasonText('definitionRefused'));
+    const given = definition as { tagName?: unknown; documentUrl?: unknown };
+    const tagName = given.tagName;
+    const url = given.documentUrl;
+    if (tagName !== undefined && typeof tagName !== 'string') throw definitionRefusal(reasonText('definitionRefused'));
+    if (url === undefined && networkModes() === null) throw definitionRefusal(reasonText('documentUrlMissing'));
+    return { tagName: tagName ?? 'web-sandbox', documentUrl: url === undefined ? null : readDocumentUrl(url, documentAddress()) };
+}
+
+const definitionRefusal = (message: string) => mintUncodedError(TypeError, `[Sandbox] defineWebSandbox(): ${message}.`);

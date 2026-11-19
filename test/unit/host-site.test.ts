@@ -385,7 +385,13 @@ describe('host-side code reads the host page only through host-site.ts', () => {
         expect(files).not.toContain('src/lib/in-sandbox-script.ts');
         // the positive control: host-site.ts itself reads what the scan forbids elsewhere
         expect(reads(readFileSync(path.join(ROOT, 'src/lib/host-site.ts'), 'utf8')).length).toBeGreaterThan(0);
-        const offending = files.filter(file => file !== 'src/lib/host-site.ts').flatMap(file => reads(readFileSync(path.join(ROOT, file), 'utf8')).map(read => `${file}: ${read}`));
+        // sealed mode's one read of the page (design 03, "The public surface"): the document's own URL, which a relative
+        // documentUrl is resolved against, in the sealed module that reads it (document-url.ts, documentAddress); a network
+        // module, as host-site.ts is, cannot be imported by the default build
+        const SEALED_READS: Readonly<Record<string, readonly string[]>> = { 'src/lib/document-url.ts': ['document.URL'] };
+        expect(files).toContain('src/lib/document-url.ts');
+        for (const [file, allowed] of Object.entries(SEALED_READS)) expect(reads(readFileSync(path.join(ROOT, file), 'utf8')).map(read => read.replace(/ \(line \d+\)$/, '')), file).toEqual(allowed);
+        const offending = files.filter(file => file !== 'src/lib/host-site.ts' && !Object.hasOwn(SEALED_READS, file)).flatMap(file => reads(readFileSync(path.join(ROOT, file), 'utf8')).map(read => `${file}: ${read}`));
         expect(offending).toEqual([]);
     });
 

@@ -495,7 +495,7 @@ describe('C-11: only real import and export specifiers are rewritten in the decl
 describe("M-1, M-2: the relay's own lines always reach the host, and its budgets fit the host's window by construction", () => {
     // The host side: the element, with a port of its own, dispatching what the guest's relay posted on it.
     function hostOf() {
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);

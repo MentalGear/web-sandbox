@@ -20,7 +20,7 @@ const flagsOf = (el: HTMLElement) => {
 
 async function mount(config: Record<string, unknown>) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     startWith(el, config);
@@ -47,7 +47,7 @@ describe('R2-2: allow-forms is an unsafe capability (cooperative and worker mode
     it("cooperative mode: capabilities: ['allow-forms'] is refused by start() with a TypeError that names unsafeCapabilities; no frame is built", async () => {
         warnings();
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         expect(() => startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts', 'allow-forms'] })).toThrow(TypeError);
         expect(() => startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts', 'allow-forms'] })).toThrow(/"allow-forms" is not allowed in "capabilities"\. .*opt in via "unsafeCapabilities"/);

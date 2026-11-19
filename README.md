@@ -89,11 +89,16 @@ The whole picture, on one page, with the realms, channels, frames and lifecycle 
 ```js
 import { defineWebSandbox } from 'web-sandbox';   // or './src/index.ts' from a checkout
 
-defineWebSandbox();                             // registers <web-sandbox>; pass a name to use your own tag
+// registers <web-sandbox>: sealed mode's view is the package's sealed-document.html, which you serve unchanged
+defineWebSandbox({ documentUrl: '/static/sealed-document.html' });
 const sandbox = document.createElement('web-sandbox');
 sandbox.start({ html: '<h1>Hello</h1>' });      // the app, once: sealed mode, the default, shows it, runs no script in it
 document.body.append(sandbox);                  // it builds once it is in the document
 ```
+
+The package exports the file as `web-sandbox/sealed-document.html` (`dist/sealed-document.html`): copy it into the
+directory your site serves static files from, and give its URL once, at registration
+([API](docs/API.md#registering-the-element)); your page's own policy admits it in `frame-src`.
 
 An element runs one app, given once with `start(app, grants)`: the app's own content (`html`, `entry`, `files`) as the
 first argument, and what you allow it (its host methods, `guestWrites`, the other options) as the second. A second

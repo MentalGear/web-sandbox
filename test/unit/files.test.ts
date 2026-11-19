@@ -57,7 +57,7 @@ const directive = (policy: string, name: string) => policy.split(';').map(d => d
 // These tests read the guest document of cooperative mode: a config that names no mode is a cooperative one here.
 async function mount(config?: Record<string, unknown>, files?: Record<string, unknown>) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     return startWith(el, { mode: 'cooperative', ...config }, { files });
@@ -238,7 +238,7 @@ describe('files are part of the environment', () => {
 
     it('a refused batch throws an Error with its code and leaves store and event silent', async () => {
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
         let events = 0;

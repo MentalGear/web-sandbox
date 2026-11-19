@@ -337,7 +337,7 @@ describe('the refusal: the default build takes no config of a network mode or op
     it('the element: start() throws with the reason before anything of the app is stored, and the element then binds a sealed app', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         vi.spyOn(console, 'info').mockImplementation(() => {});
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
         const reasons: string[] = [];
@@ -357,7 +357,7 @@ describe('the refusal: the default build takes no config of a network mode or op
     });
 
     it('the element has no execute(): the network build installs it, and nothing installs it here', () => {
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         expect('execute' in el).toBe(false);
         expect(Object.getOwnPropertyNames(WebSandbox.prototype)).not.toContain('execute');

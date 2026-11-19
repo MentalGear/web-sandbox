@@ -23,7 +23,7 @@ afterEach(() => {
 const task = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function element(config?: Record<string, unknown>) {
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);

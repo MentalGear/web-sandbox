@@ -53,6 +53,18 @@ export function insertInert(element: HTMLElement & { start(app: object, grants?:
     document.body.appendChild(element);
 }
 
+/** Each build's output directory, as the e2e server serves it (playwright.config.ts builds both at its start). */
+const BUILD_DIRECTORY = { default: '/dist', network: '/dist-network' } as const satisfies Record<Build, string>;
+
+/**
+ * Where this page's build has its sealed-document.html, sealed mode's view (design 03): the file the e2e server serves
+ * unchanged from that build's output directory (vite.config.ts). Relative, so defineWebSandbox() resolves it against
+ * the page's own URL. Both builds write the same bytes (I12); each page names its own build's.
+ */
+export function pageDocumentUrl(build: Build = pageBuild()): string {
+    return `${BUILD_DIRECTORY[build]}/sealed-document.html`;
+}
+
 /** The entry of the page's build, imported: the default build's page never loads the network build's. */
 export async function loadLibrary(): Promise<Library> {
     if (pageBuild() === 'network') return import('@src/network');

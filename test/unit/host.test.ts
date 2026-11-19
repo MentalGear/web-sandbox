@@ -39,7 +39,7 @@ const frames = (el: HTMLElement) => {
 
 const mount = async (config?: Record<string, unknown>, setup: AppSetup = {}) => {
   const { defineWebSandbox } = await import('@src/host');
-  defineWebSandbox();
+  defineWebSandbox({ documentUrl: '/sealed-document.html' });
   const el = document.createElement('web-sandbox') as any;
   document.body.appendChild(el);
   if (config) startWith(el, config, setup);
@@ -217,7 +217,7 @@ describe("the host page's policy applied to the connect lists (hostContentSecuri
 describe('the scriptUnsafe guard rail (backlog S4)', () => {
   const mount = async () => {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     return el;
@@ -297,7 +297,7 @@ describe('no directive a <meta> policy discards is ever emitted (backlog S7)', (
 describe("the element's 'violation' event (backlog S5)", () => {
   it('dispatches a validated detail on the element, not bubbling, caps events per environment with one warning, and the cap resets with the environment', async () => {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     el.start({}); // an app, so that reset() builds the next environment

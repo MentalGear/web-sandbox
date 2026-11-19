@@ -20,7 +20,7 @@ import { startWith } from './start-app';
  * Here the embedder's code is played by the srcdoc setter itself (the assignment).
  */
 
-defineWebSandbox();
+defineWebSandbox({ documentUrl: '/sealed-document.html' });
 
 afterEach(() => {
     vi.useRealTimers();

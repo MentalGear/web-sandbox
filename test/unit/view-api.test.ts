@@ -15,7 +15,7 @@ const wrapperOf = (el: HTMLElement) => el.shadowRoot!.querySelector('iframe')!;
 
 async function mount(config: Record<string, unknown>) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     startWith(el, config);

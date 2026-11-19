@@ -4,7 +4,7 @@ This project uses [Bun](https://bun.sh) for everything: installing, running scri
 
 ```bash
 bun install
-bun run dev          # playground at http://localhost:4444/playground/index.html
+bun run dev          # builds dist/ (sealed mode's served file), then the playground at http://localhost:4444/playground/index.html
 bun run typecheck    # tsc over src, tests, playground and research specs
 bun run test         # unit (vitest) then e2e (playwright; builds the package first)
 WEB_SANDBOX_MODEL_RUNS=2000 bun run test:e2e test/e2e/lifecycle-model.spec.ts  # nightly: the lifecycle model suite at 2000 sequences per engine (CI runs 40)
@@ -59,13 +59,20 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
   `test/e2e/fixture.ts`, or a path relative to `baseURL`. `bun run dev` stays on 4444.
 - **The bundles.** The server's start builds `dist/` (the default build) and `dist-network/` (the bundle of the build
   with the network modes); `package.spec.ts` mounts each from its bundle.
+- **The served file.** Sealed mode's view is each build's `sealed-document.html`, which the server answers at
+  `/dist/sealed-document.html` and `/dist-network/sealed-document.html` as the bytes on disk, with a content type and no
+  other header, never through Vite's HTML transform (`vite.config.ts`, `SERVED_DOCUMENTS`;
+  `test/e2e/served-document.spec.ts` compares the two). Every harness page registers its build's
+  (`pageDocumentUrl()`, `test/e2e/library.ts`). The file holds the view's bootstrap as the build wrote it, so a change to
+  the view's sources reaches sealed mode's view only through a build.
 - **Reuse.** Locally Playwright reuses a server that is already running, but only one that answers
   `/__e2e-root?root=<this checkout>` with 200: the e2e server of this very checkout (`vite.config.ts`). Any other server
   answers 409 (or 404, a `bun run dev` or a checkout from before this), so Playwright starts this checkout's own; if the
   port is taken, the run stops with "Port … is already in use" rather than testing another checkout's code. Free the port
-  or set `WEB_SANDBOX_E2E_PORT`. A reused server serves `dist/` and `dist-network/` as they were built when it
-  started: rebuild (`bun run build:lib`, and `WEB_SANDBOX_NETWORK_MODES=1 bun scripts/build-lib.ts --out dist-network`)
-  before running `package.spec.ts` against it.
+  or set `WEB_SANDBOX_E2E_PORT`. A reused server serves `dist/` and `dist-network/` as they were last built, by its
+  start or since: rebuild (`bun run build:lib`, and `WEB_SANDBOX_NETWORK_MODES=1 bun scripts/build-lib.ts --out
+  dist-network`) before running `package.spec.ts` against it, and before any sealed-mode spec once the view's sources
+  changed, since every sealed view is that build's `sealed-document.html`.
 - **What the host page has left.** A spec that measures the host page's ticks, a busy share or its longest stall uses
   `test/e2e/host-share.ts` (the best of N windows against the page's own idle baseline, the documented bounds, the
   stall meter), never a meter of its own: `test/unit/host-share.test.ts` fails on one (backlog T9). One window on each

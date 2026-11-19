@@ -305,7 +305,7 @@ describe("S72 (class P): the repeated-overrun rule, the owner's decision on VIEW
     });
 
     it('the host: VIEW_FIRST_OVERRUN is one host warn line per environment, the sandbox standing; VIEW_OVERRUN ends it with the reason', () => {
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);

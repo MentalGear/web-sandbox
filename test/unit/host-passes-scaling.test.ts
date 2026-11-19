@@ -44,7 +44,7 @@ let element: any = null;
 async function host() {
     if (element) return element;
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     element = document.createElement('web-sandbox');
     return element;
 }

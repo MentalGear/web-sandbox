@@ -29,7 +29,7 @@ const settled = () => new Promise(resolve => setTimeout(resolve, 0));
 
 async function mount() {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     return el;
@@ -305,7 +305,7 @@ describe('the refusal, at the element: terminated at once with the reason', () =
         ['fetchBridge, with no mode (sealed is the default)', {}, { fetchBridge: { allow: ['https://api.example'] } }],
     ])('a sealed config naming %s: start() throws the reason, nothing of it is applied; a sealed config without it builds', async (_, mode, network) => {
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));

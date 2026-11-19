@@ -15,7 +15,7 @@ const NAMING_IT = "require-trusted-types-for 'script'; trusted-types web-sandbox
 
 async function mount(config: Record<string, unknown>) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     const reasons: string[] = [];
     el.addEventListener('terminated', (event: CustomEvent) => reasons.push(event.detail?.reason));

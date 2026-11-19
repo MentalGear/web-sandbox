@@ -21,7 +21,7 @@ const bootstrapOf = (el: HTMLElement) => parse(innerSourceOf(el)).querySelector(
 
 async function mount(config?: Record<string, unknown>, setup: AppSetup = {}) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     if (config) startWith(el, config, setup);
@@ -352,7 +352,7 @@ describe('A8: the default bootstrap is parser-safe', () => {
     it('every bootstrap the element builds passes (cooperative and worker mode, files, module graph, markup references, fetch bridge, auto-sizing)', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const files = { 'app.js': 'import "./lib.js"; </script><!--', 'lib.js': 'export {}', 'a.css': 'p{}', 'i.svg': '<svg/>' };
         for (const mode of ['cooperative', 'worker']) {
             const el = document.createElement('web-sandbox') as any;

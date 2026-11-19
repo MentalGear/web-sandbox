@@ -1,7 +1,7 @@
 // The e2e harness (harness.html) as one external module, for a host page served with a policy of its own
 // (vite.config.ts, /__host-policy): no inline script and no inline style, so a host policy without 'unsafe-inline'
 // runs it and sizes the element. The element's size is set through the CSSOM, which no style-src governs.
-import { buildSettled, insertInert, loadLibrary } from './library';
+import { buildSettled, insertInert, loadLibrary, pageDocumentUrl } from './library';
 
 // the build the test asked for (library.ts): the default build, or the one with the network modes
 const { defineWebSandbox, viewScriptHash } = await loadLibrary();
@@ -23,7 +23,7 @@ if (new URLSearchParams(location.search).has('tt-default')) {
     } catch { /* refused by the page's own list */ }
 }
 
-defineWebSandbox();
+defineWebSandbox({ documentUrl: pageDocumentUrl() });
 
 const w = window as any;
 w.sandboxLogs = [];

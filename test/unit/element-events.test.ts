@@ -28,7 +28,7 @@ function sources(dir: string): string[] {
     return files;
 }
 
-defineWebSandbox();
+defineWebSandbox({ documentUrl: '/sealed-document.html' });
 
 afterEach(() => {
     vi.restoreAllMocks();

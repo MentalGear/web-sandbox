@@ -63,7 +63,7 @@ export interface MountOptions {
  */
 export async function mountApp(config: Configuration, setup: AppSetup = {}, { connect = true, before }: MountOptions = {}): Promise<any> {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     before?.(el);
     if (connect) document.body.appendChild(el);
