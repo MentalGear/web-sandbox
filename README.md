@@ -607,9 +607,11 @@ await sandboxFiles.write('out/report.json', JSON.stringify(result));  // a strin
 await sandboxFiles.remove('draft.txt');
 // on the host
 sandbox.addEventListener('fileswritten', (e) => console.log('fileswritten', e.detail.paths));
-sandbox.listGuestWrites();                        // [{ path, change: 'write', type, size, content }, …]
-sandbox.commitGuestWrites(['out/report.json']);   // now a file of the app's, from the next build on
-sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the flag
+const writes = sandbox.listGuestWrites();         // [{ path, change: 'write', type, size, content }, …], frozen
+const report = writes.filter((w) => w.path === 'out/report.json');
+const code = writes.filter((w) => w.path === 'gen/app.js');
+sandbox.commitGuestWrites(report);                // true: now a file of the app's, from the next build on
+sandbox.commitGuestWrites(code, { code: true });  // code needs the flag; false if the guest wrote there since
 ```
 
 *   **The host checks every write** as `start()` checks the app's files (paths, content, the 8 MiB / 1000-file cap with
@@ -624,7 +626,10 @@ sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the fl
     guest writes loads anywhere.
 *   **Nothing is kept unless you commit it.** Pending writes belong to the environment: `reset()` and removing the
     element discard them; `terminate()` keeps them so you can still inspect and
-    commit them. `commitGuestWrites(paths)` takes an explicit list.
+    commit them. `commitGuestWrites(writes)` takes an explicit list of the values `listGuestWrites()` returned.
+*   **A commit stores exactly what you were handed.** Each value commits the change it was listed from, all or none:
+    if the guest wrote or removed at one of the paths since, or a build discarded the pending writes, nothing is
+    committed and it returns `false`, so you list again and check again. A copy of a value is not one (`TypeError`).
 *   **Code needs `{ code: true }`.** Only images, fonts, audio, video, `text/plain`, `application/json` and
     `text/css` commit without it; JavaScript, HTML, SVG, XML, WebAssembly and anything else is refused with
     `FILES_NOT_ALLOWED`, judged by the type the file will be loaded as. A committed file loads only as what its

@@ -64,7 +64,7 @@ export const GUEST_ENTRIES: readonly GuestEntry[] = [
     { member: '_bind', takes: ['files'], holds: ['files', 'normalised', 'this._files'] },
     { member: 'listFiles', takes: ['files'], holds: ['this._files'] },
     { member: 'listGuestWrites', takes: ['writes'], holds: ['this._guestWrites'] },
-    { member: 'commitGuestWrites', takes: ['writes', 'files'], holds: ['paths', 'this._guestWrites'] },
+    { member: 'commitGuestWrites', takes: ['writes', 'files'], holds: ['writes', 'this._guestWrites'] },
     { member: '_startGuestWrites', takes: ['files'], holds: ['built', 'this._files'] },
     { member: '_discardGuestWrites', takes: ['writes'], holds: ['this._guestWrites'] },
     { member: '_handleGuestWrite', takes: ['writes'], holds: ['writes', 'request'] },

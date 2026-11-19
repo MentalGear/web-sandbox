@@ -3,7 +3,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FileStore } from '@src/lib/files';
-import { createGuestWrites, GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND } from '@src/lib/guest-writes';
+import { createGuestWrites, GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND, parseCommitArguments, type MintedWrites } from '@src/lib/guest-writes';
+import { commitAt, commitOverlayAt } from './guest-commit';
 import { createLogLimiter, LOG_EVENTS_PER_SECOND } from '@src/lib/sandbox-log';
 import { AUTO_RESIZE_MAX_UPDATES_PER_SECOND, startAutoResize } from '@src/lib/auto-resize';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
@@ -160,12 +161,16 @@ describe('W3: a removal mark never outlives the stored file it names', () => {
     it('the host unregistering the path after the mark: the mark is neither listed nor committed; a live mark is (positive control)', () => {
         const store = new FileStore(() => {});
         store.register({ 'a.txt': 'a', 'b.txt': 'b' });
-        const writes = createGuestWrites({ store });
+        const minted: MintedWrites = new WeakMap();
+        const writes = createGuestWrites({ store, minted });
         expect(writes.handle({ change: 'remove', path: 'a.txt' })).toEqual({ path: 'a.txt', change: 'remove' });
         expect(writes.handle({ change: 'remove', path: 'b.txt' })).toEqual({ path: 'b.txt', change: 'remove' });
+        const early = writes.list(); // both marks, listed while a.txt is stored
         store.unregister(['a.txt']);
+        // the forgotten mark's value is stale, so a list with it commits nothing (I4)
+        expect(writes.commit(parseCommitArguments(early, undefined, minted).entries, false)).toBeNull();
         expect(writes.list()).toEqual([{ path: 'b.txt', change: 'remove' }]);
-        expect(writes.commit(['a.txt', 'b.txt'], false)).toEqual(['b.txt']);
+        expect(commitOverlayAt(writes, minted, ['a.txt', 'b.txt'], false)).toEqual(['b.txt']);
         expect(writes.list()).toEqual([]);
         expect(store.list()).toEqual([]);
     });
@@ -176,24 +181,26 @@ describe('one diff (class D): a commit takes a change off the pending list, neve
     it('a committed write: removing it is recorded as a removal of the stored file, the view stops showing it, and a second removal is none', () => {
         const store = new FileStore(() => {});
         store.register({ 'a.txt': 'a' });
-        const writes = createGuestWrites({ store, built: store.copy() });
+        const minted: MintedWrites = new WeakMap();
+        const writes = createGuestWrites({ store, built: store.copy(), minted });
         expect(writes.handle({ change: 'write', path: 'n.txt', entry: 'n' })).toMatchObject({ path: 'n.txt', change: 'write' });
-        expect(writes.commit(['n.txt'], false)).toEqual(['n.txt']);
+        expect(commitOverlayAt(writes, minted, ['n.txt'], false)).toEqual(['n.txt']);
         expect(writes.list()).toEqual([]);
         expect(writes.record({ change: 'remove', path: 'n.txt' })).toEqual({ answer: { path: 'n.txt', change: 'remove' }, diff: { listed: true, view: true, shown: null } });
         expect(writes.list()).toEqual([{ path: 'n.txt', change: 'remove' }]);
         expect(writes.handle({ change: 'remove', path: 'n.txt' })).toEqual({ path: 'n.txt', change: 'none' });
-        expect(writes.commit(['n.txt'], false)).toEqual(['n.txt']);
+        expect(commitOverlayAt(writes, minted, ['n.txt'], false)).toEqual(['n.txt']);
         expect(store.list().map(file => file.path)).toEqual(['a.txt']);
     });
 
     it('the same bytes written again after their commit change what is listed, not what the guest sees; a committed removal stays removed (positive control)', () => {
         const store = new FileStore(() => {});
         store.register({ 'a.txt': 'a' });
-        const writes = createGuestWrites({ store, built: store.copy() });
+        const minted: MintedWrites = new WeakMap();
+        const writes = createGuestWrites({ store, built: store.copy(), minted });
         writes.handle({ change: 'write', path: 'n.txt', entry: 'n' });
         writes.handle({ change: 'remove', path: 'a.txt' });
-        expect(writes.commit(['n.txt', 'a.txt'], false)).toEqual(['a.txt', 'n.txt']);
+        expect(commitOverlayAt(writes, minted, ['n.txt', 'a.txt'], false)).toEqual(['a.txt', 'n.txt']);
         expect(writes.record({ change: 'write', path: 'n.txt', entry: 'n' }).diff).toMatchObject({ listed: true, view: false });
         expect(writes.handle({ change: 'remove', path: 'a.txt' })).toEqual({ path: 'a.txt', change: 'none' });
     });
@@ -430,8 +437,8 @@ describe('W1: a reference names a file only for the kind of load its type is for
         const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], guestWrites: true, html: '<script src="app.txt"></script><script src="ok.js"></script>' });
         el._guestWrites.handle({ change: 'write', path: 'app.txt', entry: new TextEncoder().encode('globalThis.ran = 1') });
         el._guestWrites.handle({ change: 'write', path: 'ok.js', entry: new TextEncoder().encode('globalThis.ok = 1') });
-        el.commitGuestWrites(['app.txt']);
-        el.commitGuestWrites(['ok.js'], { code: true });
+        commitAt(el, ['app.txt']);
+        commitAt(el, ['ok.js'], { code: true });
         el.reset();
         expect(el.listFiles().map((f: any) => [f.path, f.type])).toEqual([['app.txt', 'text/plain'], ['ok.js', 'text/javascript']]);
         expect(slotsOf(el)).toEqual(['ok.js']);

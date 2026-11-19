@@ -41,11 +41,11 @@ import { readStart } from '../../src/lib/app-start';
 import { DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, unknownModeReason, type CallBudget, type StoredConfig } from '../../src/lib/config-schema';
 import { dynamicImportAt } from '../../src/lib/entry-imports';
 import { FileStore, isJavaScriptType } from '../../src/lib/files';
-import { createGuestWrites, parseCommitArguments, type GuestWrites } from '../../src/lib/guest-writes';
+import { createGuestWrites, parseCommitArguments, type GuestWrite, type GuestWrites, type MintedWrites } from '../../src/lib/guest-writes';
 import { reasonText } from '../../src/lib/reasons';
 import { DEFAULT_TERMINATE_REASON, LifecycleModel, RPC_SMALLEST_CALL_BYTES, type Cmd, type ConfigDesc, type GuestSpec, type Sequence, type Settlement } from './lifecycle-model';
 import { Rng } from './generator';
-import { AGENT_SOURCE, guestStep, listingOf, startArgumentsOf } from './runner';
+import { AGENT_SOURCE, commitListedAt, guestStep, listingOf, startArgumentsOf } from './runner';
 
 export const ORIGIN = 'https://host.example';
 const BUILD_FAILED = 'the environment could not be built';
@@ -154,6 +154,7 @@ export class FakeElement implements LifecycleHost {
     frame: Frame | null = null;
     guest: FakeGuest | null = null; // the standing build's guest, from its attach to its teardown
     writes: GuestWrites | null = null; // host.ts's `_guestWrites`: made by the attach, closed at the teardown, dropped by discardWrites
+    readonly minted: MintedWrites = new WeakMap(); // host.ts's `_mintedWrites`: every value listGuestWrites() returned, for the element's life
     private calls: GuestCall[] = [];
     private queued: GuestCall[] = []; // made while loading: posted at the flush
     log: string[] = [];
@@ -305,7 +306,7 @@ export class FakeElement implements LifecycleHost {
         this.frame = frame;
         this.guest = this.guestOf(ctx);
         // host.ts, `_startGuestWrites`: the overlay answers the guest from the files this build delivers
-        this.writes = this.config.guestWrites === true ? createGuestWrites({ store: this.files, built: this.files.copy(), now: () => this.now }) : null;
+        this.writes = this.config.guestWrites === true ? createGuestWrites({ store: this.files, built: this.files.copy(), minted: this.minted, now: () => this.now }) : null;
         this.lastBuildAt = this.now;
         this.log.push(`build #${frame.id}${frame.silent ? ' (silent)' : ''}`);
         // the wrapper's one load, and the guest's announcement, in either order (S46: usually the announcement first)
@@ -485,11 +486,13 @@ export class FakeElement implements LifecycleHost {
         return this.writes?.list() ?? [];
     }
 
-    commitGuestWrites(paths: unknown, options: unknown) {
-        const { paths: checked, code } = parseCommitArguments(paths, options);
-        if (!this.writes) return;
-        const changed = this.writes.commit(checked, code);
+    commitGuestWrites(writes: readonly GuestWrite[], options?: { code?: boolean }): boolean {
+        const { entries, code } = parseCommitArguments(writes, options, this.minted);
+        if (!this.writes) return entries.length === 0;
+        const changed = this.writes.commit(entries, code);
+        if (changed === null) return false;
         if (changed.length > 0) this.dispatch('fileschanged', deepFreeze({ paths: changed }));
+        return true;
     }
 
     terminate(reason?: unknown) {
@@ -594,7 +597,7 @@ export function runReducerSequence(sequence: Sequence, options: ReducerRunOption
                 return;
             }
             case 'listWrites': return listingOf(el.listGuestWrites());
-            case 'commit': el.commitGuestWrites(cmd.paths, { code: cmd.code }); return;
+            case 'commit': commitListedAt(el, cmd.paths, cmd.code); return;
             default: return;
         }
     }

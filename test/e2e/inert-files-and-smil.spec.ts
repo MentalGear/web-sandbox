@@ -30,10 +30,14 @@ async function exposeMark(sandbox: SandboxDriver) {
 }
 const marks = (sandbox: SandboxDriver) => sandbox.page.evaluate(() => [...(window as any).marks] as string[]);
 
+// Lists the pending writes and commits the values listed at `paths`, in one task.
 const commit = (sandbox: SandboxDriver, paths: string[], options?: unknown) => sandbox.page.evaluate(({ paths, options }) => {
     try {
-        (document.querySelector('web-sandbox') as any).commitGuestWrites(paths, options);
-        return 'ok';
+        const el = document.querySelector('web-sandbox') as any;
+        const listed = el.listGuestWrites();
+        const chosen: unknown[] = [];
+        for (const write of listed) if (paths.includes(write.path)) chosen.push(write);
+        return el.commitGuestWrites(chosen, options) ? 'ok' : 'stale';
     } catch (e: any) {
         return String(e?.code);
     }

@@ -111,14 +111,14 @@ export const GUEST_WRITES_PER_SECOND = 100;
 
 // @public
 export type GuestWrite = {
-    path: string;
-    change: 'write';
-    type: string;
-    size: number;
-    content: Uint8Array;
+    readonly path: string;
+    readonly change: 'write';
+    readonly type: string;
+    readonly size: number;
+    readonly content: Uint8Array;
 } | {
-    path: string;
-    change: 'remove';
+    readonly path: string;
+    readonly change: 'remove';
 };
 
 // @public
@@ -337,9 +337,9 @@ export class WebSandbox extends HTMLElement {
     adoptedCallback(): void;
     call(method: string, ...args: unknown[]): Promise<unknown>;
     callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown>;
-    commitGuestWrites(paths: string[], options?: {
+    commitGuestWrites(writes: readonly GuestWrite[], options?: {
         code?: boolean;
-    }): void;
+    }): boolean;
     connectedCallback(): void;
     disconnectedCallback(): void;
     listFiles(): FileInfo[];

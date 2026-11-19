@@ -206,7 +206,7 @@ test.describe('the sealed app of the docs', () => {
             const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
             const app = (window as any).app;
             // what the first app committed: its own write, now one of its element's files
-            app.sandbox.commitGuestWrites(app.sandbox.listGuestWrites().map((write: { path: string }) => write.path));
+            app.sandbox.commitGuestWrites(app.sandbox.listGuestWrites());
             const committed = app.sandbox.listFiles().map((file: { path: string }) => file.path);
             app.stop();
             (window as any).app = await mountTodoApp(document.getElementById('apps'), { bundle, appId: 'bundle-b', store: (window as any).store });
@@ -243,15 +243,17 @@ test.describe('the sealed app of the docs', () => {
         const probe = await page.evaluate(async ({ bundle }) => {
             const { mountTodoApp } = await import(/* @vite-ignore */ `${location.origin}/examples/sealed-app/host.js`);
             const a = (window as any).app;
-            const pending = a.sandbox.listGuestWrites().map((w: any) => w.path);
+            const listed = a.sandbox.listGuestWrites();
+            const pending = listed.map((w: any) => w.path);
             a.stop();
-            a.sandbox.commitGuestWrites(pending); // the embedder's commit, after stop()
+            // the embedder's commit, after stop(): the removal discarded the pending writes, so the values are stale
+            const committed = a.sandbox.commitGuestWrites(listed);
             const b = await mountTodoApp(document.getElementById('apps'), { bundle, appId: 'bundle-b', store: (window as any).store });
             (window as any).app = b;
-            return { pending, aConnected: a.sandbox.isConnected, aState: a.sandbox.state, distinct: a.sandbox !== b.sandbox };
+            return { pending, committed, aConnected: a.sandbox.isConnected, aState: a.sandbox.state, distinct: a.sandbox !== b.sandbox };
         }, { bundle: '/bundle-b' });
         await expect.poll(() => recorded(page)).toEqual(NOTHING_OF_B);
-        expect(probe).toEqual({ pending: ['progress.png'], aConnected: false, aState: expect.stringMatching(/^(idle|terminated)$/), distinct: true });
+        expect(probe).toEqual({ pending: ['progress.png'], committed: false, aConnected: false, aState: expect.stringMatching(/^(idle|terminated)$/), distinct: true });
     });
 
     test("a host method of the first app that calls the sandbox after stop() reaches nothing: the next app is sent none of its data", async ({ sandbox, page, browserName }) => {

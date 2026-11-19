@@ -125,6 +125,20 @@ export function listingOf(entries: any[]): { path: string; change: string; text?
     return entries.map(entry => ({ path: entry.path, change: entry.change, ...(entry.change === 'write' ? { text: tokenOf(new TextDecoder().decode(entry.content)) } : {}) }));
 }
 
+/**
+ * The model's `commit`: lists the pending writes and commits the values listed at `paths`, in one synchronous task, so
+ * each is its path's current entry (the model predicts the commit from the list as it is now). Returns the element's
+ * answer.
+ */
+export function commitListedAt(el: { listGuestWrites(): any[]; commitGuestWrites(writes: readonly any[], options?: { code?: boolean }): boolean }, paths: readonly string[], code: boolean): boolean {
+    const listed = el.listGuestWrites();
+    const chosen: any[] = [];
+    for (const write of listed) {
+        if (paths.includes(write.path)) chosen.push(write);
+    }
+    return el.commitGuestWrites(chosen, { code });
+}
+
 /** A guest step as the agent receives it: a write carries the text its token stands for. */
 export function guestStep(spec: GuestSpec): GuestSpec {
     return spec.k === 'write' ? { ...spec, text: fileContent(spec.text) } : spec;
@@ -274,7 +288,7 @@ export async function runSequence(sequence: Sequence, origin = location.origin):
             }
             case 'listWrites':
                 return listingOf(el.listGuestWrites());
-            case 'commit': el.commitGuestWrites(cmd.paths, { code: cmd.code }); return;
+            case 'commit': commitListedAt(el, cmd.paths, cmd.code); return;
             default: return;
         }
     }

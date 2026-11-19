@@ -1,11 +1,11 @@
 # 01 · One element runs one app, given once
 
-**Status: steps 1.0 to 1.6 and 1.8 of [the build order](05-build-order.md#step-1--startapp-grants) are built**:
+**Status: step 1 of [the build order](05-build-order.md#step-1--startapp-grants) is built**:
 `start(app, grants)` and `started` in both builds, the six members gone from both, `execute()` in the build with the
 network modes only, `APP_SURFACE` (I1, I3) and `CONFIG_SCHEMA`'s owners (I17) with their tests, an element with no app
 that builds nothing (the lifecycle's rows below), and the events that carry guest data not bubbling (`ELEMENT_EVENTS`,
-I5; the network build's `fetch` is held to the same rule). Not built yet: commits by identity
-(1.7). The code as it is:
+I5; the network build's `fetch` is held to the same rule), and commits by identity of the current pending entry, all or
+none (I4). The code as it is:
 [API.md](../API.md). [The folder's index](README.md) has the invariants (I1 to I5 and I17 are this file's) and what
 [review 1](REVIEW-1.md) and [review 2](REVIEW-2.md) changed here.
 
@@ -188,9 +188,9 @@ is the guest's data.
 commitGuestWrites(writes: readonly GuestWrite[], options?: { code?: boolean }): boolean
 ```
 
-Today `commitGuestWrites(paths)` commits whatever is pending for each path at the moment of the call. An embedder that
-lists the writes, inspects their bytes and then commits by path commits bytes it never saw if the guest wrote again in
-between (`BD5:DOC-6`). In this design the commit takes the write values themselves:
+A commit by path would commit whatever is pending for each path at the moment of the call: an embedder that lists the
+writes, inspects their bytes and then commits by path would commit bytes it never saw if the guest wrote again in between
+(`BD5:DOC-6`). So the commit takes the write values themselves:
 
 - A `GuestWrite` is a frozen value the library minted, and the library knows the ones it minted (by identity, in a
   `WeakMap` to the pending entry it was made from). Nothing is compared by content, and a copy of a value is not the

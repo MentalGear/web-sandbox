@@ -10,6 +10,7 @@ import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { isViewFileType, VIEW_WRITE_TYPES } from '@src/lib/in-sandbox-view';
 import { mimeTypeFor as typeForPath } from '@src/lib/files';
 import { checkIn } from './check-in';
+import { commitAt } from './guest-commit';
 import { startWith } from './start-app';
 
 /**
@@ -248,7 +249,7 @@ describe('5:L-3 (class D/L): the first listener cannot rewrite a detail for the 
         el.addEventListener('fileschanged', (e: CustomEvent) => { Reflect.set(e.detail.paths, 0, 'rewritten'); });
         el.addEventListener('fileschanged', (e: CustomEvent) => { seen.push([...e.detail.paths], Object.isFrozen(e.detail), Object.isFrozen(e.detail.paths)); });
         await el._handleGuestWrite(el._guestWrites, { change: 'write', path: 'a.txt', entry: 'x' });
-        el.commitGuestWrites(['a.txt']); // the files change: 'fileschanged'
+        commitAt(el, ['a.txt']); // the files change: 'fileschanged'
         expect(seen).toEqual([['a.txt'], true, true]);
     });
 
@@ -317,7 +318,7 @@ describe('5:N-4 and 5:L-4 (class D): one diff of the guest-write state', () => {
                 const roll = next();
                 const target = pick();
                 if (roll < 0.3) {
-                    try { el.commitGuestWrites([target], { code: true }); } catch { /* a refused commit changes nothing */ }
+                    try { commitAt(el, [target], { code: true }); } catch { /* a refused commit changes nothing */ }
                     continue;
                 }
                 const before = JSON.parse(listed()).find((entry: any) => entry.path === target) ?? null;

@@ -9,7 +9,7 @@ import { fileKinds, SEALED_FILE_KINDS, sealedViewPolicy } from "./lib/csp/csp-ge
 import { buildRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
 import { NO_ORIGINS, type OriginKind, type OriginPolicy } from "./lib/csp/origin-kinds";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, viewStylesheets, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
-import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
+import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites, type MintedWrites } from "./lib/guest-writes";
 import { inSandboxFiles } from "./lib/in-sandbox-files";
 import { LOAD_KINDS } from "./lib/load-kinds";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
@@ -680,6 +680,9 @@ export class WebSandbox extends ElementBase {
     // environment's termination (closed, still listable and committable) and is discarded by the next build and on
     // removal (_discardGuestWrites).
     private _guestWrites: GuestWrites | null = null;
+    // Every GuestWrite this element's listGuestWrites() returned, to its entry: what commitGuestWrites() takes (I4).
+    // One map for the element's life, so a value of an earlier environment is this element's and stale, not foreign.
+    private readonly _mintedWrites: MintedWrites = new WeakMap();
     private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
     private _logLimiter = createLogLimiter(); // guest 'sandbox-log' events per second for the current environment (sandbox-log.ts)
     // The per-second budget of the guest's calls (R3:M-2): what the config gives (the config schema, callBudgetOf), and this
@@ -927,42 +930,57 @@ export class WebSandbox extends ElementBase {
      * The guest's pending writes and removals (see `guestWrites` and docs/API.md#guest-writes), sorted by path. They belong
      * to the current environment; how long they live is stated once, at docs/API.md#guest-writes-lifetime.
      *
-     * @returns One {@link GuestWrite} per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
+     * @returns One {@link GuestWrite} per path with a pending change, each a fresh frozen object: `{ path, change: 'write', type, size, content }`
      * (`type` the library's for the path's extension, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
-     * `guestWrites` is off.
+     * `guestWrites` is off. Each value is what `commitGuestWrites()` takes: the element knows the values it returned,
+     * by identity.
      */
     listGuestWrites(): GuestWrite[] {
         return this._guestWrites?.list() ?? [];
     }
 
     /**
-     * Applies the guest's pending changes at `paths` to the app's files, atomically, and removes them from the pending
-     * list. The guest sees committed files from the next build on. Fires `fileschanged` when the files changed.
+     * Applies the given values of `listGuestWrites()` to the app's files, all or none, if each is still what is pending at
+     * its path, and removes them from the pending list. The guest sees committed files from the next build on. Fires
+     * `fileschanged` when the files changed.
      *
      * @remarks
+     * - It commits exactly what you were handed: each value commits the change it was listed from, never what the
+     *   guest wrote at its path since, and the bytes stored are the ones listed (changing a value's `content` changes
+     *   nothing). The element knows the values it returned by identity, so a copy of one is not one, and a value of
+     *   another element is not either.
+     * - A value is stale when its change is not its path's pending change now: the guest wrote or removed at the path again, the
+     *   change was committed, or a build (`reset()`, the element's re-insertion) discarded the pending writes. If any value
+     *   is stale, nothing is committed and it returns `false`: list again, check again, and commit the new values. Files you
+     *   checked as a set are never committed in part.
      * - A write whose type is not inert is refused with `FILES_NOT_ALLOWED` unless `options.code` is `true`. Inert types
      *   are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the inert rows of the one
      *   type table, `FILE_TYPES`, src/lib/files.ts). JavaScript, HTML, SVG, XML, WebAssembly and any extension the table
      *   does not have can run or be parsed as code.
      * - All checks come first, the quota included (with what module and stylesheet rewrites add, against the files as they
      *   are now), so a refusal changes neither the files nor the pending list.
-     * - It commits what is pending now, not what `listGuestWrites()` showed earlier. To commit exactly what you validated, list,
-     *   validate and commit in one synchronous task (the guest's writes arrive in tasks of their own).
      * - A write's type is a function of its path (I8): the guest gives a path and bytes, never a type, so the type and the
      *   name agree. A write to `evil.html` is an HTML file and needs `code` to commit. The name is still the guest's: if you
      *   store or serve the bytes elsewhere, choose the name yourself.
      * - A committed file loads only as what its type is for (see {@link SandboxApp}): an inert file never runs as a script.
      *   Committed `text/css` is inert but still CSS: markup of the next build that links it is styled by it.
      *
-     * @param paths - The paths to commit; required, since there is no "commit everything". A path with no pending change
-     * is skipped.
+     * @param writes - The values to commit, each one this element's `listGuestWrites()` returned; required, since there is
+     * no "commit everything". An empty list commits nothing and returns `true`.
      * @param options - `code: true` allows the writes whose type is not inert.
-     * @throws A {@link FileError} with `code` `INVALID_PATH`, `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`.
+     * @returns `true` when every value was current and all were committed; `false` when one was stale, and nothing was
+     * committed.
+     * @throws A `TypeError` when `writes` is not an array or holds a value this element did not return (a copy included),
+     * before anything is committed. A {@link FileError} with `code` `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`; then
+     * nothing is committed.
      */
-    commitGuestWrites(paths: string[], options?: { code?: boolean }): void {
-        const { paths: checked, code } = parseCommitArguments(paths, options);
-        if (!this._guestWrites) return;
-        this._dispatchFilesChanged(this._guestWrites.commit(checked, code));
+    commitGuestWrites(writes: readonly GuestWrite[], options?: { code?: boolean }): boolean {
+        const { entries, code } = parseCommitArguments(writes, options, this._mintedWrites);
+        if (!this._guestWrites) return entries.length === 0; // no overlay: none of this element's values is current
+        const changed = this._guestWrites.commit(entries, code);
+        if (changed === null) return false;
+        this._dispatchFilesChanged(changed);
+        return true;
     }
 
     // Synchronous, once per call that changed something.
@@ -979,7 +997,7 @@ export class WebSandbox extends ElementBase {
     // `built` is the copy of the store this build delivers (_prepareBuild): the overlay answers the guest from it, so
     // nothing registered after the build shows through a write's answer or its quota (BR:CB4).
     private _startGuestWrites(built: FileStore) {
-        this._guestWrites = this._config.guestWrites === true ? createGuestWrites({ store: this._files, built }) : null;
+        this._guestWrites = this._config.guestWrites === true ? createGuestWrites({ store: this._files, built, minted: this._mintedWrites }) : null;
         this._exposeGuestWrites(this._guestWrites);
     }
 

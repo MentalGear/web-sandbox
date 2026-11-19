@@ -1,6 +1,6 @@
 # 05 · The order of the work
 
-**Status: steps 1 and 2 are under way: 1.0 to 1.6 and 1.8, and 2.1, 2.2, 2.4 and 2.5, are built (each row says so); 1.7 waits for the owner; the rest is a plan.** Each step ends with the repository's gates passing on both builds and three engines
+**Status: step 1 is built, and of step 2 and 3 the rows 2.1, 2.2, 2.4, 2.5 and 3.1 (each row says so); the rest is a plan.** Each step ends with the repository's gates passing on both builds and three engines
 (CONTRIBUTING.md), and each brings the structural test of its invariant ([the folder's index](README.md)). The plan is
 the one after [review 1](REVIEW-1.md), the owner's [decisions on it](README.md#decided-after-review-1) and
 [review 2](REVIEW-2.md).
@@ -24,7 +24,7 @@ policy is deleted only after the served document passes, so that each deletion i
 | 1.4 | **built**: the playground and the devtools move | |
 | 1.5 | **built**: the six members and their reducer inputs are removed from both builds; `execute()` from the default build (a method of the network modes, declared by `NetworkModeMethods`) | `APP_SURFACE` (I1, I3); the lifecycle model's suite at its nightly size |
 | 1.6 | **built**: an element with no app stays `'idle'` | a unit test and the lifecycle model's rule |
-| 1.7 | `commitGuestWrites(writes)` by identity of the current pending entry, all or none | a guest write, a commit, a `reset()` or a re-insertion after the list each leave the listed value uncommittable, and a list with one stale value commits nothing and answers `false` (I4) |
+| 1.7 | **built**: `commitGuestWrites(writes)` by identity of the current pending entry, all or none | a guest write, a commit, a `reset()` or a re-insertion after the list each leave the listed value uncommittable, and a list with one stale value commits nothing and answers `false` (I4) |
 | 1.8 | **built**: the three events stop bubbling | `ELEMENT_EVENTS` (I5) |
 
 A spec is never changed to fit: a spec that tested re-configuring one element either tests two elements, or is deleted

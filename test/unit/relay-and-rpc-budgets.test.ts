@@ -6,6 +6,7 @@ import { defineWebSandbox } from '@src/host';
 import { createBroker, RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_BYTES_PER_SECOND, LOG_DROPPED_ARGUMENT, LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_MAX_STRING, toLogDetail } from '@src/lib/sandbox-log';
+import { commitAt } from './guest-commit';
 import { startWith, type AppSetup } from './start-app';
 
 /**
@@ -462,7 +463,7 @@ describe("R3-2: a build's 'terminated' comes in a task: a listener added right a
         el._guestPolicy = () => { throw new Error('no policy'); };
         const entry = await mountElement({ mode: 'strict', entry: 'main.js', guestWrites: true }, { files: { 'main.js': 'void 0' } });
         await entry._handleGuestWrite(entry._guestWrites, { change: 'remove', path: 'main.js' });
-        entry.commitGuestWrites(['main.js']); // the next build has no entry
+        commitAt(entry, ['main.js']); // the next build has no entry
         for (const [target, act] of [[el, () => startWith(el, { mode: 'strict' })], [el, () => el.reset()], [entry, () => entry.reset()]] as const) {
             act();
             expect(target.state).toBe('terminated');

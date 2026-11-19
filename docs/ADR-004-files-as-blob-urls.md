@@ -485,7 +485,8 @@ the host says so.
   every pending change and this write applied: the count and the registered bytes, which is `apply()`'s first step,
   without lexing. The commit is `apply()` itself, lexing included, against the store as it is then, so it can still be
   refused (`FILES_QUOTA_EXCEEDED`) if the host registered more meanwhile.
-- **An overlay per environment, the host the single source of truth.** `Map<path, CheckedFile | removal>`, created by the
+- **An overlay per environment, the host the single source of truth.** `Map<path, entry>`, each entry a written
+  `CheckedFile` or a removal, new for every recorded request, created by the
   build (null when off). A refused request changes nothing on either side; the guest's map changes only after the answer,
   in call order (a `Blob` is read first; every entry's bytes are copied when `write()` is called). A removal of a path in
   neither the store nor the overlay is answered `none` (the guest mints `NOT_FOUND`) and records nothing, so removal marks
@@ -497,8 +498,12 @@ the host says so.
 - **No URL for anything written, but raster images in the strict view.** `list()`, `read()` and `text()` show the guest's
   acknowledged writes; `url()` of a written path is `NOT_FOUND` in every mode, and no `blob:` URL is minted for one in the
   guest. The one exception is the strict view (below): it shows raster-image writes from URLs it mints itself.
-- **Commit needs an explicit list, and code needs a second opt-in.** `commitGuestWrites(paths, options?)`; there is no
-  commit-all and no discard (`reset()` discards). A write whose type is not on a fixed inert list — the image, font, audio
+- **Commit needs an explicit list of what the host was handed, and code needs a second opt-in.**
+  `commitGuestWrites(writes, options?)` takes the frozen values `listGuestWrites()` minted, which the element knows by
+  identity (a `WeakMap` from the value to its entry; a copy is a `TypeError`). A value commits only while its entry is its
+  path's current entry, all or none: one stale value commits nothing and the call answers `false`
+  ([design 01, files and commits](design/01-one-element-one-app.md#files-and-commits), I4). There is no commit-all and no
+  discard (`reset()` discards). A write whose type is not on a fixed inert list — the image, font, audio
   and video types of the extension table without SVG, `text/plain`, `application/json`, `text/css`: the inert rows of
   `FILE_TYPES` — is refused unless `options.code === true`. JavaScript, HTML, SVG, XML, WebAssembly and unknown extensions
   are code until the embedder says otherwise. The type checked is the `CheckedFile`'s, which decides how the file is

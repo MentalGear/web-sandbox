@@ -18,6 +18,7 @@ import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { stringifiedFor } from './stringified';
 import { runBootstrap } from './sandbox-environment';
 import { keptCss } from '@src/lib/css-references';
+import { commitAt } from './guest-commit';
 import { startWith } from './start-app';
 
 const TYPEOF_SCANNED = await stringifiedFor('typeofRead');
@@ -307,7 +308,7 @@ describe("L-3: one rule for every 'terminated': a rebuild from its listener that
         startWith(el, { mode: 'strict', entry: 'agent.js', guestWrites: true }, { files: { 'agent.js': 'void 0' } });
         // the guest removes its entry and the host commits the removal: the next build has no entry
         await el._handleGuestWrite(el._guestWrites, { change: 'remove', path: 'agent.js' });
-        el.commitGuestWrites(['agent.js']);
+        commitAt(el, ['agent.js']);
         const reason = 'the guest entry is not a registered JavaScript file';
         const heard: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => { heard.push(e.detail.reason); el.reset(); });

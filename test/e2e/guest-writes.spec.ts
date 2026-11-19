@@ -61,14 +61,17 @@ const contentOf = (sandbox: SandboxDriver, path: string) => sandbox.page.evaluat
     const write = (document.querySelector('web-sandbox') as any).listGuestWrites().find((w: any) => w.path === path);
     return write?.content ? Array.from(write.content as Uint8Array) : null;
 }, path);
-const commit = (sandbox: SandboxDriver, paths: unknown, options?: unknown) => sandbox.page.evaluate(({ paths, options }) => {
+// Lists the pending writes and commits the values listed at `paths`, in one task; `ok` is the element's answer.
+const commit = (sandbox: SandboxDriver, paths: string[], options?: unknown) => sandbox.page.evaluate(({ paths, options }) => {
     const el = document.querySelector('web-sandbox') as any;
     const changed: string[][] = [];
     const listener = (e: any) => changed.push(e.detail.paths);
     el.addEventListener('fileschanged', listener);
     try {
-        el.commitGuestWrites(paths, options);
-        return { ok: true, changed };
+        const listed = el.listGuestWrites();
+        const chosen: unknown[] = [];
+        for (const write of listed) if (paths.includes(write.path)) chosen.push(write);
+        return { ok: el.commitGuestWrites(chosen, options), changed };
     } catch (e: any) {
         return { code: e?.code, changed };
     } finally {
@@ -368,10 +371,29 @@ for (const mode of MODES) {
             expect(await commit(sandbox, ['ok.txt'])).toEqual({ ok: true, changed: [['ok.txt']] });
             expect(await commit(sandbox, nonInert, { code: true })).toEqual({ ok: true, changed: [[...nonInert].sort()] });
             expect(await hostView(sandbox)).toMatchObject({ files: [...nonInert, 'ok.txt'].sort(), writes: [] });
-            // a path with no pending change is skipped; a list is required, and every entry must be a valid path
+            // a path with no pending change names no value: an empty list commits nothing
             expect(await commit(sandbox, ['nothing.txt'])).toEqual({ ok: true, changed: [] });
-            expect(await commit(sandbox, undefined)).toEqual({ code: 'INVALID_PATH', changed: [] });
-            expect(await commit(sandbox, ['../x'])).toEqual({ code: 'INVALID_PATH', changed: [] });
+        });
+
+        test('6b. a commit takes the listed values, all or none (I4): once the guest wrote one of them again, the listed pair commits nothing and answers false; anything but a listed value is a TypeError', async ({ sandbox }) => {
+            expect(await sandbox.mount(writesOn(mode))).toBe('ready');
+            await inGuest(sandbox, `await sandboxFiles.write('a.txt', 'a'); await sandboxFiles.write('b.txt', 'b'); return true;`);
+            await sandbox.page.evaluate(() => { (window as any).listed = (document.querySelector('web-sandbox') as any).listGuestWrites(); });
+            await inGuest(sandbox, `await sandboxFiles.write('b.txt', 'b, again'); return true;`);
+            const r = await sandbox.page.evaluate(() => {
+                const el = document.querySelector('web-sandbox') as any;
+                const listed = (window as any).listed;
+                const refusal = (run: () => unknown) => {
+                    try { run(); return 'no throw'; } catch (e) { return e instanceof TypeError ? 'TypeError' : String(e); }
+                };
+                const refusals = [undefined, ['b.txt'], [{ ...listed[0] }], [structuredClone(listed[0])]].map(writes => refusal(() => el.commitGuestWrites(writes)));
+                const files = () => el.listFiles().map((f: any) => [f.path, f.size]);
+                const stale = el.commitGuestWrites(listed);
+                const afterStale = files();
+                const current = el.commitGuestWrites(el.listGuestWrites());
+                return { frozen: Object.isFrozen(listed[0]), refusals, stale, afterStale, current, files: files() };
+            });
+            expect(r).toEqual({ frozen: true, refusals: ['TypeError', 'TypeError', 'TypeError', 'TypeError'], stale: false, afterStale: [], current: true, files: [['a.txt', 1], ['b.txt', 8]] });
         });
 
         test('7. a flood is refused with FILES_BUSY past GUEST_WRITES_PER_SECOND, and fileswritten stays bounded: one event per recorded write', async ({ sandbox }) => {

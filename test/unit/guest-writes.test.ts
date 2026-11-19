@@ -2,6 +2,7 @@ import '@src/network'; // the network build: this file tests modes and options t
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { GUEST_WRITES_PER_SECOND } from '@src/lib/guest-writes';
 import { startWith } from './start-app';
+import { commitAt } from './guest-commit';
 
 /**
  * Guest writes on the element (backlog C5): the config, the reserved method's wiring, the overlay's lifecycle,
@@ -155,7 +156,7 @@ describe('lifecycle: discarded by the next build and on removal, kept through a 
         expect(el._guestWrites.handle !== undefined && (() => { try { el._guestWrites.handle(write('c.txt')); } catch (e: any) { return e.code; } })()).toBe('FILES_NOT_ALLOWED');
         const changed: string[][] = [];
         el.addEventListener('fileschanged', (e: CustomEvent) => changed.push(e.detail.paths));
-        el.commitGuestWrites(['a.txt']);
+        commitAt(el, ['a.txt']);
         expect(changed).toEqual([['a.txt']]);
         expect(el.listFiles().map((f: any) => f.path)).toEqual(['a.txt']);
         expect(el.listGuestWrites()).toEqual([]);
@@ -236,15 +237,13 @@ describe('the rate bounds the events', () => {
 });
 
 describe('commitGuestWrites() and listGuestWrites() on the element', () => {
-    it('paths are required and checked even with writes off (INVALID_PATH); with writes off a valid list commits nothing', async () => {
+    it('the values are required and checked even with writes off (a TypeError for anything not listed); with writes off an empty list commits nothing and answers true', async () => {
         const el = await mount();
         expect(el.listGuestWrites()).toEqual([]);
-        for (const paths of [undefined, 'a.txt', ['../x']]) {
-            let code: unknown;
-            try { el.commitGuestWrites(paths); } catch (e: any) { code = e.code; }
-            expect(code, JSON.stringify(paths)).toBe('INVALID_PATH');
+        for (const writes of [undefined, 'a.txt', ['a.txt'], [{ path: 'a.txt', change: 'remove' }]]) {
+            expect(() => el.commitGuestWrites(writes), JSON.stringify(writes)).toThrow(TypeError);
         }
-        expect(() => el.commitGuestWrites(['a.txt'])).not.toThrow();
+        expect(el.commitGuestWrites([])).toBe(true);
         expect(el.listFiles()).toEqual([]);
     });
 
@@ -257,9 +256,9 @@ describe('commitGuestWrites() and listGuestWrites() on the element', () => {
         const changed: string[][] = [];
         el.addEventListener('fileschanged', (e: CustomEvent) => changed.push(e.detail.paths));
         let code: unknown;
-        try { el.commitGuestWrites(['note.txt', 'app.js']); } catch (e: any) { code = e.code; }
+        try { commitAt(el, ['note.txt', 'app.js']); } catch (e: any) { code = e.code; }
         expect([code, changed, el.listFiles()]).toEqual(['FILES_NOT_ALLOWED', [], []]);
-        el.commitGuestWrites(['note.txt', 'app.js'], { code: true });
+        commitAt(el, ['note.txt', 'app.js'], { code: true });
         expect(changed).toEqual([['app.js', 'note.txt']]);
         close();
     });
@@ -272,5 +271,93 @@ describe('commitGuestWrites() and listGuestWrites() on the element', () => {
         el.listGuestWrites()[0].content.fill(9);
         expect(Array.from(el.listGuestWrites()[0].content)).toEqual([1, 2]);
         close();
+    });
+});
+
+// I4 (docs/design/README.md): a commit stores only bytes the embedder was handed, and only while they are still what is
+// pending. The commit takes the values listGuestWrites() minted and looks each one's own entry up: a value whose entry
+// is not its path's pending entry now is stale, and one stale value commits nothing.
+describe("I4: a commit takes the listed values, by identity of their path's current pending entry, all or none", () => {
+    const withListed = async (files: Record<string, string>) => {
+        const el = await mount({ guestWrites: true });
+        const connection = connect(el);
+        for (const [path, content] of Object.entries(files)) connection.send(write(path, content));
+        await settle();
+        const changed: string[][] = [];
+        el.addEventListener('fileschanged', (e: CustomEvent) => changed.push([...e.detail.paths]));
+        return { el, changed, listed: el.listGuestWrites() as any[], ...connection };
+    };
+    const files = (el: any) => el.listFiles().map((f: any) => [f.path, f.size]);
+
+    // Each act happens after the list; the guest then writes the path again where its environment is new, so a commit
+    // by path would find something pending there.
+    it.each([
+        ['a guest write', async (el: any, send: (r: unknown) => void) => { send(write('a.txt', 'second')); await settle(); }],
+        ['a guest removal', async (el: any, send: (r: unknown) => void) => { send({ change: 'remove', path: 'a.txt' }); send(write('a.txt', 'second')); await settle(); }],
+        ['a commit', async (el: any, send: (r: unknown) => void) => { expect(el.commitGuestWrites(el.listGuestWrites())).toBe(true); send(write('a.txt', 'second')); await settle(); }],
+        ['reset()', async (el: any) => { el.reset(); connect(el).send(write('a.txt', 'second')); await settle(); }],
+        ['a re-insertion', async (el: any) => { el.remove(); document.body.appendChild(el); connect(el).send(write('a.txt', 'second')); await settle(); }],
+    ])('%s after the list leaves the listed value uncommittable: false, nothing committed, no fileschanged; the value listed now commits (positive control)', async (_label, act) => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { el, changed, listed, send, close } = await withListed({ 'a.txt': 'one' });
+        expect(listed).toMatchObject([{ path: 'a.txt', change: 'write', size: 3 }]);
+        await act(el, send);
+        const before = files(el);
+        const heard = changed.length;
+        const answer = el.commitGuestWrites(listed);
+        expect(files(el)).toEqual(before); // the files first: a commit by path would have stored 'second' here
+        expect(answer).toBe(false);
+        expect(changed).toHaveLength(heard);
+        expect(el.listGuestWrites()).toMatchObject([{ path: 'a.txt', change: 'write', size: 6 }]);
+
+        expect(el.commitGuestWrites(el.listGuestWrites())).toBe(true);
+        expect(files(el)).toEqual([['a.txt', 6]]);
+        expect(changed.at(-1)).toEqual(['a.txt']);
+        close();
+    });
+
+    it('a list with one stale value commits nothing and answers false; the current one alone commits (all or none)', async () => {
+        const { el, changed, listed, send, close } = await withListed({ 'a.txt': 'a', 'b.txt': 'b' });
+        send(write('b.txt', 'b, again'));
+        await settle();
+        const answer = el.commitGuestWrites(listed);
+        expect([files(el), changed]).toEqual([[], []]); // the files first: a commit by path would have stored both
+        expect(answer).toBe(false);
+        expect(el.listGuestWrites().map((w: any) => [w.path, w.size])).toEqual([['a.txt', 1], ['b.txt', 8]]);
+        expect(el.commitGuestWrites([listed[0]])).toBe(true);
+        expect([files(el), changed]).toEqual([[['a.txt', 1]], [['a.txt']]]);
+        close();
+    });
+
+    it('the bytes stored are the ones listed: changing a value\'s content changes nothing committed', async () => {
+        const { el, listed, close } = await withListed({ 'a.txt': 'abc' });
+        listed[0].content.fill(0x7a);
+        expect(el.commitGuestWrites(listed)).toBe(true);
+        expect(atob(el._files._files.get('a.txt').base64)).toBe('abc'); // the store's own file, as registered
+        close();
+    });
+
+    it('a value is frozen, and a copy of a value is not the value: a TypeError, before anything is committed', async () => {
+        const { el, changed, listed, close } = await withListed({ 'a.txt': 'a', 'b.txt': 'b' });
+        const [a, b] = listed;
+        expect([Object.isFrozen(a), Object.isFrozen(b)]).toEqual([true, true]);
+        for (const copy of [{ ...b }, Object.freeze({ ...b }), structuredClone(b), JSON.parse(JSON.stringify(b)), new Proxy(b, {})]) {
+            expect(() => el.commitGuestWrites([a, copy])).toThrow(TypeError);
+        }
+        expect([files(el), changed]).toEqual([[], []]);
+        expect(el.commitGuestWrites([a, b])).toBe(true); // positive control
+        close();
+    });
+
+    it("another element's value is foreign to this one: a TypeError, and neither element commits", async () => {
+        const { el, listed, close } = await withListed({ 'a.txt': 'a' });
+        const other = await withListed({ 'a.txt': 'other' });
+        expect(() => el.commitGuestWrites(other.listed)).toThrow(TypeError);
+        expect(() => el.commitGuestWrites([...listed, ...other.listed])).toThrow(TypeError);
+        expect([files(el), files(other.el)]).toEqual([[], []]);
+        expect(other.el.commitGuestWrites(other.listed)).toBe(true); // positive control
+        expect(el.commitGuestWrites(listed)).toBe(true);
+        close();
+        other.close();
     });
 });

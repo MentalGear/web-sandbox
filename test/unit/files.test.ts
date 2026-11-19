@@ -13,6 +13,7 @@ import { createSizeOf } from '@src/lib/structured-size';
 import { workerBootstrap } from '@src/lib/worker-bootstrap';
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { bootstrapListeners, UNCAUGHT_BUDGET, type EgressMode } from '@src/lib/egress';
+import { commitAt } from './guest-commit';
 import { startWith } from './start-app';
 
 // The files a build can name, typed by extension as the store types them.
@@ -199,7 +200,7 @@ describe('files are part of the environment', () => {
         const frame = el.shadowRoot.querySelector('iframe');
         await guestWrite(el, { change: 'write', path: 'b.js', entry: '2' });
         await guestWrite(el, { change: 'remove', path: 'a.js' });
-        el.commitGuestWrites(['a.js', 'b.js'], { code: true });
+        commitAt(el, ['a.js', 'b.js'], { code: true });
         expect(el.shadowRoot.querySelector('iframe')).toBe(frame);
         expect(wrapperOf(el)).toBe(before);
 
@@ -222,16 +223,16 @@ describe('files are part of the environment', () => {
         el.addEventListener('fileschanged', (e: CustomEvent) => seen.push(e.detail));
         await guestWrite(el, { change: 'write', path: 'b.js', entry: '1' });
         await guestWrite(el, { change: 'write', path: 'a.js', entry: '1' });
-        el.commitGuestWrites(['b.js', 'a.js'], { code: true });
+        commitAt(el, ['b.js', 'a.js'], { code: true });
         expect(seen).toEqual([{ paths: ['a.js', 'b.js'] }]);
-        el.commitGuestWrites(['a.js'], { code: true }); // nothing pending there
-        el.commitGuestWrites(['missing.js']);
+        commitAt(el, ['a.js'], { code: true }); // nothing pending there
+        commitAt(el, ['missing.js']);
         expect(() => el.commitGuestWrites(['../x.js'])).toThrow();
         expect(seen).toHaveLength(1);
         el.reset(); // the next build holds the committed files, which its guest can then remove
         await guestWrite(el, { change: 'remove', path: 'a.js' });
         await guestWrite(el, { change: 'remove', path: 'b.js' });
-        el.commitGuestWrites(['a.js', 'b.js']);
+        commitAt(el, ['a.js', 'b.js']);
         expect(seen).toEqual([{ paths: ['a.js', 'b.js'] }, { paths: ['a.js', 'b.js'] }]);
     });
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { FALLBACK_TYPE, FILE_TYPES, FileStore, mimeTypeFor, type FileTypeRow } from '@src/lib/files';
-import { createGuestWrites, INERT_TYPES } from '@src/lib/guest-writes';
+import { createGuestWrites, INERT_TYPES, type MintedWrites } from '@src/lib/guest-writes';
+import { commitOverlayAt } from './guest-commit';
 
 /**
  * A guest write's type comes from its path (I8, design 02 "A guest write's type comes from its path"): FILE_TYPES
@@ -24,8 +25,11 @@ const refusal = (fn: () => unknown): unknown => {
 // An element's store and one environment's overlay over it.
 function overlay() {
     const store = new FileStore(() => {});
-    const writes = createGuestWrites({ store, now: () => 0 });
-    return { store, writes };
+    const minted: MintedWrites = new WeakMap();
+    const writes = createGuestWrites({ store, minted, now: () => 0 });
+    // commits what is listed at `paths`, as the element's commitGuestWrites() does
+    const commitAt = (paths: readonly string[], code: boolean) => commitOverlayAt(writes, minted, paths, code);
+    return { store, writes, commitAt };
 }
 
 describe('FILE_TYPES: every row, as a path (I8)', () => {
@@ -67,24 +71,24 @@ describe('FILE_TYPES: every row, as a path (I8)', () => {
 
 describe('FILE_TYPES: every row, as a guest write and its commit (I8)', () => {
     it.each(ROWS)('.%s: recorded with its type; committed without { code: true } exactly when the row is inert', (extension, row) => {
-        const { store, writes } = overlay();
+        const { store, writes, commitAt } = overlay();
         const path = `w/f.${extension}`;
         expect(writes.handle({ change: 'write', path, entry: 'x' })).toEqual({ path, change: 'write', type: row.type, size: 1 });
         expect(writes.list()).toMatchObject([{ path, type: row.type }]);
-        if (row.inert) expect(writes.commit([path], false)).toEqual([path]);
+        if (row.inert) expect(commitAt([path], false)).toEqual([path]);
         else {
-            expect(refusal(() => writes.commit([path], false))).toBe('FILES_NOT_ALLOWED');
-            expect(writes.commit([path], true)).toEqual([path]);
+            expect(refusal(() => commitAt([path], false))).toBe('FILES_NOT_ALLOWED');
+            expect(commitAt([path], true)).toEqual([path]);
         }
         expect(store.list()).toMatchObject([{ path, type: row.type }]);
     });
 
     it('evil.html is text/html, needs { code: true } to commit, and is stored as text/html', () => {
-        const { store, writes } = overlay();
+        const { store, writes, commitAt } = overlay();
         expect(writes.handle({ change: 'write', path: 'evil.html', entry: new TextEncoder().encode('<script>1</script>') })).toMatchObject({ type: 'text/html' });
-        expect(refusal(() => writes.commit(['evil.html'], false))).toBe('FILES_NOT_ALLOWED');
+        expect(refusal(() => commitAt(['evil.html'], false))).toBe('FILES_NOT_ALLOWED');
         expect(store.list()).toEqual([]);
-        expect(writes.commit(['evil.html'], true)).toEqual(['evil.html']);
+        expect(commitAt(['evil.html'], true)).toEqual(['evil.html']);
         expect(store.list()).toMatchObject([{ path: 'evil.html', type: 'text/html' }]);
     });
 });

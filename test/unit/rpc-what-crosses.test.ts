@@ -419,8 +419,13 @@ describe('the element: what a guest learns of a failed host method (BD5:LIM-2, B
     const ROWS: [string, (el: any, other: ReturnType<typeof element>) => unknown, string][] = [
         ['start() of another element, a path of the host\'s', () => document.createElement('web-sandbox').start({ files: { [`${MARKER}/..`]: 'x' } }), `INVALID_PATH: ${CROSSING_TEXTS.INVALID_PATH}`],
         ['start() of another element, a bad type', () => document.createElement('web-sandbox').start({ files: { [`${MARKER}/notes.txt`]: { content: 'x', type: 'not a type' } } }), `INVALID_FILE: ${CROSSING_TEXTS.INVALID_FILE}`],
-        ['commitGuestWrites()', (el) => el.commitGuestWrites([`${MARKER}/..`]), `INVALID_PATH: ${CROSSING_TEXTS.INVALID_PATH}`],
-        ['a timeout of the host\'s call', (el) => el.callWithTimeout(1, `HOSTMETHOD-${MARKER}`), `TIMEOUT: ${CROSSING_TEXTS.TIMEOUT}`],
+        ['commitGuestWrites() of another element, a refusal that quotes the path', () => {
+            const writer = document.createElement('web-sandbox') as any;
+            document.body.appendChild(writer);
+            startWith(writer, { guestWrites: true });
+            writer._guestWrites.handle({ change: 'write', path: `${MARKER}/app.js`, entry: 'x' });
+            return writer.commitGuestWrites(writer.listGuestWrites()); // JavaScript without { code: true }
+        }, `FILES_NOT_ALLOWED: ${CROSSING_TEXTS.FILES_NOT_ALLOWED}`],        ['a timeout of the host\'s call', (el) => el.callWithTimeout(1, `HOSTMETHOD-${MARKER}`), `TIMEOUT: ${CROSSING_TEXTS.TIMEOUT}`],
         ['a relayed call to a name the app lacks', (el) => {
             const relayed = el.call(`HOSTMETHOD-unknown-${MARKER}`);
             void Promise.resolve().then(() => el._onGuestMessage(el._port, () => {}, { type: 'RPC_RES', id: el._queue.at(-1).frame.id, ok: false, code: 'UNKNOWN_METHOD', error: `unknown method: HOSTMETHOD-unknown-${MARKER}` }, null));

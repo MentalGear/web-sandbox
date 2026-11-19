@@ -12,6 +12,7 @@ import { LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { createFetchBridge, toFetchPolicy, type FetchRecord } from '@src/lib/fetch-bridge';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 import { runBootstrap } from './sandbox-environment';
+import { commitAt } from './guest-commit';
 import { startWith, type AppSetup } from './start-app';
 
 /**
@@ -447,7 +448,7 @@ describe('L-1: re-inserted from a terminated listener after a refused build, the
         startWith(el, { mode: 'strict', entry: 'main.js', guestWrites: true }, { files: { 'main.js': 'void 0' } });
         // the guest removes its entry and the host commits it: the next build is refused
         await el._handleGuestWrite(el._guestWrites, { change: 'remove', path: 'main.js' });
-        el.commitGuestWrites(['main.js']);
+        commitAt(el, ['main.js']);
         const events: string[] = [];
         el.addEventListener('ready', () => events.push('ready'));
         el.addEventListener('terminated', (event: CustomEvent) => {

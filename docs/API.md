@@ -56,7 +56,7 @@ different name of this class, and its `SyntaxError` for a name that is not a val
 
 ## The element
 
-<!-- describes: api:WebSandbox sig:a150 -->
+<!-- describes: api:WebSandbox sig:588b -->
 The element has no observed attributes. An app is given to it once, with [`start(app, grants)`](#startapp-grants): the
 app's own content in the first argument, what you allow it in the second. No other member takes app content or a grant,
 and another app is another element. Until `start()` the element builds nothing: inserted, reset or terminated, it stays
@@ -195,7 +195,7 @@ keys, over the defaults, copied, validated whole, and what it refuses) is under 
 | `callLimits` | `CallLimits` | 1000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
 | `allowAnimations` | `boolean` | `false` | strict, sealed | Whether CSS animations and transitions run in the view. **While `true`, they run on your page's main thread wherever the browser runs the view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation), and the view's time budget does not bound them: a guest can keep your page 80–98% busy.** `false` removes them (elements show their end state). Left out or `false` removes them; a value that is not a boolean makes `start()` throw a `TypeError` in strict and sealed mode. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `allowAutoplay` | `boolean` | `false` | strict, sealed | Whether `<video autoplay>` and `<audio autoplay>` in the view start on their own; while `false` the `autoplay` attribute is removed and media plays only when the user starts it. With `true`, playing media costs your page's main thread where the view shares it (measured up to +6 points for 20 looping videos), outside the time budget. Left out or `false` keeps it off; a value that is not a boolean makes `start()` throw a `TypeError` in strict and sealed mode. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
-| `guestWrites` | `boolean` | `false` | all | A boolean (anything else makes `start()` throw a `TypeError`). The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
+| `guestWrites` | `boolean` | `false` | all | A boolean (anything else makes `start()` throw a `TypeError`). The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwriteswrites-options). See [Guest writes](#guest-writes). |
 <!-- generated:end -->
 
 ### `origins`
@@ -723,27 +723,35 @@ listGuestWrites(): GuestWrite[]
 The guest's pending writes and removals (see `guestWrites` and [Guest writes](#guest-writes)), sorted by path. They belong
 to the current environment; how long they live is stated once, at [Guest writes lifetime](#guest-writes-lifetime).
 
-**Returns:** One `GuestWrite` per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
+**Returns:** One `GuestWrite` per path with a pending change, each a fresh frozen object: `{ path, change: 'write', type, size, content }`
 (`type` the library's for the path's extension, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
-`guestWrites` is off.
+`guestWrites` is off. Each value is what `commitGuestWrites()` takes: the element knows the values it returned,
+by identity.
 
-### `commitGuestWrites(paths, options?)`
+### `commitGuestWrites(writes, options?)`
 
 ```ts
-commitGuestWrites(paths: string[], options?: { code?: boolean; }): void
+commitGuestWrites(writes: readonly GuestWrite[], options?: { code?: boolean; }): boolean
 ```
 
-Applies the guest's pending changes at `paths` to the app's files, atomically, and removes them from the pending
-list. The guest sees committed files from the next build on. Fires `fileschanged` when the files changed.
+Applies the given values of `listGuestWrites()` to the app's files, all or none, if each is still what is pending at
+its path, and removes them from the pending list. The guest sees committed files from the next build on. Fires
+`fileschanged` when the files changed.
 
+- It commits exactly what you were handed: each value commits the change it was listed from, never what the
+ guest wrote at its path since, and the bytes stored are the ones listed (changing a value's `content` changes
+ nothing). The element knows the values it returned by identity, so a copy of one is not one, and a value of
+ another element is not either.
+- A value is stale when its change is not its path's pending change now: the guest wrote or removed at the path again, the
+ change was committed, or a build (`reset()`, the element's re-insertion) discarded the pending writes. If any value
+ is stale, nothing is committed and it returns `false`: list again, check again, and commit the new values. Files you
+ checked as a set are never committed in part.
 - A write whose type is not inert is refused with `FILES_NOT_ALLOWED` unless `options.code` is `true`. Inert types
  are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the inert rows of the one
  type table, `FILE_TYPES`, src/lib/files.ts). JavaScript, HTML, SVG, XML, WebAssembly and any extension the table
  does not have can run or be parsed as code.
 - All checks come first, the quota included (with what module and stylesheet rewrites add, against the files as they
  are now), so a refusal changes neither the files nor the pending list.
-- It commits what is pending now, not what `listGuestWrites()` showed earlier. To commit exactly what you validated, list,
- validate and commit in one synchronous task (the guest's writes arrive in tasks of their own).
 - A write's type is a function of its path (I8): the guest gives a path and bytes, never a type, so the type and the
  name agree. A write to `evil.html` is an HTML file and needs `code` to commit. The name is still the guest's: if you
  store or serve the bytes elsewhere, choose the name yourself.
@@ -752,11 +760,16 @@ list. The guest sees committed files from the next build on. Fires `fileschanged
 
 **Parameters**
 
-- `paths`: The paths to commit; required, since there is no "commit everything". A path with no pending change
-is skipped.
+- `writes`: The values to commit, each one this element's `listGuestWrites()` returned; required, since there is
+no "commit everything". An empty list commits nothing and returns `true`.
 - `options`: `code: true` allows the writes whose type is not inert.
 
-**Throws:** A `FileError` with `code` `INVALID_PATH`, `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`.
+**Returns:** `true` when every value was current and all were committed; `false` when one was stale, and nothing was
+committed.
+
+**Throws:** A `TypeError` when `writes` is not an array or holds a value this element did not return (a copy included),
+before anything is committed. A `FileError` with `code` `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`; then
+nothing is committed.
 
 The inert types, exactly: `application/json`, `audio/flac`, `audio/mp4`, `audio/mpeg`, `audio/ogg`, `audio/wav`, `font/otf`, `font/ttf`, `font/woff`, `font/woff2`, `image/avif`, `image/bmp`, `image/gif`, `image/jpeg`, `image/png`, `image/webp`, `image/x-icon`, `text/css`, `text/plain`, `video/mp4`, `video/ogg`, `video/webm`.
 <!-- generated:end -->
@@ -1282,7 +1295,7 @@ return what you registered. [ADR-004](ADR-004-files-as-blob-urls.md)
 
 ### Guest writes
 
-<!-- describes: api:GuestWrite sig:cce0 -->
+<!-- describes: api:GuestWrite sig:9404 -->
 With `guestWrites: true`, `sandboxFiles.write()` and `remove()` change the guest's own view once the element
 has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` with the message
 `this file has no URL` (the guest gets no URL for anything it wrote). A write is a path and bytes, never a type: its type
@@ -1292,8 +1305,10 @@ refused `INVALID_FILE`. The element checks each request as `start()` checks the 
 quota with every pending change applied) and at most `GUEST_WRITES_PER_SECOND` requests and
 `GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; a refused request changes nothing on either side. Nothing the
 guest writes reaches the files, a policy or another environment until the host calls
-[`commitGuestWrites()`](#commitguestwritespaths-options); it is listed by
-[`listGuestWrites()`](#listguestwrites) and announced by `fileswritten`. Without `guestWrites`, both methods
+[`commitGuestWrites()`](#commitguestwriteswrites-options) with the values
+[`listGuestWrites()`](#listguestwrites) returned; it is listed there and announced by `fileswritten`. Each recorded
+request is a change of its own: a value commits only while its change is the one pending at its path, so a later write
+there (the same bytes included), a commit or a build leaves the value stale. Without `guestWrites`, both methods
 reject with `FILES_NOT_ALLOWED`, and so does the element for any request that reaches it. Treat written
 content as the guest's data, and so its path, which also chose its type: show them with `textContent`, never in an HTML, URL, template or `console`
 format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,` and `@`, so one written into a
@@ -1331,9 +1346,10 @@ files again.
 
 `fileswritten` names a path exactly when a request changed what `listGuestWrites()` shows there. A removal of a path
 the guest wrote and the files do not hold withdraws the write: the path leaves the list, and `fileswritten` names it
-with nothing listed there. A removal of a file you unregistered after the build lists nothing (there is nothing left to
-remove) and is announced nowhere; the file is gone from the guest's files and from the view. Writing the same bytes and type again
-changes nothing listed and is not announced.
+with nothing listed there. A removal of a path the guest already removed, its committed removal included, changes nothing listed (there is
+nothing left to remove) and is announced nowhere. Writing the same bytes and type again
+changes nothing listed and is not announced, yet it is a new pending change: a value listed before it is stale, and a
+commit with it answers `false`.
 
 The element records a change before it announces it, and `listGuestWrites()` is the truth; the guest's view
 changes only when the element's answer arrives. They disagree by design in two cases: a `fileswritten` listener
@@ -1965,17 +1981,18 @@ Two routes, and the host decides what is kept in both:
 - **A `save` host method** (the example): the app sends its state as plain data and the host validates and stores it
   wherever it keeps apps (`localStorage` here), and hands it back with the next `load`. The rule above applies.
 - **Guest writes**: with `guestWrites: true` the app writes files with `sandboxFiles.write()`, the host sees them in
-  `listGuestWrites()` (and `fileswritten`), and `commitGuestWrites(paths)` makes the ones it accepts files of the app for the
+  `listGuestWrites()` (and `fileswritten`), and `commitGuestWrites(writes)` makes the listed values it accepts files of the app for the
   next build, where the app reads them with `sandboxFiles.text()`. Treat what the app wrote as the app's data, its
   path as well as its bytes: check the size, parse it in a `try`, check its shape, show it with `textContent`.
   Only inert types commit without `{ code: true }`; leave code out for an app's data. The type is the library's for the
   path's extension, never the app's word: `evil.html` is `text/html`, and needs `{ code: true }`
   ([Guest writes](#guest-writes)). Committed files are the app's, on its element.
 
-**`commitGuestWrites(paths)` commits what is pending now, not what you listed.** To commit exactly what you validated,
-list, validate and commit in one synchronous task: the app's writes arrive in tasks of their own, so none lands in
-between. If validating has to wait (an image decode, a digest), do not commit afterwards: list again and commit only the
-paths whose `type` and `content` still equal what you checked, in one synchronous task.
+**`commitGuestWrites(writes)` commits what you listed, or nothing.** Give it the values you validated: each commits the
+change it was listed from, with the bytes you checked, even when validating had to wait (an image decode, a digest). If
+the app wrote again at one of their paths meanwhile, or a build discarded the pending writes, nothing is committed and it
+returns `false`: list again, validate the new values, and commit those. Files you checked as a set are never committed
+in part.
 
 ### Images the app makes
 
