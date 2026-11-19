@@ -22,18 +22,14 @@
  *     one of 2**32 - 1 slots is past every limit however few elements it holds;
  *   - a Map or a Set: its entries; a Date 16; a RegExp its source like a string (the flags are at most 8 characters);
  *     a String, Number, Boolean or BigInt object like its primitive;
- *   - an ArrayBuffer: its byteLength; a typed array or a DataView: its whole buffer, which clone copies, once per buffer;
- *   - a Blob: 64 (clone copies a handle to its bytes, not the bytes) plus its `type` like a string, and past
- *     BLOB_TYPE_MAX_LENGTH characters of type, Infinity (over every limit; see below); a File: a Blob's
- *     fields plus its `name` like a string and 8 for `lastModified`. Each field is read through a getter captured below,
- *     and the table lists every field the clone of that kind carries (a test enumerates the string-valued getters of the
- *     prototypes and fails on one that is neither counted nor declared not serialized).
- * A Blob or File `type` longer than BLOB_TYPE_MAX_LENGTH is over budget on every engine (limits.ts, LIMITS), whatever
- * the engine would keep of it: Chromium empties a type of 65 536 characters or more when the Blob is made, the other
- * engines keep it whole, so measuring what arrives would send the same call on one and refuse it on the others.
- * Anything else measures Infinity, past every limit: an Error (its stack is the engine's to serialize), a platform
+ *   - an ArrayBuffer: its byteLength; a typed array or a DataView: its whole buffer, which clone copies, once per buffer.
+ * Anything else measures Infinity, past every limit (SNAPSHOT_REFUSED_KINDS names the ones a sender meets): a `Blob` or a
+ * `File` (I7: a `blob:` URL the host page makes of one is a document of the host page's origin, so no guest value carries
+ * one to the embedder's code; the guest sends bytes), an Error (its stack is the engine's to serialize), a platform
  * object (ImageData, ImageBitmap, FileList, CryptoKey, …), a SharedArrayBuffer, a function or a symbol (never in a
- * snapshot), or a value whose reading throws. A sender that wants an error across sends what it needs of it: the console
+ * snapshot), or a value whose reading throws. Every guest value the host page receives is measured here before any code
+ * of the embedder's sees it: a host method's arguments and a call's result (rpc.ts), a log line's arguments
+ * (sandbox-log.ts). A sender that wants an error across sends what it needs of it: the console
  * relay sends every Error in a line as { name, message, stack } (in-sandbox-script.ts).
  *
  * Infinity says two things, and a sender's message must not confuse them (R3:C-3): a value really past the
@@ -51,6 +47,32 @@
  * when it posts the snapshot, so its bytes are not copied a second time.
  */
 export type SizeOf = (value: unknown, limit: number, buffers?: unknown[], unsupported?: { kind: string }) => number;
+
+/**
+ * The kinds a snapshot may hold, which the measure walks: a primitive by its `typeof` (`null` by itself), an object by its
+ * `Object.prototype.toString` tag, and every typed array. The measure is the allow-list itself (it is stringified into
+ * the guest's realm, so it reads no value of this module); test/unit/snapshot-kinds.test.ts measures a sample of each
+ * kind, and every typed array the environment has, against it.
+ */
+export const SNAPSHOT_MEASURED_KINDS = [
+    'string', 'number', 'boolean', 'bigint', 'undefined', 'null',
+    'Array', 'Object', 'Map', 'Set', 'Date', 'RegExp', 'ArrayBuffer', 'DataView', 'typed array',
+    'String', 'Number', 'Boolean', 'BigInt',
+] as const;
+
+/**
+ * Kinds structured clone carries and the measure refuses, by their tag, each with why: past every limit, its kind named
+ * (`unsupported value: Blob`). Any kind not in SNAPSHOT_MEASURED_KINDS is refused the same way; these are the ones a
+ * sender meets. test/unit/snapshot-kinds.test.ts measures a sample of each, alone and at every place a container holds
+ * one.
+ */
+export const SNAPSHOT_REFUSED_KINDS = {
+    Blob: "it carries a type, and a `blob:` URL the host page makes of it is a document of the host page's origin (I7): the guest sends bytes, and the host page decides what they are",
+    File: 'a `Blob` with a name (I7): the guest sends bytes',
+    Error: "its stack is the engine's to serialize: the console relay sends an error's `name`, `message` and `stack` as strings",
+    DOMException: 'an error, as `Error`',
+    SharedArrayBuffer: 'clone shares its memory, or refuses it: never measured',
+} as const;
 
 export function createSizeOf(): SizeOf {
     // ---- The captured list (R2:C-1): everything the measure uses, taken now, before any guest code runs.
@@ -74,10 +96,6 @@ export function createSizeOf(): SizeOf {
     const setForEach = Set.prototype.forEach;
     const dateTime = Date.prototype.getTime;
     const regExpSource = getOwn(RegExp.prototype, 'source')!.get!;
-    // A Blob and a File carry, besides the handle to their bytes, strings and a number the clone copies whole (S77).
-    const blobSize = typeof Blob === 'function' ? getOwn(Blob.prototype, 'size')!.get! : null;
-    const blobType = typeof Blob === 'function' ? getOwn(Blob.prototype, 'type')!.get! : null;
-    const fileName = typeof File === 'function' ? getOwn(File.prototype, 'name')!.get! : null;
     const stringValue = String.prototype.valueOf;
     const numberValue = Number.prototype.valueOf;
     const booleanValue = Boolean.prototype.valueOf;
@@ -86,14 +104,11 @@ export function createSizeOf(): SizeOf {
     const bigintFits = BigInt.asIntN;
     const toTag = Object.prototype.toString;
     const slice = String.prototype.slice;
-    // The longest Blob or File `type`, in characters (LIMITS.BLOB_TYPE_MAX_LENGTH: api-docs.test.ts keeps the value equal).
-    const BLOB_TYPE_MAX_LENGTH = 4096;
     // The longest kind name a refusal gives (LIMITS.KIND_MAX_LENGTH: api-docs.test.ts keeps the value equal).
     const KIND_MAX_LENGTH = 64;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
-    const brand = (read: ((this: unknown) => unknown) | null, value: unknown): unknown => {
-        if (!read) return undefined;
+    const brand = (read: (this: unknown) => unknown, value: unknown): unknown => {
         try {
             return apply(read, value, []);
         } catch {
@@ -229,18 +244,8 @@ export function createSizeOf(): SizeOf {
                     total += 2 * source.length + 24;
                     continue;
                 }
-                if (typeof brand(blobSize, object) === 'number') {
-                    const type = brand(blobType, object);
-                    if (typeof type !== 'string') return unknown(object); // a field the table cannot read: refused, never free
-                    const characters = type.length;
-                    if (characters > BLOB_TYPE_MAX_LENGTH) return Infinity; // over budget, not 'unsupported': the kind is known
-                    total += 64 + 2 * characters + 8;
-                    const name = brand(fileName, object);
-                    if (typeof name === 'string') total += 2 * name.length + 8 + 8; // a File: its name, and lastModified
-                    continue;
-                }
                 const primitive = wrapped(object, limit);
-                if (primitive === undefined) return unknown(object); // outside the allow-list: an Error, a platform object
+                if (primitive === undefined) return unknown(object); // outside the allow-list: a Blob, a File, an Error, a platform object
                 total += primitive;
             }
         } catch {

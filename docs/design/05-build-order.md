@@ -1,6 +1,6 @@
 # 05 · The order of the work
 
-**Status: step 1 is under way: 1.0 to 1.6 and 1.8 are built (each row says so); 1.7 waits for the owner; the rest is a plan.** Each step ends with the repository's gates passing on both builds and three engines
+**Status: steps 1 and 2 are under way: 1.0 to 1.6 and 1.8, and 2.1, are built (each row says so); 1.7 waits for the owner; the rest is a plan.** Each step ends with the repository's gates passing on both builds and three engines
 (CONTRIBUTING.md), and each brings the structural test of its invariant ([the folder's index](README.md)). The plan is
 the one after [review 1](REVIEW-1.md), the owner's [decisions on it](README.md#decided-after-review-1) and
 [review 2](REVIEW-2.md).
@@ -34,7 +34,7 @@ with the behaviour it tested, and the commit says which.
 
 | # | Work | Measured or tested first |
 | :--- | :--- | :--- |
-| 2.1 | `Blob` and `File` refused in guest values | the snapshot measure's enumeration (I7) |
+| 2.1 | **built**: `Blob` and `File` refused in guest values, in both directions, by the one measure (`SNAPSHOT_REFUSED_KINDS`) | the snapshot measure's enumeration (I7; built: `test/unit/snapshot-kinds.test.ts`, `test/e2e/guest-blob-refused.spec.ts`) |
 | 2.2 | a write's type from its path | the type table's test (I8) |
 | 2.3 | `GuestBytes` and `GUEST_IMAGE_TYPES`; `save()` | a unit test with an SVG, an HTML file and a polyglot behind an image signature; an e2e spec on three engines: `save()` of `invoice.pdf.exe` and `report.html` saves files under the library's names (I9) |
 | 2.4 | `unknown` for guest values | the API report |

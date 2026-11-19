@@ -229,14 +229,6 @@ export const ENGINE_DIFFERENCES = {
         why: "WebKit refuses a Secure cookie over http; a production host page is https. The suite expects what the engine sends",
         tests: [`${E2E}realistic-host.spec.ts`],
     },
-    'blob-type-emptied': {
-        what: "A Blob or File `type` of 65 536 characters or more",
-        chromium: "Emptied when the object is made: the guest holds a Blob of no type, which is sent as it is",
-        firefox: "Kept whole, and refused as over `BLOB_TYPE_MAX_LENGTH`",
-        webkit: "Kept whole, and refused as over `BLOB_TYPE_MAX_LENGTH`",
-        why: "Chromium normalises the type before the library sees the object. Up to 65 535 characters every engine builds the same Blob, and the measure refuses a type over `BLOB_TYPE_MAX_LENGTH` on all of them",
-        tests: [`${E2E}exact-budget.spec.ts`],
-    },
     'shared-memory-view-clone': {
         what: "A typed array over a `SharedArrayBuffer` (a shared `WebAssembly.Memory`'s buffer) in a call or a result, on a page that is not cross-origin isolated",
         chromium: "Structured clone refuses it: `ARGS_NOT_TRANSFERABLE` or `RESULT_NOT_TRANSFERABLE`",

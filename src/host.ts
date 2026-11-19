@@ -105,7 +105,9 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
 
 /**
  * A host method the guest calls with `bridge.call(name, ...args)`, given to `start()` in {@link SandboxGrants}. Its
- * arguments are the guest's data, so they are `unknown`: check each one's type and size before you use it.
+ * arguments are the guest's data, so they are `unknown`: check each one's type and size before you use it. They never
+ * hold a `Blob` or a `File`: a call that holds one, at any depth, is refused `ARGS_NOT_TRANSFERABLE` before the method
+ * runs (I7).
  *
  * @remarks
  * It runs with your page's rights. The guest receives its return value (awaited if it is a promise), copied: a typed
@@ -1051,19 +1053,21 @@ export class WebSandbox extends ElementBase {
      * - Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on
      *   both sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`)
      *   and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure knows primitives, plain objects and arrays, `Map`,
-     *   `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, `Blob` and `File`, and `String`, `Number`,
-     *   `Boolean` and `BigInt` objects. Any other value (an `Error`, an `ImageData` or another platform object, a
-     *   `SharedArrayBuffer`) is refused the same way, with a message that names the value rather than the budget; send what
-     *   you need of it instead: an error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole
-     *   message is counted, the method name included, and a name is at most 256 characters (`INVALID_CALL`).
+     *   `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, and `String`, `Number`, `Boolean` and `BigInt`
+     *   objects. Any other value (a `Blob` or a `File`, an `Error`, an `ImageData` or another platform object, a
+     *   `SharedArrayBuffer`) is refused the same way, at any depth, with a message that names the value rather than the
+     *   budget; send what you need of it instead: an image's `data`, `width` and `height`, a file's bytes, an error's
+     *   `{ name, message, stack }`. The whole message is counted, the method name included, and a name is at most 256
+     *   characters (`INVALID_CALL`).
+     * - A `Blob` or a `File` crosses in neither direction (I7): a `blob:` URL made of one in your page is a document of your
+     *   origin, so no value of the guest's carries one to your code. The guest sends bytes, and you decide what they are.
      * - A typed array or `DataView` crosses as what it shows, at any depth and in both directions: one that covers part
      *   of its buffer (`byteOffset` not 0, or `byteLength` less than its buffer's) arrives as the same kind of view over a
      *   new buffer that holds exactly its bytes, and one that covers its whole buffer crosses with that buffer. So
      *   `heap.subarray(ptr, ptr + n)` sends `n` bytes, never the rest of `heap`. Two views of one buffer arrive with a
      *   buffer each; one view passed twice arrives as one view.
-     * - What comes back is the guest's data, a `Blob` or `File` included: its `type` and its bytes are the guest's. Never make an
-     *   object URL of them with that type (or none) and open it, since an SVG or HTML file is then a document of your origin;
-     *   see docs/API.md#guest-writes.
+     * - What comes back is the guest's data. Never make an object URL of its bytes with a type the guest chose (or none) and
+     *   open it, since an SVG or HTML file is then a document of your origin; see docs/API.md#guest-writes.
      * - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
      *   `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
      *   call's timeout.

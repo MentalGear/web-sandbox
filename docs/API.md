@@ -647,19 +647,21 @@ Calls a method the guest exposed with `bridge.expose()` and resolves with its re
 - Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on
  both sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`)
  and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure knows primitives, plain objects and arrays, `Map`,
- `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, `Blob` and `File`, and `String`, `Number`,
- `Boolean` and `BigInt` objects. Any other value (an `Error`, an `ImageData` or another platform object, a
- `SharedArrayBuffer`) is refused the same way, with a message that names the value rather than the budget; send what
- you need of it instead: an error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole
- message is counted, the method name included, and a name is at most 256 characters (`INVALID_CALL`).
+ `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, and `String`, `Number`, `Boolean` and `BigInt`
+ objects. Any other value (a `Blob` or a `File`, an `Error`, an `ImageData` or another platform object, a
+ `SharedArrayBuffer`) is refused the same way, at any depth, with a message that names the value rather than the
+ budget; send what you need of it instead: an image's `data`, `width` and `height`, a file's bytes, an error's
+ `{ name, message, stack }`. The whole message is counted, the method name included, and a name is at most 256
+ characters (`INVALID_CALL`).
+- A `Blob` or a `File` crosses in neither direction (I7): a `blob:` URL made of one in your page is a document of your
+ origin, so no value of the guest's carries one to your code. The guest sends bytes, and you decide what they are.
 - A typed array or `DataView` crosses as what it shows, at any depth and in both directions: one that covers part
  of its buffer (`byteOffset` not 0, or `byteLength` less than its buffer's) arrives as the same kind of view over a
  new buffer that holds exactly its bytes, and one that covers its whole buffer crosses with that buffer. So
  `heap.subarray(ptr, ptr + n)` sends `n` bytes, never the rest of `heap`. Two views of one buffer arrive with a
  buffer each; one view passed twice arrives as one view.
-- What comes back is the guest's data, a `Blob` or `File` included: its `type` and its bytes are the guest's. Never make an
- object URL of them with that type (or none) and open it, since an SVG or HTML file is then a document of your origin;
- see [Guest writes](#guest-writes).
+- What comes back is the guest's data. Never make an object URL of its bytes with a type the guest chose (or none) and
+ open it, since an SVG or HTML file is then a document of your origin; see [Guest writes](#guest-writes).
 - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
  `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
  call's timeout.
@@ -825,7 +827,7 @@ its shape.
 | :--- | :--- | :--- |
 | `type` | `'LOG'` | Always `'LOG'`. |
 | `level` | `'log' \| 'info' \| 'warn' \| 'error'` | How serious the line is. A level the guest sends that is not one of `SandboxLogLevel` reads as `'log'`. |
-| `args` | `readonly unknown[]` | What was logged, structured-cloned: at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING` characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced by a string that says so. Guest-controlled text when `source` is `'guest'`: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink. |
+| `args` | `readonly unknown[]` | What was logged, structured-cloned: at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING` characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced by a string that says so, and so is one that holds a value the measure refuses, at any depth: a `Blob` or a `File` (I7), an `Error`, a platform object. Guest-controlled text when `source` is `'guest'`: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink. |
 | `source` | `'guest' \| 'host'` | `'host'` for a line the element wrote itself, `'guest'` for a line that came from the guest's port, whatever it claims. Set by the element, never read from the line. |
 <!-- generated:end -->
 
@@ -842,16 +844,17 @@ handlers and of worker mode's worker: they arrive as `Uncaught Script error.`, a
 
 The bounds: `LOG_MAX_ARGS` and `LOG_MAX_STRING` bound the strings; `LOG_MAX_BYTES` bounds all arguments of a line
 together (a typed array, an object of 100 000 keys), measured as [`call()`](#callmethod-args)
-measures a message, counting every field a clone delivers ([what the byte measure counts](#limits): a `File`'s `name`, a
-`Blob`'s `type`, a sparse array's `length`): an argument past what is left of it is a string saying so (`[Uint8Array: past the log line's byte
-budget (1048576)]`), and one holding a value the measure does not know (an `ImageData`) a string naming it
-(`[unsupported value: ImageData]`); when even that string would not fit, the line ends with one string saying how many
+measures a message, counting every field a clone delivers ([what the byte measure counts](#limits): a sparse array's
+`length` included): an argument past what is left of it is a string saying so (`[Uint8Array: past the log line's byte
+budget (1048576)]`), and one holding a value the measure does not know, at any depth (a `Blob` or a `File`, an
+`ImageData`), a string naming it (`[unsupported value: Blob]`; a line that skipped the relay arrives with
+`[Sandbox] dropped: unsupported value: Blob` in its place); when even that string would not fit, the line ends with one string saying how many
 arguments it dropped (`[Sandbox] 3 more argument(s) past the log line's byte budget (1048576)`), so a line never
 measures past `LOG_MAX_BYTES` where it arrives. An `Error` anywhere in an argument (in an object, an array, a `Map`, a `Set`,
 `Promise.allSettled`'s results; within 64 levels and 10 000 objects) is sent as `{ name, message, stack }` first.
 The guest applies them before a line is posted, and sends at most `LOG_EVENTS_PER_SECOND` lines and 4 MiB in any one-second window (one `warn` line when it
-starts dropping), so a flood of values does not reach the host page's thread, a long `File` name or a sparse array of a large `length` included
-(both cross as the placeholder). In cooperative mode the browser's own console gets a
+starts dropping), so a flood of values does not reach the host page's thread, a sparse array of a large `length` included
+(it crosses as the placeholder). In cooperative mode the browser's own console gets a
 dropped line not at all and a cut line cut; in worker and strict mode it gets none (the worker's console is not a sink:
 `sandbox-log` is). The element measures every line again on receipt, and dispatches at most `LOG_EVENTS_PER_SECOND`
 guest lines in any one-second window per environment (one warning); the relay's own lines (`<mode> Ready` and its
@@ -1285,7 +1288,7 @@ ends the sandbox) keeps them: they stay listable and committable until the next 
 discards them. This is the one statement of the rule; the other passages link here.
 
 **The bytes are the guest's too, and a URL made of them is a document of your origin.** Bytes the app wrote or returned
-(`GuestWrite.content`, a `Blob` or `File` a method returns to `call()`) become a page of **your** origin when you make an
+(`GuestWrite.content`, a `Uint8Array` a method returns to `call()`) become a page of **your** origin when you make an
 object URL of them and it is opened: an SVG or HTML file there runs script with your page's storage and cookies. Never give
 `new Blob` or `URL.createObjectURL` the guest's `type`, or no type (Firefox sniffs a typeless blob). Show an image the app
 made inside the sandbox view (`render('<img src="path">')`), or in your page as a `Blob` you typed yourself as
@@ -1891,8 +1894,11 @@ element's whole life.
   forward it to a network sink, an error reporter or analytics (`fetch`, `navigator.sendBeacon`, a tracker's `capture()`)
   as if it were your page's own event: whoever wrote the app reads that sink, so what you forward is a channel from the app
   to them.
-- **Never make a URL of the app's bytes with the app's type.** What the app wrote (`listGuestWrites()`) or returned (a `Blob`
-  from `call()`) becomes a document of your origin when its object URL is opened. Show images in the sandbox view, or in
+- **Never make a URL of the app's bytes with the app's type.** What the app wrote (`listGuestWrites()`) or returned (bytes
+  from `call()`) becomes a document of your origin when its object URL is opened. A `Blob` or a `File` from the guest is
+  refused wherever it arrives, at any depth: a host method's arguments (`ARGS_NOT_TRANSFERABLE`, before the method runs),
+  the result of `call()` (`RESULT_NOT_TRANSFERABLE`) and a log line's arguments (replaced by a string that names it). The
+  app must send its bytes (`Uint8Array`, `ArrayBuffer`), and your page decides what they are. Show images in the sandbox view, or in
   an `<img>` from a `Blob` you typed `image/png` after checking its signature; offer anything else as a download of an
   `application/octet-stream` blob ([Guest writes](#guest-writes)).
 - **What a failure tells the app.** A throw or rejection reaches it as `HANDLER_ERROR`, with one of three texts:
@@ -2017,7 +2023,6 @@ input](#sandboxview-strict-mode) describes them, and [research 23](research/23_v
 | Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`) | 1000 | — |
 | Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`) | 67108864 (64 MiB) | — |
 | Default call timeout (ms) | 30000 | — |
-| Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget on every engine that keeps the type; Chromium empties one of 65 536 characters or more) | 4096 | — |
 | Characters of the kind a message names when it refuses a value it does not know (a guest chooses the tag; the name is cut) | 64 | — |
 | Objects a log line is walked through to turn its errors into plain records (an error past it stays, and the measure names it as unsupported) | 10000 | — |
 | Levels of that walk | 64 | — |
@@ -2083,14 +2088,11 @@ hexadecimal digits); any other primitive 8. A plain object adds its keys, each l
 16 an entry and its key and value; a `Set` 8 an entry and its value; a `Date` nothing more; a `RegExp` two bytes a character
 of its source plus 24; an array the more of its `length` times 8 and its keys, so a sparse array of 2**32 - 1 slots is past
 every limit; an `ArrayBuffer` its byte length; a typed array or a `DataView` its whole buffer, once (in an RPC message a view
-that covers part of its buffer has already been given a buffer of its own bytes); a `Blob` 64 plus its
-`type` like a string; a `File` that plus its `name` like a string and 8 for `lastModified`. Any other kind (an `Error`, an `ImageData`, a `SharedArrayBuffer`) is refused as
-unsupported. The library's own walks of a delivered value follow its own keys, never an array's `length`. A `Blob` or
-`File` whose `type` is longer than `BLOB_TYPE_MAX_LENGTH` (4096) characters is over every byte budget and is refused as
-one past the budget, on every engine that keeps the type: Chromium empties a type of 65 536 characters or more when the
-object is made, so there the guest holds a `Blob` of no type, which is sent as it is (Firefox and WebKit keep it whole and
-refuse it; the [engine ledger](THREAT-MODEL.md#engine-blob-type-emptied)). The limit is the library's, not the engine's, for
-a type of 4097 to 65 535 characters. A type of up to 4096 characters crosses on every engine.
+that covers part of its buffer has already been given a buffer of its own bytes). Any other kind is refused as
+unsupported, with its kind named: an `Error`, an `ImageData`, a `SharedArrayBuffer`, and a `Blob` or a `File`. A `Blob` or a
+`File` from the guest is refused wherever it arrives, at any depth (I7): its type is the guest's, and a `blob:` URL made of
+it in your page is a document of your origin, so the guest must send its bytes (`Uint8Array`, `ArrayBuffer`). The library's
+own walks of a delivered value follow its own keys, never an array's `length`.
 
 ---
 

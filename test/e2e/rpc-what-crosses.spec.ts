@@ -173,7 +173,7 @@ test('sealed mode: a view crosses with its own bytes only, and a host method\'s 
     expect(results.float64Subarray).toMatchObject({ kind: 'Float64Array', byteLength: 8, bufferLength: 8 });
     expect(results.wholeView).toMatchObject({ byteLength: 64, bufferLength: 64 }); // a view of its whole buffer: as it is
     own(results.sliceControl, 3, 'PUB');
-    expect(results.blobSlice).toEqual({ kind: 'Blob', size: 3 });
+    expect(results.blobSlice).toMatchObject({ error: 'RESULT_NOT_TRANSFERABLE' }); // a Blob crosses in neither direction (I7)
     own(results.wasmHeap, 3, 'OUT'); // 3 bytes, not the 16 MiB heap
     // ledger: shared-memory-view-clone
     expect(results.sharedMemory).toEqual({ error: 'RESULT_NOT_TRANSFERABLE', message: 'result is not transferable: it holds a value structured clone cannot carry' });

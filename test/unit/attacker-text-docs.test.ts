@@ -212,7 +212,7 @@ describe('the docs name the rule for the guest\'s bytes where the embedder takes
         ['docs/API.md', 'Never make a URL of the app\'s bytes with the app\'s type'],
         ['docs/API.md', 'The bytes are the guest\'s too, and a URL made of them is a document of your origin'],
         ['src/lib/guest-writes.ts', 'Never make an object URL of `content` with the'],
-        ['src/host.ts', 'Never make an object URL of them with that type'],
+        ['src/host.ts', 'Never make an object URL of its bytes with a type the guest chose'],
     ])('%s says: %s', (file, sentence) => {
         expect(read(file).replace(/\s+/g, ' ').replace(/ \* /g, ' ').replace(/ \/\/ /g, ' ')).toContain(sentence.replace(/\s+/g, ' '));
     });

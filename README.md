@@ -431,7 +431,8 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
     `ARGS_NOT_TRANSFERABLE`, which is not worth retrying.
 *   **Every message is bounded as a whole**: a method name is at most 256 characters, an error message at most
     65536 (cut, with a marker), and arguments or a result at most 33 MiB (`RPC_MAX_BYTES`), measured on both sides (the
-    measure counts what a clone delivers: a `File`'s name, a `Blob`'s type, a sparse array's `length`).
+    measure counts what a clone delivers, a sparse array's `length` included). A `Blob` or a `File` crosses in neither
+    direction: the guest sends bytes, and your page decides what they are.
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never
     evaluates code. A worker-mode guest has no markup, though, so it can only expose methods
     through `execute()`, which does need `scriptUnsafe` (and the build with the network modes).
