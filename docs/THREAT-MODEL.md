@@ -473,7 +473,7 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
   ([API.md](API.md#trusted-types-without-the-browser)).
 - **Cross-Origin-Embedder-Policy `require-corp`**: strict mode runs on every engine measured on 2026-11-14; an engine that applies a CORP check to the view's `blob:` worker refuses it, and the strict build then fails.
 - **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`, a
-  `fetch` record's `url` (it can be `javascript:`), the path and type of a guest's write (`fileswritten`'s `detail.paths`,
+  `fetch` record's `url` (it can be `javascript:`), the path of a guest's write, which also chose its type (`fileswritten`'s `detail.paths`,
   `listGuestWrites()`; a valid path holds `'`, `(`, `;`, `=` and more, so it can end a single-quoted attribute), the
   message of a call rejected by a guest handler. The library
   validates and clamps its size and shape, not its content. Show it with `textContent`; never pass it to an HTML, URL (a

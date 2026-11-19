@@ -259,7 +259,7 @@ for (const mode of MODES) {
                     pending,
                     sandboxFiles.write('note.txt', 'héllo ✓'),
                     sandboxFiles.write('data.json', new Blob(['{"a":1}'], { type: 'text/html' })),
-                    sandboxFiles.write('raw', { content: new Uint16Array([0x4241]), type: 'Text/Plain' }),
+                    sandboxFiles.write('raw', new Uint16Array([0x4241])),
                     sandboxFiles.write('buffer.bin', all.buffer.slice(250)),
                     sandboxFiles.write('view.bin', view),
                 ]);
@@ -275,6 +275,8 @@ for (const mode of MODES) {
                     view: await read('view.bin'),
                     urls: await Promise.all(['bytes.bin', 'note.txt', 'raw'].map((p) => outcome(() => sandboxFiles.url(p)))),
                     copies: (await sandboxFiles.read('bytes.bin')) !== (await sandboxFiles.read('bytes.bin')),
+                    // a write carries a path and bytes, never a type (I8): one that claims a type is refused
+                    claimed: await outcome(() => sandboxFiles.write('claimed.png', { content: 'x', type: 'image/png' })),
                 };`);
             const ALL = Array.from({ length: 256 }, (_, i) => i);
             expect(r.results).toEqual([null, null, null, null, null, null]);
@@ -287,13 +289,14 @@ for (const mode of MODES) {
             expect(r.view).toEqual([16, 17, 18, 19]);
             expect(r.urls).toEqual(new Array(3).fill({ code: 'NOT_FOUND', isError: true, keys: ['code'] }));
             expect(r.copies).toBe(true);
-            // from outside: the host holds the same bytes, typed by the store (the Blob's own type is not used)
+            expect(r.claimed).toEqual({ code: 'INVALID_FILE', isError: true, keys: ['code'] });
+            // from outside: the host holds the same bytes, typed by their paths (the Blob's own type is not used)
             expect((await hostView(sandbox)).writes).toEqual([
                 { path: 'buffer.bin', change: 'write', type: 'application/octet-stream', size: 6 },
                 { path: 'bytes.bin', change: 'write', type: 'application/octet-stream', size: 256 },
                 { path: 'data.json', change: 'write', type: 'application/json', size: 7 },
                 { path: 'note.txt', change: 'write', type: 'text/plain', size: Buffer.byteLength('héllo ✓') },
-                { path: 'raw', change: 'write', type: 'text/plain', size: 2 },
+                { path: 'raw', change: 'write', type: 'application/octet-stream', size: 2 },
                 { path: 'view.bin', change: 'write', type: 'application/octet-stream', size: 4 },
             ]);
             expect(await contentOf(sandbox, 'bytes.bin')).toEqual(ALL);
@@ -340,7 +343,7 @@ for (const mode of MODES) {
             expect(r).toEqual({ list: ['note.txt', 'pic.png'], text: 'kept', png: PNG_3x5.length, url: 'blob:', image: mode === 'cooperative' ? '3x5' : 'no Image here' });
         });
 
-        test('6. a commit of a non-inert type needs { code: true }: JavaScript, HTML, SVG, XML, wasm, unknown and an override; the type is the store\'s, so a renamed file does not pass', async ({ sandbox }) => {
+        test('6. a commit of a non-inert type needs { code: true }: JavaScript, HTML, SVG, XML, wasm, unknown; the type is the path\'s last extension, so a renamed file does not pass', async ({ sandbox }) => {
             expect(await sandbox.mount(writesOn(mode))).toBe('ready');
             await inGuest(sandbox, `
                 await sandboxFiles.write('app.js', 'void 0');
@@ -350,11 +353,11 @@ for (const mode of MODES) {
                 await sandboxFiles.write('mod.wasm', new Uint8Array([0, 97, 115, 109]));
                 await sandboxFiles.write('blob.unknown', 'x');
                 await sandboxFiles.write('noext', 'x');
-                await sandboxFiles.write('fake.png', { content: '<svg xmlns="http://www.w3.org/2000/svg"/>', type: 'image/svg+xml' });
-                await sandboxFiles.write('script.txt', { content: 'void 0', type: 'text/javascript' });
+                await sandboxFiles.write('fake.png.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>');
+                await sandboxFiles.write('script.txt.js', 'void 0');
                 await sandboxFiles.write('ok.txt', 'inert');
                 return true;`);
-            const nonInert = ['app.js', 'page.html', 'icon.svg', 'feed.xml', 'mod.wasm', 'blob.unknown', 'noext', 'fake.png', 'script.txt'];
+            const nonInert = ['app.js', 'page.html', 'icon.svg', 'feed.xml', 'mod.wasm', 'blob.unknown', 'noext', 'fake.png.svg', 'script.txt.js'];
             for (const path of nonInert) {
                 expect(await commit(sandbox, [path]), path).toEqual({ code: 'FILES_NOT_ALLOWED', changed: [] });
                 expect(await commit(sandbox, ['ok.txt', path], { code: 'yes' }), path).toEqual({ code: 'FILES_NOT_ALLOWED', changed: [] });

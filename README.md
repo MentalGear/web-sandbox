@@ -270,7 +270,7 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     type `SandboxViolation`. In
     strict mode each report also carries `source`, `'view'` or `'logic'` (see [Strict mode](#strict-mode)).
 *   **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`,
-    a `fetch` record's `url` (it can be `javascript:`), the path and type of a guest's write (`fileswritten`'s
+    a `fetch` record's `url` (it can be `javascript:`), the path of a guest's write, which also chose its type (`fileswritten`'s
     `detail.paths`, `listGuestWrites()`; a valid path can end a single-quoted attribute), the message of a call rejected by
     a guest handler, and the arguments of a host method you grant. "Validated and clamped" bounds its size and shape; it does not make it safe to
     display. Show it with `textContent`, and never pass it to an HTML (`innerHTML`, `insertAdjacentHTML`), URL (a link
@@ -602,7 +602,7 @@ Off by default. With `guestWrites: true` the guest can write and remove files; t
 ```js
 sandbox.start(app, { guestWrites: true, /* … */ });
 // in the guest
-await sandboxFiles.write('out/report.json', JSON.stringify(result));  // a string, Blob, ArrayBuffer or typed array
+await sandboxFiles.write('out/report.json', JSON.stringify(result));  // a string, Blob, ArrayBuffer or typed array; the type is the path's
 await sandboxFiles.remove('draft.txt');
 // on the host
 sandbox.addEventListener('fileswritten', (e) => console.log('fileswritten', e.detail.paths));
@@ -611,8 +611,9 @@ sandbox.commitGuestWrites(['out/report.json']);   // now a file of the app's, fr
 sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the flag
 ```
 
-*   **The host checks every write** as `start()` checks the app's files (paths, types, the 8 MiB / 1000-file cap with
-    every pending write counted) and at most 100 writes and 8 MiB in any one second; a refusal has the same codes,
+*   **The host checks every write** as `start()` checks the app's files (paths, content, the 8 MiB / 1000-file cap with
+    every pending write counted), and gives it the type of its path's extension: the guest names no type, so a write
+    to `evil.html` is `text/html` and commits only with `{ code: true }` and at most 100 writes and 8 MiB in any one second; a refusal has the same codes,
     plus `FILES_BUSY` past the rate and `FILES_NOT_ALLOWED` when writes are off.
 *   **The guest sees its own writes** in `list()`, `read()` and `text()` once the host accepted them, but
     `url()` of a written path is `NOT_FOUND`: the guest gets no URL for anything it wrote.

@@ -9,8 +9,9 @@
  * default), there is no overlay and the method refuses every request with FILES_NOT_ALLOWED.
  *
  * What holds by construction:
- *   - One set of rules. A write is checked by CheckedFile.from(), the same path and entry validation as
- *     the app's files, so its type is the type the store assigns (override or extension table), and the
+ *   - One set of rules. A write is checked by CheckedFile.fromGuest(), the path validation of the app's files and the
+ *     content of a FileContent, and its type is a function of its path (I8): FILE_TYPES's for the extension, or
+ *     FALLBACK_TYPE. The guest gives a path and bytes, and a write that carries a type of its own is refused. The
  *     write-time quota is FileStore.check() of the build's store with the overlay and this write applied: the count and
  *     the registered bytes, exactly apply()'s first step, without lexing. The commit is FileStore.apply(), the
  *     full check including what module and stylesheet rewrites add. So a write the host could never register is
@@ -32,8 +33,8 @@
  *     announces 'fileswritten' exactly when the first changed, and tells the strict view exactly when the second did, so
  *     the list, the announcement and the view cannot disagree about what a request did.
  *   - Code needs a second opt-in. A commit refuses any file whose type is not on INERT_TYPES unless
- *     `{ code: true }`: JavaScript, HTML, SVG, XML, WebAssembly and every type not listed (an override included).
- *     The type checked is the CheckedFile's, the one the store will load the file as, never the file name.
+ *     `{ code: true }`: JavaScript, HTML, SVG, XML, WebAssembly and every extension the table does not have. The type
+ *     checked is the CheckedFile's, the one the store will load the file as, which is the one its name says.
  *   - The rate is bounded per environment: at most GUEST_WRITES_PER_SECOND requests are handled and at most
  *     GUEST_WRITE_BYTES_PER_SECOND bytes recorded in any one-second window, refused with FILES_BUSY. That also
  *     bounds the host's 'fileswritten' events (one per recorded change).
@@ -42,7 +43,7 @@
  *
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
-import { CheckedFile, checkPath, describePath, fileError, MAX_TOTAL_BYTES, type FileStore } from './files';
+import { CheckedFile, checkPath, describePath, fileError, FILE_TYPES, MAX_TOTAL_BYTES, type FileStore, type FileTypeRow } from './files';
 import { createRateLimiter } from './rate-limit';
 
 /** The reserved broker method the guest's sandboxFiles.write() and remove() call (rpc.ts, reserved names). */
@@ -61,19 +62,17 @@ export const GUEST_WRITES_PER_SECOND = 100;
 export const GUEST_WRITE_BYTES_PER_SECOND = MAX_TOTAL_BYTES;
 
 /**
- * The types commitGuestWrites() applies without `{ code: true }`: images, fonts, audio and video the browser
- * only decodes, plain text, JSON and CSS. Exact strings, no prefixes: `image/svg+xml` is a document that can
- * carry script, and a guest's type override (`image/x-anything`) is not on the list either. Everything else —
- * JavaScript, HTML, SVG, XML, WebAssembly, unknown types — runs or is parsed as code somewhere and needs the
- * explicit flag. Kept equal to the extension table's image/font/audio/video types (minus SVG) by a test.
+ * The types commitGuestWrites() applies without `{ code: true }`: the types of FILE_TYPES's inert rows (files.ts), and
+ * no other. Exact strings: `image/svg+xml` is a document that can carry script, and FALLBACK_TYPE, an extension the table
+ * does not have, is not inert either.
  */
-export const INERT_TYPES: ReadonlySet<string> = new Set([
-    'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'image/x-icon', 'image/bmp',
-    'font/woff', 'font/woff2', 'font/ttf', 'font/otf',
-    'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/flac',
-    'video/mp4', 'video/webm', 'video/ogg',
-    'text/plain', 'application/json', 'text/css',
-]);
+export const INERT_TYPES: ReadonlySet<string> = inertTypes();
+
+function inertTypes(): ReadonlySet<string> {
+    const types = new Set<string>();
+    for (const row of Object.values(FILE_TYPES) as FileTypeRow[]) if (row.inert) types.add(row.type);
+    return types;
+}
 
 /**
  * One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size`
@@ -81,10 +80,12 @@ export const INERT_TYPES: ReadonlySet<string> = new Set([
  * files only through `commitGuestWrites()`.
  *
  * @remarks
- * The `path`, the `type` and the `content` are the guest's: attacker text. Never make an object URL of `content` with the
- * guest's `type` (or none) and open it: an SVG or HTML file is then a document of your origin. Show an image in the sandbox
+ * The `path` and the `content` are the guest's: attacker text. The `type` is the library's for the path's extension
+ * (`application/octet-stream` for one it does not know), never a type the guest gave, so it always agrees with the name;
+ * the guest still chooses it by choosing the path (`evil.svg` is `image/svg+xml`). Never make an object URL of `content` with the
+ * write's `type` (or none) and open it: an SVG or HTML file is then a document of your origin. Show an image in the sandbox
  * view, or in an `<img>` from a `Blob` you typed `image/png` after checking its signature; offer anything else as a download.
- * Show a path or a type with `textContent`, never
+ * Show a path with `textContent`, never
  * in an HTML, URL, `eval`, template or `console` format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,`
  * and `@`, so one written into a single-quoted attribute can end it and add one).
  */
@@ -214,8 +215,8 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         }
         if (change !== 'write') throw fileError('INVALID_FILE', 'a guest write request is { change: "write", path, entry } or { change: "remove", path }.');
 
-        const file = CheckedFile.from(path, source.entry, WRITE_CALLER);
-        const valid = path as string; // CheckedFile.from() checked it
+        const file = CheckedFile.fromGuest(path, source.entry, WRITE_CALLER);
+        const valid = path as string; // CheckedFile.fromGuest() checked it
         built.check(overlaid(valid, file), WRITE_CALLER);
         // After the quota, so a write past the cap is FILES_QUOTA_EXCEEDED whatever the rate.
         if (!bytes.admit(time, file.bytes.length)) throw busy(`${WRITE_CALLER} refused`);

@@ -144,7 +144,7 @@ describe('R4-4: the strict view shows raster-image guest writes, minted by the v
             close();
         });
 
-        it('SVG, HTML, JavaScript and a type override that is no raster type: the view is told the path, never the bytes; a removal likewise', async () => {
+        it('SVG, HTML, JavaScript and a raster name with another extension after it: the view is told the path, never the bytes; a removal likewise', async () => {
             vi.spyOn(console, 'warn').mockImplementation(() => {});
             const el = await mount({ mode: 'strict', guestWrites: true });
             const { posted, send, written, close } = connect(el);
@@ -152,7 +152,7 @@ describe('R4-4: the strict view shows raster-image guest writes, minted by the v
                 { change: 'write', path: 'a.svg', entry: '<svg xmlns="http://www.w3.org/2000/svg"/>' },
                 { change: 'write', path: 'b.html', entry: '<p>' },
                 { change: 'write', path: 'c.js', entry: 'void 0' },
-                { change: 'write', path: 'd.png', entry: { content: PNG, type: 'image/svg+xml' } },
+                { change: 'write', path: 'd.png.svg', entry: PNG },
                 { change: 'write', path: 'e.png', entry: PNG },
                 { change: 'remove', path: 'e.png' },
             ];
@@ -165,7 +165,7 @@ describe('R4-4: the strict view shows raster-image guest writes, minted by the v
                 ['a.svg', 'image/svg+xml', null, 0],
                 ['b.html', 'text/html', null, 0],
                 ['c.js', 'text/javascript', null, 0],
-                ['d.png', 'image/svg+xml', null, 0],
+                ['d.png.svg', 'image/svg+xml', null, 0],
                 ['e.png', 'image/png', 'bytes', 1],
                 ['e.png', null, null, 0],
             ]);

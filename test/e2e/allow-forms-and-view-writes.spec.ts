@@ -138,9 +138,9 @@ test.describe('R4-4: the strict view shows the raster images the guest writes, f
             await sandboxFiles.write('w/a.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9"><image href="${recorder.allowed}/from-svg.svg" width="9" height="9"/><script>fetch("${recorder.allowed}/svg-script")</script></svg>');
             await sandboxFiles.write('w/b.html', '<img src="${recorder.allowed}/from-html.svg"><script>fetch("${recorder.allowed}/html-script")</script>');
             await sandboxFiles.write('w/c.js', 'fetch("${recorder.allowed}/from-js")');
-            await sandboxFiles.write('w/d.png', { content: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><image href="${recorder.allowed}/from-override.svg"/></svg>'), type: 'image/svg+xml' });
+            await sandboxFiles.write('w/d.png.svg', '<svg xmlns="http://www.w3.org/2000/svg"><image href="${recorder.allowed}/from-renamed.svg"/></svg>');
             await sandboxFiles.write('w/ok.png', new Uint8Array(${JSON.stringify(png(3, 5))}));
-            sandboxView.render('<img id="a" src="w/a.svg"><img id="b" src="w/b.html"><img id="c" src="w/c.js"><img id="d" src="w/d.png">'
+            sandboxView.render('<img id="a" src="w/a.svg"><img id="b" src="w/b.html"><img id="c" src="w/c.js"><img id="d" src="w/d.png.svg">'
                 + '<link rel="icon" href="w/a.svg"><link rel="stylesheet" href="w/b.html"><video id="v" src="w/a.svg"></video><img id="ok" src="w/ok.png"><img id="control" src="${recorder.allowed}/control.svg">');
             return true;`);
         expect((await waitInView<{ size: string }>(page, browserName, image('ok'), 8000)).size).toBe('3x5');

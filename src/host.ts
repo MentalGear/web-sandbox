@@ -214,8 +214,8 @@ type GrantsAreTheSchemas = Holds<Same<Exclude<keyof SealedSandboxConfig, keyof S
  * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
  * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
  * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
- * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
- * guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
+ * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path of a guest's
+ * write, which also chose its type: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
  * URL (such as a link `href`), `eval`, template or `console` format-string sink, and do not forward it to a network sink,
  * an error reporter or analytics (`fetch`, `navigator.sendBeacon`) as if it were your page's own event: whoever wrote
  * the app reads that sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
@@ -927,7 +927,7 @@ export class WebSandbox extends ElementBase {
      * to the current environment; how long they live is stated once, at docs/API.md#guest-writes-lifetime.
      *
      * @returns One {@link GuestWrite} per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
-     * (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
+     * (`type` the library's for the path's extension, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
      * `guestWrites` is off.
      */
     listGuestWrites(): GuestWrite[] {
@@ -940,17 +940,16 @@ export class WebSandbox extends ElementBase {
      *
      * @remarks
      * - A write whose type is not inert is refused with `FILES_NOT_ALLOWED` unless `options.code` is `true`. Inert types
-     *   are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the exact list is in
-     *   `INERT_TYPES`, src/lib/guest-writes.ts). JavaScript, HTML, SVG, XML, WebAssembly, unknown types and any other type
-     *   the guest set can run or be parsed as code. The type checked is the one the file will be loaded as, never just its
-     *   name.
+     *   are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the inert rows of the one
+     *   type table, `FILE_TYPES`, src/lib/files.ts). JavaScript, HTML, SVG, XML, WebAssembly and any extension the table
+     *   does not have can run or be parsed as code.
      * - All checks come first, the quota included (with what module and stylesheet rewrites add, against the files as they
      *   are now), so a refusal changes neither the files nor the pending list.
      * - It commits what is pending now, not what `listGuestWrites()` showed earlier. To commit exactly what you validated, list,
      *   validate and commit in one synchronous task (the guest's writes arrive in tasks of their own).
-     * - The type is the guest's claim, and so is the name: a file named `evil.html` written with the type `image/png`
-     *   commits without `code`, and the library loads it only as an image. If you store or serve the bytes elsewhere, choose
-     *   the name and the type yourself.
+     * - A write's type is a function of its path (I8): the guest gives a path and bytes, never a type, so the type and the
+     *   name agree. A write to `evil.html` is an HTML file and needs `code` to commit. The name is still the guest's: if you
+     *   store or serve the bytes elsewhere, choose the name yourself.
      * - A committed file loads only as what its type is for (see {@link SandboxApp}): an inert file never runs as a script.
      *   Committed `text/css` is inert but still CSS: markup of the next build that links it is styled by it.
      *

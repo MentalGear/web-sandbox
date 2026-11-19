@@ -479,8 +479,9 @@ the host says so.
   `FILES_NOT_ALLOWED` without sending; the host's method refuses with the same code. The host's refusal is the guarantee,
   the guest's only saves the round trip.
 - **One store chokepoint.** `FileStore.apply({ put, remove })` is the store's only mutation; `start()`'s reading of the
-  app's files and the commit go through it. A write is checked by `CheckedFile.from()`, the same path and entry
-  check, so its type is the one the store will load it as. At write time the quota is `FileStore.check()` of the store with
+  app's files and the commit go through it. A write is checked by `CheckedFile.fromGuest()`: the app's path check, content
+  that is a string or bytes, and the type the extension table (`FILE_TYPES`) has for the path, or
+  `application/octet-stream`. The guest gives no type; a write that carries one is refused `INVALID_FILE` (I8, design 02). At write time the quota is `FileStore.check()` of the store with
   every pending change and this write applied: the count and the registered bytes, which is `apply()`'s first step,
   without lexing. The commit is `apply()` itself, lexing included, against the store as it is then, so it can still be
   refused (`FILES_QUOTA_EXCEEDED`) if the host registered more meanwhile.
@@ -498,11 +499,11 @@ the host says so.
   guest. The one exception is the strict view (below): it shows raster-image writes from URLs it mints itself.
 - **Commit needs an explicit list, and code needs a second opt-in.** `commitGuestWrites(paths, options?)`; there is no
   commit-all and no discard (`reset()` discards). A write whose type is not on a fixed inert list — the image, font, audio
-  and video types of the extension table without SVG, `text/plain`, `application/json`, `text/css`, exact strings — is
-  refused unless `options.code === true`. JavaScript, HTML, SVG, XML, WebAssembly, unknown types and any type the guest
-  set are code until the embedder says otherwise. The type checked is the `CheckedFile`'s, which is what decides how the
-  file is loaded, never the file name. A written `app.js` committed as `text/plain` is then a text file: the load-kind
-  table keeps it from being the script of `<script src="app.js">`.
+  and video types of the extension table without SVG, `text/plain`, `application/json`, `text/css`: the inert rows of
+  `FILE_TYPES` — is refused unless `options.code === true`. JavaScript, HTML, SVG, XML, WebAssembly and unknown extensions
+  are code until the embedder says otherwise. The type checked is the `CheckedFile`'s, which decides how the file is
+  loaded and is the one its name says. A written `app.txt` is a text file: the load-kind table keeps it from being the
+  script of `<script src="app.txt">`.
 - **Refusal code for a non-inert commit: `FILES_NOT_ALLOWED`, reused.** The code says "an opt-in is missing", the same
   meaning as for a write while `guestWrites` is off; the message names the path, its type and the flag. A separate code
   would only add a branch to the host's own call, and the host already knows every pending type from `listGuestWrites()`.

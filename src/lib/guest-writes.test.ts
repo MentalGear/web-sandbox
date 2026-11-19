@@ -63,6 +63,7 @@ describe('a write is checked by the store\'s own rules, and a refused one change
         ['a number', 5], ['null', null], ['a boolean', true], ['an array', [1, 2]], ['a plain object', { a: 1 }],
         ['a wrapper without type', { content: 'x' }], ['a wrapper with a bad type', { content: 'x', type: 'text plain' }],
         ['a wrapper with a type and parameters', { content: 'x', type: 'text/plain;charset=x' }], ['a wrapper of a number', { content: 5, type: 'text/plain' }],
+        ['a wrapper with a valid type (the guest names no type: I8)', { content: 'x', type: 'text/plain' }],
         ['an ArrayBuffer (the guest sends bytes)', new ArrayBuffer(1)],
     ])('entry %s: INVALID_FILE; nothing changes', (_label, entry) => {
         const { write, state } = setup();
@@ -76,12 +77,12 @@ describe('a write is checked by the store\'s own rules, and a refused one change
         expect(state()).toEqual({ store: [], overlay: [] });
     });
 
-    it('the type is the store\'s: from the extension, or the override (lower-cased); the answer says which', () => {
+    it('the type is the path\'s: from the extension (in any case), or application/octet-stream; the answer says which', () => {
         const { write, writes } = setup();
         expect(write('a.JS', 'x')).toEqual({ path: 'a.JS', change: 'write', type: 'text/javascript', size: 1 });
         expect(write('noext', 'x')).toEqual({ path: 'noext', change: 'write', type: 'application/octet-stream', size: 1 });
-        expect(write('img.png', { content: new Uint8Array([1, 2]), type: 'Image/SVG+xml' })).toEqual({ path: 'img.png', change: 'write', type: 'image/svg+xml', size: 2 });
-        expect(writes.list().map(w => [w.path, w.change === 'write' && w.type])).toEqual([['a.JS', 'text/javascript'], ['img.png', 'image/svg+xml'], ['noext', 'application/octet-stream']]);
+        expect(write('img.png', new Uint8Array([1, 2]))).toEqual({ path: 'img.png', change: 'write', type: 'image/png', size: 2 });
+        expect(writes.list().map(w => [w.path, w.change === 'write' && w.type])).toEqual([['a.JS', 'text/javascript'], ['img.png', 'image/png'], ['noext', 'application/octet-stream']]);
     });
 
     it('content is copied at write time, and list() hands out copies', () => {
@@ -196,17 +197,20 @@ describe('commit: the full store check, only the given paths, and code needs { c
         expect(store.list().map(f => f.size)).toEqual([11]);
     });
 
-    // BD5:DOC-7: the type checked is the write's, not the path's.
-    it('a file named evil.html written with the type image/png commits without { code: true }, and is stored as image/png (BD5:DOC-7)', () => {
+    // BD5:DOC-7: a write's name and type cannot disagree; the type is the path's (I8).
+    it('a write to evil.html is text/html, whatever it claims: a claimed type is refused, and the bytes need { code: true } (BD5:DOC-7)', () => {
         const { store, writes, write } = setup();
-        write('evil.html', { content: '<script>1</script>', type: 'image/png' });
-        write('x.svg', { content: '<svg/>', type: 'text/plain' });
-        expect(writes.list().map(w => [w.path, w.change === 'write' ? w.type : null])).toEqual([['evil.html', 'image/png'], ['x.svg', 'text/plain']]);
-        expect(writes.commit(['evil.html', 'x.svg'], false)).toEqual(['evil.html', 'x.svg']);
-        expect(store.list().map(f => [f.path, f.type])).toEqual([['evil.html', 'image/png'], ['x.svg', 'text/plain']]);
-        // and the same bytes with the type the name implies need the flag
-        write('real.html', '<script>1</script>');
-        expect(refusal(() => writes.commit(['real.html'], false))).toEqual(refused('FILES_NOT_ALLOWED'));
+        expect(refusal(() => write('evil.html', { content: '<script>1</script>', type: 'image/png' }))).toEqual(refused('INVALID_FILE'));
+        expect(refusal(() => write('x.svg', { content: '<svg/>', type: 'text/plain' }))).toEqual(refused('INVALID_FILE'));
+        expect(writes.list()).toEqual([]);
+        write('evil.html', '<script>1</script>');
+        write('x.svg', '<svg/>');
+        expect(writes.list().map(w => [w.path, w.change === 'write' ? w.type : null])).toEqual([['evil.html', 'text/html'], ['x.svg', 'image/svg+xml']]);
+        expect(refusal(() => writes.commit(['evil.html'], false))).toEqual(refused('FILES_NOT_ALLOWED'));
+        expect(refusal(() => writes.commit(['x.svg'], false))).toEqual(refused('FILES_NOT_ALLOWED'));
+        expect(store.list()).toEqual([]);
+        expect(writes.commit(['evil.html', 'x.svg'], true)).toEqual(['evil.html', 'x.svg']);
+        expect(store.list().map(f => [f.path, f.type])).toEqual([['evil.html', 'text/html'], ['x.svg', 'image/svg+xml']]);
     });
 
     it('refused when the host registered more meanwhile: FILES_QUOTA_EXCEEDED, and neither store nor overlay changes', () => {
@@ -242,8 +246,7 @@ describe('commit: the full store check, only the given paths, and code needs { c
         const NON_INERT: [string, unknown][] = [
             ['app.js', 'void 0'], ['app.mjs', 'export {}'], ['page.html', '<p>'], ['page.htm', '<p>'], ['icon.svg', '<svg/>'], ['feed.xml', '<x/>'],
             ['mod.wasm', new Uint8Array([0, 97, 115, 109])], ['readme.md', '# x'], ['data.csv', 'a,b'], ['subs.vtt', 'WEBVTT'], ['x.unknown', 'x'], ['noext', 'x'],
-            ['fake.png', { content: '<svg/>', type: 'image/svg+xml' }], ['note.txt', { content: 'void 0', type: 'text/javascript' }],
-            ['made-up.png', { content: 'x', type: 'image/x-anything' }], ['app.js.txt', { content: 'x', type: 'application/javascript' }],
+            ['app.txt.js', 'void 0'], ['pic.png.svg', '<svg/>'], ['page.HTML', '<p>'],
         ];
 
         it.each(NON_INERT)('%s: refused with FILES_NOT_ALLOWED without code: true (anything but a literal true), store and overlay unchanged; committed with it', (path, entry) => {

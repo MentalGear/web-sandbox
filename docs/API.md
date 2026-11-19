@@ -731,7 +731,7 @@ The guest's pending writes and removals (see `guestWrites` and [Guest writes](#g
 to the current environment; how long they live is stated once, at [Guest writes lifetime](#guest-writes-lifetime).
 
 **Returns:** One `GuestWrite` per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
-(`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
+(`type` the library's for the path's extension, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
 `guestWrites` is off.
 
 ### `commitGuestWrites(paths, options?)`
@@ -744,17 +744,16 @@ Applies the guest's pending changes at `paths` to the app's files, atomically, a
 list. The guest sees committed files from the next build on. Fires `fileschanged` when the files changed.
 
 - A write whose type is not inert is refused with `FILES_NOT_ALLOWED` unless `options.code` is `true`. Inert types
- are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the exact list is in
- `INERT_TYPES`, src/lib/guest-writes.ts). JavaScript, HTML, SVG, XML, WebAssembly, unknown types and any other type
- the guest set can run or be parsed as code. The type checked is the one the file will be loaded as, never just its
- name.
+ are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the inert rows of the one
+ type table, `FILE_TYPES`, src/lib/files.ts). JavaScript, HTML, SVG, XML, WebAssembly and any extension the table
+ does not have can run or be parsed as code.
 - All checks come first, the quota included (with what module and stylesheet rewrites add, against the files as they
  are now), so a refusal changes neither the files nor the pending list.
 - It commits what is pending now, not what `listGuestWrites()` showed earlier. To commit exactly what you validated, list,
  validate and commit in one synchronous task (the guest's writes arrive in tasks of their own).
-- The type is the guest's claim, and so is the name: a file named `evil.html` written with the type `image/png`
- commits without `code`, and the library loads it only as an image. If you store or serve the bytes elsewhere, choose
- the name and the type yourself.
+- A write's type is a function of its path (I8): the guest gives a path and bytes, never a type, so the type and the
+ name agree. A write to `evil.html` is an HTML file and needs `code` to commit. The name is still the guest's: if you
+ store or serve the bytes elsewhere, choose the name yourself.
 - A committed file loads only as what its type is for (see `SandboxApp`): an inert file never runs as a script.
  Committed `text/css` is inert but still CSS: markup of the next build that links it is styled by it.
 
@@ -795,8 +794,8 @@ capture phase runs down the whole path whatever `bubbles` says. The `detail` is 
 array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
 `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
 clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
-line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
-guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
+line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path of a guest's
+write, which also chose its type: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
 URL (such as a link `href`), `eval`, template or `console` format-string sink, and do not forward it to a network sink,
 an error reporter or analytics (`fetch`, `navigator.sendBeacon`) as if it were your page's own event: whoever wrote
 the app reads that sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
@@ -1146,7 +1145,7 @@ why this one was refused is the `fetch` record's `reason`, and the host page's c
 | Code | Where | Meaning |
 | :--- | :--- | :--- |
 | `INVALID_PATH` | `start()`, `commitGuestWrites()`, guest `write()` / `remove()` | A path is not valid (the element's message names the rule it breaks), or a list of paths is not an array. |
-| `INVALID_FILE` | `start()`, guest `write()` | The app's files are not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a valid MIME type (in the guest: a string, `Blob`, `ArrayBuffer` or typed array). |
+| `INVALID_FILE` | `start()`, guest `write()` | The app's files are not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a valid MIME type (in the guest: content that is not a string, `Blob`, `ArrayBuffer` or typed array, a `{ content, type }` included, since a guest write's type is its path's). |
 | `FILES_QUOTA_EXCEEDED` | `start()`, `commitGuestWrites()`, guest `write()` | The files would exceed `MAX_FILES` files or `MAX_TOTAL_BYTES` (a rewritten JavaScript or CSS file counts what its rewrite adds; a guest write counts the files with every pending change applied). |
 | `FILES_NOT_ALLOWED` | `commitGuestWrites()`, guest `write()` / `remove()` | An opt-in is missing: `guestWrites` is off, or a non-inert file is committed without `{ code: true }`. |
 | `FILES_BUSY` | guest `write()` / `remove()` | Past `GUEST_WRITES_PER_SECOND` requests or `GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; nothing was recorded. Retryable. |
@@ -1259,7 +1258,7 @@ Usable at once: calls and exposes made before the channel is connected are buffe
 | `url` | `(path: string) => string` | The file's `blob:` URL, minted in the guest's own realm. Throws `NOT_FOUND`: `no such file` for a path that is not there, and `this file has no URL` for a file that is there and has none. In strict mode's worker, only for the types the view shows (below); any other file is `read()` and `text()` only. |
 | `read` | `(path: string) => Promise<Uint8Array>` | The bytes as registered, a fresh copy per call. Rejects `NOT_FOUND`. |
 | `text` | `(path: string) => Promise<string>` | The content decoded as UTF-8. Rejects `NOT_FOUND`. |
-| `write` | `(path: string, entry) => Promise<void>` | Asks the element to record a write ([`guestWrites`](#configuration)). `entry`: a string, `Blob`, `ArrayBuffer` or typed array, or `{ content, type }`; copied when called. Rejects with a [files code](#files-fileerrorcode-and-not_found). |
+| `write` | `(path: string, entry) => Promise<void>` | Asks the element to record a write ([`guestWrites`](#configuration)). `entry`: the content, a string (as UTF-8), `Blob` (its bytes), `ArrayBuffer` or typed array; copied when called. The type is the library's for the path's extension, or `application/octet-stream` (a `Blob`'s own type is not read), and anything else, a `{ content, type }` included, is refused `INVALID_FILE`. Rejects with a [files code](#files-fileerrorcode-and-not_found). |
 | `remove` | `(path: string) => Promise<void>` | Asks the element to record a removal. Rejects `NOT_FOUND` for a path in neither the files nor the guest's writes. |
 
 Always present: with no files, `list()` is empty and every lookup fails. Lookups are exact (`../x`, `/x` and
@@ -1271,14 +1270,17 @@ return what you registered. [ADR-004](ADR-004-files-as-blob-urls.md)
 <!-- describes: api:GuestWrite sig:cce0 -->
 With `guestWrites: true`, `sandboxFiles.write()` and `remove()` change the guest's own view once the element
 has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` with the message
-`this file has no URL` (the guest gets no URL for anything it wrote). The element checks each request as `start()` checks the app's files (path, entry, type, the
+`this file has no URL` (the guest gets no URL for anything it wrote). A write is a path and bytes, never a type: its type
+is the one the library's table has for the path's extension, or `application/octet-stream` for one it does not know, so a
+write to `evil.html` is `text/html` whatever the app would have claimed, and a write that carries a type of its own is
+refused `INVALID_FILE`. The element checks each request as `start()` checks the app's files (path, content, the
 quota with every pending change applied) and at most `GUEST_WRITES_PER_SECOND` requests and
 `GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; a refused request changes nothing on either side. Nothing the
 guest writes reaches the files, a policy or another environment until the host calls
 [`commitGuestWrites()`](#commitguestwritespaths-options); it is listed by
 [`listGuestWrites()`](#listguestwrites) and announced by `fileswritten`. Without `guestWrites`, both methods
 reject with `FILES_NOT_ALLOWED`, and so does the element for any request that reaches it. Treat written
-content as the guest's data, and so its path and type: show them with `textContent`, never in an HTML, URL, template or `console`
+content as the guest's data, and so its path, which also chose its type: show them with `textContent`, never in an HTML, URL, template or `console`
 format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,` and `@`, so one written into a
 single-quoted attribute can end it and add one). [ADR-004](ADR-004-files-as-blob-urls.md)
 
@@ -1296,11 +1298,11 @@ made inside the sandbox view (`render('<img src="path">')`), or in your page as 
 of an `application/octet-stream` blob, never `target="_blank"`, an `<iframe>`, an `<object>` or `location`. The
 [recipe](#images-the-app-makes) shows both.
 
-**A committed write's type is the guest's claim, and so is its name.** `commitGuestWrites()` checks the type a file will
-be loaded as, never its name: a file named `evil.html` written with the type `image/png` commits without
-`{ code: true }`, is listed by `listFiles()` as `image/png`, and the library loads it only as an image, never as a document.
-If you store or serve the bytes anywhere else (a server that chooses the type from the extension, an export, a download
-named by the path), choose the name and the type yourself, and send `X-Content-Type-Options: nosniff` and
+**A committed write's type and its name agree; the name is the guest's.** `commitGuestWrites()` checks the type a file
+will be loaded as, which is the type its path's extension has: `evil.html` is `text/html` and needs `{ code: true }`, and
+only the extensions of inert types (images, fonts, audio, video, plain text, JSON, CSS) commit without it. The guest still
+chooses the name, and so the type. If you store or serve the bytes anywhere else (an export, a download named by the
+path), choose the name and the type yourself, and send `X-Content-Type-Options: nosniff` and
 `Content-Disposition: attachment`.
 
 In strict mode the view shows the raster images the guest writes: a write whose type is `image/png`, `image/jpeg`,
@@ -1888,7 +1890,7 @@ element's whole life.
   storage key, a listed endpoint), at a size you capped. Sealed mode has no network, so a method you grant is the only code
   of your page the app can run: a proxy hands it your page's network, cookies and storage.
 - **Everything the app can send your page is the app's data and attacker text**, not only the arguments of your methods:
-  its `sandbox-log` lines, the details of `violation` events (`blockedURI`, `sourceFile`), the paths and types of its guest
+  its `sandbox-log` lines, the details of `violation` events (`blockedURI`, `sourceFile`), the paths of its guest
   writes (`fileswritten`, `listGuestWrites()`) and the height of its auto-resize. None of it is a request, and none can run
   code, but each is chosen by the app. Show it with `textContent` and never pass it to a URL or HTML sink, and do not
   forward it to a network sink, an error reporter or analytics (`fetch`, `navigator.sendBeacon`, a tracker's `capture()`)
@@ -1949,9 +1951,9 @@ Two routes, and the host decides what is kept in both:
 - **Guest writes**: with `guestWrites: true` the app writes files with `sandboxFiles.write()`, the host sees them in
   `listGuestWrites()` (and `fileswritten`), and `commitGuestWrites(paths)` makes the ones it accepts files of the app for the
   next build, where the app reads them with `sandboxFiles.text()`. Treat what the app wrote as the app's data, its
-  path and type as well as its bytes: check the size, parse it in a `try`, check its shape, show it with `textContent`.
-  Only inert types commit without `{ code: true }`; leave code out for an app's data. The type is the app's claim, like
-  the name: a file named `evil.html` written as `image/png` commits, and is loaded as a PNG only
+  path as well as its bytes: check the size, parse it in a `try`, check its shape, show it with `textContent`.
+  Only inert types commit without `{ code: true }`; leave code out for an app's data. The type is the library's for the
+  path's extension, never the app's word: `evil.html` is `text/html`, and needs `{ code: true }`
   ([Guest writes](#guest-writes)). Committed files are the app's, on its element.
 
 **`commitGuestWrites(paths)` commits what is pending now, not what you listed.** To commit exactly what you validated,
@@ -1968,7 +1970,7 @@ The view shows the **raster images the app wrote** (PNG, JPEG, GIF, WebP or AVIF
 own images are fixed at the build; see [Guest writes](#guest-writes) for what the view shows.
 
 To show such an image **in your page** (outside the view), make the type yourself and check the bytes; offer anything else
-as a download. Never `new Blob([content], { type })` with the app's `type`, and never open the URL in a tab or a frame:
+as a download. Never `new Blob([content], { type })` with the write's `type`, which the app chose by its path, and never open the URL in a tab or a frame:
 
 ```js
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];

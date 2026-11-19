@@ -45,7 +45,8 @@ export interface FileInfo {
  * write is refused by the host's library method.
  * - `INVALID_PATH`: a path is not valid, or a list of paths is not an array.
  * - `INVALID_FILE`: the batch is not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a
- *   valid type (for a guest write: not a write or a remove).
+ *   valid type (for a guest write: not a write or a remove, or content that is not a string or bytes, a type given
+ *   beside it included).
  * - `FILES_QUOTA_EXCEEDED`: the store after the change would exceed 1000 files or 8 MiB. A JavaScript file counts its
  *   registered bytes plus what its module rewrite adds, and a stylesheet its bytes plus what its references add.
  * - `FILES_NOT_ALLOWED`: an opt-in is missing, either a guest write while `guestWrites` is off or a commit of a file
@@ -107,8 +108,13 @@ export interface SandboxFiles {
      * Asks the host to record a write. The guest's view changes only once the host has recorded it. The entry's bytes are
      * copied when this is called.
      *
-     * @param path - The path to write.
-     * @param entry - A string, a `Blob`, an `ArrayBuffer` or a typed array, or `{ content, type }`.
+     * @remarks
+     * A write carries a path and bytes, never a type: the type is the library's for the path's extension, or
+     * `application/octet-stream` for one it does not know (I8). A `Blob`'s own `type` is not read. An entry that is not one
+     * of the kinds of content below, a `{ content, type }` object included, is refused `INVALID_FILE`.
+     *
+     * @param path - The path to write; its extension decides the file's type.
+     * @param entry - The content: a string (written as UTF-8), a `Blob` (its bytes), an `ArrayBuffer` or a typed array.
      * @returns Resolves once the host recorded the write. Rejects with the host's {@link FileErrorCode}, or with
      * `FILES_NOT_ALLOWED` without sending when `guestWrites` is off.
      */
@@ -199,43 +205,60 @@ export function checkPath(path: unknown, caller: string): asserts path is string
 // (docs/archive/research/blob-delivery-probe.md, section 2), so an unknown file must not get one.
 export const FALLBACK_TYPE = 'application/octet-stream';
 
-const MIME_TYPES: Readonly<Record<string, string>> = {
-    js: 'text/javascript',
-    mjs: 'text/javascript',
-    css: 'text/css',
-    html: 'text/html',
-    htm: 'text/html',
-    json: 'application/json',
-    map: 'application/json',
-    xml: 'application/xml',
-    txt: 'text/plain',
-    md: 'text/markdown',
-    csv: 'text/csv',
-    vtt: 'text/vtt',
-    wasm: 'application/wasm',
-    svg: 'image/svg+xml',
-    png: 'image/png',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    avif: 'image/avif',
-    ico: 'image/x-icon',
-    bmp: 'image/bmp',
-    woff: 'font/woff',
-    woff2: 'font/woff2',
-    ttf: 'font/ttf',
-    otf: 'font/otf',
-    mp3: 'audio/mpeg',
-    wav: 'audio/wav',
-    ogg: 'audio/ogg',
-    oga: 'audio/ogg',
-    m4a: 'audio/mp4',
-    flac: 'audio/flac',
-    mp4: 'video/mp4',
-    webm: 'video/webm',
-    ogv: 'video/ogg',
-};
+/** One extension's row of FILE_TYPES. */
+export interface FileTypeRow {
+    /** The type a file of this extension gets. */
+    readonly type: string;
+    /** Whether a guest write of it commits without `{ code: true }`. */
+    readonly inert: boolean;
+}
+
+/**
+ * The one table of file types (I8): for each extension, the type a file gets from its path, and whether it is inert,
+ * the one decision of which guest writes commit without `{ code: true }` (guest-writes.ts, INERT_TYPES, derived from
+ * it). An inert type is one the browser only decodes or shows as text: a raster image, a font, audio, video, plain
+ * text, JSON or CSS. Every other type (JavaScript, HTML, SVG, XML, WebAssembly, Markdown, CSV, WebVTT) runs or is parsed
+ * as a document somewhere, and so is code; so is FALLBACK_TYPE, the type of an extension the table does not have. A
+ * guest write's type is always this table's for its path (CheckedFile.fromGuest): the guest gives bytes, never a type.
+ * Keys are lower case; the lookup lower-cases the extension. test/unit/file-types.test.ts runs every row.
+ */
+export const FILE_TYPES = {
+    js: { type: 'text/javascript', inert: false },
+    mjs: { type: 'text/javascript', inert: false },
+    css: { type: 'text/css', inert: true },
+    html: { type: 'text/html', inert: false },
+    htm: { type: 'text/html', inert: false },
+    json: { type: 'application/json', inert: true },
+    map: { type: 'application/json', inert: true },
+    xml: { type: 'application/xml', inert: false },
+    txt: { type: 'text/plain', inert: true },
+    md: { type: 'text/markdown', inert: false },
+    csv: { type: 'text/csv', inert: false },
+    vtt: { type: 'text/vtt', inert: false },
+    wasm: { type: 'application/wasm', inert: false },
+    svg: { type: 'image/svg+xml', inert: false },
+    png: { type: 'image/png', inert: true },
+    jpg: { type: 'image/jpeg', inert: true },
+    jpeg: { type: 'image/jpeg', inert: true },
+    gif: { type: 'image/gif', inert: true },
+    webp: { type: 'image/webp', inert: true },
+    avif: { type: 'image/avif', inert: true },
+    ico: { type: 'image/x-icon', inert: true },
+    bmp: { type: 'image/bmp', inert: true },
+    woff: { type: 'font/woff', inert: true },
+    woff2: { type: 'font/woff2', inert: true },
+    ttf: { type: 'font/ttf', inert: true },
+    otf: { type: 'font/otf', inert: true },
+    mp3: { type: 'audio/mpeg', inert: true },
+    wav: { type: 'audio/wav', inert: true },
+    ogg: { type: 'audio/ogg', inert: true },
+    oga: { type: 'audio/ogg', inert: true },
+    m4a: { type: 'audio/mp4', inert: true },
+    flac: { type: 'audio/flac', inert: true },
+    mp4: { type: 'video/mp4', inert: true },
+    webm: { type: 'video/webm', inert: true },
+    ogv: { type: 'video/ogg', inert: true },
+} as const satisfies Readonly<Record<string, FileTypeRow>>;
 
 /**
  * Whether a file of this type is JavaScript: a script load admits it (load-kinds.ts, the one table), it loads
@@ -250,13 +273,19 @@ export function isStylesheetType(type: string): boolean {
     return admits('style', type);
 }
 
+/** The row of FILE_TYPES for an extension (case-insensitive), or null for one the table does not have. */
+function fileTypeRow(extension: string): FileTypeRow | null {
+    const key = extension.toLowerCase();
+    return Object.hasOwn(FILE_TYPES, key) ? FILE_TYPES[key as keyof typeof FILE_TYPES] : null;
+}
+
 /** The type a file gets from its extension (case-insensitive), or FALLBACK_TYPE. Never empty. */
 export function mimeTypeFor(path: string): string {
     const name = path.slice(path.lastIndexOf('/') + 1);
     const dot = name.lastIndexOf('.');
     if (dot <= 0) return FALLBACK_TYPE; // no extension, or a dotfile such as .env
-    const extension = name.slice(dot + 1).toLowerCase();
-    return Object.hasOwn(MIME_TYPES, extension) ? MIME_TYPES[extension]! : FALLBACK_TYPE;
+    const row = fileTypeRow(name.slice(dot + 1));
+    return row ? row.type : FALLBACK_TYPE;
 }
 
 // type "/" subtype, each an RFC 6838 restricted name. No parameters: a blob's type is the whole
@@ -357,6 +386,19 @@ export class CheckedFile {
         checkPath(path, caller);
         const { type, bytes } = parseEntry(path, entry, caller);
         return new CheckedFile(type, bytes);
+    }
+
+    /**
+     * A guest's write (I8): `content` is its bytes (a FileContent, as the guest's sandboxFiles sends them), and the type
+     * is FILE_TYPES's for the path, never one the guest gives. Anything else, a `{ content, type }` included, is refused
+     * INVALID_FILE: a guest cannot name a type, so no type it claims can disagree with the path. Throws INVALID_PATH or
+     * INVALID_FILE.
+     */
+    static fromGuest(path: unknown, content: unknown, caller: string): CheckedFile {
+        checkPath(path, caller);
+        const bytes = toBytes(content);
+        if (!bytes) throw fileError('INVALID_FILE', `${caller} refused ${describePath(path)}: content must be a string or bytes; its type is the one its path's extension has.`);
+        return new CheckedFile(mimeTypeFor(path), bytes);
     }
 }
 
