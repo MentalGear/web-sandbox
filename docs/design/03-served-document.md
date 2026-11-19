@@ -231,25 +231,45 @@ or the test fails.
   report a guest's `http:` URL.
 - **No canary leaves the browser.** Under the `<meta>` none reached the network, in any of 57 cases on any engine, with
   a control that reached it without the `<meta>` (research 31, Q6).
-- **The verdict depends on no fixed wait.** An event is attributed by what it carries (its canary's URL or directive,
-  its policy text, its disposition), the check waits for the events it expects with one timeout, and an event that is
-  not the `<meta>`'s ends the build whenever it arrives, after the verdict too. A check that sorts events by the time
-  they arrive can end a healthy sandbox on a slow machine: the fixture's, with two fixed waits, refused a clean file
-  in a few of fifty starts on Firefox (research 31, Q7; cause not isolated there).
+- **The check has no clock.** An event is attributed by what it carries, never by when or where it arrives: a refused
+  canary by its own host and scheme in the blocked URL, which names it on all three engines in whichever realm the
+  event is filed. The view announces itself once every refused canary has raised the `<meta>`'s event and every
+  admitted load has done what the `<meta>` lets it do; a load that has not answered yet is "not yet", never "another
+  policy". An event whose policy text or disposition is not the `<meta>`'s ends the build whenever it arrives, after
+  the verdict too. The only time limit is the host page's load timeout
+  ([the start-up order](#the-start-up-order), step 6).
+- **Why no clock** (research 31, Q8). A check that counts the events in a window of time ended a healthy sandbox: the
+  fixture's refused a clean file in 3 of 400 starts on Firefox, which files a worker's refused script loads in the
+  view's document, at whatever time the worker reaches them; three fell into a window that expected one. The check by
+  content refused none of 400 there, nor on Chromium. Its one remaining time limit, 600 ms for a canary worker's
+  answer, refused 5 of 200 starts on WebKit on a loaded machine; a form without it was not seen to fail or to fix it
+  (the failure did not recur in 100 starts each).
 
 Measured under 80 policies on the file's response for the admitted canaries (research 31, Q3) and 57 for the refused
 ones (Q6), in the view and in the worker, on all three engines:
 
 | | |
 | :--- | :--- |
-| The admitted canaries see | every policy that refuses one of them: enforced and report-only, with `report-uri` and with `report-to`, each single-directive `'self'` policy, Trusted Types enforced and report-only, and a header that repeats the `<meta>`'s own text (report-only by its disposition; enforced by a canary run alone, since counting duplicate events gives false positives on Firefox) |
+| The admitted canaries see | every policy that refuses one of them: enforced and report-only, with `report-uri` and with `report-to`, each single-directive `'self'` policy, Trusted Types enforced and report-only, and a header that repeats the `<meta>`'s own text (report-only, by its disposition) |
 | The refused canaries add | every header the admitted ones missed under which a guest's URL would be reported: report-only and enforced `font-src`, `media-src`, `frame-src` and `object-src` at the `<meta>`'s own values and at `https: blob:`, `default-src` with `'self' blob:` or `https: blob:`, and `child-src blob:`, on all three engines; `worker-src` through a `data:` worker; `form-action` on Firefox and WebKit |
 | A canary worker of the view's own | started before the view announces itself. The app's worker starts after the verdict, so a `worker-src` header is otherwise seen only once the app is in the view |
 | No refused canary | `manifest-src`: no engine fetches a manifest linked in a framed document, so there is no load to refuse and none of a guest's to report. A network URL for `worker-src`: a worker of another origin fails before the policy is asked, with no request; the `data:` worker stands in. **`form-action`**: on Chromium the refused form replaced the view with an error page, so the check submits no form on any engine |
 | Does not see | a header that admits both canary URLs and still refuses a guest's: one that names the canaries' own host (Chromium, Firefox), and any `form-action` header. A `frame-ancestors` that admits the host page; `upgrade-insecure-requests`; a header `sandbox`; a policy that admits every URL on the network (`*`), under which nothing of a guest's was reported either |
 | WebKit | raises the events in the view and in the worker, so the check sees there what it sees on the other two, and the headers that name the canaries' host as well; it sends no report from an opaque document but the refusals of code from strings, filed under the file's URL |
-| Cost | the admitted set settled in 23, 37 and 16 ms at the median (Chromium, Firefox, WebKit) and the refused canaries added 63, 95 and 24 ms; the last event arrived at most 99, 165 and 203 ms after issue (Firefox and WebKit on a loaded machine) |
+| Cost | the check by content, both sets at once, decided 28, 45 and 55 ms after issuing its canaries at the median (Chromium, Firefox, WebKit; 200 starts each), and 41, 65 and 135 ms on a loaded machine; the fixture's check with its two fixed waits took 71, 71 and 90 ms |
 | Side effects | none outside the view: the refused frames exist in the view while the check runs and are removed, the file's frame count stays one, and the host page sees no second load |
+
+**An enforced header with the `<meta>`'s exact text** raises events the check cannot tell from the `<meta>`'s by text
+or disposition. It refuses what the `<meta>` refuses, and having the `<meta>`'s text it names no report endpoint, which
+the `<meta>` does not either (`POLICY_DIRECTIVES` has no report directive, and its test fails for one). So nothing is
+sent under it, and the check does not look for it. It could: a `fetch` canary raised exactly one event per load under
+the `<meta>` alone and two under that header, in 100 of 100 starts per engine with no false positive (research 31, Q8).
+The check of the file names the header where it can read the answer.
+
+**The order of two policies' events for one load.** Under each of six headers the check should see, the header's event
+came before the `<meta>`'s or with it, never after (research 31, Q8: 100 starts per engine and header), so a check
+that answers when its expected events are in had seen the header in every start. That is an observed order, not a
+guaranteed one, which is why the listener stays after the verdict.
 
 **What is left unseen, and what closes it.** Under two kinds of header the check passes and a guest's load, if the view
 ever made it, would be reported on Chromium and Firefox (the full URL under `font-src`, `media-src` and `form-action`,
@@ -272,10 +292,9 @@ Step 3.6 brings the test of those rules: a guest font, media, frame, object and 
 enforced and report-only, and no report that carries guest text.
 
 **Not measured:** a form canary aimed at a frame of the view's own, which might leave the view standing on Chromium; a
-header with both scheme sources (`font-src http: https: blob:`), which admits both canaries as `*` does; the check as
-the library builds it, with no fixed wait: what identifies each canary's event on each engine, whether a header's event
-for a load can arrive after the `<meta>`'s for the same load, and how an enforced header with the `<meta>`'s own text
-is told from the `<meta>` without a canary run alone in a window of time.
+header with both scheme sources (`font-src http: https: blob:`), which admits both canaries as `*` does; a header that
+refuses only the canary whose event arrives last; the check with no time limit of its own on a loaded WebKit; the
+check in the library's bundle.
 
 What "serve it unchanged" excludes, for the docs: a `Content-Security-Policy` or
 `Content-Security-Policy-Report-Only` header on the file, `X-Frame-Options` or a `frame-ancestors` that refuses the host
@@ -321,7 +340,8 @@ thread busy for 200 ms after insertion; a file of another version received nothi
 same as the host page speaking first: 93, 120 and 288 ms against 93, 121 and 286 ms from the frame's insertion to the
 verdict (Chromium, Firefox, WebKit; medians of 24 alternating starts on a shared machine), where a start with no gates
 and no check took 22, 32 and 34 ms. The gates are 2 to 4 ms of the difference, and the fixture's check waited 60 ms in
-two fixed waits, which the library's check does not have. **Not measured:** the worker's gates in a worker made from the
+two fixed waits; with [the check by content](#what-the-policy-check-provokes) and no gates, insertion to the verdict
+took 41, 75 and 108 ms (Q8). **Not measured:** the worker's gates in a worker made from the
 app's source; the policies a worker inherits are fixed when it is created, so the same events are expected.
 
 ### Who receives the first port
@@ -436,8 +456,8 @@ own name; `viewScriptHash()` there is strict mode's.
 - The file as it will ship: research 28's spike ran the library's per-build wrapper as a served file, and research 31
   a fixture of this design with no bundle of the library's: its guest loads reached the browser directly, not through
   the renderer, the cut of CSS URLs or the view's `submit` handling.
-- The policy check as the library builds it: attributed by content, with no fixed wait; and a form canary that leaves
-  the view standing on Chromium.
+- The policy check in the library's bundle, with no time limit of its own on a loaded machine; and a form canary that
+  leaves the view standing on Chromium.
 - The worker's gates and its half of the check in a worker made from the app's source.
 - The Reporting API (`report-to`) on Chromium, whose positive control failed; downloads on Firefox and WebKit, the
   same.

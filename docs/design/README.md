@@ -135,9 +135,9 @@ and the gates as written, on Chromium 159, Firefox 159 and WebKit 27.2.
 | :--- | :--- | :--- |
 | The policy check sees a report-only `worker-src` only through a worker | The view starts a canary worker of its own before it answers | [03](03-served-document.md#what-the-policy-check-provokes) |
 | The check passes under report-only `font-src`, `media-src`, `form-action`, `frame-src` and `object-src`, and a guest's load would then be reported | I18 restated: the check does not close the report channel alone; the renderer's five rules are named as what does, with a test. A refused canary per directive, in both schemes, sees all of them but `form-action` (on Chromium the refused form ends the view) and a header that names the canaries' host: the directives become one list, `POLICY_DIRECTIVES` | [03](03-served-document.md#what-the-policy-check-provokes) |
-| A header that repeats the `<meta>`'s text, enforced, is told from the `<meta>` only by a canary run alone | Said | [03](03-served-document.md#what-the-policy-check-provokes) |
+| A header that repeats the `<meta>`'s text, enforced, is told from the `<meta>` only by a count of events | Not looked for: with the `<meta>`'s text it names no report endpoint, so nothing is sent under it | [03](03-served-document.md#what-the-policy-check-provokes) |
 | A server that answers every path with a page that has a frame: that frame received the first port | The view speaks first, and the host page sends a port only to the window that announced itself from the first frame of the element's own frame: a document that does not claim to be the view receives none | [03](03-served-document.md#who-receives-the-first-port) |
-| The fixture's check, with two fixed waits, refused a clean file in a few starts on Firefox | The library's check has no fixed wait: events are attributed by what they carry | [03](03-served-document.md#what-the-policy-check-provokes) |
+| The fixture's check counted events in windows of time and refused a clean file in 3 of 400 starts on Firefox, which files a worker's refused script loads in the view's document | The check has no clock: an event is attributed by what it carries, and the only time limit is the host page's load timeout. Measured: none of 400 refused on Chromium and Firefox; on a loaded WebKit a 600 ms limit of the probe's own refused 5 of 200 | [03](03-served-document.md#what-the-policy-check-provokes) |
 | A file without its guard, wrongly framed, passes every gate and the check | Said: only the check of the file's bytes finds it | [03](03-served-document.md#inside-the-file) |
 | Reports sent at start-up carried the host page's URL as their referrer | The frame's `no-referrer` is stated as needed for this too | [03](03-served-document.md#the-shape) |
 | `crypto.subtle` is absent from the view under a host page that is not a secure context | The reason the version is a constant | [03](03-served-document.md#the-public-surface) |
@@ -175,7 +175,7 @@ Stated once here; each file repeats what concerns it.
 - The served file as it will ship: one static file per library version, with the library's real bootstrap. Research
   28's spike served the library's per-build wrapper; research 31 built this design's shape and start-up as a fixture,
   with no bundle of the library's.
-- The policy check as the library builds it, with no fixed wait
+- The policy check in the library's bundle, and with no time limit of its own on a loaded WebKit
   ([03](03-served-document.md#what-the-policy-check-provokes)).
 - `links` as designed: the click as the request, in the served file. Research 30 measured a call from the worker, in
   today's view.
