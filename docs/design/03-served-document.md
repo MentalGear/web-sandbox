@@ -167,6 +167,21 @@ twelve ways gave the same cells, one for one, on all three engines (research 31,
 | The channel | ports from the host page to C | impossible to build a relay | the round trip is today's; start-up is 3 to 5 ms more on loopback |
 | The start-up order and gates | below | a check, of the browser | below |
 
+**The file as generated** (`src/lib/sealed-document.ts`, step 3.1; the view answered in it on all three engines, run
+outside the suite). F's head holds, in order: the charset; `<base href="about:blank">`, before the policy, whose
+`base-uri` is `'none'`; the policy; the referrer policy; the guard. C is a `srcdoc` and inherits F's base URL, which
+without the `<base>` would be the embedder's URL of the file, query included, and the view's environment check expects
+`about:blank`. C's document is written into the `srcdoc` attribute with `&`, `"`, `<` and `>` escaped, so F's bytes hold
+one `<script` and one `<iframe`. C has no `<meta>` of its own: one policy, F's.
+
+**Open for step 3.2: C's size in F.** C is 300 by 150 pixels in F on all three engines: the attributes `width` and
+`height` do not give a frame its height in a standards-mode document, and the constant policy admits no stylesheet of
+F's. The construction that keeps the policy constant is one more constant text admitted by hash, a sizing stylesheet in
+F with its row in `POLICY_DIRECTIVES`; a quirks-mode F and a script that sizes C are the alternatives, and neither C
+(opaque to F) nor the host page (F is opaque to it) can size C from outside. Also seen once on WebKit, not repeated:
+with `allow-same-origin` on F's frame, the guard's `window.stop()` kept the host page's `load` event from firing for
+30 seconds; 3.2 and 3.4 measure it, since a guarded case ends with "the document did not answer".
+
 **What the constant policy gives up.** Today's per-build policy admits `blob:` only for the kinds of file the app
 registered. A constant policy admits it for all four kinds, and the renderer's URL rule (`keepsUrl`) is then the only
 thing that keeps a `blob:` URL of the wrong kind out: that narrowing moves from the policy to a check.
