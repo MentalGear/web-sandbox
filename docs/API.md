@@ -1761,6 +1761,24 @@ asks the browser for anything your page's policy decides (see [Host page policy]
 `'iframe'` is not a mode; it starts nothing, like any value that is not a mode. [ADR-005](ADR-005-strict-mode.md),
 [ADR-008](ADR-008-sealed-mode.md)
 
+### Migrating to one app per element
+
+What changes for an embed written against `setConfig()`:
+
+| You have | Now | What to do |
+| :--- | :--- | :--- |
+| `setConfig(config)`, with `registerFiles()` before or after it | [`start(app, grants)`](#startapp-grants), once per element. The app is its own content (`html`, `entry`, `files`); the grants are everything you decide (`mode` and its options, `methods`) | split the config: what the app's author wrote goes in the first argument, what you allow in the second |
+| `expose(name, fn)` and `unexpose()` | `grants.methods`, copied when `start()` is called | give every host method to `start()` |
+| a second `setConfig()`, a `load()`, or other files, on the same element | an element runs one app; `reset()` builds that app again, and a second `start()` throws | make a new element for another app or other grants; `started` says whether an element has its app |
+| a config the element could not take ended with `terminated` | `start()` throws a `TypeError` and nothing is stored | catch it where you call `start()` |
+| `execute(code)` | only in the build with the network modes ([Builds](#builds)) | call a method the app publishes with `bridge.expose()`, or use that build |
+| a listener for `sandbox-log`, `violation`, `fileswritten`, `fileschanged` or `fetch` on an ancestor or on `window` | these events do not bubble | listen on the element, or in the capture phase |
+| `commitGuestWrites(paths)` | [`commitGuestWrites(writes)`](#commitguestwriteswrites-options) takes the values `listGuestWrites()` returned and commits all of them or none; it answers `false` when one is stale | list, check and commit the values; on `false`, list again |
+| a pending write's `content` as a `Uint8Array`, or a write posted or cloned as it is | `content` is a `GuestBytes`, which is not cloneable | `content.bytes()` for the bytes (post these), `text()`, `image()` to show a raster image, `save()` to let the user keep the file |
+| in the guest, `sandboxFiles.write(path, { content, type })` | refused with `INVALID_FILE`: a write's type is its path's | name the file by the type it has |
+| a `Blob` or a `File` among the arguments or the result of `call()` or of a host method, in either direction | refused (`ARGS_NOT_TRANSFERABLE`, `RESULT_NOT_TRANSFERABLE`), and so is a resizable `ArrayBuffer` | send the bytes (`await blob.arrayBuffer()`) |
+| `call<T>()` and `callWithTimeout<T>()` | both answer `Promise<unknown>` | narrow the result in your code: it is the guest's data |
+
 ### Migrating to sealed as the default
 
 What changes for an embed written when strict mode was the default:

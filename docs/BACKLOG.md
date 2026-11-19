@@ -28,6 +28,9 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S84](#s84) | ⏳ open (P2 · S) · medium | The strict view's `VIEW_LISTEN` has no flow control: an `on()`/`off()` loop is uncounted (S74 board BD4:LIM-3; availability only) |
 | [S85](#s85) | ⏳ open (P3 · S) · low | The strict view's input outbox scans every slot on each event (S74 board BD4:LIM-5; availability only) |
 | [S87](#s87) | ⏳ open (P3 · S) · low | A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time (S74 board BD5:LIM-3; availability only) |
+| [S89](#s89) | ⏳ open (P3 · S) · low | A resizable `ArrayBuffer`'s maximum is reserved by the browser before any receiver measures it (review 3 of the design, finding 5; availability only) |
+| [S90](#s90) | ⏳ open (P3 · M) · to measure | On Chromium a page's policy does not govern requests to an installed extension's web-accessible resources (research 34) |
+| [T10](#t10) | ⏳ open (P2 · M) | A run reruns every spec for every change, from files served live: tests load the built bundle, and a spec's result is keyed by its inputs (owner, 2026-11-19) |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
 
 Done items, review rounds and the capability snapshot are in [the archive](archive/backlog/BACKLOG-done.md).
@@ -484,7 +487,8 @@ item cites its findings by ID (`BD7:`). The coordinator's evaluation is in
 `src/` grew by 38%. The owner's answers (2026-11-07, [research 24](research/24_sealed_mode/README.md) D8 and D9): sealed
 mode switches to served documents now; cooperative mode, worker mode and strict mode's network options stay, behind a
 build flag that is off by default. D9 is built ([ADR-009](ADR-009-network-modes-build-flag.md)): the default build is
-sealed mode alone. D8 is not built.
+sealed mode alone. D8 is being built as the design in [docs/design/](design/README.md) has it, with what an element
+and an app hand over ahead of it: [its build order](design/05-build-order.md) says row by row what is built.
 
 **Pass 8 reviews sealed mode again** (same scope), in the default build, after D8: two of pass 7's three data findings
 came from the host page's policy reaching a `srcdoc` document, which a served document does not inherit
@@ -559,6 +563,12 @@ processes beside it (the render arrived 4.4 s after the log line each time, so C
 alone on four workers, and 6 among the other view specs. `waitInView`'s failure names each frame's visibility and element
 count, each sandbox element's state and the page's last log lines (`test/e2e/strict-view.ts`, describeFrames), so the
 next occurrence says whether the view was hidden, empty or ended.
+
+**Closed by construction, of this class.** A unit test that measures scaling declares the measure's own time limit
+(`SCALING_TIMEOUT_MS`, `test/unit/scaling.ts`), and `test/unit/host-share.test.ts` fails one under the runner's default
+limit or a number of its own: `view-autofill`'s linear submit timed out at load 8 with no ratio judged, and passes alone
+in 2.4 s. Runs of several checkouts go one at a time behind a lock (CONTRIBUTING.md, "One e2e run at a time on a
+machine"), and [T10](#t10)'s third step gives the specs that measure the host page a group of their own.
 
 The same day, `test/e2e/strict-renderer.spec.ts` on WebKit 27.2, strict mode ("every URL the view mints is of a type that
 is not a document"), failed once among six specs run together, and its error was not kept. Not reproduced: 6 runs alone
@@ -802,6 +812,40 @@ sealed guest that tries every name it has; the answer is a row of `INHERITED_CON
 network options, as the measurement says.
 
 ---
+
+## T · Tests
+
+### <a id="t10"></a>T10 · A run reruns every spec for every change, from files served live — ⏳ **open** (P2 · M)
+
+*The owner's go-ahead, 2026-11-19.* The whole e2e suite takes about 1.2 hours on four cores with one engine after the
+other, and about 30 minutes in CI with the three side by side; a commit that changes only docs runs all of it again.
+
+**The root.** A run does not know what it depends on. Each test's page loads the library module by module from the dev
+server (`test/e2e/library.ts`: `src/index.ts` or `src/network.ts`), in a new browser context, so the files on disk
+during the run are what is tested (CONTRIBUTING.md, "No edit of served files during a run"), and no spec's result is
+tied to the inputs that produced it.
+
+**Fix, by construction**, in this order, each measured before and after on three engines:
+1. **The tests load the built bundle.** The server already builds `dist/` and `dist-network/` when it starts
+   (`package.spec.ts` mounts from them). Every harness page takes its build's bundle: one request for the library
+   in place of one per module, a run tests the code as it was built at its start whatever is edited meanwhile, and
+   the tests run what the package ships. To settle first: what the specs that read a source module directly need (a
+   helper imported from `src/`), and source maps for a failure's stack.
+2. **A spec's result is keyed by its inputs**: its build's bundle (a hash), the spec and the helpers it imports, the
+   harness pages, the engine's version and the Playwright config. A key that has passed on an engine is not run again:
+   a docs-only commit runs no spec, a change of one spec runs that spec, and a change confined to `network` modules
+   runs no spec of the default build, whose bundle is the same bytes (`BUILD_MODULES`: a `sealed` module imports no
+   `network` module). The specs that measure the host page stay out of it: the machine's load is one of their inputs.
+   Checkouts with the same inputs share results, and so can CI.
+3. **The specs that measure the host page run in a group of their own**, one worker, and the rest on as many workers
+   as the machine has ([S81](#s81)).
+
+**What it does not change.** A change to code every page loads changes the bundle, and every spec runs again, as it
+must. For that case the time is the machine's cores and CI's three engines side by side (CONTRIBUTING.md, "Which
+gates, when").
+
+**Order.** After step 3.2 of [the design's build order](design/05-build-order.md), which rewrites the harness pages
+and the server this touches.
 
 ## Parity Reference
 

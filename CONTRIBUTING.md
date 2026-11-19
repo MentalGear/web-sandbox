@@ -35,8 +35,8 @@ The package is sealed mode alone unless it is built with `WEB_SANDBOX_NETWORK_MO
 - **E2e tests.** A test names its build: `test.use({ build: 'network' })` at the top of a file of network-mode tests,
   and `test.use({ build: buildOfMode(mode) })` in a `describe` of a loop over modes; the fixture's default is
   `'default'`. The fixture tells every page of the test its build, each harness page loads that build's entry
-  (`test/e2e/library.ts`), and `setConfig()` on such a page throws for a config that is the other build's to test: a
-  network mode on the default build, a sealed config on the network build. A test whose subject is exactly that (the
+  (`test/e2e/library.ts`), and `start()` of every element such a page defines throws for grants that are the other
+  build's to test: a network mode on the default build, a sealed config on the network build. A test whose subject is exactly that (the
   default build's refusal; the network build's own sealed mode) says `test.use({ otherBuildConfigs: true })`. A spec
   that opens a browser context of its own calls `pairWithBuild(context, build)`.
 - **Docs and the API gate.** `bun run api:update` writes both builds' reports and doc models. The reference in
@@ -73,6 +73,9 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
 - **Scaling in a unit test.** A unit test that asserts a cost is linear uses `scalingRatio` from `test/unit/scaling.ts`
   (the sizes sampled alternately, each one's fastest time kept, sampling continued while the ratio is over its bound),
   never a best-of-N or a ratio of clock reads of its own: `test/unit/host-share.test.ts` fails on one (backlog T9).
+  Such a test declares the measure's own time limit, `it(name, { timeout: SCALING_TIMEOUT_MS }, …)`: the measure takes
+  as long as the machine is loaded, so the runner's default limit would fail a linear cost by the load, and the same
+  test fails a scaling test without it.
 - **A host page like a production app's.** A spec that asks what a feature of the host page does to the sandbox runs on
   the realistic host (`test/e2e/realistic-host.ts`; served by `test/e2e/realistic-host-server.ts`, which also plays the
   app's backend and records what reaches it): a strict CSP that admits the library the way docs/API.md#host-page-policy
@@ -89,6 +92,29 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
 - **Discovery.** Specs are found under the checkout's own `test/e2e/` and `docs/research/`; anything under the
   checkout's own `.claude/` (nested worktrees, scratch copies) is ignored, by a pattern anchored at the checkout's root,
   so a checkout that itself lives under another one's `.claude/worktrees/` still finds its specs.
+
+## Gates, and work in several checkouts
+
+- **Which gates, when.** Before a change is merged into the working branch: `bun run typecheck`, the unit suite,
+  `bun run api:check`, `bun run docs:check`, the package smoke test when the package's files changed, and on three
+  engines the specs the change touches. CI runs the whole e2e suite and the probes on every push to a pull request, its
+  three engines side by side, and is the gate of the whole suite. Run the whole suite locally too for a change that moves
+  many specs at once (the view's document, the harness pages, the fixture). The lifecycle model runs at 400 sequences or
+  more when the lifecycle, the frames it reads or the guest's writes change; CI runs it at 40.
+- **One e2e run at a time on a machine.** Runs of several checkouts share the machine's cores, and the specs that
+  measure the host page need them ([S81](docs/BACKLOG.md#s81)): put every e2e and probe run behind one lock,
+  `flock ~/.cache/web-sandbox-e2e.lock <command>`. Write a run's whole output to a file and read the file: a failure's
+  detail is not in its last lines.
+- **No edit of served files during a run.** The e2e server serves `src/`, `test/`, `examples/` and `playground/` as
+  they are on disk, so an edit there during a run changes what the rest of the run tests
+  ([T10](docs/BACKLOG.md#t10) removes this). Docs, and unit tests no page loads, are safe to edit.
+- **A worktree** (a contributor's second checkout, or an agent's under `.claude/worktrees/`) is created from the default
+  branch: reset it to the working branch before anything else. Work is committed there and not pushed; it reaches the
+  working branch by cherry-pick, and the gates run again on the merged result, since two changes that each pass can
+  fail together. A worktree whose work is still going rebases onto the working branch's head before its last gates. Once
+  merged, the worktree and its branch are removed.
+- **One commit a row or a finding**, its message saying what holds now; a report of the work names every existing test
+  it changed and why, and every gate with its real numbers.
 
 ## Security changes
 
@@ -252,7 +278,7 @@ docs/API.md and the port table of ADR-005 are built this way.
   `METHOD_ORDER`, and a new event needs its row in `ELEMENT_EVENTS`, with "Bubbles." or "Does not bubble." in its doc.
 - **Markers.** A handwritten section that describes code starts with `<!-- describes: ID, ID sig:HASH -->`. The hash is
   taken from the described items' semantic signatures: names, types, values and transitions, never formatting or
-  wording. An export of the public API is the item `api:Name` (`api:WebSandbox.setConfig` for a member); a container's
+  wording. An export of the public API is the item `api:Name` (`api:WebSandbox.start` for a member); a container's
   signature has its members', so a section about the element goes stale when a method is added.
 - **When a marker fails.** `bun run docs:check` (CI runs it) names the section and the items that changed. Read the
   section against the change; fix any sentence that is now wrong; then run `bun run docs:gen --accept`, which writes the

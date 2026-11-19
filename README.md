@@ -732,7 +732,8 @@ Why it is built this way: [ADR-005](docs/ADR-005-strict-mode.md).
 ## Backlog
 
 Open work — broken scaffolding, security follow-ups, planned capabilities — is tracked in
-[`docs/BACKLOG.md`](docs/BACKLOG.md). Whether to continue this project rather than adopt an
+[`docs/BACKLOG.md`](docs/BACKLOG.md). The design being built (one app per element, what an app hands over, sealed mode in a
+served document), its invariants, its reviews and what is built of it row by row: [`docs/design/`](docs/design/README.md). Whether to continue this project rather than adopt an
 existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-001-continue-or-adopt.md).
 
 ## Security Mitigations
