@@ -11,10 +11,10 @@ I5; the network build's `fetch` is held to the same rule). Not built yet: commit
 
 ## The root
 
-Today an app is assembled on the element in several calls: `registerFiles()`, `expose()`, `setConfig()`, `load()`. Each
-call changes one part, and the element runs whatever the parts add up to when it next builds. What one app left behind
-(its host methods, its files, its pending writes, a call still in flight) is there for the next one, unless the embedder
-remembered to take each away. The review board's findings of this kind (`BD5:DOC-3`, `BD6:LIM-2`, `BD6:CHL-3`) were
+An app assembled on the element in several calls (`registerFiles()`, `expose()`, `setConfig()`, `load()`: the members
+this design removes) has no moment at which it is whole. Each call changes one part, and the element runs whatever the
+parts add up to when it next builds. What one app left behind (its host methods, its files, its pending writes, a call
+still in flight) is there for the next one, unless the embedder remembered to take each away. The review board's findings of this kind (`BD5:DOC-3`, `BD6:LIM-2`, `BD6:CHL-3`) were
 each a path by which one app's data or authority reached another on the same element, and each fix was a rule about
 when to clean up.
 
@@ -47,7 +47,7 @@ interface SandboxGrants {                    // the embedder's; never part of an
     readonly links?: readonly string[];
     readonly guestWrites?: boolean;
     readonly capabilities?: readonly SafeCapability[];
-    // and the embedder's other options of today's config: allowAnimations, allowAutoplay, autoResize, callLimits,
+    // and the embedder's other options of the config: allowAnimations, allowAutoplay, autoResize, callLimits,
     // watchdogTimeout, workerExecutionTimeout; in the build with the network modes, mode and its options
 }
 
@@ -68,7 +68,7 @@ the grants, has granted it.
 
 - **It validates everything before it stores anything.** The app and the grants are each read once by their schema, the
   files are checked as one batch by the file store's rules, and the methods are read: own enumerable string keys, each
-  value a function, each name by the rule `expose()` has today. Validation returns the values that are stored: the
+  value a function, each name by the rule for a host method's name (`HostMethod`). Validation returns the values that are stored: the
   normalised options, a file store, and a frozen record of the methods with no prototype. The objects the embedder
   passed are not kept, so changing them afterwards changes nothing.
 - **What it decides, and what it leaves to the build.** `start()` throws for everything the host page can decide
@@ -88,7 +88,8 @@ the grants, has granted it.
   removed from the document.
 - **It builds at once if the element is in a document**, otherwise when it is inserted.
 - **An option of the other build throws.** In the default build a network mode's option throws with the reason
-  `networkModesOff`. Today `setConfig()` never throws and ends the sandbox with that reason instead; that promise ends.
+  `networkModesOff`. `setConfig()` never threw and ended the sandbox with that reason instead; that promise ended with
+  it.
 
 The name: `start`, the owner's choice over `run`. It says what happens once and pairs with the lifecycle's other verbs,
 `reset()` (the same app again) and `terminate()`.
@@ -112,6 +113,13 @@ one's methods, files, pending writes or late calls (`BD5:DOC-3`'s first path, `B
 close what goes through the embedder's own store: a storage key shared by the page's apps (`BD5:CHL-1`), or a handler of
 a terminated app that is still running and writes again (`BD5:DOC-3`'s second path). Those stay the embedder's.
 
+**Whom it holds against.** The element's members, which `APP_SURFACE` enumerates on each build's prototype: no call an
+embedder can write against the public API gives a started element another app, other files or other methods. A script
+of the host page that reaches into the element's internal fields (`_files`, `_broker`, `_config`: private to TypeScript,
+ordinary properties at run time) is outside it, as any script with the page's rights is: it could as well replace the
+element's prototype or the page's `MessagePort`. Fields the language keeps private would not change what such a script
+can do, so the design does not ask for them.
+
 ## The lifecycle
 
 `state` keeps its four values: `'idle'`, `'loading'`, `'ready'`, `'terminated'`. A new read-only member says whether the
@@ -123,7 +131,7 @@ readonly started: boolean     // true once a start() has succeeded, for the rest
 
 `state` alone cannot say it: a new element and a bound one outside its document both read `'idle'`.
 
-| Case | Today | In this design |
+| Case | With the removed members | In this design |
 | :--- | :--- | :--- |
 | An element with no app is inserted | builds an empty sandbox | stays `'idle'`; nothing is built, and no frame exists |
 | `start()` on an element in a document | (several calls) | builds: `'loading'`, then `'ready'` or `'terminated'` |
@@ -134,7 +142,7 @@ readonly started: boolean     // true once a start() has succeeded, for the rest
 | The element is inserted again | builds a fresh environment | builds the same app again |
 | The element is adopted into another document | ends, stays `'idle'` there with one warning | unchanged; the app stays bound, and moved back it builds again |
 | Every build (the first, a `reset()`, a re-insertion) | pending guest writes are discarded | unchanged, and the write values listed before it can no longer be committed ([below](#files-and-commits)) |
-| `call()` before the element is ready, or with no app | queued or refused by today's rules | unchanged; on an element with no app it is refused as it is today on one that is `'idle'` |
+| `call()` before the element is ready, or with no app | queued or refused by today's rules | unchanged; on an element with no app it is refused as on one that is `'idle'` |
 
 The lifecycle model (research 17, `LC_INPUTS`) loses the inputs for `setConfig`, `load` and changed files (a commit
 changed only a count that `setConfig()`'s no-op rule read), gains the `start` input, and gains one rule: no input builds
@@ -202,16 +210,18 @@ between (`BD5:DOC-6`). In this design the commit takes the write values themselv
 
 ## Events
 
-| Event | Bubbles today | In this design |
+| Event | Bubbled before this design | In this design |
 | :--- | :--- | :--- |
 | `sandbox-log` | yes | does not bubble |
 | `violation` | yes | does not bubble |
 | `fileswritten` | yes | does not bubble |
+| `fetch` (the build with the network modes) | yes | does not bubble |
 | `fileschanged` | no | no |
 | `ready`, `terminated` | no | no |
 
-The three carry guest data. A bubbling listener on a shared ancestor, the usual way to delegate events, sees every
-app's events today; with events that do not bubble it sees none. **A capture listener on an ancestor still receives
+The first four carry guest data, as `fileschanged` does (the paths the guest's writes named). A bubbling listener on a
+shared ancestor, the usual way to delegate events, would see every app's events if they bubbled; with events that do
+not bubble it sees none. `ELEMENT_EVENTS`' type refuses a row that carries guest data and bubbles. **A capture listener on an ancestor still receives
 them**: the capture phase runs down the whole path whatever `bubbles` says (review 1, finding 5, run on three engines).
 So this is not a construction: it removes the mixing an embedder gets by accident, and leaves the one they write on
 purpose.
