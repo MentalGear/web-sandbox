@@ -6,14 +6,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NETWORK_MODES_FLAG } from '@src/lib/build-flag';
 import { VIEW_STILL_STYLE } from '@src/lib/in-sandbox-view';
-import { HASHED_TEXTS, POLICY_DIRECTIVES, type PolicyDirectiveRow, renderSealedDocument, SEALED_DOCUMENT_FILE, SEALED_DOCUMENT_GUARD, SEALED_VIEW_FLAGS, sealedDocument, sealedDocumentPolicy, sealedViewBootstrap } from '@src/lib/sealed-document';
+import { HASHED_TEXTS, POLICY_DIRECTIVES, type PolicyDirectiveRow, renderSealedDocument, SEALED_DOCUMENT_FILE, SEALED_DOCUMENT_GUARD, SEALED_DOCUMENT_STYLE, SEALED_VIEW_FLAGS, sealedDocument, sealedDocumentPolicy, sealedViewBootstrap } from '@src/lib/sealed-document';
 
 /**
  * Sealed mode's served document, `sealed-document.html` (design 03, "Inside the file"; step 3.1 of design 05):
  *
  *  - I13, a source scan: F has one script, the guard, and nothing in F handles a message; C, in F's static markup, holds
- *    one script, sealed mode's view bootstrap. The scan fails for a file with a second script in F or C, a listener or a
- *    handler attribute in F, or a view with the host's origin.
+ *    one script, sealed mode's view bootstrap; F's one stylesheet is the sizing sheet. The scan fails for a file with a
+ *    second script in F or C, a listener or a handler attribute in F, another stylesheet in F, or a view with the host's
+ *    origin.
  *  - The policy: the hashes in the `<meta>` are the hashes of the scripts and the stylesheet the file holds, computed here
  *    with another SHA-256 than the library's; its directives are POLICY_DIRECTIVES, with no source an input could add.
  *  - I12, no input: the generator takes none and reads nothing of its environment, both builds' sources give the same
@@ -37,7 +38,7 @@ function readFile(html: string) {
 }
 
 /** The elements a document may hold, by its role: anything else is a load, a script or markup the file does not have. */
-const F_ELEMENTS = ['html', 'head', 'meta', 'base', 'script', 'body', 'iframe'];
+const F_ELEMENTS = ['html', 'head', 'meta', 'base', 'script', 'style', 'body', 'iframe'];
 const C_ELEMENTS = ['html', 'head', 'script', 'body'];
 // What a script that handles a message has: a listener, a handler property, or a post onward (a relay).
 const LISTENS = /addEventListener|\bon\w+\s*=|onmessage|postMessage|MessageChannel/;
@@ -56,6 +57,8 @@ function scanViolations(html: string): string[] {
         if (script.hasAttribute('src')) found.push('a script of F loads a URL');
     }
     if (frames.length !== 1) found.push(`F has ${frames.length} frames`);
+    const sheets = [...f.querySelectorAll('style')];
+    if (sheets.length !== 1 || sheets[0]!.textContent !== SEALED_DOCUMENT_STYLE) found.push(`F's stylesheets are not the one sizing sheet (${sheets.length})`);
     for (const element of elementsOf(f)) {
         if (!F_ELEMENTS.includes(element.localName)) found.push(`F holds a <${element.localName}>`);
         for (const name of element.getAttributeNames()) if (name.startsWith('on')) found.push(`F's <${element.localName}> has a handler attribute, ${name}`);
@@ -119,6 +122,12 @@ describe('I13: F has one script, the guard, and nothing in it handles a message'
         expect(c.querySelector('script')!.textContent).toBe(sealedViewBootstrap());
     });
 
+    it("F's sizing sheet makes C fill F, and comes after the guard", () => {
+        const { f } = readFile(FILE);
+        expect(SEALED_DOCUMENT_STYLE).toBe('html,body,iframe{margin:0;width:100%;height:100%;border:0;display:block}');
+        expect(f.querySelector('script')!.compareDocumentPosition(f.querySelector('style')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
     it('the guard is synchronous and listens for nothing: not opaque or top-level, it stops the document', () => {
         expect(SEALED_DOCUMENT_GUARD).toBe("'use strict';if (self.origin !== 'null' || top === self) window.stop();");
         expect(LISTENS.test(SEALED_DOCUMENT_GUARD)).toBe(false);
@@ -140,6 +149,8 @@ describe('I13: F has one script, the guard, and nothing in it handles a message'
         ['a second frame in F', FILE.replace('</body>', '<iframe srcdoc="x"></iframe></body>'), 'F has 2 frames'],
         ['a view with the host\'s origin', FILE.replace('sandbox="allow-scripts allow-forms allow-orientation-lock"', 'sandbox="allow-scripts allow-forms allow-orientation-lock allow-same-origin"'), "C's sandbox attribute is"],
         ['a script loaded into F', FILE.replace('</head>', '<link rel="preload" href="x.js"></head>'), 'F holds a <link>'],
+        ['a second stylesheet in F', FILE.replace('</head>', '<style>iframe{height:150px}</style></head>'), "F's stylesheets are not the one sizing sheet (2)"],
+        ['F without its sizing sheet', FILE.replace(`<style>${SEALED_DOCUMENT_STYLE}</style>`, ''), "F's stylesheets are not the one sizing sheet (0)"],
     ];
     it.each(mutants)('the scan fails for %s', (_name, mutant, finding) => {
         expect(mutant).not.toBe(FILE);
@@ -164,7 +175,7 @@ describe("the policy: the <meta>'s hashes are the file's own texts', and its dir
         const { policy } = readFile(FILE);
         const directives = new Map(directivesOf(policy[0]!));
         expect(directives.get('script-src')).toEqual([sha(SEALED_DOCUMENT_GUARD), sha(sealedViewBootstrap())]);
-        expect(directives.get('style-src')).toEqual([sha(VIEW_STILL_STYLE), 'blob:']);
+        expect(directives.get('style-src')).toEqual([sha(VIEW_STILL_STYLE), sha(SEALED_DOCUMENT_STYLE), 'blob:']);
     });
 
     it('a stale hash fails: a view whose bootstrap changed under the same policy, and a policy with a hash of no text', () => {

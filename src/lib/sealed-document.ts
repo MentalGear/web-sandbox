@@ -3,7 +3,7 @@
  * version that the embedder serves, generated at build time by scripts/build-lib.ts into each build's output directory,
  * and exported by the package as `./sealed-document.html`.
  *
- *   F, the file:  <meta> policy (POLICY_DIRECTIVES), the guard (its one script), then in its static markup
+ *   F, the file:  <meta> policy (POLICY_DIRECTIVES), the guard (its one script), the sizing sheet, then in its static markup
  *   C, the view:  <iframe sandbox="SEALED_VIEW_FLAGS" srcdoc="…">, whose document holds sealed mode's view bootstrap
  *
  * The file has no input (I12): `sealedDocument()` takes no argument and reads nothing but constants of the library, so
@@ -17,7 +17,7 @@
 import { SAFE_CAPABILITIES } from '../csp-directives';
 import { STRICT_VIEW_FLAGS } from './config-schema';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
-import { FRAME_REFERRER_POLICY, WRAPPER_BASE } from './frame-documents';
+import { FRAME_REFERRER_POLICY, WRAPPER_BASE, WRAPPER_STYLE } from './frame-documents';
 import { VIEW_OPTIONS, VIEW_STILL_STYLE, STRICT_DIRECTIVE, viewBootstrapSource } from './in-sandbox-view';
 
 /** The file's name, in each build's output directory and in the package's `exports`. */
@@ -37,8 +37,16 @@ export const SEALED_DOCUMENT_GUARD = `${STRICT_DIRECTIVE}if (self.origin !== 'nu
  */
 export const SEALED_VIEW_FLAGS: readonly string[] = [...new Set<string>([...STRICT_VIEW_FLAGS, ...SAFE_CAPABILITIES])];
 
+/**
+ * F's one stylesheet (design 03, "C's size in F"): C fills F. Without it C is 300 by 150 pixels in F on every engine: the
+ * attributes `width` and `height` do not give a frame its height in a standards-mode document, and neither C (opaque to
+ * F) nor the host page (F is opaque to it) can size C from outside. It is the wrapper's text (WRAPPER_STYLE), the same
+ * rule for the same frame, admitted by its hash, so the policy stays one constant text.
+ */
+export const SEALED_DOCUMENT_STYLE = WRAPPER_STYLE;
+
 /** The texts of the file that its policy admits by hash. */
-export const HASHED_TEXTS = ['guard', 'view', 'still'] as const;
+export const HASHED_TEXTS = ['guard', 'view', 'still', 'sizing'] as const;
 export type HashedText = (typeof HASHED_TEXTS)[number];
 
 /** A source of the file's policy: `blob:`, or the hash of one of the file's own texts. */
@@ -61,7 +69,7 @@ export const POLICY_DIRECTIVES = {
     'default-src': { sources: [], why: 'every fetch directive not listed here falls back to it' },
     'script-src': { sources: [{ hash: 'guard' }, { hash: 'view' }], why: "F's guard and C's bootstrap, by hash: no other script runs in F, C or a document either makes" },
     'script-src-attr': { sources: [], why: 'no event handler attribute runs' },
-    'style-src': { sources: [{ hash: 'still' }, 'blob:'], why: "the still stylesheet the view inserts for `allowAnimations: false` (VIEW_STILL_STYLE), and the guest's stylesheets as the blob: URLs the view mints; guest styles otherwise go through the CSSOM" },
+    'style-src': { sources: [{ hash: 'still' }, { hash: 'sizing' }, 'blob:'], why: "the still stylesheet the view inserts for `allowAnimations: false` (VIEW_STILL_STYLE), F's sizing sheet (SEALED_DOCUMENT_STYLE), and the guest's stylesheets as the blob: URLs the view mints; guest styles otherwise go through the CSSOM" },
     'img-src': { sources: ['blob:'], why: "images, from the blob: URLs the view mints for the app's files and writes" },
     'font-src': { sources: ['blob:'], why: "fonts, from the blob: URLs the view mints for the app's files" },
     'media-src': { sources: ['blob:'], why: "media, from the blob: URLs the view mints for the app's files" },
@@ -94,6 +102,7 @@ function hashesOf(bootstrap: string): Record<HashedText, string> {
         guard: scriptHashSource(SEALED_DOCUMENT_GUARD),
         view: scriptHashSource(bootstrap),
         still: scriptHashSource(VIEW_STILL_STYLE),
+        sizing: scriptHashSource(SEALED_DOCUMENT_STYLE),
     };
 }
 
@@ -137,7 +146,8 @@ function viewDocument(bootstrap: string): string {
  * The file for a view that runs `bootstrap`. Only `sealedDocument()` gives it a bootstrap, and the tests, to show that
  * another text gives other bytes. In F's head, in order: the charset (a served file has no other source of it), the
  * inert base URL C inherits (WRAPPER_BASE, before the policy, whose `base-uri` is `'none'`), the policy, the referrer
- * policy C inherits, and the guard. Then C, filling F by its attributes alone (no stylesheet in F: its policy admits none).
+ * policy C inherits, the guard, and the sizing sheet (SEALED_DOCUMENT_STYLE, by its hash). Then C, which the sheet makes
+ * fill F; its presentational attributes give it the width and no border where a sheet would not apply.
  */
 export function renderSealedDocument(bootstrap: string): string {
     assertHashableScript(bootstrap);
@@ -145,7 +155,8 @@ export function renderSealedDocument(bootstrap: string): string {
         + `<base href="${WRAPPER_BASE}">`
         + `<meta http-equiv="Content-Security-Policy" content="${escapeFileAttribute(policyText(bootstrap))}">`
         + `<meta name="referrer" content="${FRAME_REFERRER_POLICY}">`
-        + `<script>${SEALED_DOCUMENT_GUARD}</script>`;
+        + `<script>${SEALED_DOCUMENT_GUARD}</script>`
+        + `<style>${SEALED_DOCUMENT_STYLE}</style>`;
     const view = `<iframe sandbox="${SEALED_VIEW_FLAGS.join(' ')}" referrerpolicy="${FRAME_REFERRER_POLICY}" width="100%" height="100%" frameborder="0" srcdoc="${escapeFileAttribute(viewDocument(bootstrap))}"></iframe>`;
     return `<!DOCTYPE html><html><head>${head}</head><body marginwidth="0" marginheight="0">${view}</body></html>\n`;
 }
