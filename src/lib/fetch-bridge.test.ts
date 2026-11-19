@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { normaliseConfig } from './config-schema';
 import { createFetchBridge, FETCH_ERROR_CODES, FETCH_ORIGIN_RULES, FETCH_OUTCOMES, isPrivateHost, PRIVATE_NAME_SUFFIXES, toFetchPolicy, validateRequest, type FetchPolicy, type FetchRecord } from './fetch-bridge';

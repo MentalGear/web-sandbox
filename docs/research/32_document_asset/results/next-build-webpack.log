@@ -1,0 +1,30 @@
+$ npx next build --webpack
+▲ Next.js 16.4.6 (webpack)
+✓ Running next.config.mjs took 11ms
+⚠ No build cache found. Please configure build caching for faster rebuilds. Read more: https://nextjs.org/docs/messages/no-cache
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 3.9s
+  Running TypeScript ...
+  Finished TypeScript in 1ms ...
+  Collecting page data using 3 workers ...
+  Generating static pages using 3 workers (0/3) ...
+✓ Generating static pages using 3 workers (3/3) in 147ms
+  Finalizing page optimization ...
+  Collecting build traces ...
+
+Route (app)
+┌ ○ /
+└ ○ /_not-found
+
+
+○  (Static)  prerendered as static content
+
+
+$ npx next start --hostname 127.0.0.1 --port 5201
+--- server output
+▲ Next.js 16.4.6
+- Local:         http://127.0.0.1:5201
+- Network:       http://127.0.0.1:5201
+✓ Ready in 107ms
+✓ Running next.config.mjs took 12ms

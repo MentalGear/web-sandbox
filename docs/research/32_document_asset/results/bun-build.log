@@ -1,0 +1,7 @@
+$ bun build main.js --outdir dist --target browser && cp index.html dist/
+Bundled 3 modules in 4ms
+
+  main.js  1.53 KB  (entry point)
+
+
+--- server output

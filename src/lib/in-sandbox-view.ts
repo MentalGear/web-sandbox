@@ -1,9 +1,9 @@
 import { inSandboxFiles } from './in-sandbox-files';
-import { BRIDGE_FRAME_OPTIONS, inBridgeFrame } from './in-bridge-frame';
+import { networkModes } from './network-modes';
 import { checkSandboxEnvironment, ENVIRONMENT_EXPECTED } from './environment-check';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
 import { escapeAttribute } from './frame-documents';
-import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './markup-references';
+import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './references';
 import { admits, LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
@@ -12,6 +12,7 @@ import { KIND_DIRECTIVES } from './csp/csp-generator';
 import { VIOLATION_DIRECTIVES } from './violation';
 import { cssReferences, keepsUrl, withKeptReferences } from './css-references';
 import { styleMarkup, type StyleMarkup } from './style-markup';
+import { GUEST_IMAGE_TYPES } from './guest-bytes';
 
 /**
  * Strict mode's view and worker prelude (ADR-005).
@@ -464,8 +465,12 @@ export const VIEW_FILE_TYPES = [
     'text/vtt',
 ] as const;
 
-/** The raster image types: the browser only decodes them, and opened on their own they are an image, never a document. */
-export const RASTER_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'] as const;
+/**
+ * The raster image types: the browser only decodes them, and opened on their own they are an image, never a document.
+ * GUEST_IMAGE_TYPES (guest-bytes.ts) is the list, so what the view shows of a guest's write and what `image()` answers
+ * are one set.
+ */
+export const RASTER_IMAGE_TYPES = GUEST_IMAGE_TYPES;
 
 /**
  * The only types the view mints a URL for from a guest write (R1:R4-4, the owner's decision): the files
@@ -585,14 +590,16 @@ export const RENDER_ATTRIBUTES = {
         data: ['value'],
         del: ['datetime'],
         ins: ['datetime'],
-        form: ['name', 'autocomplete', 'novalidate'],
+        // a control's `name` is read, and replaced by the view's own (RENDER_NAMED_CONTROLS); `autocomplete` is the view's
+        // (RENDER_FORCED_ATTRIBUTES), on no allowlist
+        form: ['name', 'novalidate'],
         label: ['for'],
-        input: ['type', 'name', 'value', 'checked', 'disabled', 'readonly', 'required', 'placeholder', 'min', 'max', 'step', 'minlength', 'maxlength', 'pattern', 'size', 'multiple', 'accept', 'autocomplete', 'list', 'form', 'dirname', 'alt'],
+        input: ['type', 'name', 'value', 'checked', 'disabled', 'readonly', 'required', 'placeholder', 'min', 'max', 'step', 'minlength', 'maxlength', 'pattern', 'size', 'multiple', 'accept', 'list', 'form', 'dirname', 'alt'],
         button: ['type', 'name', 'value', 'disabled', 'form'],
-        select: ['name', 'multiple', 'size', 'disabled', 'required', 'form', 'autocomplete'],
+        select: ['name', 'multiple', 'size', 'disabled', 'required', 'form'],
         option: ['value', 'selected', 'disabled', 'label'],
         optgroup: ['label', 'disabled'],
-        textarea: ['name', 'rows', 'cols', 'placeholder', 'disabled', 'readonly', 'required', 'maxlength', 'minlength', 'wrap', 'form', 'autocomplete', 'dirname'],
+        textarea: ['name', 'rows', 'cols', 'placeholder', 'disabled', 'readonly', 'required', 'maxlength', 'minlength', 'wrap', 'form', 'dirname'],
         fieldset: ['name', 'disabled', 'form'],
         output: ['for', 'name', 'form'],
         progress: ['value', 'max'],
@@ -654,6 +661,12 @@ export const RENDER_URL_ATTRIBUTES = [
  * its context menu. The frames delegate no feature (no `allow` attribute), but picture-in-picture's default allowlist is
  * `*`, so Chromium allows it in the view unless the host page's own Permissions-Policy forbids it: a user could open a
  * guest's `<video controls>` in an always-on-top window outside the element's box. The guest's media stays in its box.
+ *
+ * `autocomplete="off"` on every `form`, `input`, `select` and `textarea` (INHERITED_CONTEXT.autofill, research 29): the
+ * browser offers none of its stores in a guest's form and saves nothing typed into one. Chromium 159 and Firefox 159
+ * honour it for the history of what the user typed (and Chromium for the login form's email); Chromium ignores it for
+ * saved addresses and cards, which the view's value model stops (inSandboxView). The guest's own `autocomplete` is on no
+ * allowlist, so a token it writes (`one-time-code`, `new-password`) has no effect.
  */
 export const RENDER_FORCED_ATTRIBUTES = [
     ['img', 'crossorigin', 'anonymous'],
@@ -663,7 +676,90 @@ export const RENDER_FORCED_ATTRIBUTES = [
     ['video', 'disablepictureinpicture', ''],
     ['video', 'disableremoteplayback', ''],
     ['audio', 'disableremoteplayback', ''],
+    ['form', 'autocomplete', 'off'],
+    ['input', 'autocomplete', 'off'],
+    ['select', 'autocomplete', 'off'],
+    ['textarea', 'autocomplete', 'off'],
 ] as const;
+
+/**
+ * The elements whose `name` the view owns (INHERITED_CONTEXT.autofill, research 29): every listed form-associated element
+ * the renderer keeps. The renderer gives each one a name the view chose, whatever the guest wrote, and the view maps it
+ * back in everything it forwards (the target's `name`, a submit's fields), so the guest sees its own names
+ * (viewControlNames). Chromium 159 and Firefox 159 key the history of what the user typed by a field's name, and by its
+ * id when it has none (measured): a name the view chose matches nothing typed anywhere else, and a nameless control gets
+ * one too, so its id is never the key. One view name per distinct guest name, so radio groups, `form` association and
+ * the submitted fields keep their shape; a nameless control's name is its own, so no two nameless radios form a group.
+ */
+export const RENDER_NAMED_CONTROLS = ['input', 'select', 'textarea', 'button', 'fieldset', 'output'] as const;
+
+/**
+ * The names the view gives the controls it renders (RENDER_NAMED_CONTROLS), and the guest's name each one stands for
+ * (INHERITED_CONTEXT.autofill), as arithmetic on strings, so that a unit test runs it as the view does. `prefix` is the
+ * view's own, drawn when the view starts (decimal digits, VIEW_NAME_PREFIX_DIGITS of them): no page uses it, and no
+ * store of the browser holds anything under a name that starts with it.
+ *   name(guest)     a guest's name is the prefix, `-`, and each of its UTF-16 code units as five decimal digits: the same
+ *                   for the same guest name, distinct for distinct ones, and no word of it for a browser's field
+ *                   heuristics to read; a control without one (null) gets the prefix, `_` and a number of its own
+ *   guestOf(name)   the guest's name a name stands for: a view name's guest name (null for a nameless control's, whose
+ *                   field the browser would not have submitted), with what a submission appends to it (an image
+ *                   button's `.x` and `.y`; a nameless one's are `x` and `y`); any other name as it is (a `dirname`'s
+ *                   field, an element the view does not name)
+ * Stringified into the view bootstrap; self-contained.
+ */
+export function viewControlNames(prefix: string) {
+    let nameless = 0;
+    const pad = '00000';
+    return {
+        name(guest: string | null): string {
+            if (guest === null) {
+                nameless++;
+                return prefix + '_' + nameless;
+            }
+            let digits = '';
+            for (let i = 0; i < guest.length; i++) {
+                const code = String(guest.charCodeAt(i));
+                digits += pad.slice(code.length) + code;
+            }
+            return prefix + '-' + digits;
+        },
+        guestOf(name: string): string | null {
+            if (name.indexOf(prefix) !== 0) return name;
+            const rest = name.slice(prefix.length);
+            const mark = rest.charAt(0);
+            let end = 1;
+            while (end < rest.length && rest.charCodeAt(end) >= 48 && rest.charCodeAt(end) <= 57) end++;
+            const digits = rest.slice(1, end);
+            const appended = rest.slice(end);
+            if (mark === '_') return appended === '' ? null : appended.charAt(0) === '.' ? appended.slice(1) : appended;
+            if (mark !== '-' || digits.length % 5 !== 0) return name;
+            let guest = '';
+            for (let i = 0; i < digits.length; i += 5) guest += String.fromCharCode(Number(digits.slice(i, i + 5)));
+            return guest + appended;
+        },
+    };
+}
+
+/** How many decimal digits the view's name prefix has (viewControlNames): 18, about 60 bits. */
+export const VIEW_NAME_PREFIX_DIGITS = 18;
+
+/**
+ * The kinds of control of the view's value model (INHERITED_CONTEXT.autofill, inSandboxView), by input type: every type of
+ * HTML's `input` is in one list (a type the engine does not know reads as `text`). A `textarea` is `text`, a `select`
+ * `chosen`, a `button` `fixed`. What the user enters into each kind is accepted when:
+ *   text        the control is focused, and the user's latest pointer press, key, composition or drop was on it;
+ *   chosen      the user's latest press or key was on it, and it was a pointer's or the control is focused;
+ *   checked     the trusted click on it, not cancelled;
+ *   fixed       never: only the guest sets one;
+ *   unmodelled  a file input, whose value only the user's own choice of a file sets (script can only clear it).
+ */
+export const VIEW_VALUE_KINDS = {
+    text: ['text', 'search', 'email', 'url', 'tel', 'password', 'number'],
+    chosen: ['range', 'color', 'date', 'month', 'week', 'time', 'datetime-local'],
+    checked: ['checkbox', 'radio'],
+    fixed: ['hidden', 'submit', 'reset', 'button', 'image'],
+    unmodelled: ['file'],
+} as const;
 
 /** The elements the renderer always gives `crossorigin="anonymous"`: the crossorigin rows of RENDER_FORCED_ATTRIBUTES. */
 export const RENDER_CROSSORIGIN_ELEMENTS: readonly string[] = RENDER_FORCED_ATTRIBUTES.filter(([, attribute]) => attribute === 'crossorigin').map(([element]) => element);
@@ -696,6 +792,15 @@ export const RENDER_NETWORK_DROPPED = [['video', 'poster']] as const;
  */
 export const INERT_HREF = 'about:blank#';
 
+/**
+ * The HTML elements a click inside a marked link is for instead of the link (`links`; design 02, I6): each has an
+ * activation of its own (a form control, an option of one, a label that clicks its control, a summary that opens its
+ * details), so the view sends no request for a click on one of them or inside one, between the target and the link. Every
+ * other element a link holds is part of the link: a click on it is a click on the link. Only elements of RENDER_ELEMENTS
+ * (the renderer keeps no other); test/unit/view-links.test.ts clicks each of them inside a marked link.
+ */
+export const VIEW_LINK_CLICK_STOPS = ['input', 'button', 'select', 'option', 'optgroup', 'textarea', 'label', 'summary'] as const;
+
 /** The only rel tokens a kept <link> may have. */
 const LINK_RELATIONS = ['stylesheet', 'icon'] as const;
 
@@ -710,6 +815,8 @@ export interface RenderRules {
     urls: readonly (readonly [string, string])[];
     /** [element, attribute, value]: what every kept HTML element of that name always gets (RENDER_FORCED_ATTRIBUTES). */
     forced: readonly (readonly [element: string, attribute: string, value: string])[];
+    /** The HTML elements whose `name` is the view's (RENDER_NAMED_CONTROLS). */
+    controls: readonly string[];
     /** The pairs of `urls` that keep no http(s) URL (RENDER_NETWORK_DROPPED). */
     networkDropped: readonly (readonly [string, string])[];
     /** [element, attribute, kind] triples that may name a registered file (markup-references.ts, minus <script src>). */
@@ -791,6 +898,22 @@ export interface RenderContext {
      * shows, dropped (keepsUrl).
      */
     dropped?: string[];
+    /**
+     * The name the view gives a control of RENDER_NAMED_CONTROLS for the guest's name (null where it has none): the view's
+     * viewControlNames. Without it, every control gets a name no page uses (`_` and digits drawn per call), which nothing maps
+     * back.
+     */
+    controlName?: (guest: string | null) => string;
+    /**
+     * The embedder's `links` (INIT_VIEW; design 02, I6): an HTML `a` whose `href`, as the guest wrote it, is one of them
+     * character for character is marked. None given: no link is marked.
+     */
+    links?: readonly (string | null)[];
+    /**
+     * Filled by the renderer when given: each HTML `a` it marked, with the index of its `href` in `links`. The view keeps
+     * the marks of a render it applies (inSandboxView, `linkIndex`); the guest has no way to write one.
+     */
+    marked?: [link: Element, index: number][];
 }
 
 /**
@@ -817,6 +940,7 @@ export const RENDER_RULES: RenderRules = {
     attributes: RENDER_ATTRIBUTES,
     urls: RENDER_URL_ATTRIBUTES,
     forced: RENDER_FORCED_ATTRIBUTES,
+    controls: RENDER_NAMED_CONTROLS,
     networkDropped: RENDER_NETWORK_DROPPED,
     // derived, not copied: the table markup-references.ts resolves in cooperative mode. Scripts never survive
     // the renderer, so <script src> names nothing here.
@@ -860,7 +984,9 @@ export const RENDER_RULES: RenderRules = {
  *      stylesheet. An element named style, which the encoded markup never holds, goes with its content: no <style>
  *      element is ever kept;
  *   6. every href that makes a hyperlink becomes rules.inertHref (S24): HTML <a> and <area>, SVG <a> (href and
- *      xlink:href) and any MathML element;
+ *      xlink:href) and any MathML element; an HTML <a> whose href, as the guest wrote it, is one of context.links
+ *      character for character (a string comparison: nothing is parsed or normalised) is marked first, with its index
+ *      (context.marked; design 02, I6), and an <area>, an SVG <a> and a MathML element never are;
  *   7. every attribute outside rules.attributes goes; so does a URL attribute (rules.urls) whose URL `keeps` refuses
  *      (keepsUrl: only a URL the view minted, A8, BD7:ISO-1), unless it is an http(s) URL of an origin the view's policy
  *      admits for the load the element makes (context.origins; R4:M-2) where rules.networkDropped does not forbid one (a
@@ -910,6 +1036,11 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     // Without a context (a caller that only cleans markup), the strictest one: no origin is admitted, and the
     // still properties are the known ones.
     const context: RenderContext = given || { target: 'body', animating: rules.still.known, origins: {}, refused: [], urls: 0, loads: [] };
+    // The name the view gives a control (INHERITED_CONTEXT.autofill): the view's own where given (viewControlNames, which it
+    // maps back); else, for a caller that only cleans markup, one no page uses, drawn for each control.
+    const drawn = '_' + String(Math.random()).slice(2) + '_';
+    let draws = 0;
+    const controlName = context.controlName || (() => drawn + ++draws);
     // The encoding the markup was parsed with (style-markup.ts), or null where it was parsed as it is: every text and
     // attribute value is read without its insertions, so the rules below see what the guest wrote.
     const markup = context.markup || null;
@@ -946,6 +1077,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     const svgLinkAttributes = setOf(rules.attributes.svgLink);
     const svgLocal = setOf(rules.attributes.svgLocalReferences);
     const mathAttributes = setOf(rules.attributes.mathml);
+    const namedControls = setOf(rules.controls);
     const perElement: Record<string, Record<string, true>> = Object.create(null);
     for (const name in rules.attributes.htmlElements) {
         if (call(own, rules.attributes.htmlElements, [name])) perElement[name] = setOf(rules.attributes.htmlElements[name]!);
@@ -1106,8 +1238,8 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     };
     // A kept style attribute (S74, class A: INHERITED_CONTEXT.cspReporting; style-markup.ts): its text, without its network
     // URLs, becomes the element's own CSSOM declaration (the `cssText` setter), never an attribute written from guest text.
-    // A style attribute is an inline style that the host page's style-src checks (and Chromium checks it as it parses
-    // it, in the template too); a declaration set through the CSSOM is none, on any engine (docs/research/25_cssom_styles).
+    // A style attribute is an inline style that the host page's style-src checks (and Chromium and WebKit check it as they
+    // parse it, in the template too); a declaration set through the CSSOM is none, on any engine (docs/research/25_cssom_styles).
     // The element carries the declaration's serialization as its `style` attribute from then on (the engine writes it), and
     // the attribute goes when the declaration is empty.
     //
@@ -1263,6 +1395,20 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         return local === markup.noframes ? 'noframes' : local;
     };
 
+    // An HTML <a> whose href is a URL of `links` (context.links; design 02, I6): marked with that URL's index. The href is
+    // read as the guest wrote it and looked up as a string, character for character, with no parsing or normalising, so
+    // "the same URL" has the one spelling the embedder listed (links.ts): one lookup per link, in a record without a
+    // prototype, whatever the list's length.
+    const listed = context.links || [];
+    const listedAt: Record<string, number> = Object.create(null);
+    for (let i = listed.length - 1; i >= 0; i--) if (typeof listed[i] === 'string') listedAt[listed[i]!] = i;
+    const markListed = (element: Element) => {
+        const href = get(element, 'href');
+        if (href === null || !context.marked) return;
+        const at = listedAt[href];
+        if (at !== undefined) context.marked[context.marked.length] = [element, at];
+    };
+
     const KEEP = 0, REMOVE = 1, UNWRAP = 2;
     const verdict = (namespace: unknown, name: string) => {
         if (namespace === HTML) {
@@ -1304,8 +1450,10 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             if (name === 'link' && (href === '' || !keeps(href))) return false; // a file it names, or no <link>
         }
         if ((html || namespace === SVG) && name === 'style') cleanSheet(element);
-        // a hyperlink keeps being a link, but its href is the constant, never the guest's URL (S24)
+        // a hyperlink keeps being a link, but its href is the constant, never the guest's URL (S24); an HTML <a> whose
+        // href is a listed URL is marked before (markListed)
         if ((html && (name === 'a' || name === 'area')) || (namespace === SVG && name === 'a') || namespace === MATHML) {
+            if (html && name === 'a') markListed(element);
             if (has(element, 'href')) set(element, 'href', rules.inertHref);
             if (namespace === SVG && call(E.hasAttributeNS, element, [XLINK, 'href'])) call(E.setAttributeNS, element, [XLINK, 'xlink:href', rules.inertHref]);
         }
@@ -1349,6 +1497,10 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         // kept element the table names, with no exception: no load of the view carries a credential, and the guest's media
         // stays in its box (no picture-in-picture, no remote playback)
         for (let f = 0; html && f < rules.forced.length; f++) if (rules.forced[f]![0] === name) set(element, rules.forced[f]![1], rules.forced[f]![2]);
+        // a control's name is the view's, whatever the guest wrote (its own was read above, as written): no store of the
+        // browser holds anything under it, and a control the guest left nameless gets one too, so that its id keys nothing
+        // (RENDER_NAMED_CONTROLS)
+        if (html && namedControls[name]) set(element, 'name', controlName(written(element, 'name') || null));
         if ((name === 'a' || name === 'area') && has(element, 'rel')) {
             set(element, 'rel', tokens(get(element, 'rel')).filter((token) => rules.anchorRelations.indexOf(token) >= 0).join(' '));
         }
@@ -1379,7 +1531,34 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         return out;
     };
     // One sequence of nodes being walked into `parent`. An unwrapped element's sequence shares its parent's text run.
-    type Run = { parent: Node; input: Node[]; index: number; depth: number; text: { first: Node | null; parts: string[] }; own: boolean };
+    // `select`: its parent is an HTML select, whose options are settled when the sequence ends.
+    type Run = { parent: Node; input: Node[]; index: number; depth: number; text: { first: Node | null; parts: string[] }; own: boolean; select?: boolean };
+    // A select's options, selected as its markup says, once the walk has put them all back. Taking a select's options
+    // out and putting them back one by one changes which are selected: Chromium and Firefox select the next option as
+    // each is taken out, so the last one put back is the one shown, whatever the markup says. The select gets what HTML's
+    // reset gives it: without `multiple`, the last option that has `selected`, or none (the engine then shows the first
+    // one that is not disabled, where a select shows one); with it, every option that has `selected`. At most one option
+    // is set without `multiple`, so the pass is linear in the options, where setting each would not be.
+    const optionCount = getter(HTMLSelectElement.prototype, 'length');
+    const optionAt = HTMLSelectElement.prototype.item;
+    const optionSelected = Object.getOwnPropertyDescriptor(HTMLOptionElement.prototype, 'selected')!;
+    const settleSelect = (select: Element) => {
+        const multiple = has(select, 'multiple');
+        const count = call(optionCount, select, []) as number;
+        let marked: Element | null = null;
+        let shown: Element | null = null;
+        for (let i = 0; i < count; i++) {
+            const option = call(optionAt, select, [i]) as Element;
+            const wanted = has(option, 'selected');
+            const selected = call(optionSelected.get!, option, []) === true;
+            if (multiple && selected !== wanted) call(optionSelected.set!, option, [wanted]);
+            if (wanted) marked = option;
+            if (selected) shown = option;
+        }
+        if (multiple || marked === shown) return;
+        if (marked) call(optionSelected.set!, marked, [true]);
+        else call(optionSelected.set!, shown, [false]);
+    };
     const flushText = (run: Run) => {
         const text = run.text;
         if (!text.first) return;
@@ -1395,6 +1574,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         const run = runs[runs.length - 1]!;
         if (run.index >= run.input.length) {
             if (run.own) flushText(run);
+            if (run.select) settleSelect(run.parent as Element);
             runs.length = runs.length - 1;
             continue;
         }
@@ -1431,7 +1611,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         flushText(run);
         call(N.appendChild, run.parent, [element]);
         if (name === 'style' && context.sheets) context.sheets[context.sheets.length] = element; // the view applies its text
-        runs[runs.length] = { parent: element, input: drain(element), index: 0, depth: run.depth + 1, text: { first: null, parts: list<string>() }, own: true };
+        runs[runs.length] = { parent: element, input: drain(element), index: 0, depth: run.depth + 1, text: { first: null, parts: list<string>() }, own: true, select: namespace === HTML && name === 'select' };
     }
     return kept;
 }
@@ -1639,6 +1819,12 @@ export interface ViewOptions {
     stillStyle: string;
     /** VIEW_STILL_PSEUDO_ELEMENTS and VIEW_STILL_DECLARATIONS: the rules the view adds to it, where the engine supports them. */
     still: { pseudoElements: readonly string[]; declarations: string };
+    /** VIEW_NAME_PREFIX_DIGITS: the digits of the prefix of the names the view gives the guest's controls (viewControlNames). */
+    namePrefixDigits: number;
+    /** VIEW_VALUE_KINDS: the kind of each input type in the view's value model. */
+    values: { readonly [Kind in keyof typeof VIEW_VALUE_KINDS]: readonly string[] };
+    /** VIEW_LINK_CLICK_STOPS: the elements a click inside a marked link is for instead of the link. */
+    linkStops: readonly string[];
 }
 
 /**
@@ -1651,7 +1837,7 @@ export interface ViewOptions {
  * message is ignored. A copy of this text that ever ran a second time in the same document would return
  * at once (the run counter), and a copy elsewhere would never receive INIT_VIEW (research 15, P1).
  */
-export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, scanCss: typeof cssReferences, keepCss: typeof withKeptReferences, keepsUrlRule: typeof keepsUrl, options: ViewOptions, makeOutbox: typeof viewInputOutbox, styleProperty: typeof isStyleProperty, encodeStyles: typeof styleMarkup) {
+export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, scanCss: typeof cssReferences, keepCss: typeof withKeptReferences, keepsUrlRule: typeof keepsUrl, options: ViewOptions, makeOutbox: typeof viewInputOutbox, styleProperty: typeof isStyleProperty, encodeStyles: typeof styleMarkup, controlNames: typeof viewControlNames) {
     const g = globalThis as any;
     const runs = (g.__sandboxViewRuns || 0) + 1;
     g.__sandboxViewRuns = runs;
@@ -1676,6 +1862,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const D = Document.prototype;
     const containsNode = Node.prototype.contains;
     const lengthOf = getter(HTMLCollection.prototype, 'length');
+    // The names the view gives the guest's controls, and the guest's each stands for (viewControlNames, INHERITED_CONTEXT.autofill):
+    // a prefix of decimal digits drawn now, the view's own.
+    const prefixDigits = crypto.getRandomValues(new Uint8Array(options.namePrefixDigits));
+    let prefix = '';
+    for (let i = 0; i < prefixDigits.length; i++) prefix += String(prefixDigits[i]! % 10);
+    const names = controlNames(prefix);
 
     let viewPort: MessagePort | null = null;
     let renderPort: MessagePort | null = null;
@@ -1774,11 +1966,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // (HTML and SVG <a>, <area>, anything with an href) and of every submit is cancelled. Fragment links are
     // no exception: the view inherits the wrapper's about:blank base, so "#x" names about:blank#x, a navigation.
     const XLINK = 'http://www.w3.org/1999/xlink';
+    const isLink = (element: Element) => {
+        const name = call(localNameOf, element, []);
+        return name === 'a' || name === 'area' || call(E.hasAttribute, element, ['href']) || call(E.hasAttributeNS, element, [XLINK, 'href']);
+    };
     const insideLink = (node: any) => {
-        for (let n = node; n && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
-            const name = call(localNameOf, n, []);
-            if (name === 'a' || name === 'area' || call(E.hasAttribute, n, ['href']) || call(E.hasAttributeNS, n, [XLINK, 'href'])) return true;
-        }
+        for (let n = node; n && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) if (isLink(n)) return true;
         return false;
     };
     const cancelLink = (event: Event) => {
@@ -1791,6 +1984,53 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     addEventListener('click', cancelLink, true);
     addEventListener('auxclick', cancelLink, true);
     addEventListener('submit', (event: Event) => event.preventDefault(), true);
+
+    // The click is the request (`links`; design 02, I6). The renderer marks an HTML <a> whose href was a listed URL, and
+    // the view keeps each mark here, by element, for the renders it applies (`apply`): no attribute holds it, so nothing
+    // the guest renders can forge one, and a later render of the same href is a new element with a mark of its own. On a
+    // trusted `click`, the user's (a pointer's, or Enter on a focused link: the platform's click, isTrusted, which no
+    // `click()` or dispatched event is), the nearest link of its target, up from the target, is the link clicked: when
+    // it is marked, and no element of options.linkStops (a form control, a label, a summary) comes first, the view sends
+    // the host page that link's index, and nothing else (VIEW_LINK). An `auxclick` (the middle button) sends nothing;
+    // the click's default is cancelled above all the same, so the view navigates nowhere. The guest's worker has no
+    // message that asks for a link.
+    const linkIndex = new WeakMap<Element, number>();
+    const requestedLink = (node: any): number => {
+        for (let n = node; n && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
+            if (call(namespaceOfElement, n, []) === 'http://www.w3.org/1999/xhtml' && options.linkStops.indexOf(call(localNameOf, n, [])) >= 0) return -1;
+            if (!isLink(n)) continue;
+            const index = linkIndex.get(n);
+            return index === undefined ? -1 : index;
+        }
+        return -1;
+    };
+    // One user action is one request, whatever the engine counts as an activation (docs/design/REVIEW-3.md, finding 1):
+    // Firefox raises a trusted click on the focused link for every auto-repeated keydown of a held Enter, and allows each
+    // its tab, and the app can move the focus among its marked links between repeats. So while a key is held, no click
+    // is a request: `keyHeld` is set by a trusted keydown that is a repeat (`repeat`, set by the platform on a
+    // trusted event; the view runs no guest code), and cleared by a trusted keyup, by a trusted keydown
+    // that is a new press, and when the view's window loses focus (its keyup then goes elsewhere). The first press of
+    // a key is one click, and its repeats are none, whatever link has the focus by then; a pointer's click while another
+    // key repeats is none either, and the next one after its keyup is a request again.
+    let keyHeld = false;
+    addEventListener('keydown', (event: Event) => {
+        if (!event.isTrusted) return;
+        keyHeld = (event as KeyboardEvent).repeat === true;
+    }, true);
+    addEventListener('keyup', (event: Event) => {
+        if (event.isTrusted) keyHeld = false;
+    }, true);
+    addEventListener('blur', (event: Event) => {
+        if (event.isTrusted) keyHeld = false; // not in capture: the window's own blur, not an element's
+    });
+    addEventListener('click', (event: Event) => {
+        if (!event.isTrusted || keyHeld) return;
+        let index = -1;
+        try {
+            index = requestedLink(event.target);
+        } catch {}
+        if (index >= 0) toHost({ type: 'VIEW_LINK', index });
+    }, true);
 
     // Events for the worker's sandboxView.on() handlers: only the types it subscribed to (VIEW_LISTEN), only
     // trusted ones (no guest code runs here, but the rule is stated, not assumed), capture-delegated on the
@@ -1813,6 +2053,265 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // unacknowledged (VIEW_INPUT_IN_FLIGHT: the worker's prelude answers each VIEW_EVENT with VIEW_EVENT_ACK) and the time
     // budget is not in debt. The event path's own time (reading the events, building the details) is measured and
     // charged to the time budget (VIEW_APPLY_MS_PER_SECOND), like the operations.
+    // The view's value model (INHERITED_CONTEXT.autofill, research 29): the guest receives from a control only what the user
+    // entered into that control. A browser's autofill writes the user's saved data into fields, and Chromium 159 fills
+    // every field of a form after one choice in one of them, those the user never saw included, each with trusted
+    // `keydown`, `input`, `change` and `keyup` events (plain `Event`s); Firefox 159 fills with trusted `input` events
+    // (`insertReplacementText`); a password manager's extension sets values from script. So the view keeps, per control,
+    // the state it accepted (`accepted`), and a control's state changes only:
+    //   - by the guest: a render, a text() or a set() (each flush that applies one accepts the state it leaves in the
+    //     controls it can change, having undone anything else there first: acceptOperations);
+    //   - by a form's reset (the guest's own defaults);
+    //   - by the user, in a trusted `input` or `change` event of that control, as its kind says (VIEW_VALUE_KINDS,
+    //     `entered`; the user's control, `userControl`, is the one their latest pointer press, key, composition or drop
+    //     was on): a text field when it is focused and the user's control (on all three engines, measured: typing,
+    //     deleting, cutting, pasting, undoing and redoing, IME composition and a drop of text, which has focused the field
+    //     by its `input`; every field Chromium fills besides the one the user chose from is neither); a chosen control
+    //     when it is the user's control by a pointer, or focused (a range's `input` comes before its focus, and Safari
+    //     focuses no select on a click); a checkbox or radio by the trusted click on it (`clicking`: WebKit and Safari
+    //     do not focus one on a click, and a script's click(), whose own event is untrusted, raises trusted `input` and
+    //     `change` events on every engine); a fixed one never.
+    // A file input's value is set only by the user's choice (script can only clear it): it is not modelled. Anything
+    // else that differs from the accepted state (a field filled while not focused, a value set by script with or without
+    // its own events, a fill that raised no event) is undone where it is seen: in the `input` or `change` event it
+    // raised, before a user's edit applies (the press, key, composition, drop or `beforeinput` before it), and at every
+    // read of a value the view forwards (`reconcile`: describe() and a submit's fields), the one chokepoint.
+    // One suggestion the user picks for the field they are in is the user entering one value: it passes, as typing does.
+    const VALUE_TEXT = 1, VALUE_CHOSEN = 2, VALUE_CHECKED = 3, VALUE_FIXED = 4;
+    // the kind of each input type (VIEW_VALUE_KINDS); one the engine does not know reads as `text`
+    const INPUT_KINDS: Record<string, number> = Object.create(null);
+    const kinds: [readonly string[], number][] = [[options.values.text, VALUE_TEXT], [options.values.chosen, VALUE_CHOSEN], [options.values.checked, VALUE_CHECKED], [options.values.fixed, VALUE_FIXED], [options.values.unmodelled, 0]];
+    for (let k = 0; k < kinds.length; k++) for (let t = 0; t < kinds[k]![0].length; t++) INPUT_KINDS[kinds[k]![0][t]!] = kinds[k]![1];
+    const accessor = (proto: object, name: string) => Object.getOwnPropertyDescriptor(proto, name)!;
+    const INPUT = HTMLInputElement.prototype, TEXTAREA = HTMLTextAreaElement.prototype, SELECT = HTMLSelectElement.prototype;
+    const inputValueOf = accessor(INPUT, 'value'), inputCheckedOf = accessor(INPUT, 'checked'), inputTypeOf = accessor(INPUT, 'type').get!;
+    const inputDefaultValue = accessor(INPUT, 'defaultValue').get!, inputDefaultChecked = accessor(INPUT, 'defaultChecked').get!;
+    const inputFormOf = accessor(INPUT, 'form').get!;
+    const textareaValueOf = accessor(TEXTAREA, 'value'), textareaDefaultValue = accessor(TEXTAREA, 'defaultValue').get!;
+    const buttonValueOf = accessor(HTMLButtonElement.prototype, 'value');
+    const selectLength = accessor(SELECT, 'length').get!, selectItem = SELECT.item;
+    const optionSelected = accessor(HTMLOptionElement.prototype, 'selected'), optionDefaultSelected = accessor(HTMLOptionElement.prototype, 'defaultSelected').get!;
+    const formOwners: Record<string, () => unknown> = { input: inputFormOf, textarea: accessor(TEXTAREA, 'form').get!, select: accessor(SELECT, 'form').get!, button: accessor(HTMLButtonElement.prototype, 'form').get! };
+    const labelControl = accessor(HTMLLabelElement.prototype, 'control').get!;
+    const activeElementOf = accessor(D, 'activeElement').get!;
+    const selectAll = D.querySelectorAll;
+    const listLength = accessor(NodeList.prototype, 'length').get!, nodeListItem = NodeList.prototype.item;
+    const KeyboardEventFound = g.KeyboardEvent;
+    const HTML = 'http://www.w3.org/1999/xhtml';
+    type ValueState = string | boolean | Element[];
+    const accepted = new WeakMap<Element, ValueState>();
+    // The kind of a control (0: not one the model holds).
+    const kindOf = (node: unknown): number => {
+        if (!(node instanceof Element) || call(namespaceOfElement, node, []) !== HTML) return 0;
+        const name = call(localNameOf, node, []);
+        if (name === 'textarea') return VALUE_TEXT;
+        if (name === 'select') return VALUE_CHOSEN;
+        if (name === 'button') return VALUE_FIXED;
+        if (name !== 'input') return 0;
+        const kind = INPUT_KINDS[String(call(inputTypeOf, node, []))];
+        return kind === undefined ? VALUE_TEXT : kind;
+    };
+    const isSelect = (element: Element) => call(localNameOf, element, []) === 'select';
+    const optionsOf = (select: Element): Element[] => {
+        const out: Element[] = [];
+        const length = call(selectLength, select, []) as number;
+        for (let i = 0; i < length; i++) out.push(call(selectItem, select, [i]) as Element);
+        return out;
+    };
+    // What a control holds: its value, its checkedness, or a select's selected options.
+    const stateOf = (element: Element, kind: number): ValueState => {
+        if (kind === VALUE_CHECKED) return call(inputCheckedOf.get!, element, []) === true;
+        if (isSelect(element)) {
+            const selected: Element[] = [];
+            const all = optionsOf(element);
+            for (let i = 0; i < all.length; i++) if (call(optionSelected.get!, all[i], []) === true) selected.push(all[i]!);
+            return selected;
+        }
+        const name = call(localNameOf, element, []);
+        const value = name === 'textarea' ? textareaValueOf : name === 'button' ? buttonValueOf : inputValueOf;
+        return String(call(value.get!, element, []));
+    };
+    const sameState = (a: ValueState, b: ValueState) => {
+        if (typeof a !== 'object' || typeof b !== 'object') return a === b;
+        if (a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+        return true;
+    };
+    const setState = (element: Element, kind: number, state: ValueState) => {
+        if (kind === VALUE_CHECKED) {
+            call(inputCheckedOf.set!, element, [state === true]);
+            return;
+        }
+        if (isSelect(element)) {
+            const all = optionsOf(element);
+            const chosen = state as Element[];
+            for (let i = 0; i < all.length; i++) call(optionSelected.set!, all[i], [chosen.indexOf(all[i]!) >= 0]);
+            return;
+        }
+        const name = call(localNameOf, element, []);
+        const value = name === 'textarea' ? textareaValueOf : name === 'button' ? buttonValueOf : inputValueOf;
+        call(value.set!, element, [state as string]);
+    };
+    // The state a form's reset gives a control: the guest's own defaults.
+    const resetState = (element: Element, kind: number) => {
+        const name = call(localNameOf, element, []);
+        if (kind === VALUE_FIXED) return;
+        if (kind === VALUE_CHECKED) call(inputCheckedOf.set!, element, [call(inputDefaultChecked, element, [])]);
+        else if (name === 'select') {
+            const all = optionsOf(element);
+            for (let i = 0; i < all.length; i++) call(optionSelected.set!, all[i], [call(optionDefaultSelected, all[i], [])]);
+        } else if (name === 'textarea') call(textareaValueOf.set!, element, [call(textareaDefaultValue, element, [])]);
+        else call(inputValueOf.set!, element, [call(inputDefaultValue, element, [])]);
+    };
+    // The radios of a radio's group: its name (the view's) and its form.
+    const groupOf = (radio: Element): Element[] => {
+        const name = call(E.getAttribute, radio, ['name']);
+        if (!name) return [radio];
+        const form = call(inputFormOf, radio, []);
+        const group: Element[] = [];
+        eachControl((other, kind) => {
+            if (kind === VALUE_CHECKED && call(inputTypeOf, other, []) === 'radio' && call(E.getAttribute, other, ['name']) === name && call(inputFormOf, other, []) === form) group.push(other);
+        });
+        return group;
+    };
+    const isRadio = (element: Element, kind: number) => kind === VALUE_CHECKED && call(inputTypeOf, element, []) === 'radio';
+    // Accepts what `element` holds now (a radio: its whole group, which the browser changed with it).
+    const accept = (element: Element, kind: number) => {
+        const members = isRadio(element, kind) ? groupOf(element) : [element];
+        for (let i = 0; i < members.length; i++) accepted.set(members[i]!, stateOf(members[i]!, kind));
+    };
+    // Undoes whatever `element` holds that the view did not accept; a control it holds nothing for yet (a form's reset
+    // forgot it) gets its defaults, which are then accepted.
+    const reconcileOne = (element: Element, kind: number) => {
+        const state = accepted.get(element);
+        if (state === undefined) {
+            resetState(element, kind);
+            accepted.set(element, stateOf(element, kind));
+            return;
+        }
+        if (!sameState(stateOf(element, kind), state)) setState(element, kind, state);
+    };
+    // Undoes what each control `each` visits holds that the view did not accept, in two passes, each linear in them: the
+    // unchecked radios first, since checking a radio unchecks the others of its group.
+    const reconcileEach = (each: (visit: (element: Element, kind: number) => void) => void) => {
+        each((element, kind) => {
+            if (accepted.get(element) !== true || !isRadio(element, kind)) reconcileOne(element, kind);
+        });
+        each((element, kind) => {
+            if (accepted.get(element) === true && isRadio(element, kind)) reconcileOne(element, kind);
+        });
+    };
+    // One control, before the view reads it or the user's edit of it applies: what the view forwards of it is its own state
+    // (a radio's group is reconciled where a submit reads it, reconcileForm).
+    const reconcile = (node: unknown) => {
+        const kind = kindOf(node);
+        if (kind) reconcileOne(node as Element, kind);
+    };
+    // Every control of the view's document, in document order: one static list, read once, so a pass is linear in them.
+    const eachControl = (visit: (element: Element, kind: number) => void) => {
+        const list = call(selectAll, document, ['input, textarea, select, button']) as NodeList;
+        const length = call(listLength, list, []) as number;
+        for (let i = 0; i < length; i++) {
+            const element = call(nodeListItem, list, [i]) as Element;
+            const kind = kindOf(element);
+            if (kind) visit(element, kind);
+        }
+    };
+    // Every control a form submits, before its fields are read: the controls whose form owner it is (the submitter is one;
+    // a radio's group is its form's).
+    const reconcileForm = (form: Element) => {
+        reconcileEach((visit) => eachControl((element, kind) => {
+            if (call(formOwners[call(localNameOf, element, [])]!, element, []) === form) visit(element, kind);
+        }));
+    };
+    // Around a flush's operations that can change a control: what differs from the accepted states is undone first (a
+    // control the view holds nothing for, after a form's reset, gets its defaults: reconcileOne), so that what the
+    // operations leave, and only that, is accepted after. `each` visits the controls they can change: every control of the
+    // view for a render or a text() (eachControl), or the targets of set()s of a value or checkedness, a radio with its
+    // group (eachTarget). Linear in what it visits: each control on its own, a radio without its group.
+    const acceptOperations = (operations: () => void, each: (visit: (element: Element, kind: number) => void) => void) => {
+        reconcileEach(each);
+        operations();
+        each((element, kind) => accepted.set(element, stateOf(element, kind)));
+    };
+    // The controls among `targets`, each radio with its group.
+    const eachTarget = (targets: Element[]) => (visit: (element: Element, kind: number) => void) => {
+        for (let i = 0; i < targets.length; i++) {
+            const kind = kindOf(targets[i]);
+            if (!kind) continue;
+            const members = isRadio(targets[i]!, kind) ? groupOf(targets[i]!) : [targets[i]!];
+            for (let m = 0; m < members.length; m++) visit(members[m]!, kind);
+        }
+    };
+    // The control the user's latest pointer press, key, composition or drop was on (a label's is its control, an option's its
+    // select), and whether it was a pointer's; a script's focus() raises trusted focus events, so focus says nothing of the
+    // user. A key's `keyup` counts too: after Tab it is on the field the key moved to.
+    let userControl: Element | null = null;
+    let userPointed = false;
+    const controlOf = (node: unknown): Element | null => {
+        const body = call(bodyOf, document, []);
+        for (let n: any = node; n && n !== body && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
+            if (call(namespaceOfElement, n, []) !== HTML) continue;
+            const name = call(localNameOf, n, []);
+            if (name === 'label') return call(labelControl, n, []);
+            if (name === 'input' || name === 'select' || name === 'textarea' || name === 'button') return n;
+        }
+        return null;
+    };
+    const userOn = (event: Event, pointed: boolean) => {
+        if (!event.isTrusted) return;
+        userControl = controlOf(event.target);
+        userPointed = pointed;
+        reconcile(userControl); // before what the user does to it applies
+    };
+    // The control a trusted click is being dispatched on, until its `input` and `change` have run (they run in the click's
+    // own task, after its dispatch). A checkbox or radio is checked or unchecked before its click is dispatched, and back
+    // again if the click is cancelled: so a trusted click that is not cancelled (the view cancels one inside a link,
+    // before this listener) is where the user's checking is accepted, before the click is forwarded and read.
+    let clicking: unknown = null;
+    addEventListener('click', (event: Event) => {
+        clicking = event.isTrusted ? event.target : null;
+        if (clicking === null) return;
+        setTimeout(() => { clicking = null; }, 0);
+        if (kindOf(clicking) === VALUE_CHECKED && !event.defaultPrevented) accept(clicking as Element, VALUE_CHECKED);
+    }, true);
+    const entered = (element: Element, kind: number): boolean => {
+        if (kind === VALUE_CHECKED) return clicking === element;
+        if (kind === VALUE_FIXED || element !== userControl) return false;
+        const focused = call(activeElementOf, document, []) === element;
+        return kind === VALUE_TEXT ? focused : focused || userPointed;
+    };
+    const observeValue = (event: Event) => {
+        const target = event.target;
+        const kind = kindOf(target);
+        if (!kind) return;
+        if (event.isTrusted && entered(target as Element, kind)) accept(target as Element, kind);
+        else reconcile(target);
+    };
+    addEventListener('pointerdown', (event: Event) => userOn(event, true), true);
+    addEventListener('drop', (event: Event) => userOn(event, true), true);
+    addEventListener('keydown', (event: Event) => {
+        if (event instanceof KeyboardEventFound) userOn(event, false);
+    }, true);
+    addEventListener('keyup', (event: Event) => {
+        if (event instanceof KeyboardEventFound) userOn(event, false);
+    }, true);
+    addEventListener('compositionstart', (event: Event) => userOn(event, false), true);
+    addEventListener('beforeinput', (event: Event) => {
+        if (event.isTrusted) reconcile(event.target);
+    }, true);
+    addEventListener('input', observeValue, true);
+    addEventListener('change', observeValue, true);
+    // A reset gives the form's controls the guest's defaults, after this event: the view holds nothing for them until it
+    // reads them, and then gives them their defaults (reconcileOne).
+    addEventListener('reset', (event: Event) => {
+        const form = event.target;
+        if (!(form instanceof Element) || call(localNameOf, form, []) !== 'form') return;
+        eachControl((element, kind) => {
+            if (kind !== VALUE_FIXED && call(formOwners[call(localNameOf, element, [])]!, element, []) === form) accepted.delete(element);
+        });
+    }, true);
+
     let subscribed: string[] = [];
     const inputs = makeOutbox(options.events.inFlight);
     const pressed = new Map<number, boolean>(); // the pointers whose press began in the view, until released
@@ -1906,14 +2405,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             return text;
         };
         const tag = clamp(call(localNameOf, target, []));
+        reconcile(target); // what the view accepted, and nothing else (the value model, above)
         const value = tag === 'form' ? undefined : target.value; // a form's "value" could be a named control
+        const name = call(E.getAttribute, target, ['name']);
         const detail: any = {
             type: eventType,
             ids: [] as string[],
             target: {
                 tag,
                 id: clamp(call(idOf, target, [])),
-                name: clamp(call(E.getAttribute, target, ['name']) || ''),
+                name: clamp((name && names.guestOf(name)) || ''), // the guest's own name (viewControlNames)
                 value: typeof value === 'string' ? clamp(value) : '',
                 checked: tag !== 'form' && target.checked === true,
             },
@@ -1930,19 +2431,21 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         }
         if (eventType === 'submit' && tag === 'form' && event) {
             const fields: [string, string][] = [];
+            reconcileForm(target);
             let data: FormData;
             try {
                 data = new FormData(target, event.submitter || undefined);
             } catch {
                 data = new FormData(target);
             }
-            data.forEach((value, name) => {
-                if (typeof value !== 'string') return;
+            data.forEach((value, field) => {
+                const guest = names.guestOf(field); // null: a control the guest left nameless, which no submission has
+                if (typeof value !== 'string' || guest === null) return;
                 if (fields.length === options.events.maxFields || share.left === 0) {
                     truncated = true;
                     return;
                 }
-                fields.push([clamp(name), clamp(value)]);
+                fields.push([clamp(guest), clamp(value)]);
             });
             detail.form = fields;
         }
@@ -2246,6 +2749,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // The origins the view's policy admits per kind of load (INIT_VIEW, from `origins`; R4:M-2), as lists of
     // strings, and nothing until then: the renderer drops an http(s) URL outside them.
     let viewOrigins: Record<string, string[]> = Object.create(null);
+    // The embedder's `links` (INIT_VIEW; design 02, I6), its strings only, and none until then: the renderer marks an HTML
+    // <a> whose href is one of them (RenderContext.links).
+    // An entry that is not a string (which start() never stores) keeps its index and matches no href.
+    let viewLinks: (string | null)[] = [];
+    const linksOf = (given: unknown): (string | null)[] => {
+        const out: (string | null)[] = [];
+        if (!Array.isArray(given)) return out;
+        for (let i = 0; i < given.length; i++) out.push(typeof given[i] === 'string' ? given[i] : null);
+        return out;
+    };
     const originsOf = (given: unknown) => {
         const out: Record<string, string[]> = Object.create(null);
         if (!given || typeof given !== 'object') return out;
@@ -2526,7 +3039,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
     // The guest's markup as the parser gets it (S74, class A: INHERITED_CONTEXT.cspReporting; style-markup.ts): with no
     // style attribute and no <style> element in it, so that the parse makes no inline style the host page's policy
-    // checks (Chromium checks a style attribute as it parses it, in the template too). The nonce is drawn per render, and
+    // checks (Chromium and WebKit check a style attribute as they parse it, in the template too). The nonce is drawn per render, and
     // drawn again in the unlikely case that the markup holds it; `markup` is null where nothing had to be renamed.
     const randomSource = g.crypto;
     const randomValues = randomSource.getRandomValues;
@@ -2665,6 +3178,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         for (let n = target; n !== body; n = call(parentOf, n, [])) depth++;
         const context: RenderContext = { target: String(call(localNameOf, target, [])), animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0, loads: [], css: [], dropped: [], sheets: [] };
         if (input.markup) context.markup = input.markup;
+        context.controlName = names.name;
+        context.links = viewLinks;
+        context.marked = [];
         const room = { elements: options.render.maxElements - (before.elements - ownElements), depth: options.render.maxDepth - depth, urls: options.render.maxUrls - (before.urls - ownUrls) };
         let kept = sanitize(template.content, fileOf, keepsMarkup, keptCss, options.render, switches, room, context);
         if (inStyle(target)) {
@@ -2676,6 +3192,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             context.loads.length = 0;
             context.css!.length = 0;
             context.sheets!.length = 0;
+            context.marked!.length = 0;
         }
         const fresh = newLoads(context.loads, template.content, context.sheets!, context.css!);
         // The characters the body would hold (R1:R1-1): its serialization outside the target, plus the cleaned fragment's
@@ -2687,6 +3204,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (!switches.animations) stillNamedIn(context.sheets!); // the still rules its stylesheets need, before they apply
         const css = cssLoadsOf(template.content, target, context.css!, context.sheets!); // before the move empties the fragment
         call(E.replaceChildren, target, [template.content]);
+        for (let i = 0; i < context.marked!.length; i++) linkIndex.set(context.marked![i]![0], context.marked![i]![1]);
         settle(target);
         sheetsAfter(target, context.sheets!);
         urlWork += context.urls;
@@ -3037,6 +3555,20 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         judge(budget.measured(spent, spent, now, true));
         measureRendering(inFrame, spent); // and what showing it takes
     };
+    // Whether a flush's operations can change what a control holds (a render, a text(), a set() of a value or checkedness),
+    // and which controls (acceptOperations): every control after a render or a text(), the targets of the set()s otherwise;
+    // null when no operation can.
+    const changedBy = (jobs: Job[]): ((visit: (element: Element, kind: number) => void) => void) | null => {
+        const targets: Element[] = [];
+        for (let i = 0; i < jobs.length; i++) {
+            const job = jobs[i]!;
+            if (job.kind !== 'set') return eachControl;
+            if (job.fields!.value === undefined && job.fields!.checked === undefined) continue;
+            const target = elementInBody(job.target!);
+            if (target) targets.push(target);
+        }
+        return targets.length > 0 ? eachTarget(targets) : null;
+    };
     const flush = (inFrame: boolean) => {
         const jobs = pending;
         pending = [];
@@ -3045,20 +3577,26 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         work = 0;
         const started = performance.now();
         const refused: string[] = [];
-        for (let i = 0; i < jobs.length; i++) {
-            const job = jobs[i]!;
-            try {
-                if (job.kind === 'render') apply(job.input!, job.target);
-                else if (job.kind === 'text') applyText(job.html, job.target!);
-                else applySet(job.target!, job.fields!);
-            } catch (error: any) {
-                // refused before anything was changed (the renderer, or a budget): this operation is dropped, and the ack
-                // below still releases the next one; one past the view's budget, or a focus the view refused, is named to
-                // the worker, which says so
-                const message = error && error.message;
-                if (message === 'VIEW_MAX_ELEMENTS' || message === 'VIEW_MAX_DEPTH' || message === 'VIEW_MAX_CHARACTERS' || message === 'VIEW_MAX_URLS' || message === 'VIEW_MAX_DISTINCT_URLS' || message === 'VIEW_FOCUS') refused.push(message);
+        const operations = () => {
+            for (let i = 0; i < jobs.length; i++) {
+                const job = jobs[i]!;
+                try {
+                    if (job.kind === 'render') apply(job.input!, job.target);
+                    else if (job.kind === 'text') applyText(job.html, job.target!);
+                    else applySet(job.target!, job.fields!);
+                } catch (error: any) {
+                    // refused before anything was changed (the renderer, or a budget): this operation is dropped, and the ack
+                    // below still releases the next one; one past the view's budget, or a focus the view refused, is named to
+                    // the worker, which says so
+                    const message = error && error.message;
+                    if (message === 'VIEW_MAX_ELEMENTS' || message === 'VIEW_MAX_DEPTH' || message === 'VIEW_MAX_CHARACTERS' || message === 'VIEW_MAX_URLS' || message === 'VIEW_MAX_DISTINCT_URLS' || message === 'VIEW_FOCUS') refused.push(message);
+                }
             }
-        }
+        };
+        // the guest's operations are what a control may hold besides what the user entered (the value model)
+        const changed = changedBy(jobs);
+        if (changed) acceptOperations(operations, changed);
+        else operations();
         settleOperations(started, inFrame);
         const dropped = renderDropped;
         renderDropped = [];
@@ -3236,6 +3774,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         // host page's policy refused it, the guest's stylesheets go instead, and the check-in says so (the host warns).
         switches = { animations: data.allowAnimations === true, autoplay: data.allowAutoplay === true, stylesheets: true };
         viewOrigins = originsOf(data.origins);
+        viewLinks = linksOf(data.links);
         const stillRefused = !switches.animations && !stillStyleInForce();
         if (stillRefused) switches.stylesheets = false;
         viewPort.postMessage(stillRefused
@@ -3457,11 +3996,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             budget.charge('characters', initial.length, performance.now()); // the initial view is charged like any render (R1:R1-1)
             work = 0;
             const started = performance.now();
-            try {
-                apply(parserInput(initial), null);
-            } catch {
-                // past the budget, or anything else the renderer refused: the initial view stays empty
-            }
+            acceptOperations(() => {
+                try {
+                    apply(parserInput(initial), null);
+                } catch {
+                    // past the budget, or anything else the renderer refused: the initial view stays empty
+                }
+            }, eachControl);
             settleOperations(started, false);
             // The initial view's notes are the element's to say, not a render's: what it dropped of `html` that the author
             // may not expect, its scripts and handlers among them (BD7:LIM-1). The element warns from these once; it reads
@@ -4050,10 +4591,13 @@ export const VIEW_OPTIONS: ViewOptions = {
     guestText: { maxLength: 2048, perSecond: LOG_EVENTS_PER_SECOND, uncaughtCharacters: UNCAUGHT_CHARACTERS_PER_SECOND },
     stillStyle: VIEW_STILL_STYLE,
     still: { pseudoElements: VIEW_STILL_PSEUDO_ELEMENTS, declarations: VIEW_STILL_DECLARATIONS },
+    namePrefixDigits: VIEW_NAME_PREFIX_DIGITS,
+    values: VIEW_VALUE_KINDS,
+    linkStops: VIEW_LINK_CLICK_STOPS,
 };
 
-let cachedText: string | null = null;
-let cachedHash: string | null = null;
+// The bootstrap's text and its hash, with the bridge frame's part they were built for (the network modes', or none).
+let cached: { bridge: string | null; text: string; hash: string | null } | null = null;
 
 /**
  * What viewScriptHash() warns, once, when the library runs from its sources and not from the built package (BD3:NEW-1):
@@ -4093,15 +4637,17 @@ export function environmentGate(host: string, stopParsing: boolean, body: string
 }
 
 /**
- * The bootstrap's text for `options`, built from the functions it runs (the tests build it with other options): strict
- * mode's view, or the fetch bridge's frame where its script element has the bridge's role (BRIDGE_ROLE).
+ * The bootstrap's text for `options`, built from the functions it runs (the tests build it with other options): the
+ * view of strict and sealed mode and, in a build with the network modes, the fetch bridge's frame where its script
+ * element has the bridge's role (BRIDGE_ROLE). `bridge` is that frame's part (network-modes.ts, bridgeBootstrap), or
+ * null: a build without the network modes has no such frame, and its bootstrap runs the view alone.
  */
-export function viewBootstrapSource(options: ViewOptions): string {
+export function viewBootstrapSource(options: ViewOptions, bridge: string | null = bridgeBootstrap()): string {
+    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()}, ${viewControlNames.toString()});`;
+    // The gate first (environment-check.ts): a refusal goes to the host page's window, which is the view's grandparent
+    // and the bridge frame's parent.
+    if (bridge === null) return `(function () {${environmentGate('parent.parent', false, view)}})();`;
     const script = 'var s = document.currentScript;';
-    const bridge = `(${inBridgeFrame.toString()})(${JSON.stringify(BRIDGE_FRAME_OPTIONS).replaceAll('<', '\\u003c')});`;
-    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`;
-    // The gate first (environment-check.ts): a refusal goes to the host page's window, which is the bridge frame's parent and
-    // the view's grandparent.
     const host = `(document.currentScript && document.currentScript.getAttribute('data-role') === '${BRIDGE_ROLE}' ? parent : parent.parent)`;
     return `(function () {${environmentGate(host, false, `${script} if (s && s.getAttribute('data-role') === '${BRIDGE_ROLE}') {${bridge}} else {${view}}`)}})();`;
 }
@@ -4125,29 +4671,43 @@ declare const __WEB_SANDBOX_VIEW_BOOTSTRAP__: string | undefined;
  * or NUL, or anything that ends a script element.
  */
 export function viewBootstrapText(): string {
-    if (cachedText !== null) return cachedText;
-    const text = typeof __WEB_SANDBOX_VIEW_BOOTSTRAP__ === 'string' ? __WEB_SANDBOX_VIEW_BOOTSTRAP__ : viewBootstrapSource(VIEW_OPTIONS);
-    assertHashableScript(text);
-    cachedText = text;
-    return text;
+    return bootstrap().text;
 }
 
 /** The hash-source of the view bootstrap, computed once per page (script-hash.ts). */
 export function viewBootstrapHash(): string {
-    if (cachedHash === null) cachedHash = scriptHashSource(viewBootstrapText());
-    return cachedHash;
+    const built = bootstrap();
+    built.hash ??= scriptHashSource(built.text);
+    return built.hash;
+}
+
+// The fetch bridge frame's part of the bootstrap in this build: the network modes', or null where the build has none.
+const bridgeBootstrap = (): string | null => networkModes()?.bridgeBootstrap ?? null;
+
+// The bootstrap of this build, made once: again only if the network modes were installed since (the network build's
+// entry installs them as it is imported, before anything asks).
+function bootstrap(): NonNullable<typeof cached> {
+    const bridge = bridgeBootstrap();
+    if (cached !== null && cached.bridge === bridge) return cached;
+    const text = typeof __WEB_SANDBOX_VIEW_BOOTSTRAP__ === 'string' ? __WEB_SANDBOX_VIEW_BOOTSTRAP__ : viewBootstrapSource(VIEW_OPTIONS, bridge);
+    assertHashableScript(text);
+    cached = { bridge, text, hash: null };
+    return cached;
 }
 
 /**
- * The CSP hash source of the library's bootstrap for this release of the package, to allow in the host page's own
- * Content-Security-Policy (R1:R4-5): strict mode's view runs it, and so does the fetch bridge's frame.
+ * The CSP hash source of the library's bootstrap for this build of the package, to allow in the host page's own
+ * Content-Security-Policy (R1:R4-5): the view of sealed and strict mode runs it and, in a build with the network modes,
+ * so does the fetch bridge's frame.
  *
  * @remarks
- * It is the very value the element puts in the `script-src` of both documents, and both inherit the host page's policy
- * (docs/API.md#host-page-policy), so one hash admits them both: the view in strict mode, and with `fetchBridge` the
- * frame that makes the bridge's requests, in every mode (BD1:ISO-1). In the built package the bootstrap is a string
- * literal of the bundle, so the hash is the same in a build step (importing the package needs no DOM) and in the browser,
- * however the embedder's app is bundled or minified. It changes only with the package's version.
+ * It is the very value the element puts in the `script-src` of its documents, which inherit the host page's policy
+ * (docs/API.md#host-page-policy), so one hash admits them: the view in sealed and strict mode, and with `fetchBridge`
+ * the frame that makes the bridge's requests, in every mode that has it (BD1:ISO-1). In the built package the bootstrap
+ * is a string literal of the bundle, so the hash is the same in a build step (importing the package needs no DOM) and in
+ * the browser, however the embedder's app is bundled or minified. It changes only with the package's version and its
+ * build: the default build's bootstrap has no bridge frame's part, so its hash is not the network build's
+ * (docs/API.md#builds).
  *
  * The sources have no such literal: a project that bundles `src/index.ts` (not the built package) gets the hash of the
  * functions as its own transpiler prints them, which a build step that imports the sources does not compute. There the

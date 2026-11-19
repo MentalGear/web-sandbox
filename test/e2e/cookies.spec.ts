@@ -5,6 +5,9 @@ import { useRecorder, wss } from './recorder';
 import { COOKIE_CARRIERS, COOKIE_CARRIER_IDS, COOKIE_ENGINE_FACTS, STRICT_COOKIE_CARRIERS, type CookieCarrierId, type CookieEngine } from '@src/lib/cookie-facts';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The host site's cookies on a guest request (S74, class A; THREAT-MODEL, `INHERITED_CONTEXT.cookies`). Every wrapper
  * iframe is `credentialless`: Chromium loads it, and everything nested in it, with an empty, ephemeral cookie jar, so no

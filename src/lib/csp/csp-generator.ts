@@ -1,6 +1,6 @@
 import { ORIGIN_PATTERN, type Origin } from "../origin";
 import { admits, LOAD_KIND_NAMES, LOAD_KINDS } from "../load-kinds";
-import type { OriginKind, OriginPolicy } from "./origins";
+import type { OriginKind, OriginPolicy } from "./origin-kinds";
 import { mintUncodedError } from "../minted-errors";
 
 /**

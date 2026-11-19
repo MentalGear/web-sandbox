@@ -1,86 +1,71 @@
 /**
- * The `<web-sandbox>` custom element: it builds each mode's frames, holds the host end of every port, and applies the
- * lifecycle reducer's effects (lifecycle.ts) to the DOM.
+ * The `<web-sandbox>` custom element: it builds sealed mode's frames, holds the host end of every port, and applies the
+ * lifecycle reducer's effects (lifecycle.ts) to the DOM. What strict, cooperative and worker mode add to it are methods
+ * the network build installs on its prototype (lib/network-host.ts; ADR-009), which it calls through the seam
+ * (lib/network-modes.ts): a build without them has none.
  */
-import type { SafeCapability, UnsafeCapability } from "./csp-directives";
-import { UNSAFE_PERMISSIONS } from "./csp-directives";
-import { connectSources, cooperativePolicy, fileKinds, SEALED_FILE_KINDS, sealedViewPolicy, strictViewPolicy, type PolicyInput } from "./lib/csp/csp-generator";
-import { hostReach, type NarrowedReach } from "./lib/csp/host-connect";
-import { buildRefused, executeRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
-import { NO_ORIGINS, refusalDetail, type OriginKind, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
-import type { NormaliseContext } from "./lib/config-schema";
+import type { SafeCapability } from "./csp-directives";
+import { fileKinds, SEALED_FILE_KINDS, sealedViewPolicy } from "./lib/csp/csp-generator";
+import { buildRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
+import { NO_ORIGINS, type OriginKind, type OriginPolicy } from "./lib/csp/origin-kinds";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, viewStylesheets, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
-import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
-import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
-import { kindMismatchMessage, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
-import { scriptInMarkup } from "./lib/markup-scripts";
+import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites, type MintedWrites } from "./lib/guest-writes";
+import { inSandboxFiles } from "./lib/in-sandbox-files";
 import { LOAD_KINDS } from "./lib/load-kinds";
-import { mergeGuestImportMaps } from "./lib/import-map";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
 import { crossingText, mintError, mintUncodedError } from "./lib/minted-errors";
-import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
+import { createBroker, type BudgetRefusal } from "./lib/rpc";
+import { createLinkTabLimiter, LINK_WINDOW_FEATURES, listedLink } from "./lib/links";
 import { createSizeOf } from "./lib/structured-size";
-import { workerBootstrap } from "./lib/worker-bootstrap";
-import { keepOnlyWorkerGlobals, removeSecureContextOnly, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from "./lib/worker-globals";
+import { keepOnlyWorkerGlobals, removeSecureContextOnly, SEALED_WORKER_GLOBALS, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from "./lib/worker-globals";
 import { dynamicImportAt } from "./lib/entry-imports";
 import { CODE_FROM_STRING_REFUSAL, FUNCTION_KINDS_SOURCE, REFUSED_GLOBALS, REFUSED_TIMERS, refuseCodeFromStrings } from "./lib/code-from-strings";
-import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
-import { setLongTimeout, type LongTimeout } from "./lib/long-timer";
+import { startWatchdog, watchdogBudget } from "./lib/watchdog";
 import { createRateLimiter, type RateLimiter } from "./lib/rate-limit";
 import { toViolationDetail, VIOLATION_EVENT_FIELDS, VIOLATION_EVENT_LIMIT, violationBucket, type SandboxViolation } from "./lib/violation";
 import { createLogLimiter, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
-import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
-import { createFetchBridge, fetchRefusal, FETCH_METHOD, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
-import { BRIDGE_FRAME_REFUSED, createBridgeFrame, prepareBridgeFrame, type BridgeFrame } from "./lib/bridge-frame";
-import { buildGuestDocument, buildWrapperDocument, permissionAttributes, setWrapperFrameIsolation, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
+import { startAutoResize } from "./lib/auto-resize";
+import { fetchRefusal, FETCH_METHOD } from "./lib/fetch-method";
+import { networkModes, type FetchHandler, type NetworkElement, type PreparedBuild, type StrictInit, type ViewNetwork } from "./lib/network-modes";
+import { buildWrapperDocument, setWrapperFrameIsolation, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { hostPageOrigin, hostSiteOrigins } from "./lib/host-site";
-import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, htmlRefusal, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
+import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, NO_HOST_PAGE, STRICT_VIEW_FLAGS, unknownModeReason, type AppOptionName, type CallBudget, type EmbedderOptionName, type StoredConfig } from "./lib/config-schema";
+import { readStart, type StartValues } from "./lib/app-start";
+import type { Holds } from "./lib/utils";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
 import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from "./lib/environment";
-import { errorName, fixedDetail, hostLine, joinDetails, reasonText } from "./lib/reasons";
+import { errorName, hostLine, reasonText } from "./lib/reasons";
 import { ENVIRONMENT_CHECKS, ENVIRONMENT_EXPECTED, ENVIRONMENT_REFUSED_TYPE } from "./lib/environment-check";
 import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type Generation, type LcInput, type LcState, type LifecycleHost, type Notice } from "./lib/lifecycle";
-import { assertEntryScoped, buildViewDocument, entryDoneName, environmentGate, inStrictWorker, STRICT_DIRECTIVE, isStyleProperty, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_SET_STYLE_LIMITS, VIEW_STYLE_PROPERTIES, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, STRICT_DIRECTIVE, isStyleProperty, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_SET_STYLE_LIMITS, VIEW_STYLE_PROPERTIES, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
- * The configuration `setConfig()` takes: a union keyed by `mode`.
+ * The options of one of the modes the build has ({@link SandboxConfigByMode}), the app's and the embedder's together: a
+ * union keyed by `mode`. `start()` takes them as two arguments, {@link SandboxApp} and {@link SandboxGrants}.
  *
  * @remarks
- * Every option left out takes its default, not its previous value. The union narrows each mode, so an option a mode
- * cannot use does not type-check (strict mode's `origins` has no `scripts`; ADR-007; a sealed config takes no
- * `origins` and no `fetchBridge`). A config from JSON is held to the same rules at run time: an option outside its modes
- * is ignored and holds its default, mostly with one warning, except that a sealed config naming `origins` or
- * `fetchBridge` is refused: the sandbox terminates with a reason that names the fix, `mode: 'strict'`
- * (docs/API.md#terminated-reasons). A config that names no `mode` is a sealed config (sealed is the default; ADR-008),
- * so `{ origins }` or `{ fetchBridge }` without `mode: 'strict'` does not type-check, and from JSON is refused the same
- * way. Defaults, bounds and modes of every option: docs/API.md#configuration.
+ * Every option left out takes its default. The union narrows each mode, so an option a mode cannot use does not
+ * type-check (a sealed config takes no `origins` and no `fetchBridge`). Options from JSON are held to the same rules at
+ * run time: an option outside its modes is ignored and holds its default, mostly with one warning, and a mode or an
+ * option the build does not have makes `start()` throw, with a message that names the fix. Options that name no `mode`
+ * are sealed mode's (sealed is the default; ADR-008). Defaults, bounds and modes of every option:
+ * docs/API.md#configuration.
  */
-export type SandboxConfig = StrictSandboxConfig | SealedSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
+export type SandboxConfig = SandboxConfigByMode[keyof SandboxConfigByMode];
 
 /**
- * The options that open the network: `origins` and `fetchBridge`. Strict, cooperative and worker mode take them; sealed
- * mode does not.
+ * The configuration of each mode this build of the package has, by the mode's name.
+ *
+ * @remarks
+ * The package as published has sealed mode alone. A build with the network modes (ADR-009; docs/API.md#builds) adds
+ * strict, cooperative and worker mode here, with their configurations, so that {@link SandboxConfig} is what the build
+ * takes and nothing else type-checks.
  */
-export interface NetworkSandboxOptions {
-    /**
-     * The exact origins the guest may load each kind from (ADR-007). Strict mode's have no `scripts`
-     * ({@link StrictSandboxConfig}).
-     *
-     * @defaultValue none
-     */
-    origins?: SandboxOrigins;
-    /**
-     * Opens `sandboxFetch()` in the guest: the host decides each request under a fixed discipline (exact-origin
-     * allowlist, no credentials, no redirects, capped body and time), a hidden frame of the library's with an opaque
-     * origin makes it (the target sees `Origin: null`), and the host reports it as a `fetch` event. The guest's
-     * policy is unchanged. Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. See ADR-006.
-     *
-     * @defaultValue off
-     */
-    fetchBridge?: FetchBridgeConfig;
+export interface SandboxConfigByMode {
+    /** Sealed mode, the default: no network ({@link SealedSandboxConfig}). */
+    sealed: SealedSandboxConfig;
 }
 
 /**
@@ -90,9 +75,8 @@ export interface NetworkSandboxOptions {
  *
  * @remarks
  * A config that names no `mode` is a sealed config. A sealed config that names `origins` or `fetchBridge`, with the mode
- * written or left out, does not type-check, and from JSON it is refused: nothing of it is applied, and the sandbox
- * terminates with a reason that names the fix, `mode: 'strict'` (docs/API.md#terminated-reasons). `sandboxFetch()`
- * rejects with `FETCH_NOT_ALLOWED`.
+ * written or left out, does not type-check, and from JSON `start()` throws, with a message that names the fix,
+ * `mode: 'strict'`. `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`.
  */
 export interface SealedSandboxConfig extends SandboxConfigOptions {
     /**
@@ -100,19 +84,18 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
      * with a reason that names it (AR:A4).
      */
     mode?: 'sealed';
-    /** Not in sealed mode, which has no network: a config that names it is refused. */
+    /** Not in sealed mode, which has no network: `start()` throws for grants that name it. */
     origins?: never;
-    /** Not in sealed mode, which has no network: a config that names it is refused. */
+    /** Not in sealed mode, which has no network: `start()` throws for grants that name it. */
     fetchBridge?: never;
     /**
-     * Not in sealed mode, which runs no string as code: `true` refuses the config.
+     * Not in sealed mode, which runs no string as code: `true` makes `start()` throw.
      *
      * @remarks
      * A string run as code is checked against the host page's policy, which the guest's worker inherits; a policy that
      * refuses it reports the refusal with the page's policy text, and to the page's report endpoint with a sample of the
      * string. So in sealed mode `eval`, `Function`, the other function constructors and a timer given a string throw
-     * the library's `EvalError` before the browser sees the string, and `execute()` does nothing. Strict mode keeps the
-     * option, for testing.
+     * the library's `EvalError` before the browser sees the string. Strict mode keeps the option, for testing.
      *
      * @defaultValue `false`
      */
@@ -122,70 +105,119 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
 }
 
 /**
- * The configuration of strict mode (ADR-005): sealed mode's view and worker, with the network options. Guest code runs
- * only in a worker that a view document spawns, and the worker draws into the view with `sandboxView.render()`. `html`
- * is the initial view, rendered without its scripts and event-handler attributes.
+ * A host method the guest calls with `bridge.call(name, ...args)`, given to `start()` in {@link SandboxGrants}. Its
+ * arguments are the guest's data, so they are `unknown`: check each one's type and size before you use it. They never
+ * hold a `Blob` or a `File`: a call that holds one, at any depth, is refused `ARGS_NOT_TRANSFERABLE` before the method
+ * runs (I7).
  *
  * @remarks
- * `mode: 'strict'` must be named: a config that names no mode is sealed ({@link SealedSandboxConfig}, ADR-008), which
- * has no `origins` and no `fetchBridge`.
+ * It runs with your page's rights. The guest receives its return value (awaited if it is a promise), copied: a typed
+ * array or `DataView` that covers part of its buffer arrives with a buffer that holds exactly its bytes.
+ *
+ * What a failure tells the guest: a throw or rejection reaches it as `HANDLER_ERROR`, and its text is your own words
+ * only. The guest receives the message of a plain `Error` your code made (`throw new Error(text)`, whose prototype is
+ * this window's `Error.prototype`) or a thrown string, verbatim up to 65536 characters (a longer one is cut, and ends
+ * `[… cut at 65536 characters]`): put nothing in it you would not show the guest. An error of the library's that the
+ * method lets through (a refusal of `commitGuestWrites()`, of its own `call()` to this guest or another element's, a
+ * `TypeError` of `start()`) arrives as its code and the library's fixed text for that code (`INVALID_PATH: …`;
+ * `the method failed (TypeError)` for one without a code), never its message, which quotes what you gave the library
+ * or what another app answered. Any other throw (an engine's `TypeError` or `SyntaxError` from `JSON.parse`, a
+ * `DOMException`, a subclass of `Error`, an error from another window, an object) arrives as
+ * `the method failed (<name>)` with its name only, because an engine's message quotes the data it was handling. A
+ * result that cannot be copied is refused `RESULT_NOT_TRANSFERABLE` with the library's own text. Each text the guest does not receive is
+ * written to this page's console with `console.warn`, once per call.
+ *
+ * The methods belong to the app: they stay through `reset()`, `terminate()` and the element's removal, for the
+ * element's whole life. A method that started keeps running after `terminate()`, `reset()` or the element's removal:
+ * only its answer is dropped. One that writes should check a flag you set when you stop the app, right before the
+ * write. The arguments are the guest's data: validate them, and copy objects with spread rather than `Object.assign` or
+ * a `for...in` loop (an own `__proto__` key survives the copy). Guest-controlled text: show it with `textContent`,
+ * never in an HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink.
  */
-export interface StrictSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    /** Names the mode. */
-    mode: 'strict';
-    /** The origins the view's policy admits: as in the other modes, but without `scripts`, since the view runs only the library's bootstrap. */
-    origins?: StrictSandboxOrigins;
-    /** Not in strict mode (R1:R3-6): no capability reaches outside the view. Dropped at run time. */
-    unsafeCapabilities?: never;
+export type HostMethod = (...args: unknown[]) => unknown;
+
+/**
+ * The app `start()` runs: its own content, what its author wrote. It may come from data, such as a bundle you stored:
+ * a grant in it is refused, so it carries none by accident. Every option the embedder decides is in
+ * {@link SandboxGrants}, the second argument.
+ *
+ * @remarks
+ * `html` and `entry` are the options of the same names ({@link SandboxConfigOptions}). In strict and sealed mode an
+ * `entry` must name a JavaScript file of `files`; any other key, the grants' own included, is refused.
+ */
+export interface SandboxApp extends Readonly<Pick<SandboxConfigOptions, 'html' | 'entry'>> {
+    /**
+     * The app's files by path, validated as one batch and copied into the element's store. The guest reads them through
+     * `sandboxFiles`, and its markup names them by path. An entry is a `string` (stored as UTF-8), a `Uint8Array`
+     * (copied), or `{ content, type }` to set the MIME type instead of deriving it from the extension.
+     *
+     * @remarks
+     * - A path is relative (`src/main.js`): segments of letters, digits and the characters of `._~!$&'()*+,;=@-`,
+     *   separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised;
+     *   a refusal's message names the rule the path breaks. A refusal is a {@link FileError} with `code`
+     *   `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED`, and nothing is stored.
+     * - A file's type comes from its extension (`.js` and `.mjs` `text/javascript`, `.css` `text/css`, `.json`
+     *   `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4` and the like); an unknown extension is
+     *   `application/octet-stream`.
+     * - A reference names a file only for the kind of load its type is for: `<script src>`, `modulepreload`,
+     *   `preload as=script` and module imports only JavaScript types; a stylesheet `<link>`, `preload as=style` and
+     *   `@import` only `text/css`; `img`, `srcset`, `poster`, icon links and CSS `url()` only `image/*`; `url()` in
+     *   `@font-face` and `preload as=font` only `font/*`; `audio`, `video` and `source` only `audio/*` and `video/*`;
+     *   `track` only `text/vtt`. A reference to a file of another type stays as written and fails closed, with one
+     *   warning (strict and sealed mode's view drops it: docs/API.md#the-url-rule). This holds for the app's files as
+     *   for committed ones: `x.js` given as `text/plain` is never a script. Code that passes `sandboxFiles.url()` to a
+     *   script element or `importScripts()` itself decides what it loads (Chromium runs such a file whatever its type;
+     *   Firefox and WebKit refuse it in `importScripts()`).
+     * - The files change only through the app's own committed writes (`commitGuestWrites()`), and every build delivers
+     *   them as they are then. How the guest names files (markup, module imports, stylesheets) is described in the
+     *   README's Files section; why: ADR-004.
+     *
+     * @defaultValue none
+     */
+    readonly files?: Readonly<Record<string, FileEntry>>;
 }
 
 /**
- * The configuration of cooperative mode, for content that cooperates: guest code runs in the guest document, within the
- * documented limits of the mode (README, "Cooperative-mode limits"). `'iframe'` is not a mode: it is refused like any other unknown value.
+ * What the embedder allows the app `start()` runs: the host methods, and every option that is not the app's own
+ * ({@link SandboxApp}), for the modes this build has, keyed by `mode` as {@link SandboxConfig} is.
+ *
+ * @remarks
+ * A grant is whatever you pass as this argument. The two arguments keep an app read from data from carrying a grant by
+ * accident; nothing stops you from passing a stored manifest here, and then its author chooses the grants. Write them
+ * in your own code. A key of the app's, or one that is no option, is refused.
  */
-export interface CooperativeSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    /** Names the mode. */
-    mode: 'cooperative';
-    /** Strict and sealed mode only (R1:R3-6): ignored with a warning at run time. */
-    entry?: never;
-    /** Strict and sealed mode only (the guest document is the guest's own): ignored with a warning at run time. */
-    allowAnimations?: never;
-    /** Strict and sealed mode only: ignored with a warning at run time. */
-    allowAutoplay?: never;
-    /** Worker, strict and sealed mode only (the guest document may share the host's thread, so no timer could fire; R1:R3-6): ignored. */
-    workerExecutionTimeout?: never;
-}
+export type SandboxGrants = {
+    [Mode in keyof SandboxConfigByMode]: Readonly<Omit<SandboxConfigByMode[Mode], keyof SandboxApp>> & {
+        /**
+         * The host methods the guest may call, by name: own enumerable keys, each a name of at most 256 characters that
+         * does not start with `sandbox:`, each value a function. Copied when `start()` is called: a name not listed
+         * here is `UNKNOWN_METHOD` to the guest.
+         */
+        readonly methods?: Readonly<Record<string, HostMethod>>;
+    };
+}[keyof SandboxConfigByMode];
 
-/**
- * The configuration of worker mode: guest code runs in a worker inside the frame. The mode is frozen and is to be folded
- * into strict mode (S49).
- */
-export interface WorkerSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    /** Names the mode. */
-    mode: 'worker';
-    /** Strict and sealed mode only (R1:R3-6): ignored with a warning at run time. */
-    entry?: never;
-    /** Strict and sealed mode only (a worker has no document): ignored with a warning at run time. */
-    allowAnimations?: never;
-    /** Strict and sealed mode only: ignored with a warning at run time. */
-    allowAutoplay?: never;
-    /** A worker has no document (R1:R3-6): ignored. */
-    html?: never;
-    /** A worker has no document to measure (R1:R3-6): no effect, with a warning at run time. */
-    autoResize?: never;
-}
+// The two types against the schema's classification (CONFIG_SCHEMA's `owner`; I17): written out for the API report, and
+// held to the value here, so that neither can drift from it.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : { differ: [A, B] }) : { differ: [A, B] };
+type AppOptionsAreTheSchemas = Holds<Same<Exclude<keyof SandboxApp, 'files'>, AppOptionName>>;
+type GrantsAreTheSchemas = Holds<Same<Exclude<keyof SealedSandboxConfig, keyof SandboxApp>, EmbedderOptionName>>;
 
 /**
  * The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.
  *
  * @remarks
- * Every event is a `CustomEvent` dispatched on the element and none is `composed`. The bubbling ones reach a listener on
- * `window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and
+ * Every event is a `CustomEvent` dispatched on the element and none is `composed`. Listen on the element itself: the
+ * events whose detail carries the guest's data (`sandbox-log`, `violation`, `fileswritten`, `fileschanged`) do not
+ * bubble, nor does the network build's `fetch`, so a bubbling listener on a shared ancestor or on `window` hears no
+ * app's data. A listener added for the capture phase on an ancestor still receives each of them: the
+ * capture phase runs down the whole path whatever `bubbles` says. The `detail` is frozen, deeply: every object and
  * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
  * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
- * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
- * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
- * guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
+ * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (every
+ * value of docs/API.md#guest-chosen-text, the list the registry of guest values gives: a log line's `args`, a violation's
+ * `blockedURI` and `sourceFile`, a fetch record's `url`, the path of a guest's write in `fileswritten` and
+ * `listGuestWrites()`, which also chose its type, and the others listed there): show it with `textContent`, never in an HTML,
  * URL (such as a link `href`), `eval`, template or `console` format-string sink, and do not forward it to a network sink,
  * an error reporter or analytics (`fetch`, `navigator.sendBeacon`) as if it were your page's own event: whoever wrote
  * the app reads that sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
@@ -207,8 +239,8 @@ export interface WebSandboxEventMap extends HTMLElementEventMap {
      *
      * @remarks
      * Once per termination, for a call to `terminate()`, a budget or liveness check that ended the guest, a failed frame
-     * check, or a configuration or build that was refused (that one in a task of its own, and not at all if another build
-     * started meanwhile). Removing the element ends its environment without this event. Branch on `state` and the event,
+     * check, or a build that failed (that one in a task of its own, and not at all if another build started
+     * meanwhile). Removing the element ends its environment without this event. Branch on `state` and the event,
      * not on the reason's text. Does not bubble.
      */
     terminated: CustomEvent<{ readonly reason: string }>;
@@ -216,27 +248,20 @@ export interface WebSandboxEventMap extends HTMLElementEventMap {
      * A log line from the guest's console or written by the element; see {@link SandboxLog}.
      *
      * @remarks
-     * Guest lines are limited to {@link LOG_EVENTS_PER_SECOND} per environment per second. Bubbles.
+     * Guest lines are limited to {@link LOG_EVENTS_PER_SECOND} per environment per second. Does not bubble. Listen on
+     * the element (a capture listener on an ancestor still receives it).
      */
     'sandbox-log': CustomEvent<SandboxLog>;
     /**
      * The guest's policy refused a load; see {@link SandboxViolation}.
      *
      * @remarks
-     * At most {@link VIOLATION_EVENT_LIMIT} per environment. A report is a claim by the guest, not a host fact. Bubbles.
+     * At most {@link VIOLATION_EVENT_LIMIT} per environment. A report is a claim by the guest, not a host fact.
+     * Does not bubble. Listen on the element (a capture listener on an ancestor still receives it).
      */
     violation: CustomEvent<SandboxViolation>;
     /**
-     * A `sandboxFetch()` request settled, refusals included; see {@link FetchRecord}.
-     *
-     * @remarks
-     * Dispatched only with `fetchBridge` configured. Without it `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no
-     * event is dispatched. Bubbles.
-     */
-    fetch: CustomEvent<FetchRecord>;
-    /**
-     * `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; `detail.paths` lists the paths
-     * that changed.
+     * `commitGuestWrites()` changed the files; `detail.paths` lists the paths that changed.
      *
      * @remarks
      * Dispatched synchronously, once per call that changed something. Does not bubble.
@@ -247,7 +272,8 @@ export interface WebSandboxEventMap extends HTMLElementEventMap {
      * holds that one path.
      *
      * @remarks
-     * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles. The path is guest-controlled text: show
+     * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Does not bubble. Listen on the element (a
+     * capture listener on an ancestor still receives it). The path is guest-controlled text: show
      * it with `textContent` (a valid path can end a single-quoted attribute).
      */
     fileswritten: CustomEvent<{ readonly paths: readonly string[] }>;
@@ -303,19 +329,18 @@ declare global {
 }
 
 /**
- * The options every mode takes, and the ones a mode's config narrows ({@link SealedSandboxConfig},
- * {@link StrictSandboxConfig}, {@link CooperativeSandboxConfig}, {@link WorkerSandboxConfig}).
+ * The options every mode takes, and the ones a mode's config narrows ({@link SealedSandboxConfig}, and in a build with
+ * the network modes the configurations of strict, cooperative and worker mode).
  *
  * @remarks
- * An option left out takes its default, whatever `setConfig()` was given before. An option a mode does not
- * read holds its default in that mode. Each option's accepted values, bounds, warnings and modes are declared once, in
+ * An option left out takes its default. An option a mode does not read holds its default in that mode. Each option's accepted values, bounds, warnings and modes are declared once, in
  * the config schema (`CONFIG_SCHEMA`, src/lib/config-schema.ts), and docs/API.md#configuration renders them.
  */
 export interface SandboxConfigOptions {
     /**
-     * Whether the guest policy allows `'unsafe-eval'` (strings run as code, WebAssembly too) and
-     * `execute()` runs code. For testing: each element that enables it warns once. Only a literal `true`
-     * enables it. Sealed mode refuses it ({@link SealedSandboxConfig}).
+     * Whether the guest policy allows `'unsafe-eval'` (strings run as code, WebAssembly too), and in a build with the
+     * network modes whether `execute()` runs code. For testing: each element that enables it warns once. A value that
+     * is not a boolean makes `start()` throw. Sealed mode refuses `true` ({@link SealedSandboxConfig}).
      *
      * @remarks
      * The host page's policy still applies: the guest's realm inherits it, so a string it refuses fails, and the page's
@@ -326,46 +351,32 @@ export interface SandboxConfigOptions {
      */
     scriptUnsafe?: boolean;
     /**
-     * Sandbox flags that keep the guest inside the frame, from {@link SAFE_CAPABILITIES}. An entry that is not one is
-     * dropped with a warning. Worker mode always adds `allow-scripts`; the view of strict and sealed mode always has
+     * Sandbox flags that keep the guest inside the frame, from {@link SAFE_CAPABILITIES}. An entry that is not one, or a
+     * value that is not a list, makes `start()` throw. Worker mode always adds `allow-scripts`; the view of strict and sealed mode always has
      * `allow-scripts` and `allow-forms`, so listing either there changes nothing.
      *
      * @defaultValue `[]`
      */
     capabilities?: SafeCapability[];
     /**
-     * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,
-     * presentation, pointer lock, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;
-     * dropped with a warning in strict and sealed mode.
-     *
-     * @remarks
-     * On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no
-     * opener: the guest's `window.open()` returns `null`, though the page opens.
-     *
-     * @defaultValue `[]`
-     */
-    unsafeCapabilities?: UnsafeCapability[];
-    /**
      * The initial HTML: the initial view in strict and sealed mode (its `<script>` elements and event-handler attributes never
      * run, and markup that holds any warns once per element), the guest document in cooperative mode. Ignored in worker
-     * mode. `load()` sets it too. Empty means `<div id="root"></div>`. A value that is not a string is
-     * dropped with a warning.
+     * mode. Empty means `<div id="root"></div>`. A value that is not a string makes `start()` throw.
      *
      * @defaultValue `''`
      */
     html?: string;
     /**
-     * Strict and sealed mode only: the path of a registered JavaScript file (see `registerFiles()`) that the worker
-     * runs first, as a classic script. Ignored with a warning in other modes. If it is not a registered JavaScript file
-     * the sandbox terminates.
+     * Strict and sealed mode only: the path of a JavaScript file of the app's ({@link SandboxApp}) that the worker runs
+     * first, as a classic script. Ignored with a warning in other modes. In strict and sealed mode `start()` throws when
+     * it names no JavaScript file of the app's.
      *
      * @defaultValue none
      */
     entry?: string;
     /**
-     * Strict and sealed mode only: whether CSS animations and transitions run in the view. Only a literal `true` keeps them; left
-     * out, `false` or any other value (with one warning when it is not a boolean) removes them. Ignored with a warning
-     * in other modes.
+     * Strict and sealed mode only: whether CSS animations and transitions run in the view. Left out or `false` removes
+     * them; there, a value that is not a boolean makes `start()` throw. Ignored with a warning in other modes.
      *
      * @remarks
      * While `true`, animations run on the host page's main thread wherever the browser runs the view there, and the
@@ -378,9 +389,9 @@ export interface SandboxConfigOptions {
      */
     allowAnimations?: boolean;
     /**
-     * Strict and sealed mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Only a literal
-     * `true` keeps `autoplay`; left out, `false` or any other value (with one warning when it is not a boolean) removes
-     * it, and media then plays only when the user starts it. Ignored with a warning in other modes.
+     * Strict and sealed mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Left
+     * out or `false` removes `autoplay`, and media then plays only when the user starts it; there, a value that is not a
+     * boolean makes `start()` throw. Ignored with a warning in other modes.
      *
      * @remarks
      * With `true`, playing media costs the host page's main thread where the view shares it, outside the view's time
@@ -390,18 +401,18 @@ export interface SandboxConfigOptions {
      */
     allowAutoplay?: boolean;
     /**
-     * A deadline in ms for each `execute()`, in worker and strict mode. At the deadline the guest's event
-     * loop must be free: the element pings the guest, and if no answer arrives within
+     * A deadline in ms for each `execute()`, in worker and strict mode (a build with the network modes). At the
+     * deadline the guest's event loop must be free: the element pings the guest, and if no answer arrives within
      * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).
-     * Anything but a finite number above 0 is off, with a warning unless it is `0`. Not read in cooperative mode, nor in sealed mode, which has no `execute()` (ignored silently; `watchdogTimeout` bounds
-     * a sealed app that loops).
+     * `0` is off; anything but `0` or a finite number above 0 makes `start()` throw. Not read in cooperative mode, nor
+     * in sealed mode, which runs no `execute()` (ignored silently; `watchdogTimeout` bounds a sealed app that loops).
      *
      * @defaultValue `0` (off)
      */
     workerExecutionTimeout?: number;
     /**
-     * Terminates a guest that stops answering for this long, in ms; anything but a finite number above 0 is off, with a
-     * warning unless it is `0`. It starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.
+     * Terminates a guest that stops answering for this long, in ms; `0` is off, and anything but `0` or a finite number
+     * above 0 makes `start()` throw. It starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.
      * In cooperative mode it bounds a looping guest only where the browser runs the frame in its own process.
      *
      * @defaultValue `0` (off)
@@ -410,8 +421,8 @@ export interface SandboxConfigOptions {
     /**
      * Whether the element's height follows the guest's content height, from `ready` on; the height is validated,
      * clamped to {@link AUTO_RESIZE_MAX_HEIGHT} and changes at most {@link AUTO_RESIZE_MAX_UPDATES_PER_SECOND} times a
-     * second. Only a literal `true` enables it. Strict, sealed and cooperative mode; in worker mode it does nothing, with one
-     * warning.
+     * second. A value that is not a boolean makes `start()` throw, except in worker mode, where it does nothing (`true`
+     * with one warning). Strict, sealed and cooperative mode.
      *
      * @defaultValue `false`
      */
@@ -430,9 +441,9 @@ export interface SandboxConfigOptions {
      * and anything the parser does not understand admit nothing (docs/API.md#your-connect-src has the grammar).
      *
      * - A string is the enforced policy, exactly as served; several policies are separated by commas, as in a header. A
-     *   Report-Only policy is not passed. It is also what a browser without Trusted Types (Firefox, at the version
-     *   measured) reads the page's `require-trusted-types-for` and `trusted-types` from: with it, such a browser ends the
-     *   build and refuses `execute()` as the others do, and without it nothing is applied there
+     *   Report-Only policy is not passed. It is also what a browser without Trusted Types reads the page's
+     *   `require-trusted-types-for` and `trusted-types` from: with it, such a browser ends the build and refuses `execute()`
+     *   as the others do, and without it nothing is applied there
      *   (docs/API.md#trusted-types-without-the-browser).
      * - `false` says the page sends no Content-Security-Policy: the lists are kept as configured. A policy the page does
      *   send is then applied by the browser alone, and engines differ on what some of its sources admit.
@@ -446,16 +457,46 @@ export interface SandboxConfigOptions {
     /**
      * Whether the guest's `sandboxFiles.write()` and `remove()` are recorded as pending changes of the environment,
      * announced as `fileswritten`, listed by `listGuestWrites()` and applied only by
-     * `commitGuestWrites()`. Only a literal `true` enables it.
+     * `commitGuestWrites()`. A value that is not a boolean makes `start()` throw.
      *
      * @defaultValue `false`
      */
     guestWrites?: boolean;
     /**
+     * Strict and sealed mode only: the URLs the user's click on a link of the app's opens, each in a new tab with no
+     * opener and no referrer. The app writes an ordinary `<a href="…">` whose `href` is one of them, character for
+     * character; the element opens your own copy of the URL, so nothing of the guest's is part of what it opens.
+     * Ignored with a warning in other modes.
+     *
+     * @remarks
+     * Each entry is a string of at most 2048 characters that parses as a URL, has the scheme `https:`, has no user name
+     * or password, and is equal to its own serialisation (`new URL(entry).href === entry`), so that a URL has one
+     * spelling; at most {@link MAX_LINKS} entries, no two equal. A list that breaks a rule makes `start()` throw a
+     * `TypeError` whose message names the rule (the reason `linksRefused`), in every mode, and nothing of it is kept.
+     *
+     * The view marks an HTML `a` whose `href` is a listed URL, compared as strings with no parsing or normalising; an
+     * `area`, an SVG `a` and a MathML element are never marked, and every other `href` stays inert. A marked link's
+     * `href` in the view is the inert one too, so the status bar and "copy link address" do not show the URL (a listed
+     * URL as the `href` would reach its site on a press, before any click: docs/research/33_link_href). The request is
+     * the user's trusted `click` on a marked link or inside one, not on a form control inside it (Enter on a focused link
+     * is such a click; a middle click is not): the view sends the link's index in the list, and the element calls
+     * `window.open(url, '_blank', 'noopener,noreferrer')` in the task of that message, where the browser's popup blocker
+     * allows it for the click. The guest's worker has nothing to call. While a key is held, no click is a request, and
+     * the element opens at most {@link LINK_TABS_PER_SECOND} tabs in any one-second window. The app chooses which listed
+     * URL each link carries and how it looks, and which listed link is under the pointer or has the focus when the user
+     * acts (it can move the focus to a marked link at any time, and the user's next Enter in the view opens it): a user's
+     * click or Enter in the view is a choice the app can steer among the listed URLs, one per user action, sent to their
+     * sites with its time (docs/API.md#budgets). List only URLs you would let the app send the user to at any moment.
+     * The element cannot see a tab the browser blocked: with `noopener`, `window.open` returns `null` either way.
+     *
+     * @defaultValue none: no link opens
+     */
+    links?: readonly string[];
+    /**
      * The per-second budget of the calls the guest makes, per environment and in every mode. A call past it is refused
      * with `BUSY` by the guest's `bridge` before sending, and by the element if it arrives anyway. A field left out takes
-     * its default; one that is not a finite number of at least 1 takes it with one warning. There is no way to turn
-     * the budget off.
+     * its default; one that is not a finite number of at least 1, or a `callLimits` that is not an object, makes
+     * `start()` throw. There is no way to turn the budget off.
      *
      * @defaultValue `{ maxPerSecond: 1000, maxBytesPerSecond: 67108864 }`
      */
@@ -473,7 +514,7 @@ export interface CallLimits {
     /**
      * Most bytes of calls in any one-second window, each call's whole message measured as `call()`
      * measures it. A value below `RPC_MAX_BYTES` (33 MiB) also caps one call: a heavier call is refused with
-     * `ARGS_NOT_TRANSFERABLE`, with one warning at `setConfig()`.
+     * `ARGS_NOT_TRANSFERABLE`, with one warning at `start()`.
      *
      * @defaultValue `67108864` (64 MiB)
      */
@@ -483,13 +524,13 @@ export interface CallLimits {
 /**
  * Where the element is in its lifecycle; read it from `state`.
  *
- * - `'idle'`: constructed, or removed from the document. There is no frame.
+ * - `'idle'`: no app yet (`start()` was not called), or not in the document (constructed, removed). There is no frame:
+ *   an element with no app builds nothing, wherever it is, and is never `'terminated'`.
  * - `'loading'`: a frame was built and the guest has not checked in (without a bootstrap, the frame has not loaded).
  * - `'ready'`: the guest checked in and `ready` was dispatched. In cooperative mode the guest document may still be
- *   loading; its calls and `execute()` wait until it is parsed.
+ *   loading; its calls wait until it is parsed.
  * - `'terminated'`: torn down by `terminate()`, a budget (`watchdogTimeout`, `workerExecutionTimeout`),
- *   a frame check, or a build that failed. It stays so until `reset()`, `load()` or
- *   `setConfig()` builds a new environment.
+ *   a frame check, or a build that failed. It stays so until `reset()` builds a new environment.
  *
  * @remarks
  * There is deliberately no `'running'` state: nothing the guest reports could make it truthful. Lifecycle
@@ -498,25 +539,15 @@ export interface CallLimits {
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 
 // The configuration as the element keeps it, its modes and their refusal: src/lib/config-schema.ts (the config schema,
-// backlog S67), which declares every option once. Every option left out takes its default there, not its previous value.
+// backlog S67), which declares every option once. Every option left out takes its default there.
 
 // Texts of the host's own refusals, for people reading them. Code branches on the error's `code`
 // ('TERMINATED', set by the broker), never on these texts: a guest handler can throw the very same text,
 // and that call rejects with code 'HANDLER_ERROR' instead.
-const TERMINATED_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.";
+const TERMINATED_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was terminated. Call reset() to start it again.";
 const RESET_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was reset or terminated.";
 const IDLE_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox is not in the document. Call it once the element is inserted.";
-
-// What the bootstrap writes and registers for one build's guest markup (cooperative mode).
-interface GuestMarkupPlan {
-    // the markup cut into parts for the bootstrap to write (markup-references.ts), or null to embed it as written
-    parts: MarkupParts | null;
-    // the one import map (module graph): every registered JavaScript file, plus the guest's own
-    // inline maps merged (import-map.ts), or null when no JavaScript file is registered
-    importMap: { paths: string[]; guest: string | null } | null;
-}
-
-const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
+const NO_APP_CALL_MESSAGE = "[Sandbox] call() rejected: the element has no app. Call start() first.";
 
 // The sandbox flags of strict mode's view, always: scripts for its bootstrap, and forms so that `submit` reaches it, to be
 // forwarded to the worker's handlers and cancelled (research 15, P4: without allow-forms Chromium and Firefox dispatch no
@@ -530,64 +561,26 @@ const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode runs no script in `htm
 const SEALED_HTML_SCRIPT_WARNING = "[Sandbox] sealed mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
 // Every reason the element gives, and every line it dispatches itself, is the texts registry's (src/lib/reasons.ts).
-// What worker mode's frame may announce instead of a port (worker-bootstrap.ts), and the reason each ends the build with.
-const WORKER_FRAME_REFUSALS: Readonly<Record<string, string>> = Object.freeze(Object.assign(Object.create(null), {
-    'worker': reasonText('workerRefused'),
-    'trusted-types': reasonText('trustedTypes'),
-    'failed': reasonText('buildFailed', fixedDetail('Error')),
-}));
-
 // The reason each environment check ends the build with (environment-check.ts, S74): the element's own table, by the
 // check's id; what a bootstrap posts names a row, never a text.
 const ENVIRONMENT_REFUSALS: Readonly<Record<string, string>> = Object.freeze(Object.assign(Object.create(null), Object.fromEntries(
     Object.entries(ENVIRONMENT_CHECKS).map(([id, row]) => [id, reasonText(row.reason)]),
 )));
 
-// Plain data, compared as data (R1:R3-7): the same primitives, arrays and plain objects, key by key. Anything else (a
-// Date, a Map, a typed array) never compares equal, so a config holding one always rebuilds.
-// Each pair of objects is compared once (R2:C-7): a config is a structured clone, which keeps shared references, and
-// walking a shared object once per path to it would be exponential in the nesting. A pair already compared, or being compared, adds nothing:
-// were it different, the comparison already in progress or done answers so. At most SAME_DATA_MAX_PAIRS pairs are
-// compared; past that, and past a depth of 64, the configs count as different, which only costs a rebuild.
-export const SAME_DATA_MAX_PAIRS = 10000;
-function sameData(a: unknown, b: unknown): boolean {
-    const compared = new Map<object, Set<object>>();
-    const pending: [unknown, unknown, number][] = [[a, b, 0]];
-    let pairs = 0;
-    while (pending.length > 0) {
-        const [x, y, depth] = pending.pop()!;
-        if (Object.is(x, y)) continue;
-        if (depth > 64 || !x || !y || typeof x !== 'object' || typeof y !== 'object') return false;
-        const partners = compared.get(x) ?? new Set<object>();
-        if (partners.has(y)) continue;
-        if (++pairs > SAME_DATA_MAX_PAIRS) return false;
-        partners.add(y);
-        compared.set(x, partners);
-        const arrays = Array.isArray(x);
-        if (arrays !== Array.isArray(y)) return false;
-        if (!arrays && (Object.getPrototypeOf(x) !== Object.prototype || Object.getPrototypeOf(y) !== Object.prototype)) return false;
-        const keys = Object.keys(x);
-        if (keys.length !== Object.keys(y).length) return false;
-        for (const key of keys) {
-            if (!Object.hasOwn(y, key)) return false;
-            pending.push([(x as Record<string, unknown>)[key], (y as Record<string, unknown>)[key], depth + 1]);
-        }
-    }
-    return true;
-}
-
 // The first statement of every guest worker's source, worker mode and strict mode (VR:V1): the worker keeps only the allowlisted globals (worker-globals.ts) before any other script of the
 // library or the guest runs there, so every request guest code can make goes through an API the policy governs on
 // every engine. `global` is the expression for the global object in that source.
 // The call is an expression whose value is the worker's postMessage, which it deleted (worker-globals.ts); strict mode
 // runs it as a statement and keeps nothing of it.
-// Strict mode's worker keeps STRICT_WORKER_GLOBALS and STRICT_WORKER_NAVIGATOR_MEMBERS: no importScripts, which its policy
+// Strict mode's worker keeps STRICT_WORKER_GLOBALS (sealed mode's, SEALED_WORKER_GLOBALS) and STRICT_WORKER_NAVIGATOR_MEMBERS: no importScripts, which its policy
 // never lets load anything (S74), and none of the names only a secure context has, whose members removeSecureContextOnly
 // deletes next and whose isSecureContext it pins to false, so its surface is the same whatever the host page's URL and the
 // engine (class A: INHERITED_CONTEXT.secureContext; SECURE_CONTEXT_ONLY).
-const workerGlobalsCall = (global: string, globals: readonly string[], navigatorMembers: readonly string[] = WORKER_NAVIGATOR_MEMBERS) =>
+export const workerGlobalsCall = (global: string, globals: readonly string[], navigatorMembers: readonly string[] = WORKER_NAVIGATOR_MEMBERS) =>
     `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(globals)}, ${toInlineScriptLiteral(navigatorMembers)})`;
-const workerGlobalsStatement = (global: string, scriptUnsafe: boolean) => `${workerGlobalsCall(global, workerGlobalsFor(STRICT_WORKER_GLOBALS, scriptUnsafe), STRICT_WORKER_NAVIGATOR_MEMBERS)};`
+// Sealed mode's worker keeps SEALED_WORKER_GLOBALS, which has none of the request makers (fetch, XMLHttpRequest, WebSocket):
+// the names are gone before the bootstrap runs, which then has nothing to gate.
+const workerGlobalsStatement = (global: string, scriptUnsafe: boolean, sealed: boolean) => `${workerGlobalsCall(global, workerGlobalsFor(sealed ? SEALED_WORKER_GLOBALS : STRICT_WORKER_GLOBALS, scriptUnsafe), STRICT_WORKER_NAVIGATOR_MEMBERS)};`
     + `(${removeSecureContextOnly.toString()})(${global}, ${toInlineScriptLiteral(SECURE_CONTEXT_ONLY.members)});`;
 
 // The strict prelude's last statement, before the guest's entry, unless scriptUnsafe (code-from-strings.ts; BD6:ISO-1,
@@ -648,7 +641,7 @@ export const LOAD_TIMEOUT_MS = VIEW_LIVENESS_TIMEOUT_MS;
 // The features literal a bootstrap is given (in-sandbox-script.ts): the opt-in ones only when on, the call budget
 // always, the listeners of its rows in the egress table (egress.ts), and in worker and strict mode the budget of uncaught
 // errors and rejections.
-interface BootstrapFeatures {
+export interface BootstrapFeatures {
     autoResize?: true;
     fetchBridge?: { timeoutMs: number };
     externalPort?: true;
@@ -656,34 +649,9 @@ interface BootstrapFeatures {
     callBudget: CallBudget;
     listeners: BootstrapListener[];
     uncaught?: { count: number; characters: number };
-    connect: string[];
+    connect?: string[];
     sealed?: true;
     violationFields?: Readonly<Record<string, string | number>>;
-}
-
-// What the host posts to a strict view with its two ports (INIT_VIEW).
-interface StrictInit {
-    workerSource: string;
-    // The build's marker (entryDoneName): the worker's source ends the entry with its error, which tells the view the
-    // entry ran to its end, in the order of the Worker object's errors (backlog S75; in-sandbox-view.ts).
-    entryDone: string;
-    viewFiles: FileSnapshotEntry[];
-    html: string;
-    autoResize: boolean;
-    allowAnimations: boolean;
-    allowAutoplay: boolean;
-    // The origins the view's policy admits for the loads its markup makes, by kind key (R4:M-2): the
-    // renderer drops an http(s) URL outside them, so the browser never processes a refusal. Sealed mode has no
-    // origins, so its INIT_VIEW has no such field: the renderer then admits no http(s) URL at all.
-    origins?: { images: readonly string[]; media: readonly string[] };
-}
-
-// What a strict view's build takes of the network options (_prepareStrictFrame), and sealed mode's takes nothing of
-// (_prepareSealedFrame: null): the request gate's list, the origins the renderer admits, the bridge's timeout.
-interface ViewNetwork {
-    connect: string[];
-    origins: OriginPolicy;
-    fetchBridge: { timeoutMs: number } | null;
 }
 
 // The warning for a registered stylesheet the view of strict or sealed mode gets without the URLs it may not keep, or not
@@ -698,10 +666,6 @@ function viewStylesheetWarning(mode: 'strict' | 'sealed', path: string, urls: re
     return `${names}: CSS in the view loads registered files only (a load that CSS makes cannot be sent without cookies). Register the file instead, or show it with an element (<img>, <video>) from an origin listed in origins.`;
 }
 
-// The host page as the config's rules about it read it (config-schema.ts, NormaliseContext), read only when such a rule
-// asks: only the network options' rules do, and sealed mode runs neither (readIn), so a sealed config reads nothing of it.
-const readHostPage = (): NormaliseContext => ({ hostOrigin: hostPageOrigin(), hostSites: hostSiteOrigins() });
-
 // What the element extends: HTMLElement where there is a DOM. Importing the package must not need one (R2:C-8):
 // an embedder reads viewScriptHash() in a build step, in Node or Bun, and the class declaration is the only thing
 // evaluated at import that names a DOM interface. Without a DOM the class extends an empty one, which nothing constructs.
@@ -710,13 +674,13 @@ const readHostPage = (): NormaliseContext => ({ hostOrigin: hostPageOrigin(), ho
 const ElementBase: typeof HTMLElement = typeof HTMLElement === 'function' ? HTMLElement : (class {} as unknown as typeof HTMLElement);
 
 /**
- * The `<web-sandbox>` custom element: one sandboxed environment for untrusted web content, rebuilt by
- * `setConfig()`, `load()` and `reset()`. Register it with
- * {@link defineWebSandbox}.
+ * The `<web-sandbox>` custom element: one app, given once with `start()`, run in a sandboxed environment that
+ * `reset()` rebuilds. Register it with {@link defineWebSandbox}.
  *
  * @remarks
- * The element has no observed attributes and one property, `state`; everything else is set through its
- * methods. It builds an environment only while it is in the document of the window that defined it: moved into another
+ * The element has no observed attributes and two properties, `state` and `started`; everything else is done through
+ * its methods. An element with no app builds nothing and stays `'idle'`, wherever it is and whatever is called on it;
+ * another app is another element. It builds an environment only while it is in the document of the window that defined it: moved into another
  * document it tears its environment down and stays `'idle'` there, with one warning. Its events are listed in
  * {@link WebSandboxEventMap}. Reference: docs/API.md.
  */
@@ -732,14 +696,13 @@ export class WebSandbox extends ElementBase {
     // The lifecycle's state (src/lib/lifecycle.ts, LcState; backlog S65): `state`, the environment count (`gen`: every
     // teardown increments it), a build's 'terminated' waiting for its task (`pending`, R1:R3-2), the 'terminated' reasons
     // being dispatched (`dispatching`, R4:L-3), the one being dispatched when the last build started (`within`,
-    // R2:L-4: BR:CB5's no-repeat rule), the standing build's progress, how often what a build reads changed (setConfig(),
-    // load(), the files: `inputs`, R1:R3-7) and the refusal of the last setConfig() argument (`refused`). One value. The
-    // executor's `step` (module level, below) writes it, and nothing else does.
+    // R2:L-4: BR:CB5's no-repeat rule) and the standing build's progress. One value. The executor's `step` (module level,
+    // below) writes it, and nothing else does.
     private _lc: LcState = INITIAL_LIFECYCLE;
     private _watchdog: EnvironmentFields['_watchdog'] = null;
     private _resizer: EnvironmentFields['_resizer'] = null; // this environment's auto-sizing (BL:B6), or null when off
     private _autoHeight: string | null = null;   // the inline height auto-sizing last wrote on the element
-    private _fetchPolicy: FetchPolicy | null = null; // the validated fetchBridge config, or null when off (BL:B5)
+    private _fetchPolicy: object | null = null; // the validated fetchBridge config, the network modes' to read, or null when off (BL:B5)
     private _origins: OriginPolicy = NO_ORIGINS; // the parsed `origins` (ADR-007), what the guest policy admits
     private _fetchBridge: EnvironmentFields['_fetchBridge'] = null; // this environment's bridge: its requests end with it
     private _bridgeFrame: EnvironmentFields['_bridgeFrame'] = null; // the frame that makes this environment's bridge requests (BD1:ISO-1)
@@ -748,6 +711,10 @@ export class WebSandbox extends ElementBase {
     // environment's termination (closed, still listable and committable) and is discarded by the next build and on
     // removal (_discardGuestWrites).
     private _guestWrites: GuestWrites | null = null;
+    // Every GuestWrite this element's listGuestWrites() returned, to its entry: what commitGuestWrites() takes (I4).
+    // One map for the element's life, so a value of an earlier environment is this element's and stale, not foreign.
+    private readonly _mintedWrites: MintedWrites = new WeakMap();
+    private readonly _linkTabs = createLinkTabLimiter(); // the tabs this element opens for `links`, per second, for its life (LINK_TABS_PER_SECOND)
     private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
     private _logLimiter = createLogLimiter(); // guest 'sandbox-log' events per second for the current environment (sandbox-log.ts)
     // The per-second budget of the guest's calls (R3:M-2): what the config gives (the config schema, callBudgetOf), and this
@@ -764,10 +731,6 @@ export class WebSandbox extends ElementBase {
     // (_issue), or null outside one: _postRpc sends a call's frame only to the environment it was made in (R3:L-2).
     private _issuedIn: number | null = null;
     private _config: StoredConfig = defaultConfig();
-    // The setConfig() argument being applied, as its structured clone or what refused cloning it: setConfig() holds it
-    // for the executor's `applyConfig` effect (_configure), within its own call. Why the last argument could not be used
-    // is the reducer's (`_lc.refused`): while set, every build is refused with it, as for an unknown mode.
-    private _configuring: { copy: unknown; unusable: unknown } | null = null;
     private _port: EnvironmentFields['_port'] = null;     // the guest's port: the guest document's bootstrap, or the worker (logic port)
     private _viewPort: EnvironmentFields['_viewPort'] = null; // strict mode: the view's port (violations, resize, entry errors, liveness)
     private _viewWatchdog: EnvironmentFields['_viewWatchdog'] = null; // strict mode: the view liveness check (ADR-005)
@@ -781,28 +744,23 @@ export class WebSandbox extends ElementBase {
     // → that probe's end. A PONG to any of a probe's pings passes it.
     private _executionProbes: EnvironmentFields['_executionProbes'] = new Map();
     private _probePings = 0; // numbers the probes' pings: -1, -2, …
-    // What waits for the port while loading, in the order it was issued (R2:L-3): execute() code and the host's own RPC
-    // requests (cloned at call time), in one queue, so a call made before an execute() is sent before it.
+    // What waits for the port while loading, in the order it was issued (R2:L-3): the host's own RPC requests (cloned at
+    // call time) and, in a build with the network modes, execute() code, in one queue, so a call made before an execute()
+    // is sent before it.
     private _queue: ({ code: string } | { frame: unknown })[] = [];
     private _warned = new Set<string>(); // the warnings said, each once per element and text (_warnOnce)
     private _warnedForeignDocument = false; // inserted into a document of another realm (BR:CB7), once per instance
     private _warnedWrapperStyle = false;    // the host page's style-src refused the wrapper's style (R1:R3-1), once per instance
-    // The copy of the last usable setConfig() argument (R1:R3-7), compared as data with the next one; whether nothing else a
-    // build reads changed since is the reducer's (`_lc.lastInputs`, `_lc.inputs`).
-    private _lastConfig: { copy: unknown } | null = null;
     private _heightBeforeAuto: string | null = null; // the embedder's inline height before auto-sizing first wrote one (R1:R3-8)
-    private _exposedNames = new Set<string>(); // what expose() published, for the no-allow-scripts warning (R1:R3-4)
+    private _hasMethods = false; // the app's grants hold host methods, for the no-allow-scripts warning (R1:R3-4)
 
-    // Files are part of the environment: they live on the element, survive reset(), load(), setConfig()
-    // and terminate(), and every environment build takes a snapshot (_prepareBuild). See src/lib/files.ts.
+    // The app's files (start()): they live on the element, survive reset(), terminate() and removal, change only by a
+    // commit of guest writes, and every environment build takes a snapshot (_prepareBuild). See src/lib/files.ts.
     private _files = new FileStore();
 
-    // The broker's removal of exposed methods (unexpose()), handed out once when it is made: declared before it.
-    private _unexposeMethod: ((name?: string) => void) | null = null;
-
-    // One broker lives on the element for its whole life, so host-exposed methods persist across
+    // One broker lives on the element for its whole life, so the app's host methods persist across
     // frame recreation (the guest's broker is per-frame and resets with each new frame). Its send only
-    // ever carries the host's own requests: it queues them until a port exists, then setupChannel
+    // ever carries the host's own requests: it queues them until a port exists, then _setupChannel
     // flushes them. Answers to the guest never use it — they go back on the port the request arrived on.
     // Results go back with their snapshot's ArrayBuffers transferred (R2:C-3: rpc.ts, sendResult).
     // A guest's request past its environment's per-second budget is answered BUSY (R3:M-2: _admitGuestCall).
@@ -820,7 +778,6 @@ export class WebSandbox extends ElementBase {
                 console.warn(`[Sandbox] "${method.slice(0, 64)}" failed, and the other side received "${refusal}" in place of its error, which was:`, text);
             },
         },
-        takeUnexpose: (unexpose) => { this._unexposeMethod = unexpose; },
     });
 
     constructor() {
@@ -836,8 +793,8 @@ export class WebSandbox extends ElementBase {
         } catch {
             // an engine without constructed stylesheets: the embedder's CSS decides
         }
-        // The fetch bridge (BL:B5) and guest writes (BL:C5) are library methods under reserved names: expose() can never
-        // replace them. Each build registers both again, bound to that build's bridge and overlay
+        // The fetch bridge (BL:B5) and guest writes (BL:C5) are library methods under reserved names: no host method of
+        // the grants can replace them (start() refuses the prefix). Each build registers both again, bound to that build's bridge and overlay
         // (_startFetchBridge, _startGuestWrites); until the first build, none: every request is refused.
         this._exposeFetch(null);
         this._exposeGuestWrites(null);
@@ -851,14 +808,91 @@ export class WebSandbox extends ElementBase {
         return this._lc.state;
     }
 
+    /**
+     * Whether `start()` has given this element its app: `true` from its first success on, for the rest of the element's
+     * life. `state` cannot say it, since a new element and one with its app outside the document both read `'idle'`.
+     *
+     * @remarks
+     * A framework set-up does not branch on it to restart an element: an element that has an app may hold another app
+     * than the one you mean. Let the set-up own its element: create it, `start()` it and append it, and remove it in the
+     * clean-up, with the app and the grants as the set-up's dependencies.
+     */
+    get started(): boolean {
+        return this._lc.started;
+    }
+
+    /**
+     * Gives the element its app, once: the app's own content and what you allow it, validated whole before anything is
+     * stored. It builds at once while the element is in the document, otherwise when it is inserted.
+     *
+     * @remarks
+     * - **Two arguments.** `app` is what the app's author wrote (`html`, `entry`, `files`) and may come from data;
+     *   `grants` is yours (the host methods, `guestWrites`, `capabilities` and every other option). Each refuses a key of
+     *   the other and any key it does not know, so an app read from data carries no grant by accident. A grant is
+     *   whatever you pass as the second argument: nothing stops you from passing a stored manifest there, which hands its
+     *   author the grants.
+     * - **All or nothing.** Every option is checked for its shape and type, the files as one batch (see
+     *   {@link SandboxApp}), an `entry` against the files given (in strict and sealed mode it must name a JavaScript file
+     *   of them), and each method. A refusal throws and leaves the element as it was: without an app, so a corrected one
+     *   can be started on it. What needs a parse of the guest's code (an `import()` in the entry) still ends the build,
+     *   with its reason.
+     * - **Copied.** The options are copied (structured clone), the files into the element's own store, the methods into
+     *   a frozen record: changing your objects afterwards changes nothing.
+     * - **Once.** A second call throws, whatever the element's state, and changes nothing; `started` is `true` from the
+     *   first success on. Reading the arguments may run your code (a getter, a `Proxy`): of two calls that overlap this
+     *   way, the one that finishes validating first binds and the other throws.
+     * - **Its lifecycle.** `reset()` rebuilds the same app, with its files as they are now, committed writes included;
+     *   `terminate()` ends it, and a later `reset()` starts it again; removing the element ends its environment and
+     *   inserting it again builds the same app. Until `start()` is called the element builds nothing: inserted, reset
+     *   or terminated, it stays `'idle'`.
+     *
+     * @param app - The app: its markup, its entry and its files; see {@link SandboxApp}.
+     * @param grants - What the embedder allows it: its host methods and options; see {@link SandboxGrants}. None when
+     * left out.
+     * @throws A `TypeError` for a second call, an argument that is not an object, a key of the other argument or one
+     * neither takes, an option of the wrong shape or type, a mode or an option this build does not have (in the default
+     * build an option of the network modes, with the reason of the `networkModesOff` termination), an `entry` that names
+     * no JavaScript file of `files`, or a method that is not a function or whose name is longer than 256 characters
+     * or starts with `sandbox:`; a
+     * {@link FileError} with `code` `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED` for the files. Nothing is
+     * stored then.
+     */
+    start(app: SandboxApp, grants?: SandboxGrants): void {
+        if (this._lc.started) throw alreadyStarted();
+        const values = readStart(app, grants, networkModes()?.readHostPage ?? NO_HOST_PAGE);
+        this._bind(values);
+        for (const message of values.warnings) this._warnOnce(message);
+        // the build of the app just bound, as reset() starts one
+        step(this, { t: 'build', ctx: this._buildContext() });
+    }
+
+    // The binding (I1): the check that the element has no app and the store of what start() validated, one step with no
+    // code of the embedder's in it (no getter, no listener, no console), so that a start() the reading of the arguments
+    // ran finds the element bound, or is the one that bound it. The reducer holds the binding (`_lc.started`): its `start`
+    // input is stepped here, after the stores, and runs no effect. The configuration, the files and the host methods are
+    // the app's from here on, for the element's whole life.
+    private _bind({ normalised, files, methods }: StartValues) {
+        if (this._lc.started) throw alreadyStarted();
+        this._config = normalised.config;
+        this._fetchPolicy = normalised.fetchPolicy;
+        this._origins = normalised.origins;
+        this._callBudget = normalised.callBudget;
+        this._files = files;
+        for (const [name, method] of Object.entries(methods)) {
+            this._broker.expose(name, method);
+            this._hasMethods = true;
+        }
+        step(this, { t: 'start' });
+    }
+
     // The lifecycle callbacks call module-level functions (connected, disconnected, adopted below), never a method
     // looked up on the element (BR:CB7): Firefox gives an element adopted into another document that document's
     // HTMLElement prototype, so `this.initialize` and `this._teardown` are gone there; a method call would throw, and the
     // guest would keep running with nothing left that could end it.
     /**
      * Custom element reaction: the browser calls it when the element is inserted into a document. It builds an
-     * environment from the current configuration (see `state`) where the element may build one;
-     * nothing is dispatched synchronously.
+     * environment of the element's app (see `state`) where the element may build one, and nothing for an element with
+     * no app; nothing is dispatched synchronously.
      */
     connectedCallback() {
         connected(this);
@@ -888,12 +922,12 @@ export class WebSandbox extends ElementBase {
 
     /**
      * Removes the frame now, sets `state` to `'terminated'` and dispatches `terminated` with `{ reason }`. Pending calls
-     * reject with `TERMINATED` and later calls are refused at once. The sandbox stays terminated until
-     * `reset()`, `load()` or `setConfig()` builds a new environment.
+     * reject with `TERMINATED` and later calls are refused at once. The sandbox stays terminated until `reset()`
+     * builds a new environment of the same app.
      *
      * @remarks
-     * Calling it while terminated does nothing, so `terminated` fires once per termination. The reason is also written to
-     * the console as a warning.
+     * Calling it while terminated does nothing, so `terminated` fires once per termination; so does calling it on an
+     * element with no app, which stays `'idle'`. The reason is also written to the console as a warning.
      *
      * @param reason - Why, as the `terminated` event reports it; `'terminated by the host'` when left out. A value that
      * is not a string, or is empty or only white space, is replaced by that default.
@@ -905,152 +939,20 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Rebuilds the environment now, from any state (terminated included): a fresh frame with a fresh opaque origin, the
-     * current configuration and a new snapshot of the files. Methods the guest exposed are gone, methods exposed with
-     * `expose()` stay, and pending calls reject with `TERMINATED`. Wait for `ready` before relying on the
-     * new environment. Outside the document it builds nothing until the element is inserted.
+     * Rebuilds the environment of the same app now, from any state (terminated included): a fresh frame with a fresh
+     * opaque origin and a new snapshot of the app's files, committed writes included. Methods the guest exposed are
+     * gone, the host methods of the grants stay, and pending calls reject with `TERMINATED`. Wait for `ready` before
+     * relying on the new environment. Outside the document it builds nothing until the element is inserted, and on an
+     * element with no app it does nothing.
      */
     reset(): void {
-        step(this, { t: 'build', why: 'reset', ctx: this._buildContext() });
+        step(this, { t: 'build', ctx: this._buildContext() });
     }
 
     /**
-     * Replaces the configuration and rebuilds the environment now (while the element is in the document).
+     * The app's files, committed writes included, sorted by path.
      *
-     * @remarks
-     * - The configuration is applied over the defaults, not over the previous one: an option left out returns to its
-     *   default, `html` included, so a `setConfig()` after `load()` starts with an empty document unless
-     *   it passes `html` again.
-     * - The argument is copied (structured clone) before anything reads it; changing your objects afterwards changes
-     *   nothing, not even at the next `reset()`.
-     * - Values that cannot be used (an entry that is not allowed, a list option that is not a list, an `html` that is not
-     *   a string) are dropped with one `console.warn` per element and message, and never applied half-way.
-     * - The configuration the environment already stands on, set again, changes nothing: no rebuild and no event, so read
-     *   `state` rather than wait for `ready`. Anything a build reads that changed since (`load()`, the files) rebuilds as
-     *   usual.
-     * - A config that cannot be used at all (not an object, not cloneable such as a `Proxy` or a function value, an
-     *   `origins` that is not an object or has a kind that is not a list) applies nothing and the previous config stays: the
-     *   sandbox terminates, and stays terminated until a usable config is set. A build that fails terminates it too.
-     * - It never throws. `state` is `'terminated'` when it returns after a refusal; the `terminated` event of a refused
-     *   build comes in a task of its own, like `ready`, and not at all if another build started meanwhile.
-     *
-     * @param config - The new configuration; see {@link SandboxConfig}.
-     */
-    setConfig(config: SandboxConfig) {
-        // A config the element cannot use is a termination with a reason, never a throw that leaves the old
-        // environment torn down and no new one built (S26): the reducer refuses every build
-        // while its refusal stands (`_lc.refused`), as it does for an unknown mode (AR:A4), until a usable config
-        // arrives. Nothing of a refused config is applied.
-        //
-        // One structured clone of the whole argument before anything reads it: every check, and every later build,
-        // reads this copy, never the caller's objects. So an array the caller changes after setConfig() never changes
-        // the policy a later reset() builds, and a getter or a Proxy cannot answer two reads differently (AR:A6).
-        // What cannot be cloned (a Proxy, a function, a DOM node) throws here, and refuses the config.
-        let copy: unknown;
-        let unusable: unknown = null;
-        try {
-            copy = structuredClone(config);
-        } catch (error) {
-            unusable = error;
-        }
-        // The configuration the environment was built from, again, while that environment stands (R1:R3-7):
-        // nothing to change, so nothing is rebuilt (an embedder that applies its config on every edit, as the
-        // playground does, keeps its guest). Anything a build reads changed since (load(), the files) builds as usual.
-        // The comparison of the data is the host's (`same`); the rest of the no-op rule is the reducer's (`setConfig`),
-        // and decides it before anything of the argument is applied. Otherwise the executor applies the copy
-        // (`applyConfig`: _configure), then builds from it.
-        const same = unusable === null && this._lastConfig !== null && sameData(copy, this._lastConfig.copy);
-        this._configuring = { copy, unusable };
-        try {
-            step(this, { t: 'setConfig', same });
-        } finally {
-            this._configuring = null;
-        }
-    }
-
-    // The executor's `applyConfig` effect: the argument setConfig() holds, applied (_applyConfig), and its refusal, or null.
-    // The reducer stores the refusal and starts the build from it (`configured`).
-    private _configure(): string | null {
-        const { copy, unusable } = this._configuring!;
-        try {
-            if (unusable !== null) throw unusable;
-            this._applyConfig(copy);
-            this._lastConfig = { copy };
-            return null;
-        } catch (error) {
-            this._lastConfig = null;
-            // a refusal with a reason of its own (a sealed config that names a network option) is that reason alone
-            if (error instanceof ConfigRefusal) return error.reason;
-            // an `origins` of the wrong type names the option, in a fixed text of the library's (BD3:NEW-3)
-            return reasonText('configRefused', joinDetails(errorName(error), refusalDetail(error)));
-        }
-    }
-
-    // Stores one setConfig() argument, already copied (setConfig), as the config schema normalised it
-    // (src/lib/config-schema.ts, normaliseConfig: every option's rule and the cross-field ones, decided there once).
-    // Throws what refused a config that cannot be used; then nothing is stored. Its warnings are said first, once per
-    // element and message (the same config is set again and again: the playground applies it on every edit), those of
-    // a refused config too, up to what refused it; only a config that passed every check is stored, last (FR:F6).
-    private _applyConfig(copy: unknown) {
-        const { value, warnings, refusal } = normaliseConfig(copy, readHostPage);
-        for (const message of warnings) this._warnOnce(message);
-        if (value === null) throw refusal;
-        this._config = value.config;
-        this._fetchPolicy = value.fetchPolicy;
-        this._origins = value.origins;
-        this._callBudget = value.callBudget;
-    }
-
-    /**
-     * Adds or replaces files in the element's store. The guest sees them from the next environment build on
-     * (`reset()`, `load()` or `setConfig()`), never in a guest already
-     * running. Files survive every rebuild and `terminate()`.
-     *
-     * @remarks
-     * - The whole batch is validated first. It fires `fileschanged` when something changed; registering identical content
-     *   again changes nothing.
-     * - A path is relative (`src/main.js`): segments of letters, digits and the characters of `._~!$&'()*+,;=@-`,
-     *   separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised;
-     *   a refusal's message names the rule the path breaks.
-     * - A file's type comes from its extension (`.js` and `.mjs` `text/javascript`, `.css` `text/css`, `.json`
-     *   `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4` and the like); an unknown extension is
-     *   `application/octet-stream`.
-     * - A reference names a file only for the kind of load its type is for: `<script src>`, `modulepreload`,
-     *   `preload as=script` and module imports only JavaScript types; a stylesheet `<link>`, `preload as=style` and
-     *   `@import` only `text/css`; `img`, `srcset`, `poster`, icon links and CSS `url()` only `image/*`; `url()` in
-     *   `@font-face` and `preload as=font` only `font/*`; `audio`, `video` and `source` only `audio/*` and `video/*`;
-     *   `track` only `text/vtt`. A reference to a file of another type stays as written and fails closed, with one
-     *   warning (strict and sealed mode's view drops it: docs/API.md#the-url-rule). This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
-     *   script. Code that passes `sandboxFiles.url()` to a script element or `importScripts()` itself decides what it
-     *   loads (Chromium runs such a file whatever its type; Firefox and WebKit refuse it in `importScripts()`).
-     * - How the guest names files (markup, module imports, stylesheets) is described in the README's Files section; why:
-     *   ADR-004.
-     *
-     * @param files - The files by path. An entry is a `string` (stored as UTF-8), a `Uint8Array` (copied), or
-     * `{ content, type }` to set the MIME type instead of deriving it from the extension.
-     * @throws A {@link FileError} with `code` `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED`. The whole batch is
-     * validated first, so a refusal changes nothing.
-     */
-    registerFiles(files: Record<string, FileEntry>): void {
-        this._dispatchFilesChanged(this._files.register(files));
-    }
-
-    /**
-     * Removes files from the store. Like `registerFiles()`, it takes effect at the next environment
-     * build. Fires `fileschanged` when something was removed.
-     *
-     * @param paths - The paths to remove; every file when left out. A path that is not registered is ignored.
-     * @throws A {@link FileError} with `code` `INVALID_PATH` for an invalid path (or `paths` that is not an array); nothing
-     * is removed then.
-     */
-    unregisterFiles(paths?: string[]): void {
-        this._dispatchFilesChanged(this._files.unregister(paths));
-    }
-
-    /**
-     * The registered files, sorted by path.
-     *
-     * @returns One {@link FileInfo} per file: its path, its MIME type and its size in bytes as registered.
+     * @returns One {@link FileInfo} per file: its path, its MIME type and its size in bytes as stored.
      */
     listFiles(): FileInfo[] {
         return this._files.list();
@@ -1060,51 +962,63 @@ export class WebSandbox extends ElementBase {
      * The guest's pending writes and removals (see `guestWrites` and docs/API.md#guest-writes), sorted by path. They belong
      * to the current environment; how long they live is stated once, at docs/API.md#guest-writes-lifetime.
      *
-     * @returns One {@link GuestWrite} per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
-     * (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
-     * `guestWrites` is off.
+     * @returns One {@link GuestWrite} per path with a pending change, each a fresh frozen object: `{ path, change: 'write', type, size, content }`
+     * (`type` the library's for the path's extension, `content` the bytes as a {@link GuestBytes}: `bytes()` a copy, `image()`
+     * and `save()` the safe ways to show and to download them) or `{ path, change: 'remove' }`. Empty while
+     * `guestWrites` is off. Each value is what `commitGuestWrites()` takes: the element knows the values it returned,
+     * by identity.
      */
     listGuestWrites(): GuestWrite[] {
         return this._guestWrites?.list() ?? [];
     }
 
     /**
-     * Applies the guest's pending changes at `paths` to the files, atomically, as one `registerFiles()` or
-     * `unregisterFiles()` would, and removes them from the pending list. The guest sees committed files
-     * from the next build on. Fires `fileschanged` when the files changed.
+     * Applies the given values of `listGuestWrites()` to the app's files, all or none, if each is still what is pending at
+     * its path, and removes them from the pending list. The guest sees committed files from the next build on. Fires
+     * `fileschanged` when the files changed.
      *
      * @remarks
+     * - It commits exactly what you were handed: each value commits the change it was listed from, never what the
+     *   guest wrote at its path since, and the bytes stored are the ones listed (changing a value's `content` changes
+     *   nothing). The element knows the values it returned by identity, so a copy of one is not one, and a value of
+     *   another element is not either.
+     * - A value is stale when its change is not its path's pending change now: the guest wrote or removed at the path again, the
+     *   change was committed, or a build (`reset()`, the element's re-insertion) discarded the pending writes. If any value
+     *   is stale, nothing is committed and it returns `false`: list again, check again, and commit the new values. Files you
+     *   checked as a set are never committed in part.
      * - A write whose type is not inert is refused with `FILES_NOT_ALLOWED` unless `options.code` is `true`. Inert types
-     *   are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the exact list is in
-     *   `INERT_TYPES`, src/lib/guest-writes.ts). JavaScript, HTML, SVG, XML, WebAssembly, unknown types and any other type
-     *   the guest set can run or be parsed as code. The type checked is the one the file will be loaded as, never just its
-     *   name.
+     *   are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the inert rows of the one
+     *   type table, `FILE_TYPES`, src/lib/files.ts). JavaScript, HTML, SVG, XML, WebAssembly and any extension the table
+     *   does not have can run or be parsed as code.
      * - All checks come first, the quota included (with what module and stylesheet rewrites add, against the files as they
      *   are now), so a refusal changes neither the files nor the pending list.
-     * - It commits what is pending now, not what `listGuestWrites()` showed earlier. To commit exactly what you validated, list,
-     *   validate and commit in one synchronous task (the guest's writes arrive in tasks of their own), or register your own
-     *   copy of the validated bytes with `registerFiles()` when validating has to wait.
-     * - The type is the guest's claim, and so is the name: a file named `evil.html` written with the type `image/png`
-     *   commits without `code`, and the library loads it only as an image. If you store or serve the bytes elsewhere, choose
-     *   the name and the type yourself.
-     * - A committed file loads only as what its type is for (see `registerFiles()`): an inert file never runs as a script.
+     * - A write's type is a function of its path (I8): the guest gives a path and bytes, never a type, so the type and the
+     *   name agree. A write to `evil.html` is an HTML file and needs `code` to commit. The name is still the guest's: if you
+     *   store or serve the bytes elsewhere, choose the name yourself.
+     * - A committed file loads only as what its type is for (see {@link SandboxApp}): an inert file never runs as a script.
      *   Committed `text/css` is inert but still CSS: markup of the next build that links it is styled by it.
      *
-     * @param paths - The paths to commit; required, since there is no "commit everything". A path with no pending change
-     * is skipped.
+     * @param writes - The values to commit, each one this element's `listGuestWrites()` returned; required, since there is
+     * no "commit everything". An empty list commits nothing and returns `true`.
      * @param options - `code: true` allows the writes whose type is not inert.
-     * @throws A {@link FileError} with `code` `INVALID_PATH`, `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`.
+     * @returns `true` when every value was current and all were committed; `false` when one was stale, and nothing was
+     * committed.
+     * @throws A `TypeError` when `writes` is not an array or holds a value this element did not return (a copy included),
+     * before anything is committed. A {@link FileError} with `code` `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`; then
+     * nothing is committed.
      */
-    commitGuestWrites(paths: string[], options?: { code?: boolean }): void {
-        const { paths: checked, code } = parseCommitArguments(paths, options);
-        if (!this._guestWrites) return;
-        this._dispatchFilesChanged(this._guestWrites.commit(checked, code));
+    commitGuestWrites(writes: readonly GuestWrite[], options?: { code?: boolean }): boolean {
+        const { entries, code } = parseCommitArguments(writes, options, this._mintedWrites);
+        if (!this._guestWrites) return entries.length === 0; // no overlay: none of this element's values is current
+        const changed = this._guestWrites.commit(entries, code);
+        if (changed === null) return false;
+        this._dispatchFilesChanged(changed);
+        return true;
     }
 
     // Synchronous, once per call that changed something.
     private _dispatchFilesChanged(paths: string[]) {
         if (paths.length === 0) return;
-        step(this, { t: 'filesChanged' }); // what a build reads changed (R1:R3-7: the same config again rebuilds now)
         this.dispatchEvent(elementEvent('fileschanged', { paths }));
     }
 
@@ -1116,7 +1030,7 @@ export class WebSandbox extends ElementBase {
     // `built` is the copy of the store this build delivers (_prepareBuild): the overlay answers the guest from it, so
     // nothing registered after the build shows through a write's answer or its quota (BR:CB4).
     private _startGuestWrites(built: FileStore) {
-        this._guestWrites = this._config.guestWrites === true ? createGuestWrites({ store: this._files, built }) : null;
+        this._guestWrites = this._config.guestWrites === true ? createGuestWrites({ store: this._files, built, minted: this._mintedWrites }) : null;
         this._exposeGuestWrites(this._guestWrites);
     }
 
@@ -1176,177 +1090,10 @@ export class WebSandbox extends ElementBase {
         port.postMessage({ type: 'VIEW_WRITE', id, ...change }, change.bytes ? [change.bytes.buffer] : []);
     }
 
-    // One guest change the host recorded: dispatched on the element and bubbling, like the other events a guest
-    // causes. At most GUEST_WRITES_PER_SECOND per environment (guest-writes.ts).
+    // One guest change the host recorded: dispatched on the element, not bubbling, like the other events that carry guest
+    // data (ELEMENT_EVENTS; I5). At most GUEST_WRITES_PER_SECOND per environment (guest-writes.ts).
     private _dispatchFilesWritten(path: string) {
         this.dispatchEvent(elementEvent('fileswritten', { paths: [path] }));
-    }
-
-    /**
-     * Sets `html` (the guest document, or the initial view in sealed and strict mode), keeps the rest of the configuration and
-     * rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still
-     * rebuilds.
-     *
-     * @remarks
-     * In sealed and strict mode, markup longer than {@link VIEW_RENDER_MAX_LENGTH} characters is not stored: the build
-     * ends with the reason `html is longer than … characters`, and the element keeps the html it had, as `setConfig()`
-     * refuses such an `html`.
-     *
-     * @param html - The markup, as for the `html` option of {@link SandboxConfigOptions}.
-     */
-    load(html: string) {
-        // checked before it is stored (BD7:LIM-3): markup longer than the view takes refuses the build with its reason, as
-        // setConfig() refuses it, and the element keeps the html it had
-        const refusal = htmlRefusal(this._config.mode, html);
-        if (refusal === null) this._config.html = html;
-        step(this, { t: 'build', why: 'load', ctx: this._buildContext(refusal?.reason ?? null) }); // the reducer counts the change of `html`
-    }
-
-    /**
-     * Runs `code` in the guest's global scope as the body of a function: in the guest document in cooperative mode, in
-     * the worker in worker, strict and sealed mode. It is compiled with the `Function` the bootstrap captured before any guest
-     * code ran. Nothing reaches the host: no return value and no report that it returned.
-     *
-     * @remarks
-     * - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
-     * - While the element is `'idle'` (not in the document) or `'terminated'` there is no environment: it warns and does
-     *   nothing, where `call()` rejects.
-     * - While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the
-     *   guest document is parsed (see docs/API.md#ready-and-the-startup-gate), in order with calls.
-     * - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
-     * - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
-     *   the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a
-     *   handler guest code cannot reach, and only a free event loop can run it. No answer within
-     *   {@link EXECUTION_TIMEOUT_GRACE_MS} terminates the sandbox.
-     * - Code that is still running at the deadline, or that returned but left work running then (a loop in a
-     *   `setTimeout`), is terminated. Code that ran to its end and left the loop free stays ready, whatever it scheduled
-     *   for later.
-     * - Several calls each have their own deadline, and every deadline checks the one event loop: a loop started by any
-     *   code ends the sandbox at the first deadline it blocks.
-     * - A loop that starts after the last deadline is not bounded by it: `watchdogTimeout` checks the event loop
-     *   continuously and covers that case.
-     *
-     * @param code - The function body to run.
-     */
-    execute(code: string) {
-        if (typeof code !== 'string') {
-            console.warn("[Sandbox] execute() ignored: code must be a string.");
-            return;
-        }
-        if (!this._config.scriptUnsafe) {
-            console.warn("[Sandbox] execute() blocked: scriptUnsafe is false. Enable it in config to run arbitrary code.");
-            return;
-        }
-        // One rule for work handed to the guest (BL:B8): it belongs to an environment, and while idle or
-        // terminated there is none. execute() warns and does nothing; call() rejects at once with TERMINATED.
-        // (Code queued while idle would be dropped silently by the build on insertion.)
-        if (this._lc.state === 'terminated' || this._lc.state === 'idle') {
-            console.warn(`[Sandbox] execute() ignored: the sandbox ${this._lc.state === 'idle' ? 'is not in the document' : 'was terminated'}. Call it once the element is in the document and not terminated (reset(), setConfig() or load() start a new environment).`);
-            return;
-        }
-
-        // Before `ready` it waits, even with a port (strict mode has one from the wrapper's load): the `flush` effect posts it.
-        if (this._port && this._lc.state === 'ready') {
-            this._postExecute(this._port, code);
-        } else {
-            this._queue.push({ code });
-        }
-    }
-
-    // One EXECUTE frame, with its budget armed first.
-    private _postExecute(port: MessagePort, code: string) {
-        // where the browser has no Trusted Types: the page requires them for scripts, so a string is not evaluated (as the guest's own sink refuses it where it has them)
-        const trustedTypes = this._trustedTypes();
-        if (trustedTypes && executeRefused(trustedTypes)) {
-            console.warn("[Sandbox] execute() refused: the host page requires Trusted Types for scripts (require-trusted-types-for 'script'), so a string is not evaluated (docs/API.md#host-page-policy).");
-            return;
-        }
-        this._armExecutionBudget();
-        port.postMessage({ type: 'EXECUTE', code });
-    }
-
-    /**
-     * Publishes a host method the guest calls with `bridge.call(name, ...args)`. The guest receives the handler's return
-     * value (awaited if it is a promise), copied: a typed array or `DataView` that covers part of its buffer arrives
-     * with a buffer that holds exactly its bytes.
-     *
-     * @remarks
-     * What a failure tells the guest: a throw or rejection reaches it as `HANDLER_ERROR`, and its text is
-     * your own words only. The guest receives the message of a plain `Error` your code made (`throw new Error(text)`,
-     * whose prototype is this window's `Error.prototype`) or a thrown string, verbatim up to 65536 characters (a longer
-     * one is cut, and ends `[… cut at 65536 characters]`): put nothing in it you would not show the guest. An error of the
-     * library's that the handler lets through (a refusal of `registerFiles()`, `unregisterFiles()` or
-     * `commitGuestWrites()`, of its own `call()` to this guest or another element's, a `TypeError` of `expose()`) arrives
-     * as its code and the library's fixed text for that code (`INVALID_PATH: …`; `the method failed (TypeError)` for one
-     * without a code), never its message, which quotes what you gave the library or what another app answered. Any other
-     * throw (an engine's `TypeError` or `SyntaxError` from `JSON.parse`, a `DOMException`, a subclass of `Error`, an error
-     * from another window, an object) arrives as `the method failed (<name>)` with its name only, because an engine's
-     * message quotes the data it was handling. A result that cannot be copied is refused `RESULT_NOT_TRANSFERABLE` with
-     * the library's own text. Each text the guest does not receive is written to this page's console with
-     * `console.warn`, once per call.
-     *
-     * Methods belong to the element: they survive `reset()`, `load()`,
-     * `setConfig()` and `terminate()`, until `unexpose()` removes them. A handler that started keeps running after
-     * `terminate()`, `reset()` or `setConfig()`: only its answer is dropped. One that writes should check a flag you set
-     * when you stop the app, right before the write. Exposing a name again replaces its handler. Names that
-     * start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
-     * validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
-     * survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
-     * `eval`, template or `console` format-string sink.
-     *
-     * @param name - The method name, a string of at most 256 characters.
-     * @param fn - The handler; its arguments come from the guest by structured clone.
-     * @throws A `TypeError` if `name` is not a string or is longer than 256 characters, or `fn` is not a function.
-     */
-    expose(name: string, fn: (...args: any[]) => unknown): void {
-        // A name that is not a string, or a handler that is not a function, is a mistake to say at once (R1:R3-9): ignored,
-        // it would fail the guest's call with UNKNOWN_METHOD far from the cause.
-        if (typeof name !== 'string') throw mintUncodedError(TypeError, '[Sandbox] expose(): the name must be a string');
-        // the broker's longest method name (rpc.ts, R3:C-1): a longer one could never be called
-        if (name.length > 256) throw mintUncodedError(TypeError, `[Sandbox] expose(): the name "${name.slice(0, 64)}…" is longer than 256 characters`);
-        if (typeof fn !== 'function') throw mintUncodedError(TypeError, `[Sandbox] expose(): the handler for "${name.slice(0, 64)}" must be a function`);
-        if (name.startsWith(RESERVED_METHOD_PREFIX)) {
-            console.warn(`[Sandbox] expose(): names starting with "${RESERVED_METHOD_PREFIX}" are reserved for the library; "${name}" was not exposed.`);
-            return;
-        }
-        this._broker.expose(name, fn);
-        this._exposedNames.add(name);
-    }
-
-    /**
-     * Removes host methods published with `expose()`: the named ones, or every one when `names` is left out. A guest call
-     * to a removed name is then refused `UNKNOWN_METHOD`, with the same text as a name that was never exposed, so the
-     * guest cannot tell the two apart.
-     *
-     * @remarks
-     * Use it, with `unregisterFiles()`, before one element runs another app: methods and files belong to the element,
-     * not to the app it runs. A call that already reached the element runs to completion and is answered;
-     * only calls that arrive after `unexpose()` are refused. A name that is not exposed is ignored. Names that start with
-     * `sandbox:` are reserved for the library: they are never removed, and naming one is refused with a warning, as
-     * `expose()` refuses it.
-     *
-     * @param names - A method name or a list of names; every host-exposed method when left out.
-     * @throws A `TypeError` if `names` is neither a string nor an array of strings; nothing is removed then.
-     */
-    unexpose(names?: string | readonly string[]): void {
-        const unexpose = this._unexposeMethod!;
-        if (names === undefined) {
-            unexpose();
-            this._exposedNames.clear();
-            return;
-        }
-        const list: unknown[] = typeof names === 'string' ? [names] : Array.isArray(names) ? [...names] : [names];
-        for (const name of list) {
-            if (typeof name !== 'string') throw mintUncodedError(TypeError, '[Sandbox] unexpose(): names must be a string or an array of strings');
-        }
-        for (const name of list as string[]) {
-            if (name.startsWith(RESERVED_METHOD_PREFIX)) {
-                console.warn(`[Sandbox] unexpose(): names starting with "${RESERVED_METHOD_PREFIX}" are reserved for the library; "${name.slice(0, 64)}" was not removed.`);
-                continue;
-            }
-            unexpose(name);
-            this._exposedNames.delete(name);
-        }
     }
 
     /**
@@ -1357,19 +1104,21 @@ export class WebSandbox extends ElementBase {
      * - Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on
      *   both sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`)
      *   and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure knows primitives, plain objects and arrays, `Map`,
-     *   `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, `Blob` and `File`, and `String`, `Number`,
-     *   `Boolean` and `BigInt` objects. Any other value (an `Error`, an `ImageData` or another platform object, a
-     *   `SharedArrayBuffer`) is refused the same way, with a message that names the value rather than the budget; send what
-     *   you need of it instead: an error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole
-     *   message is counted, the method name included, and a name is at most 256 characters (`INVALID_CALL`).
+     *   `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, and `String`, `Number`, `Boolean` and `BigInt`
+     *   objects. Any other value (a `Blob` or a `File`, an `Error`, an `ImageData` or another platform object, a
+     *   `SharedArrayBuffer`) is refused the same way, at any depth, with a message that names the value rather than the
+     *   budget; send what you need of it instead: an image's `data`, `width` and `height`, a file's bytes, an error's
+     *   `{ name, message, stack }`. The whole message is counted, the method name included, and a name is at most 256
+     *   characters (`INVALID_CALL`).
+     * - A `Blob` or a `File` crosses in neither direction (I7): a `blob:` URL made of one in your page is a document of your
+     *   origin, so no value of the guest's carries one to your code. The guest sends bytes, and you decide what they are.
      * - A typed array or `DataView` crosses as what it shows, at any depth and in both directions: one that covers part
      *   of its buffer (`byteOffset` not 0, or `byteLength` less than its buffer's) arrives as the same kind of view over a
      *   new buffer that holds exactly its bytes, and one that covers its whole buffer crosses with that buffer. So
      *   `heap.subarray(ptr, ptr + n)` sends `n` bytes, never the rest of `heap`. Two views of one buffer arrive with a
      *   buffer each; one view passed twice arrives as one view.
-     * - What comes back is the guest's data, a `Blob` or `File` included: its `type` and its bytes are the guest's. Never make an
-     *   object URL of them with that type (or none) and open it, since an SVG or HTML file is then a document of your origin;
-     *   see docs/API.md#guest-writes.
+     * - What comes back is the guest's data. Never make an object URL of its bytes with a type the guest chose (or none) and
+     *   open it, since an SVG or HTML file is then a document of your origin; see docs/API.md#guest-writes.
      * - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
      *   `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
      *   call's timeout.
@@ -1377,39 +1126,38 @@ export class WebSandbox extends ElementBase {
      *   sealed mode included, whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue
      *   and never runs. In cooperative mode a call reaches the guest's method once the guest document is parsed (see
      *   docs/API.md#ready-and-the-startup-gate).
-     * - Calls made while `'idle'` (not in the document) or `'terminated'` reject at once with `TERMINATED`, as
-     *   `execute()` does nothing then; so do pending ones when the environment goes away.
+     * - Calls made while `'idle'` (not in the document, or no app) or `'terminated'` reject at once with `TERMINATED`;
+     *   so do pending ones when the environment goes away.
      *
-     * @typeParam T - The type of the result, which the caller asserts: the guest's value is not checked against it.
      * @param method - The name the guest exposed.
      * @param args - The arguments, copied by structured clone.
-     * @returns The guest method's return value (awaited if it is a promise).
+     * @returns The guest method's return value (awaited if it is a promise): the guest's data, typed `unknown`, so your
+     * code checks its type and shape before it uses it. No type argument asserts it.
      * @throws Never synchronously: the promise rejects with an {@link RpcError}, an `Error` whose `code` is an
      * {@link RpcErrorCode}. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and
      * their message is the guest's text. A host method that lets the rejection propagate hands its own caller the code
-     * and the library's fixed text for it, never this message (see `expose()`).
+     * and the library's fixed text for it, never this message (see {@link HostMethod}).
      */
-    call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
+    call(method: string, ...args: unknown[]): Promise<unknown> {
         const refusal = this._noEnvironmentError();
         if (refusal) return Promise.reject(refusal);
-        return this._issue(() => this._broker.call(method, ...args)) as Promise<T>;
+        return this._issue(() => this._broker.call(method, ...args));
     }
 
     /**
      * Like `call()`, with a timeout of your own for this one call. Every other timeout is waited out in
      * full, however long: `watchdogTimeout` and `workerExecutionTimeout` do not shorten it.
      *
-     * @typeParam T - The type of the result, which the caller asserts.
      * @param timeoutMs - The timeout in ms. `0`, any value that is not above 0, and `Infinity` disable it.
      * @param method - The name the guest exposed.
      * @param args - The arguments, copied by structured clone.
-     * @returns The guest method's return value (awaited if it is a promise).
+     * @returns The guest method's return value (awaited if it is a promise): the guest's data, typed `unknown`, as `call()`'s.
      * @throws Never synchronously: the promise rejects as `call()`'s does.
      */
-    callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T> {
+    callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown> {
         const refusal = this._noEnvironmentError();
         if (refusal) return Promise.reject(refusal);
-        return this._issue(() => this._broker.callWithTimeout(timeoutMs, method, ...args)) as Promise<T>;
+        return this._issue(() => this._broker.callWithTimeout(timeoutMs, method, ...args));
     }
 
     // One host call, made in the current environment (R3:L-2). The broker copies the arguments with
@@ -1448,17 +1196,17 @@ export class WebSandbox extends ElementBase {
         return promise;
     }
 
-    // The same rule as execute() (BL:B8): while idle or terminated there is no environment to call, so a call
+    // One rule for work handed to the guest (BL:B8): while idle or terminated there is no environment to call, so a call
     // is refused at once with TERMINATED. (Waiting for the element's insertion would end in the same TERMINATED, from
     // the build.)
     private _noEnvironmentError(): Error | null {
         if (this._lc.state === 'terminated') return this._broker.terminationError(TERMINATED_CALL_MESSAGE);
-        if (this._lc.state === 'idle') return this._broker.terminationError(IDLE_CALL_MESSAGE);
+        if (this._lc.state === 'idle') return this._broker.terminationError(this._lc.started ? IDLE_CALL_MESSAGE : NO_APP_CALL_MESSAGE);
         return null;
     }
 
     // Sends one of the host's own RPC requests over the port once the build is ready, or queues it until `ready` flushes
-    // (mirrors execute(); R5:L-1: strict mode has its port from the wrapper's load, before `ready`).
+    // (R5:L-1: strict mode has its port from the wrapper's load, before `ready`).
     // Only for the environment the call was made in, while it stands (R3:L-2, _issue): otherwise nothing is sent, and the
     // text returned refuses the call TERMINATED.
     private _postRpc(frame: unknown): string | undefined {
@@ -1470,108 +1218,11 @@ export class WebSandbox extends ElementBase {
         this._queue.push({ frame });
     }
 
-    // workerExecutionTimeout (FR:F2, ADR-003): what it bounds is "the guest's
-    // event loop is free at the deadline". Each execute() arms a deadline `budget` ms after the host posts the code
-    // (the only moment the host can see). At the deadline the host pings the guest through the bootstrap's own PING
-    // handler, which guest code cannot reach (AR:B2), and only a free event loop can run it: no answer within
-    // EXECUTION_TIMEOUT_GRACE_MS means the loop is still busy, and that ends the sandbox the way the watchdog does
-    // (ADR-003: a guest over a budget is terminated; reset() is the embedder's choice).
-    //
-    // The guest reports nothing when the code returns, because no report of the guest's can be a bound: code that
-    // returns at once but leaves a loop scheduled (setTimeout(() => { for (;;) {} })) would stop its own timer and then
-    // loop, and guest code that replaced globalThis.Function would have the bootstrap's `new Function(code)` return a
-    // function of its choosing, so a "done" report would come before the embedder's code had run at all (FR:F2). So
-    // nothing the guest says ends a budget, only an answer from a free loop at the deadline, and the bootstrap compiles
-    // with the Function it captured before guest code ran (in-sandbox-script.ts).
-    //
-    // Several execute() calls each have their own deadline, and each deadline checks the one event loop: a loop
-    // started by any code ends the sandbox at the first deadline it blocks. Code that ran to its end and left the
-    // loop free stays, whatever it scheduled for later; a loop that starts after the last deadline is the
-    // watchdog's to bound (watchdogTimeout checks the loop continuously). The worker lives inside the frame, so
-    // tearing the frame down stops it. Cooperative mode has no such budget: the guest document can share the host's
-    // thread, so no timer could fire meanwhile.
-    private _armExecutionBudget() {
-        if (this._config.mode !== 'worker' && !hasStrictView(this._config.mode)) return;
-        const budget = watchdogBudget(this._config.workerExecutionTimeout); // a finite number > 0, else off
-        if (budget === 0) return;
-        const gen = this._lc.gen; // the environment the code was posted to: its timeout ends that one only
-        const timer = setLongTimeout(() => {
-            this._executionTimers.delete(timer);
-            this._probeExecution(gen);
-        }, budget); // any budget, 2^31 ms and past (R2:L-2: long-timer.ts)
-        this._executionTimers.add(timer);
-    }
-
-    // The check at a deadline: a one-off watchdog over EXECUTION_TIMEOUT_GRACE_MS (watchdog.ts: pings each tick until
-    // an answer, expires after a whole grace of silent ticks, so a host stall is never counted against the guest).
-    // Its pings carry negative numbers of their own, so a PONG names the probe it answers and never the watchdog's.
-    private _probeExecution(gen: Generation) {
-        const port = this._port;
-        if (!port) return;
-        const pings: number[] = [];
-        let probe: Watchdog | null = null;
-        const end = () => {
-            probe?.stop();
-            for (const n of pings) this._executionProbes.delete(n);
-        };
-        probe = startWatchdog({
-            timeoutMs: EXECUTION_TIMEOUT_GRACE_MS,
-            ping: () => {
-                const n = -(++this._probePings);
-                pings.push(n);
-                this._executionProbes.set(n, end);
-                port.postMessage({ type: 'PING', n });
-            },
-            onExpire: () => {
-                end();
-                this._onExecutionTimeout(gen);
-            },
-        });
-    }
-
-    // A PONG to a probe's ping: the event loop was free, the probe passes. False when it answers no probe.
-    private _passExecutionProbe(n: unknown): boolean {
-        const end = typeof n === 'number' ? this._executionProbes.get(n) : undefined;
-        if (!end) return false;
-        end();
-        return true;
-    }
-
-    // The deadline's probe went unanswered: one host line, then the termination, of the environment the code ran in.
-    //
-    // A termination the element starts that says something first carries its lines as `notices` (src/lib/lifecycle.ts,
-    // Notice), and the executor dispatches them, one event each, then the termination as a nested step. A listener of a
-    // line may reset() or terminate() the sandbox, and acting afterwards on the environment that is gone would undo what
-    // the listener did (AR:B5); a second line of one callback, dispatched after a listener of the first had reset or
-    // removed the element, would reach the next environment's listeners, or an idle element's (R4:L-2). So the
-    // executor stops before the next line and before the step once the generation moved (lifecycle.ts, `runEffects`),
-    // and the step itself carries `gen`, which `reduce` drops once it is stale. host.ts keeps no comparison of its own
-    // for this (test/unit/lifecycle-reducer.test.ts scans for one), and a notice is data, so it dispatches exactly one
-    // event by construction (the executor's `notice`, host.ts's `lifecycleHost`).
-    private _onExecutionTimeout(gen: Generation) {
-        step(this, { t: 'terminate', reason: reasonText('executionTimeout'), gen, notices: [hostNotice(hostLine('executionTimeout'))] });
-    }
-
     // A frame of ours that the host page's policy refused, as it reported (R1:R3-1, R2:C-5, R2:C-6): one host
     // line, then the termination with the reason that names the policy (unless a listener of that line acted first), of
     // the environment `gen` whose frame said so.
     private _refusedByHostPage(reason: string, gen: Generation) {
         step(this, { t: 'terminate', reason, gen, notices: [hostNotice(hostLine('refusedByHostPage', reason))] });
-    }
-
-    // The guest's port, announced by the guest frame itself (BR:CB1), becomes this environment's port. Null when this
-    // build's guest runs no bootstrap (no allow-scripts): there is nothing to talk to,
-    // and calls wait in the queue until they time out.
-    private setupChannel(port: MessagePort | null) {
-        if (this._port) { this._port.close(); this._port = null; }
-        if (!port) return;
-        this._port = port;
-        // One reply channel per port: answers go back where their request came from, and the broker counts the
-        // calls it runs per channel (AR:B7), so the count belongs to this environment.
-        const reply = (frame: unknown, transfer?: Transferable[]) => port.postMessage(frame, transfer ?? []);
-        // Setting onmessage starts the port: frames the guest posted before its announcement was accepted are
-        // delivered now, after 'ready'. What waits in the queue is posted by the `flush` effect, the one flush point.
-        port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, null);
     }
 
     /**
@@ -1619,14 +1270,9 @@ export class WebSandbox extends ElementBase {
             if (!announces || !guestWindow || event.source !== guestWindow) return;
             if (data.type !== ANNOUNCEMENT_TYPE) return;
             event.stopImmediatePropagation(); // the port is the element's: no other listener on this window sees it
-            // Worker mode's frame announces a worker that could not start as its one announcement, with no port (R2:C-5,
-            // worker-bootstrap.ts): the build ends with the reason strict mode gives for the same refusal,
-            // and is never 'ready'. Only in worker mode, whose frame runs no guest code: elsewhere it is a forgery.
-            const refusal = this._config.mode === 'worker' && event.ports.length === 0 ? WORKER_FRAME_REFUSALS[data.refused as string] ?? null : null;
-            const valid = event.isTrusted && (event.ports.length === 1 || refusal !== null);
-            // The check-in (S46): the environment is ready then, whether or not the wrapper has loaded (its load waits for
-            // the guest's subresources).
-            step(this, { t: 'announced', gen, valid, refusal, port: valid && refusal === null ? event.ports[0]! : null, source: guestWindow });
+            // What it is (one port, or worker mode's refusal) and what it does are the network modes' (network-host.ts,
+            // _onAnnouncement): only their builds announce.
+            networkElement(this)?._onAnnouncement({ data, ports: event.ports, trusted: event.isTrusted, source: guestWindow, gen });
         };
         host.addEventListener('message', onMessage, true);
         this._stopListening = () => host.removeEventListener('message', onMessage, true);
@@ -1642,7 +1288,7 @@ export class WebSandbox extends ElementBase {
         if (!port || port !== this._port) return;
         if (data?.type === 'PONG') {
             // an execution probe's (negative numbers), else the watchdog's: validated there; only this generation's are live
-            if (!this._passExecutionProbe(data.n)) this._watchdog?.handlePong(data.n);
+            if (networkElement(this)?._passExecutionProbe(data.n) !== true) this._watchdog?.handlePong(data.n);
             return;
         }
         if (data?.type === 'LOG') {
@@ -1678,7 +1324,7 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Strict mode (ADR-005): two channels to the view, once per frame like setupChannel. The logic port goes
+     * Strict mode (ADR-005): two channels to the view, once per frame like _setupChannel. The logic port goes
      * on to the worker, which the view spawns; the view port stays with the view, which runs no guest code,
      * so what arrives on it is the library's own: the view's violations, its height, an entry failure, and
      * its liveness answers. The render port between view and worker is the view's to create.
@@ -1712,6 +1358,10 @@ export class WebSandbox extends ElementBase {
             // The view's check-in, the first frame on the port only its bootstrap holds (R1:R3-1): the strict build is ready,
             // if it is still loading (the reducer's `viewReady`), and what the view measured is checked then (`checkView`).
             step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true });
+            return;
+        }
+        if (data?.type === 'VIEW_LINK') {
+            this._openListedLink(data.index);
             return;
         }
         if (data?.type === 'VIEW_INITIAL') {
@@ -1802,6 +1452,23 @@ export class WebSandbox extends ElementBase {
         }
     }
 
+    /**
+     * The view's request for a listed link (VIEW_LINK; design 02, I6): the user's trusted click on a link the view marked.
+     * Only the view posts on its port, and only the current environment's port reaches here (_onViewMessage). The index
+     * is checked against this element's own list (listedLink: an integer within it, else nothing opens), and the URL
+     * opened is that list's string, in the task of this message, so the browser's popup blocker still sees the click: no
+     * text of the guest's is part of it. `noopener` and `noreferrer` give the tab no handle on this page and no referrer;
+     * `window.open` then answers null whether or not the browser opened the tab. At most LINK_TABS_PER_SECOND open in any
+     * one-second window, whatever the browser allows (docs/design/REVIEW-3.md, finding 1): a request past it opens nothing
+     * and is not queued.
+     */
+    private _openListedLink(index: unknown) {
+        const url = listedLink(this._config.links, index);
+        if (url === null) return;
+        if (!this._linkTabs.admit()) return;
+        window.open(url, '_blank', LINK_WINDOW_FEATURES);
+    }
+
     // The view's height against the frame's (R1:R3-1): a view 150 px high in a taller frame means the host page's style-src
     // refused the wrapper's style (frame-documents.ts, WRAPPER_STYLE), which nothing on this side can see. Once per element.
     private _checkViewSize(height: unknown) {
@@ -1818,8 +1485,8 @@ export class WebSandbox extends ElementBase {
         this._warnOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or ${scriptHashSource(VIEW_STILL_STYLE)} in style-src (see docs/API.md#host-page-policy).`);
     }
 
-    // Flushes what was queued before the build was ready onto its port, in the order it was issued (R2:L-3): execute() code
-    // (checked by execute() when queued) and the host's own RPC requests — the queue never holds answers (those go back
+    // Flushes what was queued before the build was ready onto its port, in the order it was issued (R2:L-3): the host's own
+    // RPC requests and, in a build with the network modes, execute() code (checked by execute() when queued) — the queue never holds answers (those go back
     // on the port their request arrived on). Reached by the `flush` effect only (R5:L-1). Requests are cloned when
     // the call is made (see callWithTimeout in rpc.ts), so a post failure is not expected here; the per-frame catch is a
     // backstop so that one bad frame could never drop the frames behind it or stop 'ready' from firing.
@@ -1829,7 +1496,7 @@ export class WebSandbox extends ElementBase {
         let skipped = 0;
         for (const item of queued) {
             try {
-                if ('code' in item) this._postExecute(port, item.code);
+                if ('code' in item) networkElement(this)?._postExecute(port, item.code);
                 else port.postMessage(item.frame);
             } catch {
                 skipped++;
@@ -1838,11 +1505,11 @@ export class WebSandbox extends ElementBase {
         if (skipped > 0) console.warn(`[Sandbox] skipped ${skipped} queued frame(s) that could not be posted (not transferable).`);
     }
 
-    // Log lines are dispatched on the element and bubble, so one event serves both kinds of listener:
-    // one on the element hears only its own sandbox, and one on window (the playground, the e2e harness)
-    // hears every sandbox and tells them apart by event.target. Not composed: the element sits in the
-    // embedding page's DOM, and an event of ours has no business crossing a consumer's shadow boundary.
-    // The name stays namespaced because it bubbles: a generic 'log' would collide with other code on window.
+    // Log lines are dispatched on the element and do not bubble (ELEMENT_EVENTS; I5): they carry the guest's data, so a
+    // listener on the element hears only its own sandbox, and a bubbling one on a shared ancestor hears no app's lines.
+    // Not composed: the element sits in the embedding page's DOM, and an event of ours has no business crossing a
+    // consumer's shadow boundary. The name is namespaced: a capture listener on window still receives it, beside other
+    // code's events there.
     // Every detail is normalised and labelled with where it came from (sandbox-log.ts, AR:B3), here, from the
     // raw line and its source: no caller can hand this a detail of its own making.
     private _dispatchLog(line: unknown, source: 'guest' | 'host') {
@@ -1894,8 +1561,8 @@ export class WebSandbox extends ElementBase {
         this._dispatchLog({ level, args: [text] }, 'host');
     }
 
-    // A CSP violation reported by the guest (S5): dispatched on the element and bubbling, like
-    // sandbox-log. The detail is guest-supplied, so it is validated and clamped (violation.ts) and the
+    // A CSP violation reported by the guest (S5): dispatched on the element, not bubbling, like sandbox-log
+    // (ELEMENT_EVENTS; I5). The detail is guest-supplied, so it is validated and clamped (violation.ts) and the
     // number of events per environment is capped: past VIOLATION_EVENT_LIMIT reports are dropped, with one
     // warning, so a guest cannot make the host run embedder listeners without bound.
     // In strict mode each port has its own count, labelled by where the report arrived (ADR-005): the view's
@@ -1916,7 +1583,7 @@ export class WebSandbox extends ElementBase {
         this._violationCounts.set(key, count + 1);
         if (count + 1 > VIOLATION_EVENT_LIMIT) {
             const where = source === 'view' ? ` for ${detail.directive} on its view port` : source ? ` on its ${source} port` : '';
-            console.warn(`[Sandbox] the guest reported more than ${VIOLATION_EVENT_LIMIT} CSP violations${where}; further ones are not dispatched until the next reset(), load() or setConfig().`);
+            console.warn(`[Sandbox] the guest reported more than ${VIOLATION_EVENT_LIMIT} CSP violations${where}; further ones are not dispatched until the next reset().`);
             return;
         }
         this.dispatchEvent(elementEvent('violation', detail));
@@ -1963,60 +1630,18 @@ export class WebSandbox extends ElementBase {
         this._heightBeforeAuto = null;
     }
 
-    // One fetch bridge per environment (BL:B5), built with the environment and aborted by _teardown. The reserved
-    // method is registered again by every build (_attachBuild, from this function's answer: a sealed build, which has no
-    // network, gives null), closed over THIS build's bridge (or null when off), as sandbox:write is
-    // over its overlay: the broker looks a method up when a request arrives and runs it a microtask later, and a
-    // request must be served by the bridge of the environment it arrived in. Reading this._fetchBridge when the method
-    // runs would let a request that arrived just before a rebuild be served by the next environment's bridge (FR:H).
-    // Closed over its own bridge, it reaches the one teardown closed, and is refused there.
-    // Its requests are made by its own frame (bridge-frame.ts; BD1:ISO-1, class E-net), prepared by the build and put in
-    // the shadow root after the wrapper: the bridge's only transport. The host page's fetch makes none of them.
-    private _startFetchBridge(network: PreparedNetwork): FetchBridge | null {
-        const { bridgeFrame: prepared, fetchPolicy: policy } = network;
-        if (!policy || !prepared) {
-            this._fetchBridge = null;
-            return null;
-        }
-        const frame = createBridgeFrame({
-            iframe: prepared,
-            parent: this.shadowRoot!,
-            maxBytes: policy.maxBytes,
-            startupTimeoutMs: LOAD_TIMEOUT_MS,
-            onRefused: () => this._warnBridgeFrameRefused(),
-        });
-        this._bridgeFrame = frame;
-        this._fetchBridge = createFetchBridge({
-            policy,
-            hostOrigin: hostPageOrigin(),
-            onRecord: (record) => this._dispatchFetch(record),
-            transport: frame.transport,
-        });
-        return this._fetchBridge;
-    }
-
-    // The bridge fails closed when its frame never started (every request refused, with the reason in its record);
-    // the embedder is told once, on the console.
-    private _warnBridgeFrameRefused() {
-        if (this._warnedBridgeFrame) return;
-        this._warnedBridgeFrame = true;
-        console.warn(`[Sandbox] ${BRIDGE_FRAME_REFUSED}: every sandboxFetch() request is refused.`);
-    }
-
-    private _exposeFetch(bridge: FetchBridge | null) {
+    // The reserved method is registered again by every build (_attachBuild), closed over THAT build's bridge, or null when
+    // the build has none (a sealed build, or the bridge off): the broker looks a method up when a request arrives and runs it
+    // a microtask later, and a request must be served by the bridge of the environment it arrived in (FR:H; network-host.ts,
+    // _startFetchBridge).
+    private _exposeFetch(bridge: FetchHandler | null) {
         this._broker.exposeReserved(FETCH_METHOD, (request: unknown) => this._handleFetch(bridge, request));
     }
 
-    // The reserved sandbox:fetch method of one environment. Every refusal is minted in fetch-bridge.ts with a library code.
-    private _handleFetch(bridge: FetchBridge | null, request: unknown): Promise<unknown> {
+    // The reserved sandbox:fetch method of one environment. Every refusal is minted with a library code (fetch-method.ts).
+    private _handleFetch(bridge: FetchHandler | null, request: unknown): Promise<unknown> {
         if (!bridge) return Promise.reject(fetchRefusal('FETCH_NOT_ALLOWED', 'the fetch bridge is off (fetchBridge is not configured)'));
         return bridge.handle(request);
-    }
-
-    // Every request through the bridge, once, when it settled: dispatched on the element and bubbling, like
-    // 'violation'. The record is built by the host from validated fields (fetch-bridge.ts).
-    private _dispatchFetch(record: FetchRecord) {
-        this.dispatchEvent(elementEvent('fetch', record));
     }
 
     // The resources of the environment (the executor's `teardown` effect): its generation is the reducer's. Everything a
@@ -2024,7 +1649,7 @@ export class WebSandbox extends ElementBase {
     // Detach, then release (class L; S74): first every per-environment field is written, the declared resources taken
     // into a record and their fields cleared, and only then is anything released, from the record. A release can run
     // embedder code synchronously (a frame's removal fires the host window's `focus` on Firefox, and a focused guest's
-    // `pagehide` calls `parent.parent.focus()` on every engine), and a listener's reset(), load() or setConfig() builds
+    // `pagehide` calls `parent.parent.focus()` on every engine), and a listener's reset() builds
     // a new environment from inside it: it finds the element holding no environment, and its fields are not written
     // again by this teardown. test/unit/teardown-reentry.test.ts re-enters at every release; it also scans this body
     // for a write after the first release.
@@ -2050,24 +1675,22 @@ export class WebSandbox extends ElementBase {
     }
 
     // What a build reads besides the reducer's state, asked as it starts (src/lib/lifecycle.ts, BuildContext). Every build
-    // starts in the reducer (`connect`, `build`, `configured`: its `initialize`), the one place a build starts, and every
+    // starts in the reducer (`connect`, `build`: its `initialize`), the one place a build starts, and every
     // build failure is a termination there (S26, AR:A4). A build that throws must not leave the old environment torn
-    // down with state 'loading', no frame and no 'terminated' event, the throw escaping to whoever called setConfig() or
-    // reset() (a configured string where a directive takes a list ("img-src": "x; script-src *") makes the policy
-    // generator throw). A refusal known up front (a config that could not be used, an unknown mode, an entry that is
-    // not registered) and anything the build throws end the same way: state 'terminated', one 'terminated' event with
-    // the reason, nothing half-built (the `teardown` effect).
+    // down with state 'loading', no frame and no 'terminated' event, the throw escaping to whoever called start() or
+    // reset(). A refusal known up front (a host page that is cross-origin isolated, an entry that calls import()) and
+    // anything the build throws end the same way: state 'terminated', one 'terminated' event with the reason, nothing
+    // half-built (the `teardown` effect).
     // Where the element may build is one rule (R2:L-1: buildsHere, below), asked by every build, however it starts: in
-    // another window's document, reset(), load() and setConfig() would build (the guest would run, and announce itself
+    // another window's document, reset() and start() would build (the guest would run, and announce itself
     // to a window the element does not listen to), so they stop the environment instead, as insertion there does, and
     // the element stays idle. Asked first: in another document the element may have lost its prototype (BR:CB7), and
     // nothing else here is asked there.
-    // `refused`: why the input that starts this build could not be used (load()'s html), which blocks it before anything else.
-    private _buildContext(refused: string | null = null): BuildContext {
+    private _buildContext(): BuildContext {
         if (!buildsHere(this)) return NOT_HERE;
         const strict = hasStrictView(this._config.mode);
         // a bootstrap runs, and announces its port, exactly where the inline script can run (_getMarkupPlan's test, BR:CB1)
-        return { buildsHere: true, blocked: refused ?? this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
+        return { buildsHere: true, blocked: this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
     }
 
     // `loading` is bounded (BR:CB3): a build that has not completed within LOAD_TIMEOUT_MS of host ticks ends with a
@@ -2091,7 +1714,6 @@ export class WebSandbox extends ElementBase {
 
     // Why no environment may be built from the current config and files, or null (BuildContext.blocked). Fail closed on a
     // mode the element does not know (AR:A4): no environment at all, rather than one of a mode the embedder did not
-    // ask for. A config that could not be used is the reducer's own refusal (`_lc.refused`).
     // The strict entry that names no registered JavaScript file is one of them (R2:L-4): decided here, so
     // the no-repeat rule (BR:CB5) knows it before building.
     private _buildRefusal(): string | null {
@@ -2113,100 +1735,11 @@ export class WebSandbox extends ElementBase {
         return null;
     }
 
-    // `postToFrame` (worker mode): the expression that names the worker's platform postMessage, which the globals
-    // allowlist handed over (worker-globals.ts, R4:M-1); the bootstrap's one WORKER_STARTED uses it.
-    // `connect`: the sources of the guest policy's connect-src (_gateConnect), which the bootstrap's request gate admits.
-    private _getSandboxCommsScript(mode: 'cooperative' | 'worker', files: FileSnapshotEntry[], plan: GuestMarkupPlan = NO_MARKUP_PLAN, postToFrame = 'null', connect: readonly string[] = []) {
-        // communication, logs and RPC bridge template that any content running in the sandbox uses.
-        // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
-        // The features as one literal: the opt-in ones only when on, and the call budget always (R3:M-2).
-        // The listeners the bootstrap installs are the egress table's rows for this mode (egress.ts), and worker mode's guest also
-        // counts its uncaught errors and rejections against their budget (R5:N-1).
-        const features: BootstrapFeatures = { callBudget: { ...this._callBudget }, listeners: bootstrapListeners(mode), connect: [...connect] };
-        if (mode === 'worker') {
-            features.uncaught = { ...UNCAUGHT_BUDGET };
-            features.violationFields = { ...VIOLATION_EVENT_FIELDS };
-        }
-        if (mode === 'cooperative' && this._autoResizeEnabled()) features.autoResize = true;
-        if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
-        if (this._config.guestWrites === true) features.guestWrites = true;
-        const featuresArgument = `, ${toInlineScriptLiteral(features)}`;
-        // Only literals are interpolated: `=== true` here as well, whatever setConfig() stored (AR:A6).
-        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument}, ${createSizeOf.toString()}, ${postToFrame})`;
-        // Guest writes (BL:C5): sandboxFiles gets the comms script's captured write call through `comms`, a constant
-        // of a block the whole bootstrap then runs in: block-scoped, so never a global guest code could read.
-        // Without them the bootstrap keeps its text: the comms statement, then sandboxFiles without a write call
-        // (its write() and remove() refuse locally).
-        const writes = this._config.guestWrites === true;
-        // The snapshot is one inline literal, so the blobs exist before the parser reaches guest markup.
-        // Installed even with no files (an empty literal): sandboxFiles always exists, and a lookup in
-        // an empty store is NOT_FOUND like any other miss, never a ReferenceError.
-        let filesCall = `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}${writes ? ', comms.writeFiles' : ''})`;
-        // With JavaScript files: the one import map, registered with the URLs filesCall just created,
-        // before any guest markup (module graph). It hands the files object on to the next step.
-        if (plan.importMap) {
-            filesCall = `(${inSandboxImportMap.toString()})(${filesCall}, ${toInlineScriptLiteral(plan.importMap.paths)}, ${toInlineScriptLiteral(plan.importMap.guest)})`;
-        }
-        // Guest markup that names files: written by the bootstrap's last statement, with the blob: URLs
-        // filesCall just created (markup-references.ts). The parts are one more inline literal.
-        const last = plan.parts ? `(${inSandboxMarkup.toString()})(${filesCall}, ${toInlineScriptLiteral(plan.parts)});` : `${filesCall};`;
-        return writes ? `{const comms = ${comms};${last}}` : `${comms};${last}`;
-    }
-
-    // The cooperative guest's bootstrap, behind the environment gate (environment-check.ts, S74): the check is its first
-    // statement, and on a refusal the document's parser stops, so the guest markup that follows never runs.
-    private _getCooperativeBootstrapScript(files: FileSnapshotEntry[], plan: GuestMarkupPlan, connect: readonly string[]) {
-        return environmentGate('parent.parent', true, this._getSandboxCommsScript('cooperative', files, plan, 'null', connect));
-    }
-
-    private _getWorkerBootstrapScript(files: FileSnapshotEntry[], connect: readonly string[]) {
-        // the worker keeps only the allowlisted globals (worker-globals.ts), then runs the comms script and builds its
-        // own blobs and sandboxFiles from the same literal; the frame only spawns it and forwards the port
-        // No WebAssembly unless scriptUnsafe (R1:R2-5), as in strict mode: off the allowlist (workerGlobalsFor).
-        // The allowlist runs first, as the argument of the function the rest runs in: it returns the worker's postMessage,
-        // which it deleted (R4:M-1), and only the comms script is given it, for its one WORKER_STARTED.
-        const globals = workerGlobalsFor(WORKER_GLOBALS, this._config.scriptUnsafe === true);
-        const workerSource = `${STRICT_DIRECTIVE}(function (g, postToFrame) {${this._getSandboxCommsScript('worker', files, NO_MARKUP_PLAN, 'postToFrame', connect)}})(this, ${workerGlobalsCall('this', globals)});`;
-        return environmentGate('parent.parent', false, `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)}, ${toInlineScriptLiteral(TRUSTED_TYPES_POLICY)});`);
-    }
-
-    private _isPermission(capability: string): boolean {
-        return (UNSAFE_PERMISSIONS as readonly string[]).includes(capability);
-    }
-
     private _getSandboxFlags(): string {
         // Strict and sealed mode (ADR-005): STRICT_VIEW_FLAGS, plus the safe capabilities configured. No unsafe capability.
         if (hasStrictView(this._config.mode)) return [...new Set<string>([...STRICT_VIEW_FLAGS, ...(this._config.capabilities || [])])].join(' ');
-        const flags = new Set<string>(this._config.capabilities || []);
-        for (const capability of this._config.unsafeCapabilities || []) {
-            if (this._isPermission(capability)) continue; // goes into the allow attribute instead
-            flags.add(capability);
-        }
-
-        // worker mode needs scripts in the frame to spawn the worker
-        if (this._config.mode === 'worker') flags.add('allow-scripts');
-
-        return [...flags].join(' ');
-    }
-
-    // Permissions Policy features for the iframe `allow` attribute (e.g. fullscreen)
-    private _getPermissions(): string[] {
-        const permissions: string[] = [];
-        if (hasStrictView(this._config.mode)) return permissions;
-        for (const capability of this._config.unsafeCapabilities || []) {
-            if (this._isPermission(capability)) permissions.push(capability);
-        }
-        return permissions;
-    }
-
-    // The guest policy of this build (csp-generator.ts, ADR-007): the mode's template, the parsed origins, and blob:
-    // for the kinds of load this build's files need (the snapshot's types, through the one load-kind table). The one
-    // place a guest policy of strict, cooperative and worker mode is made; worker mode's worker and strict mode's worker
-    // inherit their frame's. Sealed mode's is not made here: _sealedPolicy, which takes no origins.
-    private _guestPolicy(files: FileSnapshotEntry[], origins: OriginPolicy): string {
-        const input = this._policyInput(files, origins);
-        if (this._config.mode !== 'strict') return cooperativePolicy(input);
-        return strictViewPolicy({ ...input, bootstrapHash: viewBootstrapHash() });
+        // Cooperative and worker mode's are the network modes' (network-host.ts, _documentSandboxFlags); a mode that is no mode has none.
+        return networkElement(this)?._documentSandboxFlags() ?? '';
     }
 
     // Sealed mode's view policy (sealedViewPolicy, docs/research/24_sealed_mode): the strict view's template with no
@@ -2214,18 +1747,6 @@ export class WebSandbox extends ElementBase {
     private _sealedPolicy(files: FileSnapshotEntry[]): string {
         const kinds = this._viewFileKinds(files);
         return sealedViewPolicy({ fileKinds: new Set(SEALED_FILE_KINDS.filter(kind => kinds.has(kind))), bootstrapHash: viewBootstrapHash() });
-    }
-
-    // The sources of that policy's connect-src, from the same input: what the bootstrap's request gate admits (S74), so
-    // the gate and the browser read one list. Sealed mode has no such list: its gate admits nothing (_prepareSealedFrame).
-    private _gateConnect(files: FileSnapshotEntry[], origins: OriginPolicy): string[] {
-        return connectSources(this._policyInput(files, origins));
-    }
-
-    private _policyInput(files: FileSnapshotEntry[], origins: OriginPolicy): PolicyInput {
-        const scriptUnsafe = this._config.scriptUnsafe === true;
-        if (!hasStrictView(this._config.mode)) return { origins, fileKinds: fileKinds(files.map(entry => entry[1])), scriptUnsafe };
-        return { origins, fileKinds: this._viewFileKinds(files), scriptUnsafe };
     }
 
     // The kinds of load the files of a view of strict or sealed mode need blob: for (the one load-kind table).
@@ -2237,14 +1758,6 @@ export class WebSandbox extends ElementBase {
         return kinds;
     }
 
-    // The host page's policy applied to the connect origins of this build (host-connect.ts): `origins` and the bridge's
-    // allowlist as configured, less what the embedder's `hostContentSecurityPolicy` refuses, and nothing of them when the
-    // embedder did not give it (hostReach, the one decision; BD4:CHL-1, BD4:CHL-2). The page itself is never asked.
-    // Pure of the element's fields: a nested or stale build narrows its own (LM-2).
-    private _reach(): NarrowedReach {
-        return hostReach(this._origins, this._fetchPolicy, this._config.hostContentSecurityPolicy, message => this._warnOnce(message));
-    }
-
     // The host page's Trusted Types directives, where the browser has no Trusted Types to apply them (a browser that has them
     // decides, in the sinks and in the guest: null), and only from the embedder's `hostContentSecurityPolicy`: nothing is
     // applied without the option (host-trusted-types.ts).
@@ -2252,44 +1765,6 @@ export class WebSandbox extends ElementBase {
         if (browserHasTrustedTypes()) return null;
         const option = this._config.hostContentSecurityPolicy;
         return typeof option === 'string' ? trustedTypesStance(option, TRUSTED_TYPES_POLICY) : null;
-    }
-
-    // What the bootstrap does with this build's guest markup (GuestMarkupPlan): references to registered
-    // files cut into parts for it to write (markup-references.ts) and, with JavaScript files, the one
-    // import map (module graph). Only when the bootstrap can run — scripts allowed by the sandbox flags (the
-    // policy always admits the inline bootstrap, csp-generator.ts) — since otherwise nothing would write the markup
-    // or register the map; references then stay as written and fail closed, and so do relative imports between modules.
-    private _getMarkupPlan(html: string, files: FileSnapshotEntry[], sandboxFlags: string): GuestMarkupPlan {
-        if (files.length === 0) return NO_MARKUP_PLAN;
-        if (!sandboxFlags.split(' ').includes('allow-scripts')) return NO_MARKUP_PLAN;
-
-        // The module graph maps only files a script load admits (load-kinds.ts, through isJavaScriptType): an import
-        // of any other file names nothing in the import map and fails closed, as a <script src> of one does (FR:W1).
-        const javascript = files.filter(entry => isJavaScriptType(entry[1])).map(entry => entry[0]);
-        const markup = rewriteGuestMarkup(html, new Map(files.map(entry => [entry[0], entry[1]])), {
-            modules: javascript.length > 0,
-            onModuleFailure: (index) => this._warnOnce(`[Sandbox] inline module script #${index + 1} in the guest markup could not be lexed, so its relative imports were not rewritten and will fail.`),
-            onKindMismatch: (mismatch) => this._warnOnce(kindMismatchMessage(mismatch)),
-        });
-        if (javascript.length === 0) return { parts: markup.parts, importMap: null };
-        const guest = mergeGuestImportMaps(markup.importMaps, (message) => this._warnOnce(message));
-        return { parts: markup.parts, importMap: { paths: javascript, guest } };
-    }
-
-    // Cooperative mode without allow-scripts runs no script, the library's bootstrap included (R1:R3-4): what
-    // needs one does nothing there, silently, so it is said once per element and message.
-    private _warnAboutNoScripts(html: string, sandboxFlags: string) {
-        if (sandboxFlags.split(' ').includes('allow-scripts')) return;
-        const unused: string[] = [];
-        if (scriptInMarkup(html)) unused.push('the scripts and handlers in html');
-        if (watchdogBudget(this._config.watchdogTimeout) > 0) unused.push('watchdogTimeout');
-        if (this._config.autoResize === true) unused.push('autoResize');
-        if (this._fetchPolicy) unused.push('fetchBridge');
-        if (this._config.guestWrites === true) unused.push('guestWrites');
-        if (this._config.scriptUnsafe === true) unused.push('execute()');
-        if (this._exposedNames.size > 0) unused.push('the methods published with expose()');
-        if (unused.length === 0) return;
-        this._warnOnce(`[Sandbox] cooperative mode without "allow-scripts" runs no script, the library's own included: ${unused.join(', ')} ${unused.length === 1 ? 'has' : 'have'} no effect. Add "allow-scripts" to capabilities.`);
     }
 
     // Every warning a config or a build brings back (the config schema's, the build's about the guest's markup and files,
@@ -2312,67 +1787,21 @@ export class WebSandbox extends ElementBase {
         // then completes: the element's, not a resource of the build, and written without embedder code.
         if (!this._autoResizeEnabled()) this._releaseAutoHeight();
         // One copy of the store per build, taken now: the guest's files and the policy come from its snapshot, and the
-        // guest-write overlay answers from it (BR:CB4). Later registerFiles() calls reach the guest only through the next build.
+        // guest-write overlay answers from it (BR:CB4). A later commit reaches the guest only through the next build.
         const built = this._files.copy();
         const files = built.snapshot();
         // Sealed mode has no network (docs/research/24_sealed_mode): a path of its own from here, which takes nothing of
         // `origins` or `fetchBridge` and makes no bridge (_prepareSealedFrame), so the host page's policy is applied to
-        // nothing (no _reach) and only its Trusted Types list is read.
+        // nothing and only its Trusted Types list is read.
         if (this._config.mode === 'sealed') {
             this._refuseByTrustedTypes();
             return this._prepareSealedFrame(built, files);
         }
-        const reach = this._reach();
-        this._refuseByTrustedTypes();
-        if (this._config.mode === 'strict') return this._prepareStrictFrame(built, files, reach);
-        return this._prepareDocumentFrame(built, files, reach);
-    }
-
-    /**
-     * Cooperative and worker mode: the guest document (cooperative mode's is `html`, which runs as it is: that is the mode;
-     * worker mode's has no markup) under the guest policy, in the wrapper. Cooperative mode reads `html` with an inert
-     * parser here, for its warning and its file references (HOST_PASSES.cooperativeDocument); a strict or sealed build
-     * never reaches this (_prepareBuild returns before it).
-     */
-    private _prepareDocumentFrame(built: FileStore, files: FileSnapshotEntry[], reach: NarrowedReach): PreparedBuild {
-        const isWorkerMode = this._config.mode === 'worker';
-        const sandboxFlags = this._getSandboxFlags();
-        const permissions = this._getPermissions();
-        const policy = this._guestPolicy(files, reach.origins);
-        const connect = this._gateConnect(files, reach.origins);
-
-        // Guest markup is the guest's own: cooperative mode runs it as it is (that is the mode), and strict mode's view cleans
-        // it with its allowlist renderer (sanitizeRender), not here.
-        let guestDocument: string;
-        if (isWorkerMode) {
-            // worker mode is headless: no guest markup, so no markup references either
-            guestDocument = buildGuestDocument({ csp: policy, bootstrapScript: this._getWorkerBootstrapScript(files, connect), content: '' });
-        } else {
-            const html = this._config.html || '<div id="root"></div>';
-            this._warnAboutNoScripts(html, sandboxFlags);
-            // A fresh slot nonce per build (inside rewriteGuestMarkup); null parts keep the markup verbatim.
-            const plan = this._getMarkupPlan(html, files, sandboxFlags);
-            guestDocument = buildGuestDocument({
-                csp: policy,
-                bootstrapScript: this._getCooperativeBootstrapScript(files, plan, connect),
-                content: plan.parts ? '' : html,
-                bootstrapWritesContent: plan.parts !== null,
-            });
-        }
-
-        const iframe = document.createElement("iframe");
-        iframe.setAttribute("sandbox", sandboxFlags);
-        // the wrapper's own document.referrer is never the host page (S15; the guest's is set in the wrapper), and on Chromium
-        // none of its requests carries a cookie (S74)
-        setWrapperFrameIsolation(iframe);
-        for (const [name, value] of Object.entries(permissionAttributes(permissions))) {
-            iframe.setAttribute(name, value);
-        }
-        iframe.style.cssText = isWorkerMode ? "display:none" : "width:100%;height:100%;border:none";
-        // srcdoc goes in before the frame is inserted: an iframe inserted without one first
-        // loads about:blank, which would count as the frame's one load (see _frameLoadHandler)
-        setLibrarySrcdoc(iframe, buildWrapperDocument(guestDocument, sandboxFlags, permissions));
-        return { iframe, built, strictInit: null, network: this._prepareNetwork(reach.fetchPolicy) };
+        // Strict, cooperative and worker mode are the network modes' (network-host.ts, _prepareNetworkBuild). The config
+        // schema refuses their configs where the build has none (networkModesOffRefusal), so no other mode reaches a build.
+        const network = networkElement(this);
+        if (!network) throw mintUncodedError(Error, 'the mode was not refused before the build');
+        return network._prepareNetworkBuild(built, files);
     }
 
     // Where the browser has no Trusted Types: the page's list that does not name the library's policy ends the build, as
@@ -2380,20 +1809,6 @@ export class WebSandbox extends ElementBase {
     private _refuseByTrustedTypes() {
         const trustedTypes = this._trustedTypes();
         if (trustedTypes && buildRefused(trustedTypes, this._config.mode as TrustedTypesMode)) throw mintUncodedError(TrustedTypesRefusal, "the host page's trusted-types directive does not name the policy");
-    }
-
-    /**
-     * Strict mode (ADR-005): the view (_prepareViewFrame) under the strict template with this build's origins, the request
-     * gate's list from the same input, the origins the renderer admits, and the fetch bridge's frame.
-     */
-    private _prepareStrictFrame(built: FileStore, files: FileSnapshotEntry[], reach: NarrowedReach): PreparedBuild {
-        const network: ViewNetwork = {
-            connect: this._gateConnect(files, reach.origins),
-            origins: reach.origins,
-            fetchBridge: this._fetchPolicy ? { timeoutMs: this._fetchPolicy.timeoutMs } : null,
-        };
-        const prepared = this._prepareViewFrame(built, files, this._guestPolicy(files, reach.origins), network);
-        return { ...prepared, network: this._prepareNetwork(reach.fetchPolicy) };
     }
 
     /**
@@ -2438,6 +1853,7 @@ export class WebSandbox extends ElementBase {
             autoResize: this._autoResizeEnabled(),
             allowAnimations: this._config.allowAnimations === true,
             allowAutoplay: this._config.allowAutoplay === true,
+            links: [...this._config.links],
         };
         if (network) strictInit.origins = { images: [...network.origins.images], media: [...network.origins.media] };
         const view = buildViewDocument(policy, viewBootstrapText());
@@ -2448,12 +1864,6 @@ export class WebSandbox extends ElementBase {
         iframe.style.cssText = "width:100%;height:100%;border:none";
         setLibrarySrcdoc(iframe, buildWrapperDocument(view, sandboxFlags, []));
         return { iframe, built, strictInit, network: null };
-    }
-
-    // The network of a build of strict, cooperative or worker mode: the fetch bridge's frame, written detached like the
-    // wrapper (or none with the bridge off), and the bridge's policy. _attachBuild starts it (_startFetchBridge).
-    private _prepareNetwork(policy: FetchPolicy | null): PreparedNetwork {
-        return { bridgeFrame: policy ? prepareBridgeFrame(policy.allow) : null, fetchPolicy: policy };
     }
 
     // The executor's `attach` effect: the prepared build becomes the element's, every per-build resource made here (the
@@ -2477,7 +1887,7 @@ export class WebSandbox extends ElementBase {
         // bridge, and the reserved method refuses, as before the first build (its guest's sandboxFetch() never calls it; a guest's
         // own bridge.call('sandbox:fetch') does, and is refused here, test/e2e/sealed.spec.ts). The method is registered here
         // for every build, with this build's bridge or none: no branch leaves the previous build's handler in place (BD6:TST-1).
-        const bridge = prepared.network ? this._startFetchBridge(prepared.network) : null;
+        const bridge = prepared.network ? networkElement(this)?._startFetchBridge(prepared.network) ?? null : null;
         this._exposeFetch(bridge);
     }
 
@@ -2492,19 +1902,20 @@ export class WebSandbox extends ElementBase {
     // (assertEntryScoped) refuses to start a worker whose entry escaped that scope. The prelude's function is strict-mode
     // code (STRICT_DIRECTIVE, BD5:CHL-3) and the entry's is not: it keeps the semantics of the script it was written as.
     // `network`: what strict mode takes of the network options (the request gate's list, the bridge's timeout); null, the
-    // default, in sealed mode, whose bootstrap gets an empty list and `sealed`, so its sandboxFetch() refuses in the guest.
+    // default, in sealed mode, whose bootstrap gets `sealed` and no request gate (the worker has no fetch, XMLHttpRequest or WebSocket), so its sandboxFetch() refuses in the guest.
     private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string, marker = entryDoneName(), network: ViewNetwork | null = null): string {
         const features: BootstrapFeatures = network
             ? { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [...network.connect], violationFields: { ...VIOLATION_EVENT_FIELDS } }
-            : { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [], sealed: true, violationFields: { ...VIOLATION_EVENT_FIELDS } };
+            : { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, sealed: true, violationFields: { ...VIOLATION_EVENT_FIELDS } };
         if (network?.fetchBridge) features.fetchBridge = { ...network.fetchBridge };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const scriptUnsafe = this._config.scriptUnsafe === true;
+        const sealed = network === null; // no network of the build's own: sealed mode, whose worker has no request maker
         const options = { maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
         const prelude = `(function (g) {${STRICT_DIRECTIVE}`
             + `(${assertEntryScoped.toString()})(g);`
-            + workerGlobalsStatement('g', scriptUnsafe)
-            + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()});`
+            + workerGlobalsStatement('g', scriptUnsafe, sealed)
+            + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()}${network ? `, undefined, ${network.requestGateSource}` : ''});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}, ${this._config.guestWrites === true ? 'comms.writeFiles' : 'null'}, ${toInlineScriptLiteral(VIEW_FILE_TYPES)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)}, ${isStyleProperty.toString()});`
             + (scriptUnsafe ? '' : refuseCodeFromStringsStatement('g'))
@@ -2581,7 +1992,7 @@ export class WebSandbox extends ElementBase {
     // _flushQueues. The queued calls and execute() code are posted in the order they were made, and nowhere else. A call
     // made while loading waits in the queue for this point; if it settles first (its timeout), it leaves the queue and is
     // never posted (_queuedWhilePending), so a call that timed out before `ready` never runs. Neither the wrapper's load
-    // (_setupStrictChannels) nor setupChannel flushes: two flush points for one rule would let strict mode's release a
+    // (_setupStrictChannels) nor _setupChannel flushes: two flush points for one rule would let strict mode's release a
     // call before `ready`.
     private _flush() {
         if (this._port) this._flushQueues(this._port);
@@ -2600,8 +2011,10 @@ export class WebSandbox extends ElementBase {
         if (stillStyleRefused) this._warnStillStyleRefused();
     }
 
-    // For tests: the platform's lifecycle inputs, delivered by hand where jsdom cannot deliver them (a guest frame's
-    // announcement, the view's check-in, the wrapper's load; test/unit/check-in.ts). The element itself never calls it.
+    // The executor's entry as a method, for what is not in this module: the network modes' methods, which hand the reducer
+    // their inputs (network-host.ts: the announcement, the execution timeout), and the tests, which deliver the platform's
+    // lifecycle inputs by hand where jsdom cannot (the view's check-in, the wrapper's load; test/unit/check-in.ts). The
+    // class itself never calls it.
     private _step(input: LcInput) {
         step(this, input);
     }
@@ -2610,11 +2023,10 @@ export class WebSandbox extends ElementBase {
 // The lifecycle (BR:CB7). Each function reaches the element's own fields and the class's methods through
 // WebSandbox.prototype, never through the element's prototype chain: in Firefox an element adopted into another
 // document has that document's HTMLElement prototype. The methods applied here use the element's own fields, and those
-// that build (_buildContext past its first line, _configure, _prepareBuild, _attachBuild, _startLoadDeadline) run only
+// that build (_buildContext past its first line, _prepareBuild, _attachBuild, _startLoadDeadline) run only
 // in the defining document, where the element has its own prototype (connected restores it first).
 const LIFECYCLE = WebSandbox.prototype as unknown as {
     _buildContext(): BuildContext;
-    _configure(): string | null;
     _prepareBuild(): PreparedBuild;
     _attachBuild(prepared: PreparedBuild): void;
     _startLoadDeadline(): void;
@@ -2624,31 +2036,20 @@ const LIFECYCLE = WebSandbox.prototype as unknown as {
     _dispatchGuestLog(frame: unknown): void;
     _stopLoadDeadline(): void;
     _setupStrictChannels(target: Window): void;
-    setupChannel(port: MessagePort | null): void;
     _checkView(height: unknown, stillStyleRefused: boolean): void;
     _flush(): void;
     _startWatchdogs(): void;
     _startAutoResize(): void;
 };
 
+// The element as the holder of the network modes' methods (network-modes.ts, NetworkElement), which the network build
+// installs on its prototype; null in a build without them, where the element has none.
+const networkElement = (element: WebSandbox): NetworkElement | null => (networkModes() === null ? null : element as unknown as NetworkElement);
+
 // What the executor reaches on the element: its own fields, whatever its prototype (BR:CB7).
 interface LifecycleFields {
     _lc: LcState;
     _warnedForeignDocument: boolean;
-}
-
-// What a build prepared (_prepareBuild), until the reducer attaches it (`built`, then `attach`) or drops it (LM-2).
-interface PreparedBuild {
-    iframe: HTMLIFrameElement; // the wrapper, its srcdoc written, not in the document
-    built: FileStore; // the copy of the store this build delivers (BR:CB4)
-    strictInit: StrictInit | null; // strict and sealed mode: what the wrapper's load hands the view
-    network: PreparedNetwork | null; // the build's network, which _attachBuild starts; none in sealed mode
-}
-
-// The network of a build of strict, cooperative or worker mode (_prepareNetwork).
-interface PreparedNetwork {
-    bridgeFrame: HTMLIFrameElement | null; // the fetch bridge's frame, its srcdoc written, not in the document (BD1:ISO-1)
-    fetchPolicy: FetchPolicy | null; // the bridge's policy with the host page's policy applied (_reach): what its requests are checked against
 }
 
 // The context of a build where the element may not build (buildsHere): it stops instead, and asks nothing else.
@@ -2657,7 +2058,7 @@ const NOT_HERE: BuildContext = Object.freeze({ buildsHere: false, blocked: null,
 /**
  * The lifecycle executor's one entry (S65; src/lib/lifecycle.ts, `step`): reduce `input` against the element's
  * `_lc`, store the next state, then run the effects on the element. Every transition comes through here: every build
- * (the DOM callbacks, reset(), load(), setConfig()) and its completion (the wrapper's load, the guest's announcement,
+ * (the DOM callbacks, start(), reset()) and its completion (the wrapper's load, the guest's announcement,
  * the view's check-in), and every termination: terminate(), a build's failure and its deferred 'terminated', and every
  * one the element starts itself. What a platform callback or a timer delivers is stamped with the generation it was
  * armed in, which `reduce` drops once a teardown made it stale (research 18, class L: "an actor of an old environment
@@ -2697,8 +2098,6 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
         },
         teardown: () => Reflect.apply(LIFECYCLE._teardown, element, []),
         discardWrites: () => Reflect.apply(LIFECYCLE._discardGuestWrites, element, []),
-        applyConfig: () => Reflect.apply(LIFECYCLE._configure, element, []),
-        buildContext: () => Reflect.apply(LIFECYCLE._buildContext, element, []),
         build: () => Reflect.apply(LIFECYCLE._prepareBuild, element, []),
         attach: (prepared) => Reflect.apply(LIFECYCLE._attachBuild, element, [prepared as PreparedBuild]),
         startLoadDeadline: () => Reflect.apply(LIFECYCLE._startLoadDeadline, element, []),
@@ -2724,7 +2123,12 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
         // The completion of a build (S65), in the order `enterReady` gives them.
         stopLoadDeadline: () => Reflect.apply(LIFECYCLE._stopLoadDeadline, element, []),
         sendInitView: (target) => Reflect.apply(LIFECYCLE._setupStrictChannels, element, [target as Window]),
-        openChannel: (port) => Reflect.apply(LIFECYCLE.setupChannel, element, [port as MessagePort | null]),
+        // Only a build of the network modes announces a port, and has the method (network-host.ts, _setupChannel): reached
+        // through the class's prototype, where that build installed it, as every effect is (BR:CB7).
+        openChannel: (port) => {
+            const setupChannel = (LIFECYCLE as unknown as Partial<NetworkElement>)._setupChannel;
+            if (setupChannel) Reflect.apply(setupChannel, element, [port as MessagePort | null]);
+        },
         closePort: (port) => (port as MessagePort | null)?.close(),
         checkView: (height, stillStyleRefused) => Reflect.apply(LIFECYCLE._checkView, element, [height, stillStyleRefused]),
         flush: () => Reflect.apply(LIFECYCLE._flush, element, []),
@@ -2737,8 +2141,13 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
     };
 }
 
+// start() on an element that has its app (I1): another app is another element.
+function alreadyStarted(): TypeError {
+    return mintUncodedError(TypeError, '[Sandbox] start(): this element already runs its app; another app is another element.');
+}
+
 // A line of the element's own, said before the termination it announces (the executor dispatches it: `notices`).
-function hostNotice(text: string): Notice {
+export function hostNotice(text: string): Notice {
     return { level: 'error', text, source: 'host' };
 }
 
@@ -2796,7 +2205,7 @@ function connected(element: WebSandbox) {
 }
 
 // Firefox gives an element adopted into another document that document's HTMLElement prototype (BR:CB7): its methods are
-// gone there, so a call would throw a TypeError, and registerFiles() would change the store and then throw before its
+// gone there, so a call would throw a TypeError, and a commit would change the store and then throw before its
 // 'fileschanged' (R2:L-5). The element gets its own prototype back on adoption, and again on its return
 // (connected), so its methods behave the same in every document: there, as the element is idle, a call is refused with
 // TERMINATED and a build does nothing (buildsHere). False if the engine refuses.

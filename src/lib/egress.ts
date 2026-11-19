@@ -116,7 +116,7 @@ export const WINDOW_EVENT_TYPES: readonly string[] = [
     'contentvisibilityautostatechange', 'contextlost', 'contextmenu', 'contextrestored', 'copy', 'cuechange', 'cut',
     'dblclick', 'devicemotion', 'deviceorientation', 'deviceorientationabsolute', 'drag', 'dragend', 'dragenter',
     'dragexit', 'dragleave', 'dragover', 'dragstart', 'drop', 'durationchange', 'emptied', 'ended', 'error', 'focus',
-    'formdata', 'gamepadconnected', 'gamepaddisconnected', 'gotpointercapture', 'hashchange', 'input', 'invalid',
+    'formdata', 'gamepadconnected', 'gamepaddisconnected', 'gotpointercapture', 'hashchange', 'input', 'installresult', 'invalid',
     'keydown', 'keypress', 'keyup', 'languagechange', 'load', 'loadeddata', 'loadedmetadata', 'loadstart',
     'lostpointercapture', 'message', 'messageerror', 'mousedown', 'mouseenter', 'mouseleave', 'mousemove', 'mouseout',
     'mouseover', 'mouseup', 'mousewheel', 'mozfullscreenchange', 'mozfullscreenerror', 'offline', 'online',
@@ -187,7 +187,7 @@ const own: EgressRow[] = [
 
     // ---- the library's port, the host's end
     { realm: 'port', surface: 'message', modes: ALL_MODES, owner: 'host', handling: ['relayed', 'budgeted', 'capped'],
-        bound: 'the logic port: only the bootstrap posts on it, through its chokepoints: log lines (LOG_EVENTS_PER_SECOND), calls (callLimits), violations (VIOLATION_EVENT_LIMIT), heights (AUTO_RESIZE_MAX_UPDATES_PER_SECOND), PONG, the budget of uncaught errors; strict mode\'s view port: only the view posts on it, its own frames, bounded in the view (guestText, VIOLATION_EVENT_LIMIT per directive, heights, a first overrun\'s notice at most once per 9 s of its debt and one host line per environment); the fetch bridge\'s port: only the bridge\'s frame posts on it, answering the host\'s own frames (one check-in, one head a request, one chunk a pull, MAX_RESPONSE_HEAD and fetchBridge.maxBytes checked before posting)', test: 'test/unit/relay-and-rpc-budgets.test.ts; test/e2e/worker-port-and-view-cost.spec.ts (M-6, M-5); test/e2e/fetch-bridge-isolation.spec.ts' },
+        bound: 'the logic port: only the bootstrap posts on it, through its chokepoints: log lines (LOG_EVENTS_PER_SECOND), calls (callLimits), violations (VIOLATION_EVENT_LIMIT), heights (AUTO_RESIZE_MAX_UPDATES_PER_SECOND), PONG, the budget of uncaught errors; strict mode\'s view port: only the view posts on it, its own frames, bounded in the view (guestText, VIOLATION_EVENT_LIMIT per directive, heights, a first overrun\'s notice at most once per 9 s of its debt and one host line per environment, a VIEW_LINK a trusted click on a marked link); the fetch bridge\'s port: only the bridge\'s frame posts on it, answering the host\'s own frames (one check-in, one head a request, one chunk a pull, MAX_RESPONSE_HEAD and fetchBridge.maxBytes checked before posting)', test: 'test/unit/relay-and-rpc-budgets.test.ts; test/e2e/worker-port-and-view-cost.spec.ts (M-6, M-5); test/e2e/fetch-bridge-isolation.spec.ts' },
     { realm: 'port', surface: 'messageerror', modes: ALL_MODES, owner: 'host', handling: ['unreachable'],
         bound: 'only the bootstrap posts on the port, frames it built from clones, which deserialize', test: 'test/e2e/egress.spec.ts' },
 
@@ -211,7 +211,7 @@ const own: EgressRow[] = [
     { realm: 'view', surface: 'rendering', modes: VIEW_MODES, owner: 'view', handling: ['budgeted'],
         bound: 'the view\'s budgets: VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_ELEMENTS, VIEW_MAX_CHARACTERS; one operation: the second past VIEW_MAX_OPERATION_MS within VIEW_OVERRUN_WINDOW_MS ends the sandbox (S72)', test: 'test/e2e/view-budget.spec.ts; test/e2e/view-bound.spec.ts (b)' },
     { realm: 'view', surface: 'click', modes: VIEW_MODES, owner: 'view', handling: ['cancelled', 'relayed'],
-        bound: 'a link\'s navigation cancelled; forwarded to sandboxView.on within VIEW_EVENT_LIMITS', test: 'test/e2e/strict-events.spec.ts' },
+        bound: 'a link\'s navigation cancelled; forwarded to sandboxView.on within VIEW_EVENT_LIMITS; a trusted one on a link the renderer marked (`links`), and on no form control inside it, while no key is held (a trusted keydown that repeats holds it, until a trusted keyup, a new press or the window\'s blur), sends the host one VIEW_LINK: the link\'s index in the list', test: 'test/e2e/strict-events.spec.ts; test/unit/view-links.test.ts; test/e2e/links.spec.ts' },
     { realm: 'view', surface: 'auxclick', modes: VIEW_MODES, owner: 'view', handling: ['cancelled'],
         bound: 'a link\'s navigation cancelled', test: 'test/e2e/strict-events.spec.ts' },
     { realm: 'view', surface: 'submit', modes: VIEW_MODES, owner: 'view', handling: ['cancelled', 'relayed'],
@@ -252,6 +252,8 @@ const own: EgressRow[] = [
     // ---- the host page's window, and the element's frame in it
     { realm: 'host', surface: 'load', modes: ALL_MODES, owner: 'host', handling: ['own'],
         bound: 'the wrapper frame\'s load: it loads once; a guest that navigates or reloads it ends the sandbox at the second', test: 'test/unit/fetch-and-csp-guarantees.test.ts; test/e2e/lifecycle.spec.ts' },
+    { realm: 'host', surface: 'window.open', modes: VIEW_MODES, owner: 'host', handling: ['own'],
+        bound: "the element's own call, in the task of a VIEW_LINK from the current environment's view, and only for an integer index within the element's `links`: it opens that list's URL with noopener and noreferrer, at most LINK_TABS_PER_SECOND in any one-second window per element (a request past it opens nothing); the browser opens a tab only for a user activation (research 30)", test: 'test/unit/links.test.ts; test/e2e/links-popup-blocker.spec.ts' },
     { realm: 'host', surface: 'message', modes: ALL_MODES, owner: 'host', handling: ['own'],
         bound: 'the element takes the guest frame\'s one announcement; anything else a cooperative guest posts to the host window is the host page\'s to read (a cooperative-mode limit: messages to the host window), and strict and worker mode run no guest code in a window', test: 'test/unit/fetch-and-csp-guarantees.test.ts (CB1)' },
 ];
@@ -336,10 +338,11 @@ export interface ChannelBudget {
     /** The bound on what it costs the host page: a share, a cap or a constant, or that the columns above are the bound. */
     readonly cost: string;
     /**
-     * What the channel reaches of the network in sealed mode, which has none (docs/research/24_sealed_mode): `none`, and
-     * why where it is not plain, or that the channel is not one of sealed mode's.
+     * What the channel reaches of the network in sealed mode, which has none of its own (docs/research/24_sealed_mode):
+     * `none`, and why where it is not plain; `only` and what the embedder granted, for the one channel that reaches beyond
+     * the host page, `links`; or that the channel is not one of sealed mode's.
      */
-    readonly sealed: `none${string}` | 'not a channel of sealed mode';
+    readonly sealed: `none${string}` | `only ${string}` | 'not a channel of sealed mode';
     readonly test: string;
 }
 
@@ -458,6 +461,14 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         cost: `a stall past {VIEW_MAX_OPERATION_MS} ms at most once per {VIEW_OVERRUN_WINDOW_MS} ms beyond the first; ${VIEW_COST}`,
         sealed: 'none',
         test: 'test/unit/strict-view-budget.test.ts (the repeated-overrun rule); test/e2e/view-bound.spec.ts' },
+    { channel: 'Strict and sealed: the user\'s click on a link the view marked (`links`), to a new tab of a listed URL',
+        surfaces: [['view', 'click'], ['host', 'window.open']],
+        count: 'one request a user action: a trusted click on a marked link, sent by the view, and none while a key is held (a repeat\'s click is none); at most {LINK_TABS_PER_SECOND} tabs in any one-second window per element, counted by the host page, whatever the browser allows; none without a user activation; at most {MAX_LINKS} URLs listed',
+        bytes: 'an index of the list, an integer: a choice among the listed URLs, at most log₂ of their number in bits a user action (5 at {MAX_LINKS}), and at most {LINK_TABS_PER_SECOND} times that in any second; no text of the guest\'s is part of the URL',
+        time: 'the user\'s action: each request is a click on the link itself, or Enter on it while it has the focus; the app chooses which listed URL each link carries, and which link is under the pointer or has the focus when the user acts, and the browser allows the tab for its 5 seconds of activation',
+        cost: `one \`window.open\` a request, and a tab only for a click; the marking (each link's href looked up once among the listed URLs) and the click's walk to its link (at most {VIEW_MAX_DEPTH} elements) run in the view, within its share of at most {VIEW_APPLY_MS_PER_SECOND} ms of each second; ${VIEW_COST}`,
+        sealed: 'only the URLs the embedder lists in `links`: each a new tab of the browser\'s, opened by the host page with no opener and no referrer, on the user\'s click; what a listed site\'s server learns is which listed URL the click carried, and when',
+        test: 'test/unit/links.test.ts; test/unit/view-links.test.ts; test/e2e/links.spec.ts; test/e2e/links-popup-blocker.spec.ts' },
     { channel: "Cooperative: the guest's own document",
         surfaces: [['cooperative', 'every other event of the guest document']],
         count: "none: the guest runs on the host page's thread wherever the engine puts its frame there",

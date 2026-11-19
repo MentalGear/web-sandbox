@@ -1,6 +1,10 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder, wss } from './recorder';
+import { FOCUS_AND_CLIPBOARD_FACTS } from '@src/lib/engine-ledger';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The guest realm's hardening (each label below is cited as BR:<label>), where browser behaviour decides:
@@ -142,7 +146,7 @@ test.describe('CB3: calls while loading, and the load deadline', () => {
         const html = `<script>globalThis.__counted = 0; bridge.expose('count', () => ++__counted); bridge.expose('counted', () => __counted);</script>`;
         const outcome = await page.evaluate(({ html, config }) => new Promise<any>((resolve) => {
             const el = document.querySelector('web-sandbox') as any;
-            el.setConfig({ ...config, html });
+            el.start(...sandboxSplit({ ...config, html }));
             const settled = (outcome: string) => ({ outcome, state: el.state });
             const timedOut = el.callWithTimeout(50, 'count').then(() => settled('resolved'), (e: any) => settled(e.code));
             const waiting = el.call('counted');
@@ -255,13 +259,13 @@ test.describe('PD2: fetch() with keepalive is refused in the guest realm', () =>
         });
     }
 
-    test('residual (measured): a frame the guest creates has the platform\'s fetch; Firefox still sends its keepalive request past connect-src', async ({ sandbox, browserName }) => {
+    test('residual (measured): a frame the guest creates has the platform\'s fetch, whose keepalive request every engine checks against connect-src', async ({ sandbox }) => {
         expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         await sandbox.run(`const f = document.createElement('iframe'); f.srcdoc = ${JSON.stringify(`<script>fetch('${recorder.blocked}/pd2-nested', { keepalive: true, method: 'POST', body: 'x' }).catch(() => {}); fetch('${recorder.allowed}/pd2-nested-control').catch(() => {});</script>`)}; document.body.append(f);`);
         await recorder.waitFor('allowed', '/pd2-nested-control'); // the nested frame's scripts run (positive control)
         await sandbox.page.waitForTimeout(800);
         // ledger: keepalive-fetch
-        expect(recorder.paths('blocked')).toEqual(browserName === 'firefox' ? ['/pd2-nested'] : []);
+        expect(recorder.paths('blocked')).toEqual([]);
     });
 });
 
@@ -327,7 +331,8 @@ test.describe('PD5: focus and the clipboard (residuals, measured)', () => {
         const guestKeys = (await sandbox.logs()).filter(line => line.startsWith('PD5-KEY')).at(-1) ?? null;
         const hostValue = await page.evaluate(() => (document.getElementById('host-input') as HTMLInputElement).value);
         // ledger: focus-and-clipboard
-        const measured = { chromium: ['web-sandbox', 'PD5-KEY abc', ''], firefox: ['web-sandbox', null, ''], webkit: ['input', null, 'abc'] }[browserName as 'chromium'];
+        const facts = FOCUS_AND_CLIPBOARD_FACTS[browserName as 'chromium'];
+        const measured = [facts.guestTakesFocus ? 'web-sandbox' : 'input', facts.keystrokesReachGuest ? 'PD5-KEY abc' : null, facts.guestTakesFocus ? '' : 'abc'];
         expect([active, guestKeys, hostValue]).toEqual(measured);
     });
 
@@ -348,12 +353,13 @@ test.describe('PD5: focus and the clipboard (residuals, measured)', () => {
         await page.frameLocator('web-sandbox >>> iframe').frameLocator('iframe').locator('#t').click();
         const inHandler = (await sandbox.waitForLog('PD5-HANDLER')).slice('PD5-HANDLER '.length);
         console.log('PD5 clipboard', browserName, JSON.stringify({ without, withClick, inHandler }));
+        // ledger: focus-and-clipboard
+        const facts = FOCUS_AND_CLIPBOARD_FACTS[browserName as 'chromium'];
         const measured = {
-            // ledger: focus-and-clipboard
-            chromium: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'NotAllowedError', copied: true }, inHandler: 'NotAllowedError' },
-            firefox: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'written', copied: true }, inHandler: 'written' },
-            webkit: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'NotAllowedError', copied: false }, inHandler: 'written' },
-        }[browserName as 'chromium'];
+            without: { written: 'NotAllowedError', copied: false },
+            withClick: { written: facts.writeTextAfterClick ? 'written' : 'NotAllowedError', copied: facts.copyAfterClick },
+            inHandler: facts.writeTextInClickHandler ? 'written' : 'NotAllowedError',
+        };
         expect({ without, withClick, inHandler }).toEqual(measured);
     });
 });

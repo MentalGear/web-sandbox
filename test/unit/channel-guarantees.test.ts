@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { EXECUTION_TIMEOUT_GRACE_MS } from '@src/host';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_STRING, LOG_OWN_LINES, toLogDetail } from '@src/lib/sandbox-log';
@@ -7,6 +8,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkIn } from './check-in';
+import { elementSource } from './element-source';
+import { startWith } from './start-app';
 
 /**
  * Channels and lifecycle, host side:
@@ -19,7 +22,7 @@ async function mount(config?: Record<string, unknown>) {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    if (config) el.setConfig(config);
+    if (config) startWith(el, config);
     return el;
 }
 
@@ -73,7 +76,7 @@ describe('B3: every sandbox-log detail is normalised and labelled', () => {
 
     it(`dispatches at most ${LOG_EVENTS_PER_SECOND} guest lines per second per environment, with one warning; host lines are never limited; a new environment starts afresh`, async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount();
+        const el = await mount({}); // an app, so that reset() builds the new environment
         const heard = logs(el);
         const { port1 } = new MessageChannel();
         el._port = port1;
@@ -198,7 +201,7 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
         },
         {
             name: "a worker the host page's policy refused (strict mode, review round 1 R3-1)",
-            reason: "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)",
+            reason: "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src, or a Cross-Origin-Embedder-Policy the engine applies to it; see docs/API.md#host-page-policy)",
             start: async () => {
                 const el = await mount({ mode: 'strict' });
                 const { port1: view } = new MessageChannel();
@@ -236,7 +239,7 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
 
     // The generation is compared only by the reducer and its executor (and, for a call, _postRpc): the source scan of
     // class L is in test/unit/lifecycle-reducer.test.ts ("class L in host.ts, by its source").
-    const source = () => readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/host.ts'), 'utf8');
+    const source = () => elementSource();
     // The method each `notices` list is in, and the list itself (up to its closing bracket at the same depth).
     const noticeLists = (text: string) => [...text.matchAll(/notices: \[/g)].map(match => {
         let depth = 0;
@@ -255,7 +258,7 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
         expect(text).not.toContain('_notifyThenAct(');
         // the execution timeout; the host page's refusals (the view's TRUSTED_TYPES_REFUSED and WORKER_REFUSED, worker
         // mode's announced refusal) through one method; the entry failure
-        expect(noticeLists(text).map(({ method }) => method)).toEqual(['_onExecutionTimeout', '_refusedByHostPage', '_onViewMessage']);
+        expect(noticeLists(text).map(({ method }) => method).sort()).toEqual(['_onExecutionTimeout', '_onViewMessage', '_refusedByHostPage']);
         expect(noticeLists(text)).toHaveLength(PATHS.length);
         // Paths whose action is not a termination are forced where their feature is tested: the guest-write announcement
         // ('fileswritten', then the acknowledgement; test/unit/guest-writes.test.ts, AR:B5).

@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { cssLoadBound, inSandboxView, isStyleProperty, sanitizeRender, VIEW_OPTIONS, VIEW_URLS_PER_SECOND, viewBudget, viewInputOutbox, type ViewOptions } from '@src/lib/in-sandbox-view';
+import { cssLoadBound, inSandboxView, isStyleProperty, sanitizeRender, VIEW_OPTIONS, VIEW_URLS_PER_SECOND, viewBudget, viewControlNames, viewInputOutbox, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { styleMarkup } from '@src/lib/style-markup';
 import { VIOLATION_DIRECTIVES, violationBucket } from '@src/lib/violation';
-import { scalingRatio, type ScalingSize } from './scaling';
+import { scalingRatio, SCALING_TIMEOUT_MS, type ScalingSize } from './scaling';
 import { cssReferences, keepsUrl, withKeptReferences } from '@src/lib/css-references';
 
 /**
@@ -301,7 +301,7 @@ describe('S73: cssLoadBound counts every token that can load, as the CSS tokeniz
     // Linear, as a ratio measured in the same run (backlog T9's class: "under a second" measured the machine): 8 times the
     // text takes at most 3 times 8 as long. scalingRatio samples both sizes alternately and keeps each one's fastest time
     // (test/unit/scaling.ts). A count quadratic in the text takes about 64 times as long.
-    it('linear in the text: 8 times the CSS that loads (1 MiB) takes about 8 times as long to count, not 64', { timeout: 60000 }, () => {
+    it('linear in the text: 8 times the CSS that loads (1 MiB) takes about 8 times as long to count, not 64', { timeout: SCALING_TIMEOUT_MS }, () => {
         const css = (n: number) => 'a{background:url(https://a.example/x.png),image-set("y.png" 1x)}/* u\\72 l( */'.repeat(n);
         const size = (n: number): ScalingSize<number> => () => {
             const text = css(n);
@@ -419,7 +419,7 @@ describe('S73: the view prepays the CSS each operation applies, and a reported l
             return add.call(this, type, listener, options);
         } as typeof window.addEventListener;
         try {
-            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${spy}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
+            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${spy}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()}, ${viewControlNames.toString()});`)();
         } finally {
             window.addEventListener = add;
         }

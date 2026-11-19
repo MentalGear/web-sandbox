@@ -8,7 +8,7 @@
 could ask the other for a result. One layer under several features answers that: promise-based calls in both
 directions. The features that ride it are the host-mediated `fetch` ([ADR-006](ADR-006-fetch-bridge.md)) and the
 guest's file writes ([ADR-004](ADR-004-files-as-blob-urls.md)), both as reserved methods, and the embedder's own
-`call()` and `expose()`. Frames that are fire-and-forget or that the library alone sends do not ride it: console
+`call()`, the host methods it gives with `start()` and the guest's `bridge.expose()`. Frames that are fire-and-forget or that the library alone sends do not ride it: console
 lines, uncaught errors, violation reports, content heights, liveness probes, and strict mode's render updates, which
 travel on a port of their own from the worker to the view (below).
 
@@ -87,7 +87,7 @@ Its separate retry/stop signal was not adopted, for the reason above.
 ### Reserved methods and library codes
 
 Names starting with `sandbox:` are reserved. They live in a registry of their own, written only by `exposeReserved()`;
-`expose()` never registers one, so no embedder or guest method can replace a library method. A reserved method may
+a broker's `expose()` never registers one, and `start()` refuses a host method of such a name, so no embedder or guest method can replace a library method. A reserved method may
 refuse with a *library code* from a third closed group, disjoint from both groups above: the fetch bridge's `FETCH_*`
 codes ([ADR-006](ADR-006-fetch-bridge.md)) and the file codes `INVALID_PATH`, `INVALID_FILE`,
 `FILES_QUOTA_EXCEEDED`, `FILES_NOT_ALLOWED` and `FILES_BUSY`, reported by `sandbox:write`
@@ -181,7 +181,7 @@ from the worker to the view; the host is not on the path.
   (`VIEW_EVENT`) flow the other way, to handlers registered with `sandboxView.on()`, not to exposed methods. Neither fits
   the broker's registry or correlation.
 - **Who holds which port.** The logic port (host ↔ worker) carries the broker exactly as in worker mode: `call()`,
-  `expose()`, the reserved `sandbox:fetch`, logs, the watchdog and the worker's violation reports. The view port
+  the host methods, the reserved `sandbox:fetch`, logs, the watchdog and the worker's violation reports. The view port
   (host ↔ view) carries only the library's own frames: the view's violations, its height, an entry failure, its
   liveness answers. The render port (view ↔ worker) is created by the view and kept by the worker's library prelude in
   a closure, used only through primitives captured before guest code ran, so guest code cannot post on it and cannot

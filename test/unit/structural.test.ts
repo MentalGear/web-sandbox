@@ -112,10 +112,10 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIOLATION', 'sourceFile', 'cutAt(read.sourceFile, VIOLATION_MAX_STRING)'],
     ['VIOLATION', 'lineNumber', 'read.lineNumber'],
     ['VIOLATION', 'columnNumber', 'read.columnNumber'],
-    // the request gate's own reports (S74): the same frame, its strings cut the same way
+    // the request gate's own reports (S74; request-gate.ts hands them to the bootstrap's `report`): the same frame, its strings cut the same way
     ['VIOLATION', 'directive', "'connect-src'"],
-    ['VIOLATION', 'blockedURI', 'cutAt(reportedUrl(href), VIOLATION_MAX_STRING)'],
-    ['VIOLATION', 'sourceFile', 'GATE_SOURCE'],
+    ['VIOLATION', 'blockedURI', 'cutAt(blockedURI, VIOLATION_MAX_STRING)'],
+    ['VIOLATION', 'sourceFile', 'cutAt(sourceFile, VIOLATION_MAX_STRING)'],
     ['RESIZE', 'type', "'RESIZE'"],
     ['RESIZE', 'height', 'height'],
     ['LOG', 'type', "'LOG'"],
@@ -158,6 +158,8 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIOLATION', 'sourceFile', 'cutText(sourceFile, options.violationMaxString)'],
     ['VIOLATION', 'lineNumber', 'lineNumber'],
     ['VIOLATION', 'columnNumber', 'columnNumber'],
+    ['VIEW_LINK', 'type', "'VIEW_LINK'"],
+    ['VIEW_LINK', 'index', 'index'],
     ['VIEW_EVENT', 'type', "'VIEW_EVENT'"],
     ['VIEW_EVENT', 'details', 'details'],
     ['VIEW_FIRST_OVERRUN', 'type', "'VIEW_FIRST_OVERRUN'"],
@@ -424,10 +426,10 @@ function platformRequestUses(file: string, text: string, allowed: [number, numbe
 }
 
 describe("the fetch bridge's requests are made by its frame, and only there (BD1:ISO-1, class E-net)", () => {
-    // The functions that may name the platform's fetch: the guest bootstrap, which guards the guest's own fetch
-    // (keepalive), and the bridge's frame, which makes every bridge request. The host page's own realm makes no request
+    // The functions that may name the platform's fetch: the request gate of the network modes, which guards the guest's own fetch
+    // (keepalive; the bootstrap itself names none), and the bridge's frame, which makes every bridge request. The host page's own realm makes no request
     // (not even to learn the page's policy: test/unit/host-policy-source.test.ts).
-    const MAY_FETCH: readonly [string, string][] = [['src/lib/in-sandbox-script.ts', 'inSandboxScript'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame']];
+    const MAY_FETCH: readonly [string, string][] = [['src/lib/request-gate.ts', 'requestGate'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame']];
     const unixOf = (file: string) => file.split(path.sep).join('/');
 
     it("no code of src/ names the platform's fetch outside those two functions, and the bridge's host-side modules name no other request API: the host never makes a bridge request itself", () => {
@@ -448,7 +450,7 @@ describe("the fetch bridge's requests are made by its frame, and only there (BD1
     it("and that scan flags each way a host request to the target could be spelled, in the bridge's host-side modules", () => {
         const file = 'src/lib/fetch-bridge.ts';
         const source = read(file);
-        const anchor = "export const FETCH_METHOD = 'sandbox:fetch';";
+        const anchor = 'export const DEFAULT_MAX_BYTES = 1024 * 1024;';
         expect(source.split(anchor)).toHaveLength(2);
         const none: [number, number][] = [];
         expect(platformRequestUses(file, source, none).found).toEqual([]);
@@ -484,9 +486,10 @@ describe("the fetch bridge's requests are made by its frame, and only there (BD1
         const callers = (name: string) => sourceFiles('src')
             .filter(file => read(file).replace(`function ${name}(`, '').includes(`${name}(`))
             .map(unixOf);
-        expect(callers('createFetchBridge')).toEqual(['src/host.ts']);
-        expect(read('src/host.ts')).toMatch(/const frame = createBridgeFrame\(\{[^]*?\}\);\s*this\._bridgeFrame = frame;\s*this\._fetchBridge = createFetchBridge\(\{[^}]*transport: frame\.transport,/);
-        expect(callers('createBridgeFrame')).toEqual(['src/host.ts']);
+        // the element's bridge is started by the network modes' method (network-host.ts, _startFetchBridge)
+        expect(callers('createFetchBridge')).toEqual(['src/lib/network-host.ts']);
+        expect(read('src/lib/network-host.ts')).toMatch(/const frame = createBridgeFrame\(\{[^]*?\}\);\s*this\._bridgeFrame = frame;\s*this\._fetchBridge = createFetchBridge\(\{[^}]*transport: frame\.transport,/);
+        expect(callers('createBridgeFrame')).toEqual(['src/lib/network-host.ts']);
         expect(callers('buildBridgeDocument')).toEqual(['src/lib/bridge-frame.ts']);
         expect(BRIDGE_FRAME_SANDBOX).toBe('allow-scripts');
         expect(read('src/lib/bridge-frame.ts')).toContain("iframe.setAttribute('sandbox', BRIDGE_FRAME_SANDBOX);");

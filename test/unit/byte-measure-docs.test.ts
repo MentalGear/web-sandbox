@@ -3,19 +3,18 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LIMITS } from '@src/lib/limits';
 import { createSizeOf } from '@src/lib/structured-size';
 
 /**
  * What docs/API.md states about the byte measure is what the measure counts (BD3:DOC-11, class P with D: a doc's copy of
  * a constant). Each constant the paragraph "What the byte measure counts" states is measured here on a sample of its kind,
- * and the paragraph must state it; the Blob-type limit is stated as the library's for the types the engines keep.
+ * and the paragraph must state it; a kind it refuses is refused by the measure.
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const squash = (text: string) => text.replace(/\s+/g, ' ');
 const API = squash(readFileSync(path.join(ROOT, 'docs/API.md'), 'utf8'));
-const PARAGRAPH = API.slice(API.indexOf('**What the byte measure counts.**'), API.indexOf('A type of up to 4096 characters crosses on every engine.'));
+const PARAGRAPH = API.slice(API.indexOf('**What the byte measure counts.**'), API.indexOf("never an array's `length`.", API.indexOf('**What the byte measure counts.**')));
 const measure = createSizeOf();
 const sizeOf = (value: unknown) => measure(value, Infinity);
 
@@ -36,8 +35,6 @@ describe('the constants of the byte measure that docs/API.md states', () => {
         ['a `RegExp` two bytes a character of its source plus 24', /ab/, 16 + 2 * 2 + 24],
         ['an `ArrayBuffer` its byte length', new ArrayBuffer(10), 16 + 10],
         ['a typed array or a `DataView` its whole buffer, once', new Uint8Array(new ArrayBuffer(10), 2, 3), 16 + 10],
-        ['a `Blob` 64 plus its `type` like a string', new Blob([], { type: 'text/a' }), 16 + 64 + 2 * 6 + 8],
-        ['a `File` that plus its `name` like a string and 8 for `lastModified`', new File([], 'ab', { type: 'text/a' }), 16 + 64 + 2 * 6 + 8 + (2 * 2 + 8) + 8],
     ];
 
     it.each(STATED)('%s', (statement, value, bytes) => {
@@ -54,12 +51,12 @@ describe('the constants of the byte measure that docs/API.md states', () => {
         expect(PARAGRAPH).toContain('an object met again 8');
     });
 
-    it('the Blob type limit is stated as the engines\' behaviour says: the library\'s for the types an engine keeps, with Chromium\'s emptying named', () => {
-        expect(LIMITS.BLOB_TYPE_MAX_LENGTH.value).toBe(4096);
-        const label = LIMITS.BLOB_TYPE_MAX_LENGTH.label;
-        expect(label).toContain('on every engine that keeps the type');
-        expect(label).toContain('Chromium empties');
-        expect(API).toContain('on every engine that keeps the type: Chromium empties a type of 65 536 characters or more');
-        expect(API).not.toContain('is over every byte budget, on every engine, and is refused');
+    it('the kinds it says are refused measure past every limit, their kind named: a Blob and a File among them (I7)', () => {
+        expect(PARAGRAPH).toContain('Any other kind is refused as unsupported, with its kind named: an `Error`, an `ImageData`, a `SharedArrayBuffer`, a `Blob` or a `File`, and a resizable `ArrayBuffer` (`resizable ArrayBuffer`),');
+        for (const value of [new Error('e'), new SharedArrayBuffer(8), new Blob([]), new File([], 'f'), new ArrayBuffer(8, { maxByteLength: 16 })]) {
+            const unsupported = { kind: '' };
+            expect(measure(value, Infinity, undefined, unsupported)).toBe(Infinity);
+            expect(unsupported.kind).not.toBe('');
+        }
     });
 });

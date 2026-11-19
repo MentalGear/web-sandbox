@@ -5,8 +5,9 @@
  * event, eventEnd). test/unit/lifecycle-reducer.test.ts runs thousands of sequences through it (S65).
  *
  * The fake element mirrors host.ts's adapter, reduced to what the lifecycle sees:
- * - setConfig() clones the argument and applies it with the real config schema (normaliseConfig), so a refusal, an
- *   unknown mode and a strict entry are decided by the element's own rules; the files are a map of paths;
+ * - start() reads its two arguments with the element's own reading (app-start.ts, readStart), so what it refuses is
+ *   decided by the element's own rules, and a second start() throws; the files are a FileStore, as the element's are,
+ *   and a build refuses a strict entry they do not hold, or one that calls import(), as host.ts's _buildRefusal does;
  * - a build makes a fake frame whose guest checks in after a few ms of fake time (a seeded delay): the strict view's
  *   VIEW_READY after it got its ports at the wrapper's load, the bootstrap's announcement in cooperative and worker
  *   mode, the wrapper's load alone without a bootstrap. One build in 40 has a guest that never checks in, so the load
@@ -19,33 +20,72 @@
  *   with their generation, and the reducer must drop them. That is stronger than the element, whose listeners and
  *   ports go with their environment (AR:B4).
  *
- * Listener plans run as nested steps inside the dispatch, as in test/model/runner.ts. What cannot agree without a guest
- * is filtered out (the S65 plan): calls, execute(), commitGuestWrites() and listGuestWrites(), with the guest's logs,
- * writes and fetches and the terminations a guest causes. The e2e suite (test/e2e/lifecycle-model.spec.ts) covers them.
+ * - the fake guest answers one kind of call, the guest's writes and removals (`act` with a `write` or `remove` step, plain
+ *   arguments, the default timeout), through the element's own overlay (guest-writes.ts, createGuestWrites, over a
+ *   FileStore) as host.ts's `_handleGuestWrite` does: 'fileswritten' first when the listed entry changed, then the
+ *   answer, unless a listener tore the environment down. commitGuestWrites() and listGuestWrites() are the overlay's, so
+ *   a committed change of the strict entry reaches the next build's refusal (`entryNotRegistered`, `entryImport`). The
+ *   guest is the agent where the app's entry or markup is the agent, and answers UNKNOWN_METHOD elsewhere; a guest with
+ *   no bootstrap answers nothing.
+ *
+ * Listener plans run as nested steps inside the dispatch, as in test/model/runner.ts. What cannot agree without a real
+ * guest is filtered out (the S65 plan): every other call, and execute(), with the guest's logs and fetches and the
+ * terminations a guest causes. The e2e suite (test/e2e/lifecycle-model.spec.ts) covers them.
  *
  * Besides the model's own checks, after every operation and every task the reducer's state must be the model's: the
  * same `state`, the same pending build termination, no 'terminated' still being dispatched, and the generation changed
  * exactly when the model's did (the element counts two teardowns for a refused build, the model one).
  */
-import { refusalDetail } from '../../src/lib/csp/origins';
 import { admits, isStale, reduce, step, type BuildContext, type Generation, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice, INITIAL_LIFECYCLE } from '../../src/lib/lifecycle';
-import { ConfigRefusal, defaultConfig, hasStrictView, normaliseConfig, unknownModeReason, type StoredConfig } from '../../src/lib/config-schema';
-import { isJavaScriptType, mimeTypeFor } from '../../src/lib/files';
-import { CONFIG_REFUSED, DEFAULT_TERMINATE_REASON, LifecycleModel, type Cmd, type ConfigDesc, type Sequence } from './lifecycle-model';
+import { readStart } from '../../src/lib/app-start';
+import { DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, unknownModeReason, type CallBudget, type StoredConfig } from '../../src/lib/config-schema';
+import { dynamicImportAt } from '../../src/lib/entry-imports';
+import { FileStore, isJavaScriptType } from '../../src/lib/files';
+import { createGuestWrites, parseCommitArguments, type GuestWrite, type GuestWrites, type MintedWrites } from '../../src/lib/guest-writes';
+import { reasonText } from '../../src/lib/reasons';
+import { DEFAULT_TERMINATE_REASON, LifecycleModel, RPC_SMALLEST_CALL_BYTES, type Cmd, type ConfigDesc, type GuestSpec, type Sequence, type Settlement } from './lifecycle-model';
 import { Rng } from './generator';
-import { configOf } from './runner';
+import { AGENT_SOURCE, commitListedAt, guestStep, listingOf, startArgumentsOf } from './runner';
 
 export const ORIGIN = 'https://host.example';
 const BUILD_FAILED = 'the environment could not be built';
 
-/** What the unit runner leaves out: what needs a guest to answer (the S65 plan; the e2e suite covers it). */
-const NEEDS_A_GUEST = new Set<Cmd['op']>(['call', 'execute', 'commit', 'listWrites']);
+/** The calls the fake guest answers: a write or a removal of the guest's, with plain arguments and the default timeout. */
+function isGuestWrite(cmd: Cmd): boolean {
+    if (cmd.op !== 'call' || cmd.method !== 'act' || cmd.timeout !== undefined || cmd.getter !== undefined) return false;
+    if (cmd.arg !== undefined && cmd.arg !== 'plain') return false;
+    return cmd.spec.k === 'write' || cmd.spec.k === 'remove';
+}
 
-/** The sequence without the operations a fake guest cannot answer, in the commands and in the listener plans. */
+/** What the unit runner leaves out: what needs a real guest to answer (the S65 plan; the e2e suite covers it). */
+function needsAGuest(cmd: Cmd): boolean {
+    if (cmd.op === 'execute') return true;
+    return cmd.op === 'call' && !isGuestWrite(cmd);
+}
+
+/** The sequence without the operations the fake guest cannot answer, in the commands and in the listener plans. */
 export function forTheReducer(sequence: Sequence): Sequence {
-    const cmds = sequence.cmds.filter(cmd => !NEEDS_A_GUEST.has(cmd.op));
-    const plans = sequence.plans.filter(plan => !NEEDS_A_GUEST.has(plan.action.op));
+    const cmds = sequence.cmds.filter(cmd => !needsAGuest(cmd));
+    const plans = sequence.plans.filter(plan => !needsAGuest(plan.action));
     return { ...sequence, cmds, plans };
+}
+
+/** The timeout of call() (API.md: 30 s). */
+const CALL_TIMEOUT_MS = 30000;
+
+/** One call to the fake guest, until it settles. */
+interface GuestCall {
+    readonly spec: GuestSpec;
+    readonly gen: Generation; // the environment it was made in
+    readonly settle: (outcome: Settlement) => void;
+    settled: boolean;
+}
+
+/** What the guest of the standing build is, as its app makes it. */
+interface FakeGuest {
+    readonly bootstrap: boolean; // it answers calls at all
+    readonly agent: boolean; // `act` is exposed
+    readonly tinyBytes: boolean; // its own calls, its writes among them, are heavier than callLimits.maxBytesPerSecond
 }
 
 export interface ReducerRunOptions {
@@ -109,8 +149,14 @@ export class FakeElement implements LifecycleHost {
     parent: 'none' | 'own' | 'foreign' = 'none';
     ownerDoc: 'own' | 'foreign' = 'own';
     config: StoredConfig = defaultConfig();
-    files: Record<string, string> = {};
+    callBudget: Readonly<CallBudget> = DEFAULT_CALL_BUDGET;
+    files = new FileStore(() => {});
     frame: Frame | null = null;
+    guest: FakeGuest | null = null; // the standing build's guest, from its attach to its teardown
+    writes: GuestWrites | null = null; // host.ts's `_guestWrites`: made by the attach, closed at the teardown, dropped by discardWrites
+    readonly minted: MintedWrites = new WeakMap(); // host.ts's `_mintedWrites`: every value listGuestWrites() returned, for the element's life
+    private calls: GuestCall[] = [];
+    private queued: GuestCall[] = []; // made while loading: posted at the flush
     log: string[] = [];
     warns = 0;
     stats: Record<string, number> = {};
@@ -120,8 +166,6 @@ export class FakeElement implements LifecycleHost {
     private seq = 0;
     private frames = 0;
     private deadline: Task | null = null;
-    private lastKey: string | null = null; // the last usable setConfig() argument, as data (host.ts: `_lastConfig.copy`)
-    private pendingCopy: { copy: unknown; error: unknown; key: string } | null = null;
     private warnedForeign = false;
     private lastSilent = false;
     lastBuildAt = 0;
@@ -197,27 +241,19 @@ export class FakeElement implements LifecycleHost {
             this.frame.connected = false;
         }
         this.frame = null;
+        this.guest = null;
+        this.writes?.close(); // its writes stay listable and committable until the next build
+        this.queued = [];
+        // host.ts: the broker rejects every call in flight with TERMINATED
+        const pending = this.calls;
+        this.calls = [];
+        for (const call of pending) this.settleCall(call, { status: 'rejected', code: 'TERMINATED' });
     }
 
     discardWrites() {
         this.log.push('discardWrites');
-    }
-
-    applyConfig(): string | null {
-        const pending = this.pendingCopy!;
-        this.pendingCopy = null;
-        const refuse = (error: unknown) => {
-            this.lastKey = null;
-            if (error instanceof ConfigRefusal) return error.reason;
-            return `${CONFIG_REFUSED} (${errorName(error)}${refusalDetail(error)})`;
-        };
-        if (pending.error !== null) return refuse(pending.error);
-        const { value, warnings, refusal } = normaliseConfig(pending.copy, { hostOrigin: ORIGIN, hostSites: [ORIGIN] });
-        this.warns += warnings.length;
-        if (value === null) return refuse(refusal);
-        this.config = value.config;
-        this.lastKey = pending.key;
-        return null;
+        this.writes?.close();
+        this.writes = null;
     }
 
     buildContext(): BuildContext {
@@ -228,11 +264,29 @@ export class FakeElement implements LifecycleHost {
         return { buildsHere: this.parent === 'own' && this.ownerDoc === 'own', blocked: unknownModeReason(mode) ?? this.entryRefusal(), strict, announces };
     }
 
+    // host.ts, `_buildRefusal`: the entry as the files hold it now
     private entryRefusal(): string | null {
         const entry = this.config.entry;
         if (!hasStrictView(this.config.mode) || typeof entry !== 'string' || entry === '') return null;
-        if (entry in this.files && isJavaScriptType(mimeTypeFor(entry))) return null;
-        return 'the guest entry is not a registered JavaScript file';
+        const file = this.files.list().find(candidate => candidate.path === entry);
+        if (!file || !isJavaScriptType(file.type)) return reasonText('entryNotRegistered');
+        return dynamicImportAt(this.textOf(entry) ?? '') >= 0 ? reasonText('entryImport') : null;
+    }
+
+    private textOf(path: string): string | null {
+        const base64 = this.files.base64(path);
+        return base64 === null ? null : new TextDecoder().decode(Uint8Array.from(atob(base64), c => c.charCodeAt(0)));
+    }
+
+    // The guest of a build, as its app makes it: the agent where the strict entry or the cooperative markup is the agent
+    // (worker mode's comes by execute(), which the fake guest does not run); no bootstrap without allow-scripts.
+    private guestOf(ctx: BuildContext): FakeGuest {
+        const entry = this.config.entry;
+        const strictAgent = ctx.strict && typeof entry === 'string' && this.textOf(entry) === AGENT_SOURCE;
+        const html = this.config.html;
+        const cooperativeAgent = this.config.mode === 'cooperative' && ctx.announces && typeof html === 'string' && html.includes(AGENT_SOURCE);
+        const tinyBytes = this.callBudget.bytes < RPC_SMALLEST_CALL_BYTES;
+        return { bootstrap: ctx.strict || ctx.announces, agent: strictAgent || cooperativeAgent, tinyBytes };
     }
 
     // host.ts, `_prepareBuild`: a frame the element does not hold yet
@@ -250,6 +304,9 @@ export class FakeElement implements LifecycleHost {
         const ctx = this.buildContext();
         frame.onload = this.loadHandler(frame);
         this.frame = frame;
+        this.guest = this.guestOf(ctx);
+        // host.ts, `_startGuestWrites`: the overlay answers the guest from the files this build delivers
+        this.writes = this.config.guestWrites === true ? createGuestWrites({ store: this.files, built: this.files.copy(), minted: this.minted, now: () => this.now }) : null;
         this.lastBuildAt = this.now;
         this.log.push(`build #${frame.id}${frame.silent ? ' (silent)' : ''}`);
         // the wrapper's one load, and the guest's announcement, in either order (S46: usually the announcement first)
@@ -301,7 +358,12 @@ export class FakeElement implements LifecycleHost {
     openChannel() { this.log.push('openChannel'); }
     closePort() { this.log.push('closePort'); }
     checkView() { this.log.push('checkView'); }
-    flush() { this.log.push('flush'); }
+    flush() {
+        this.log.push('flush');
+        const queued = this.queued;
+        this.queued = [];
+        for (const call of queued) this.post(call);
+    }
     startWatchdogs() { this.log.push('startWatchdogs'); }
     startAutoResize() { this.log.push('startAutoResize'); }
 
@@ -344,55 +406,97 @@ export class FakeElement implements LifecycleHost {
 
     // ---- the public API and the DOM, as host.ts's adapter will step them
 
-    setConfig(config: unknown, key: string) {
-        let copy: unknown = null;
-        let error: unknown = null;
-        try {
-            copy = structuredClone(config);
-        } catch (caught) {
-            error = caught;
-        }
-        this.pendingCopy = { copy, error, key };
-        this.step({ t: 'setConfig', same: error === null && this.lastKey !== null && key === this.lastKey });
-    }
-
-    load(html: string) {
-        this.config = { ...this.config, html };
-        this.step({ t: 'build', why: 'load', ctx: this.buildContext() });
+    // host.ts, start(): the arguments read whole first (a refusal throws and stores nothing), a second call throws; the
+    // app is stored and bound (`start`), the warnings said, then it builds as reset() does
+    start(app: unknown, grants: unknown) {
+        if (this.lc.started) throw new TypeError('[Sandbox] start(): this element already runs its app');
+        const values = readStart(app, grants, { hostOrigin: ORIGIN, hostSites: [ORIGIN] });
+        this.config = values.normalised.config;
+        this.callBudget = values.normalised.callBudget;
+        this.files = values.files;
+        this.step({ t: 'start' });
+        this.warns += values.warnings.length;
+        this.step({ t: 'build', ctx: this.buildContext() });
     }
 
     reset() {
-        this.step({ t: 'build', why: 'reset', ctx: this.buildContext() });
+        this.step({ t: 'build', ctx: this.buildContext() });
+    }
+
+    // ---- the fake guest's one kind of call, and the overlay's two members (host.ts: call, _handleGuestWrite,
+    // listGuestWrites, commitGuestWrites)
+
+    /** call('act', spec): TERMINATED at once with no environment; queued while loading; posted while ready. */
+    call(spec: GuestSpec, settle: (outcome: Settlement) => void) {
+        const call: GuestCall = { spec, gen: this.lc.gen, settle, settled: false };
+        if (this.lc.state !== 'loading' && this.lc.state !== 'ready') {
+            this.settleCall(call, { status: 'rejected', code: 'TERMINATED' });
+            return;
+        }
+        this.calls.push(call);
+        this.schedule(CALL_TIMEOUT_MS, () => this.settleCall(call, { status: 'rejected', code: 'TIMEOUT' }));
+        if (this.lc.state === 'loading') this.queued.push(call);
+        else this.post(call);
+    }
+
+    private post(call: GuestCall) {
+        this.schedule(this.rng.int(1, 5), () => this.answer(call));
+    }
+
+    private settleCall(call: GuestCall, outcome: Settlement) {
+        if (call.settled) return;
+        call.settled = true;
+        this.calls = this.calls.filter(other => other !== call);
+        this.queueMicrotask(() => call.settle(outcome));
+    }
+
+    // The guest runs the step, in the environment the call was made in; one with no bootstrap answers nothing.
+    private answer(call: GuestCall) {
+        const guest = this.guest;
+        if (call.settled || call.gen !== this.lc.gen || !guest || !guest.bootstrap) return;
+        if (!guest.agent) {
+            this.settleCall(call, { status: 'rejected', code: 'UNKNOWN_METHOD' });
+            return;
+        }
+        const value = this.guestWrite(call.spec as { k: 'write' | 'remove'; path: string; text?: string }, guest);
+        if (value !== null) this.settleCall(call, { status: 'resolved', value });
+    }
+
+    // sandboxFiles.write() or remove() in the guest, answered by host.ts's `_handleGuestWrite`; null when a 'fileswritten'
+    // listener tore the environment down before the answer (the teardown rejected the call).
+    private guestWrite(spec: { k: 'write' | 'remove'; path: string; text?: string }, guest: FakeGuest): string | null {
+        const writes = this.writes;
+        if (!writes) return 'code:FILES_NOT_ALLOWED';
+        if (guest.tinyBytes) return 'code:ARGS_NOT_TRANSFERABLE';
+        const request = spec.k === 'write' ? { change: 'write', path: spec.path, entry: spec.text! } : { change: 'remove', path: spec.path };
+        let recorded: ReturnType<GuestWrites['record']>;
+        try {
+            recorded = writes.record(request);
+        } catch (error: any) {
+            return `code:${error?.code}`;
+        }
+        if (recorded.answer.change === 'none') return 'code:NOT_FOUND';
+        if (!recorded.diff.listed) return 'ok';
+        const gen = this.lc.gen;
+        this.dispatch('fileswritten', deepFreeze({ paths: [recorded.answer.path] }));
+        return this.lc.gen === gen ? 'ok' : null;
+    }
+
+    listGuestWrites() {
+        return this.writes?.list() ?? [];
+    }
+
+    commitGuestWrites(writes: readonly GuestWrite[], options?: { code?: boolean }): boolean {
+        const { entries, code } = parseCommitArguments(writes, options, this.minted);
+        if (!this.writes) return entries.length === 0;
+        const changed = this.writes.commit(entries, code);
+        if (changed === null) return false;
+        if (changed.length > 0) this.dispatch('fileschanged', deepFreeze({ paths: changed }));
+        return true;
     }
 
     terminate(reason?: unknown) {
         this.step({ t: 'terminate', reason: typeof reason === 'string' && reason.trim() !== '' ? reason : DEFAULT_TERMINATE_REASON });
-    }
-
-    registerFiles(files: Record<string, string>) {
-        const changed: string[] = [];
-        for (const [path, text] of Object.entries(files)) {
-            if (this.files[path] === text) continue;
-            this.files[path] = text;
-            changed.push(path);
-        }
-        this.filesChanged(changed);
-    }
-
-    unregisterFiles(paths?: string[]) {
-        const removed: string[] = [];
-        for (const path of paths ?? Object.keys(this.files)) {
-            if (!(path in this.files)) continue;
-            delete this.files[path];
-            removed.push(path);
-        }
-        this.filesChanged(removed);
-    }
-
-    private filesChanged(paths: string[]) {
-        if (paths.length === 0) return;
-        this.step({ t: 'filesChanged' });
-        this.dispatch('fileschanged', deepFreeze({ paths }));
     }
 
     // A frame's load inside the embedder's own DOM call, before the element's lifecycle reactions (Chromium, WebKit).
@@ -422,8 +526,6 @@ export class FakeElement implements LifecycleHost {
         this.step({ t: 'disconnect' });
     }
 }
-
-const html = (agent: boolean) => (agent ? '<script>agent</script>' : '<p>plain</p>');
 
 /** One sequence against the reducer; every observation goes to a fresh lifecycle model. */
 export function runReducerSequence(sequence: Sequence, options: ReducerRunOptions = {}): ReducerRunResult {
@@ -478,29 +580,34 @@ export function runReducerSequence(sequence: Sequence, options: ReducerRunOption
         }
     };
 
-    function perform(cmd: Cmd) {
+    function perform(cmd: Cmd, frame: ReturnType<LifecycleModel['begin']>): ReturnType<typeof listingOf> | undefined {
         switch (cmd.op) {
             case 'insert': inDomOperation(() => el.insertInto('own')); return;
             case 'remove': inDomOperation(() => el.remove()); return;
             case 'foreign': inDomOperation(() => el.insertInto('foreign')); return;
-            case 'setConfig': el.setConfig(configOf(cmd.cfg, ORIGIN), JSON.stringify(cmd.cfg)); return;
-            case 'setConfigEqual': el.setConfig(configOf(model.lastDesc!, ORIGIN), JSON.stringify(model.lastDesc)); return;
-            case 'load': el.load(html(cmd.agent)); return;
+            case 'start': el.start(...startArgumentsOf(cmd.cfg, ORIGIN, cmd.methods)); return;
             case 'reset': el.reset(); return;
             case 'terminate': el.terminate(cmd.reason); return;
-            case 'register': el.registerFiles(cmd.files); return;
-            case 'registerBad': throw Object.assign(new Error('the path is outside the store'), { code: 'INVALID_PATH' });
-            case 'unregister': el.unregisterFiles(cmd.paths); return;
-            default: return; // expose(): host methods are not the lifecycle's
+            case 'call': {
+                const id = frame.callId!;
+                el.call(guestStep(cmd.spec), (outcome) => {
+                    trace.push(`  settled call ${id}: ${JSON.stringify(outcome).slice(0, 120)}`);
+                    guard(() => model.settled(id, outcome, el.now));
+                });
+                return;
+            }
+            case 'listWrites': return listingOf(el.listGuestWrites());
+            case 'commit': commitListedAt(el, cmd.paths, cmd.code); return;
+            default: return;
         }
     }
 
     function runOp(cmd: Cmd) {
-        if (failure !== null || NEEDS_A_GUEST.has(cmd.op)) return;
-        if (cmd.op === 'setConfigEqual' && !model.lastDesc) return;
+        if (failure !== null || needsAGuest(cmd)) return;
         let frame: ReturnType<LifecycleModel['begin']>;
         try {
-            frame = model.begin(cmd, el.now);
+            // a commit is predicted from the pending list, as runner.ts does
+            frame = model.begin(cmd, el.now, cmd.op === 'commit' ? { listed: listingOf(el.listGuestWrites()) } : undefined);
         } catch (error) {
             fail(error);
             return;
@@ -508,13 +615,14 @@ export function runReducerSequence(sequence: Sequence, options: ReducerRunOption
         depth++;
         const warnsBefore = el.warns;
         let threw: string | null = null;
+        let listed: ReturnType<typeof perform>;
         try {
-            perform(cmd);
+            listed = perform(cmd, frame);
         } catch (error: any) {
             threw = String(error?.code ?? error?.name ?? error);
         }
         depth--;
-        guard(() => model.end(frame, { threw, warned: el.warns - warnsBefore, state: el.lc.state }));
+        guard(() => model.end(frame, { threw, warned: el.warns - warnsBefore, state: el.lc.state, listed }));
     }
 
     // The reducer's state against the model's, once nothing runs.

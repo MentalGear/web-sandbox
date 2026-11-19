@@ -1,6 +1,9 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import type { Page } from '@playwright/test';
 
+// The build with the network modes (ADR-009), and every mode in one test, sealed mode among them, on the build that has them all.
+test.use({ build: 'network', otherBuildConfigs: true });
+
 /**
  * The environment check (S74, class B; src/lib/environment-check.ts): the first statement of every bootstrap that runs
  * in a sandbox document confirms that the document is the one the library built (an opaque origin, about:srcdoc, the
@@ -50,10 +53,10 @@ async function openWithPolicy(page: Page, csp?: string) {
     await page.waitForFunction(() => (window as any).harnessReady === true);
 }
 
-/** setConfig() and the events from then on, once it settled (and a moment after, for a termination right after `ready`). */
+/** start() on a fresh element (startFresh()) and the events from then on, once it settled (and a moment after, for a termination right after `ready`). */
 async function configure(sandbox: SandboxDriver, config: object): Promise<HostEvent[]> {
     await sandbox.page.evaluate(() => { (window as any).sandboxEvents.length = 0; });
-    await sandbox.page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
+    await sandbox.page.evaluate((c) => startFresh(c), config as any);
     await sandbox.page.waitForTimeout(400);
     return sandbox.page.evaluate(() => [...(window as any).sandboxEvents]);
 }

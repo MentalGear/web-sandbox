@@ -8,7 +8,7 @@ import {
     CHOKEPOINTS, IMPORT_EXPRESSIONS, REACH_RELATIONS, REACH_SIDES, SEALED_REACH, SURFACES, reachCell, sealedReachNames, secureContextOnlyNames, sideOf, surfaceOf,
     type Cell, type ChokepointId, type Column, type SurfaceId,
 } from '@src/lib/sealed-reach';
-import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { NETWORK_WORKER_GLOBALS, SEALED_WORKER_GLOBALS, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { HOST_PASSES, type HostPassId } from '@src/lib/host-passes';
 
 /**
@@ -156,10 +156,14 @@ describe('the classification agrees with the chokepoints the code keeps', () => 
         }
     });
 
-    it('every request maker of the allowlist is neutralised by the request gate for every row a request reaches', () => {
-        for (const name of ['fetch', 'XMLHttpRequest', 'WebSocket']) {
-            for (const rowId of ['cspFetch', 'cspPolicyText', 'cspReporting', 'referrer', 'cookies', 'serviceWorker'] as const) neutralisedBy(name, rowId, 'requestGate');
+    it("every network name (NETWORK_WORKER_GLOBALS) is off the sealed allowlist and neutralised by its absence for every row a request reaches", () => {
+        for (const name of NETWORK_WORKER_GLOBALS) {
+            expect(SEALED_WORKER_GLOBALS, name).not.toContain(name);
+            expect(STRICT_WORKER_GLOBALS, `${name}: strict mode keeps it, behind its request gate`).toContain(name);
+            expect(surfaceOf(name), name).toBe('requests');
+            for (const rowId of ['cspFetch', 'cspPolicyText', 'cspReporting', 'referrer', 'cookies', 'serviceWorker'] as const) neutralisedBy(name, rowId, 'sealedWorkerAllowlist');
         }
+        expect(SURFACES.requests.names).toEqual([...NETWORK_WORKER_GLOBALS]);
     });
 
     it("every name only a secure context has, and isSecureContext, is neutralised by the strict worker's removal; nothing of the row remains", () => {

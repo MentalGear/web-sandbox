@@ -90,10 +90,11 @@ function platformReached(roots: readonly string[]): string[] {
 const VIEW_BUILDERS = ['src/host.ts#this._prepareViewFrame', 'src/host.ts#this._prepareSealedFrame'];
 
 /**
- * The one edge from a row a strict or sealed build runs into cooperative mode's documented reading: the build's dispatch,
- * which returns the sealed and the strict frame before it, so a strict or sealed build never takes it (held below).
+ * The one edge from a row a strict or sealed build runs into cooperative mode's documented reading: the build's dispatch.
+ * The element's returns the sealed frame before it hands a build to the network modes, whose own returns the strict frame
+ * before the document frame, so a strict or sealed build never takes it (held below).
  */
-const DISPATCH = { from: 'src/host.ts#this._prepareBuild', to: 'src/host.ts#this._prepareDocumentFrame' } as const;
+const DISPATCH = { from: 'src/lib/network-host.ts#this._prepareNetworkBuild', to: 'src/lib/network-host.ts#this._prepareDocumentFrame' } as const;
 
 describe('the registry is well formed', () => {
     it('every row says what it does, its modes, its cost and its rule; a documented row says why; every unit is code of the graph, in one row', () => {
@@ -117,7 +118,8 @@ describe('the registry is well formed', () => {
 
 describe('every function of the host realm that receives guest content is a row of HOST_PASSES', () => {
     it("every member of the element that reads its guest state (GUEST_STATE) is an entry (GUEST_ENTRIES), and every entry is a member", () => {
-        const { units } = graphOf('src/host.ts');
+        // the element's members: its class's, and the methods the network build installs on it
+        const units = new Map([...graphOf('src/host.ts').units, ...graphOf('src/lib/network-host.ts').units]);
         const entries = GUEST_ENTRIES.map(entry => entry.member);
         const readers: string[] = [];
         for (const [name, text] of units) {
@@ -150,7 +152,7 @@ describe('every function of the host realm that receives guest content is a row 
 describe("no platform parser, loader or markup sink is reachable from the host realm's passes, but the library's own documents", () => {
     it("positive control: the scan sees the documented parse of cooperative mode, and the base's warning, which read `html` with DOMParser", () => {
         expect(platformNames('src/lib/trusted-types.ts#parseInert')).toEqual(expect.arrayContaining(['DOMParser', 'parseFromString']));
-        expect(platformReached(['src/host.ts#this._warnAboutNoScripts']).some(found => found.startsWith('DOMParser in '))).toBe(true);
+        expect(platformReached(['src/lib/network-host.ts#this._warnAboutNoScripts']).some(found => found.startsWith('DOMParser in '))).toBe(true);
         expect(platformReached(['src/lib/markup-references.ts#rewriteGuestMarkup']).some(found => found.startsWith('DOMParser in '))).toBe(true);
     });
 
@@ -176,10 +178,12 @@ describe("no platform parser, loader or markup sink is reachable from the host r
         expect(body).toMatch(/\n\s+html,\n/);
         const policies = [member('_prepareSealedFrame'), member('_prepareStrictFrame')].map(text => /this\._prepareViewFrame\(built, files, (this\._\w+)\(files(?:, [\w.]+)?\), /.exec(text)?.[1]);
         expect(policies).toEqual(['this._sealedPolicy', 'this._guestPolicy']);
-        // the build's dispatch: the sealed frame, then the strict frame, are returned before the document frame (DISPATCH)
-        expect(member('_prepareBuild')).toMatch(/if \(this\._config\.mode === 'sealed'\) \{\s*this\._refuseByTrustedTypes\(\);\s*return this\._prepareSealedFrame\(built, files\);\s*\}[\s\S]*if \(this\._config\.mode === 'strict'\) return this\._prepareStrictFrame\(built, files, reach\);\s*return this\._prepareDocumentFrame\(built, files, reach\);\s*$/);
-        expect(member('_prepareBuild').match(/_prepareDocumentFrame\(/g)).toHaveLength(1);
+        // the build's dispatch: the sealed frame is returned before the network modes' build, whose strict frame is returned before the document frame (DISPATCH)
+        expect(member('_prepareBuild')).toMatch(/if \(this\._config\.mode === 'sealed'\) \{\s*this\._refuseByTrustedTypes\(\);\s*return this\._prepareSealedFrame\(built, files\);\s*\}[\s\S]*return network\._prepareNetworkBuild\(built, files\);\s*$/);
+        expect(member('_prepareNetworkBuild')).toMatch(/if \(this\._config\.mode === 'strict'\) return this\._prepareStrictFrame\(built, files, reach\);\s*return this\._prepareDocumentFrame\(built, files, reach\);\s*$/);
+        expect(member('_prepareBuild').match(/_prepareDocumentFrame\(/g)).toBeNull();
+        expect(member('_prepareNetworkBuild').match(/_prepareDocumentFrame\(/g)).toHaveLength(1);
         const policyRow: HostPassId = 'policyFromKinds';
-        for (const unit of ['src/host.ts#this._sealedPolicy', 'src/host.ts#this._guestPolicy']) expect(rowOf(unit)?.id, unit).toBe(policyRow);
+        for (const unit of ['src/host.ts#this._sealedPolicy', 'src/lib/network-host.ts#this._guestPolicy']) expect(rowOf(unit)?.id, unit).toBe(policyRow);
     });
 });

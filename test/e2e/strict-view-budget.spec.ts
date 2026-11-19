@@ -1,4 +1,4 @@
-import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
+import { test, expect, ORIGIN, type SandboxDriver, buildOfMode } from './fixture';
 import { inView, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { cssLoadBound, RENDER_RULES, sanitizeRender, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
@@ -7,6 +7,9 @@ import { styleMarkup } from '@src/lib/style-markup';
 import { VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
 import { busyOf, busyShare, describeShare, idleBaseline, lag, loadedShare, operationCost, startLag, viewBound } from './host-share';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The strict view's findings of R5 where the browser decides, on Chromium, Firefox and WebKit: loads that only
@@ -52,6 +55,7 @@ test.describe('N-3 (class B): the renderer keeps a URL only where every engine a
 test.describe("N-2 (class G): the strict prelude's error listener reads no getter the guest replaced", () => {
     const THROW = `() => { throw new Error('guest getter'); }`;
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         for (const [name, error, message] of [['throwing', THROW, THROW], ['spoofed as muted', '() => null', `() => 'Script error.'`]] as const) {
             test(`ErrorEvent.prototype's error and message ${name}: a later error is cancelled and logged, and the sandbox stays ready`, async ({ sandbox }) => {
                 await mountEntry(sandbox, `

@@ -1,0 +1,53 @@
+{
+  "id": "parcel-dev",
+  "app": "parcel",
+  "variant": null,
+  "build": null,
+  "serve": {
+    "cmd": "npx parcel serve index.html --dist-dir dist --no-cache --host 127.0.0.1 --port $PORT --no-hmr"
+  },
+  "buildExitCode": null,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5195/sealed-document.d2ccf0ef.html",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "http://127.0.0.1:5195/sealed-document.d2ccf0ef.html",
+  "rawHref": "http://127.0.0.1:5195/sealed-document.d2ccf0ef.html",
+  "rawOrigin": "http://127.0.0.1:5195",
+  "appOrigin": "http://127.0.0.1:5195",
+  "scriptOrigin": "http://127.0.0.1:5195",
+  "documentOrigin": "http://127.0.0.1:5195",
+  "status": 200,
+  "contentType": "text/html; charset=utf-8",
+  "length": 1899,
+  "sha256": "1b3d8817143467633f46464f35610feda442537492d7532bc95a4a13cc7c5e4f",
+  "iframe": {
+    "status": 200,
+    "contentType": "text/html; charset=utf-8",
+    "sha256": "1b3d8817143467633f46464f35610feda442537492d7532bc95a4a13cc7c5e4f",
+    "bytesEqual": false
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": true,
+  "bytesEqual": false,
+  "fileName": "sealed-document.d2ccf0ef.html",
+  "console": [
+    "error: Applying inline style violates the following Content Security Policy directive 'default-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-yOoxDVpDbb0sNHlwB1l+EKf0emnCaMhH3VHZKhNcAkc='), or a nonce ('nonce-...') is required to enable inline execution. Note also that 'style-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-i4g+k88H+7xeFGX6qJ5jcqP55ajjH23zQ2jeP2/SUA4='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "outputFiles": [
+    "index.html (270 B)",
+    "parcel.36960861.js (9919 B)",
+    "parcel.36960861.js.map (5321 B)",
+    "sealed-document.d2ccf0ef.html (1899 B)"
+  ],
+  "documentFilesInOutput": [
+    "./dist/sealed-document.d2ccf0ef.html"
+  ],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "parcel": "2.16.4"
+  }
+}

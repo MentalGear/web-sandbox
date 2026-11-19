@@ -31,7 +31,7 @@ const OPEN: Partial<Record<SyntaxKind, SyntaxKind>> = {
 };
 
 // The index of each bracket's partner (template substitutions are braces too: js-tokens rescans their ends).
-function partners(tokens: Token[]): number[] {
+export function partners(tokens: Token[]): number[] {
     const partner = new Array<number>(tokens.length).fill(-1);
     const stack: number[] = [];
     for (let i = 0; i < tokens.length; i++) {
@@ -50,11 +50,14 @@ function partners(tokens: Token[]): number[] {
     return partner;
 }
 
-interface Scope {
+export interface Scope {
     // tokens [start, end) of the body
     start: number;
     end: number;
     names: Set<string>;
+    // the token of its `function` keyword, `=>`, or method name, and the tokens [from, to) of its parameter list
+    at: number;
+    params: { from: number; to: number };
 }
 
 // The plain identifiers of a parameter list (tokens between the parentheses), defaults skipped; patterns are not names.
@@ -80,7 +83,7 @@ function parameterNames(tokens: Token[], partner: number[], from: number, to: nu
 }
 
 // Where an expression body that starts at `from` ends: the first `,` `;` or closing bracket at its own depth.
-function expressionEnd(tokens: Token[], partner: number[], from: number): number {
+export function expressionEnd(tokens: Token[], partner: number[], from: number): number {
     for (let i = from; i < tokens.length; i++) {
         const kind = tokens[i]!.kind;
         if (kind in OPEN || kind === SyntaxKind.TemplateHead) {
@@ -92,26 +95,30 @@ function expressionEnd(tokens: Token[], partner: number[], from: number): number
     return tokens.length;
 }
 
-function scopes(tokens: Token[], partner: number[]): Scope[] {
+export function scopes(tokens: Token[], partner: number[]): Scope[] {
     const found: Scope[] = [];
     for (let i = 0; i < tokens.length; i++) {
         const kind = tokens[i]!.kind;
         let params: string[] | null = null;
         let bodyStart = -1;
+        let list = { from: 0, to: 0 };
         if (kind === SyntaxKind.FunctionKeyword) {
             let open = i + 1;
             while (open < tokens.length && tokens[open]!.kind !== SyntaxKind.OpenParenToken) open++;
             const close = partner[open]!;
             if (close < 0 || tokens[close + 1]?.kind !== SyntaxKind.OpenBraceToken) continue;
             params = parameterNames(tokens, partner, open + 1, close);
+            list = { from: open + 1, to: close };
             bodyStart = close + 1;
         } else if (kind === SyntaxKind.EqualsGreaterThanToken) {
             const before = tokens[i - 1]!;
             if (before.kind === SyntaxKind.CloseParenToken) {
                 const open = partner[i - 1]!;
                 params = parameterNames(tokens, partner, open + 1, i - 1);
+                list = { from: open + 1, to: i - 1 };
             } else if (before.kind === SyntaxKind.Identifier) {
                 params = [before.text];
+                list = { from: i - 1, to: i };
             } else continue;
             bodyStart = i + 1;
         } else if (kind === SyntaxKind.OpenParenToken && tokens[i - 1]?.kind === SyntaxKind.Identifier && tokens[partner[i]! + 1]?.kind === SyntaxKind.OpenBraceToken
@@ -120,12 +127,13 @@ function scopes(tokens: Token[], partner: number[]): Scope[] {
             // a method of an object literal or a class: `name(a) { … }`
             const close = partner[i]!;
             params = parameterNames(tokens, partner, i + 1, close);
+            list = { from: i + 1, to: close };
             bodyStart = close + 1;
         } else continue;
         const start = bodyStart;
         const end = tokens[start]?.kind === SyntaxKind.OpenBraceToken ? partner[start]! : expressionEnd(tokens, partner, start);
         if (end < 0) continue;
-        found.push({ start, end, names: new Set(params) });
+        found.push({ start, end, names: new Set(params), at: i, params: list });
     }
     // the declarations of each function: the ones whose innermost enclosing function it is
     for (let i = 0; i < tokens.length; i++) {

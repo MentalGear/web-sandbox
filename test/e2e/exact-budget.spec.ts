@@ -1,15 +1,18 @@
 import fc from 'fast-check';
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import type { MountConfig, SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 useRecorder();
 
 /**
  * S77, S78 (class P): the byte budgets count what is delivered, on Chromium, Firefox and WebKit. The measure is run on
- * the browser's own clones (a File's name and a Blob's type are copied whole by the clone, and Node's structuredClone
- * does not stand for that: test/unit/measure-delivered.test.ts runs the same property on built values), and a guest
- * that sends an oversized File name or a sparse array meets the budgets that already exist.
+ * the browser's own clones (test/unit/measure-delivered.test.ts runs the same property on built values), and a guest
+ * that sends a sparse array of a large `length` meets the budgets that already exist. A `Blob` or a `File` is not of the
+ * measure's kinds at all (I7): test/e2e/guest-blob-refused.spec.ts.
  */
 
 const MODES: Record<string, MountConfig> = {
@@ -19,30 +22,21 @@ const MODES: Record<string, MountConfig> = {
     sealed: { mode: 'sealed', scriptUnsafe: true },
 };
 
-type Case = { kind: 'file' | 'blob' | 'sparse'; nameLength: number; typeLength: number; modified: number; length: number; at: number[]; wrap: 'none' | 'array' | 'object' | 'map' };
+type Case = { length: number; at: number[]; wrap: 'none' | 'array' | 'object' | 'map' };
 
 const cases = fc.record({
-    kind: fc.constantFrom('file', 'blob', 'sparse'),
-    nameLength: fc.oneof(fc.integer({ min: 0, max: 64 }), fc.integer({ min: 0, max: 400000 })),
-    typeLength: fc.oneof(fc.integer({ min: 0, max: 64 }), fc.integer({ min: 0, max: 100000 })),
-    modified: fc.integer({ min: 0, max: 2 ** 40 }),
     length: fc.oneof(fc.integer({ min: 0, max: 100 }), fc.integer({ min: 0, max: 2 ** 24 })),
     at: fc.array(fc.nat(99), { maxLength: 4 }),
     wrap: fc.constantFrom('none', 'array', 'object', 'map'),
 }) as fc.Arbitrary<Case>;
 
-test.describe('S77: the measure counts at least what the browser delivers, for every supported kind', () => {
-    test('a File, a Blob and a sparse array, alone or inside an array, an object or a Map, through a real MessageChannel', async ({ sandbox, page }) => {
+test.describe('S77: the measure counts at least what the browser delivers, for a sparse array', () => {
+    test('a sparse array, alone or inside an array, an object or a Map, through a real MessageChannel', async ({ sandbox, page }) => {
         test.setTimeout(60000);
         const samples = fc.sample(cases, { numRuns: 60, seed: 77 });
-        // the extremes by hand: a name and a type at the length of a limit's worth, and a sparse array of many slots (WebKit's
-        // clone of one of 2**28 slots never arrives, so what is delivered here stays within 2**24)
-        samples.push(
-            { kind: 'file', nameLength: 2 ** 21, typeLength: 0, modified: 1, length: 0, at: [], wrap: 'none' },
-            { kind: 'blob', nameLength: 0, typeLength: 2 ** 20, modified: 0, length: 0, at: [], wrap: 'array' },
-            { kind: 'sparse', nameLength: 0, typeLength: 0, modified: 0, length: 2 ** 24, at: [5], wrap: 'object' },
-            { kind: 'file', nameLength: 2 ** 20, typeLength: 2 ** 20, modified: 2 ** 40, length: 0, at: [], wrap: 'map' },
-        );
+        // the extreme by hand: a sparse array of many slots (WebKit's clone of one of 2**28 slots never arrives, so what is
+        // delivered here stays within 2**24)
+        samples.push({ length: 2 ** 24, at: [5], wrap: 'object' });
         await sandbox.mount(MODES.strict);
         const failures = await page.evaluate(async (all) => {
             const module = '/src/lib/structured-size.ts'; // served by the e2e server, as the harness's own imports
@@ -55,25 +49,20 @@ test.describe('S77: the measure counts at least what the browser delivers, for e
             });
             const failed: string[] = [];
             for (const c of all) {
-                let leaf: unknown;
-                if (c.kind === 'file') leaf = new File(['x'], 'n'.repeat(c.nameLength), { type: 'a/' + 'b'.repeat(Math.min(c.typeLength, 1 << 20)), lastModified: c.modified });
-                else if (c.kind === 'blob') leaf = new Blob(['x'], { type: 'a/' + 'b'.repeat(c.typeLength) });
-                else { const sparse: unknown[] = []; sparse.length = c.length; for (const i of c.at) if (i < c.length) sparse[i] = 1; leaf = sparse; }
+                const leaf: unknown[] = [];
+                leaf.length = c.length;
+                for (const i of c.at) if (i < c.length) leaf[i] = 1;
                 const value = c.wrap === 'array' ? [leaf] : c.wrap === 'object' ? { k: leaf } : c.wrap === 'map' ? new Map([['k', leaf]]) : leaf;
                 const received = await deliver(value) as any;
                 const part = c.wrap === 'array' ? received[0] : c.wrap === 'object' ? received.k : c.wrap === 'map' ? received.get('k') : received;
-                // what arrived, field by field, in the units of the budgets: two bytes a code unit, 8 a number, 8 a slot
-                let delivered = 0;
-                if (c.kind === 'file') delivered = 2 * part.name.length + 2 * part.type.length + 8;
-                else if (c.kind === 'blob') delivered = 2 * part.type.length;
-                else delivered = 8 * part.length;
-                if (c.kind === 'sparse' && part.length !== c.length) failed.push(`${c.kind}: length ${part.length} arrived for ${c.length}`);
-                if (c.kind === 'file' && part.name.length !== c.nameLength) failed.push(`file: a name of ${part.name.length} arrived for ${c.nameLength}`);
+                // what arrived, in the units of the budgets: 8 a slot
+                const delivered = 8 * part.length;
+                if (part.length !== c.length) failed.push(`length ${part.length} arrived for ${c.length}`);
                 const measured = sizeOf(received, Infinity);
-                if (!(measured >= delivered)) failed.push(`${c.kind}/${c.wrap}: measured ${measured} for ${delivered} delivered`);
+                if (!(measured >= delivered)) failed.push(`${c.wrap}: measured ${measured} for ${delivered} delivered`);
                 // and within a limit the measure says "past" whenever the delivered size is past it
                 const limit = 1048576;
-                if (delivered > limit && !(sizeOf(received, limit) > limit)) failed.push(`${c.kind}/${c.wrap}: ${delivered} delivered is past ${limit} and the measure says it is not`);
+                if (delivered > limit && !(sizeOf(received, limit) > limit)) failed.push(`${c.wrap}: ${delivered} delivered is past ${limit} and the measure says it is not`);
             }
             return failed;
         }, samples);
@@ -95,75 +84,44 @@ test.describe('S77: the measure counts at least what the browser delivers, for e
     });
 });
 
-// A Blob or File type past BLOB_TYPE_MAX_LENGTH (4096 characters, limits.ts) is over every byte budget, on every engine. The
-// longest type Chromium keeps is 65 535 characters, so 65 535 is the longest one all three engines build alike.
-const LONG_TYPE = `'a/' + 'b'.repeat(65533)`;
-
 for (const [mode, config] of Object.entries(MODES)) {
-    test.describe(`S77: ${mode} mode: an oversized File name or a sparse array meets the existing budgets`, () => {
-        test('a log line: a File with a name past LOG_MAX_BYTES and a sparse array arrive as the budget\'s placeholder, and the line after them at once', async ({ sandbox }) => {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
+    test.describe(`S77: ${mode} mode: a sparse array meets the existing budgets`, () => {
+        test('a log line: a sparse array past LOG_MAX_BYTES arrives as the budget\'s placeholder, nested too, and the line after it at once', async ({ sandbox }) => {
             expect(await sandbox.mount(config)).toBe('ready');
             await sandbox.run(`
                 const sparse = []; sparse.length = 2 ** 18; sparse[5] = 1; // 2 MiB at 8 bytes a slot
-                console.log('S77 file', new File([], 'x'.repeat(2 ** 21)));
-                console.log('S77 blob', new Blob([], { type: ${LONG_TYPE} }));
-                console.log('S77 file type', new File([], 'f', { type: ${LONG_TYPE} }));
-                console.log('S77 blob at the limit', new Blob([], { type: 'a/' + 'b'.repeat(4094) }));
                 console.log('S77 sparse', sparse);
-                console.log('S77 nested', { list: [new File([], 'y'.repeat(2 ** 21))] });
-                console.log('S77 after', new File(['x'], 'photo.png', { type: 'image/png' }).name);`);
-            expect(await sandbox.waitForLog(/^S77 file /)).toBe("S77 file [File: past the log line's byte budget (1048576)]");
-            expect(await sandbox.waitForLog(/^S77 blob /)).toBe("S77 blob [Blob: past the log line's byte budget (1048576)]");
-            expect(await sandbox.waitForLog(/^S77 file type /)).toBe("S77 file type [File: past the log line's byte budget (1048576)]");
-            expect(await sandbox.waitForLog(/^S77 blob at the limit /)).toBe('S77 blob at the limit [object Blob]');
+                console.log('S77 nested', { list: [sparse] });
+                console.log('S77 after', 'photo.png');`);
             expect(await sandbox.waitForLog(/^S77 sparse /)).toBe("S77 sparse [Array: past the log line's byte budget (1048576)]");
             expect(await sandbox.waitForLog(/^S77 nested /)).toMatch(/^S77 nested \[Object: past the log line's byte budget/);
             expect(await sandbox.waitForLog('S77 after photo.png')).toBe('S77 after photo.png');
         });
 
-        test('a call to a host method: past RPC_MAX_BYTES by a File name or a sparse array, or by a Blob or File type past BLOB_TYPE_MAX_LENGTH, the guest\'s own broker refuses it; a type at the limit and a small File are delivered', async ({ sandbox }) => {
+        test('a call to a host method: past RPC_MAX_BYTES by a sparse array, the guest\'s own broker refuses it; a small one is delivered', async ({ sandbox }) => {
             test.setTimeout(60000);
-            expect(await sandbox.mount(config)).toBe('ready');
             await sandbox.exposeHost('sink', '(...args) => args.length');
-            await sandbox.exposeHost('nameOf', '(file) => [file.name, file.type, file.lastModified]');
+            await sandbox.exposeHost('lengthOf', '(list) => list.length');
+            expect(await sandbox.mount(config)).toBe('ready');
             const outcome = await sandbox.inGuest(`
                 const refused = async (...args) => { try { await bridge.call('sink', ...args); return 'sent'; } catch (error) { return error.code; } };
                 const sparse = []; sparse.length = 2 ** 23; sparse[5] = 1; // 64 MiB at 8 bytes a slot
-                return [
-                    await refused(new File([], 'x'.repeat(2 ** 25))),
-                    await refused(new Blob([], { type: ${LONG_TYPE} })),
-                    await refused(new File([], 'f', { type: 'a/' + 'b'.repeat(4096) })),
-                    await refused(new Blob([], { type: 'a/' + 'b'.repeat(4094) })),
-                    await refused(sparse),
-                    await refused({ deep: [sparse] }),
-                    await bridge.call('nameOf', new File(['x'], 'photo.png', { type: 'image/png', lastModified: 1234 })),
-                ];`, 30000);
-            expect(outcome).toEqual(['ARGS_NOT_TRANSFERABLE', 'ARGS_NOT_TRANSFERABLE', 'ARGS_NOT_TRANSFERABLE', 'sent', 'ARGS_NOT_TRANSFERABLE', 'ARGS_NOT_TRANSFERABLE', ['photo.png', 'image/png', 1234]]);
+                const small = []; small.length = 1000; small[5] = 1;
+                return [await refused(sparse), await refused({ deep: [sparse] }), await bridge.call('lengthOf', small)];`, 30000);
+            expect(outcome).toEqual(['ARGS_NOT_TRANSFERABLE', 'ARGS_NOT_TRANSFERABLE', 1000]);
         });
 
-        // A type of 65 536 characters or more: Chromium empties it when the Blob is made, so the guest holds a Blob of no type
-        // and the library has nothing longer to refuse (ledger: blob-type-emptied); Firefox and WebKit keep it whole,
-        // and the type limit refuses it. Either way the library never turns a long type into '' itself.
-        test('a Blob type of 65 536 characters: refused where the engine keeps it, and where the engine emptied it first, what the guest holds is sent', async ({ sandbox, browserName }) => {
-            expect(await sandbox.mount(config)).toBe('ready');
-            await sandbox.exposeHost('typeOf', '(blob) => blob.type.length');
-            const outcome = await sandbox.inGuest(`
-                const blob = new Blob([], { type: 'a/' + 'b'.repeat(65534) });
-                try { return [blob.type.length, await bridge.call('typeOf', blob)]; } catch (error) { return [blob.type.length, error.code]; }`, 30000);
-            // ledger: blob-type-emptied
-            expect(outcome).toEqual(browserName === 'chromium' ? [0, 0] : [65536, 'ARGS_NOT_TRANSFERABLE']);
-        });
-
-        test('a result of the guest\'s method: a File with an oversized name or a sparse array is refused as RESULT_NOT_TRANSFERABLE, and a small one is delivered', async ({ sandbox }) => {
+        test('a result of the guest\'s method: a sparse array past the budget is refused as RESULT_NOT_TRANSFERABLE, and a small one is delivered', async ({ sandbox }) => {
             test.setTimeout(60000);
             expect(await sandbox.mount(config)).toBe('ready');
-            await sandbox.exposeGuest('bigFile', `() => new File([], 'x'.repeat(2 ** 25))`);
             await sandbox.exposeGuest('sparse', `() => { const a = []; a.length = 2 ** 23; a[5] = 1; return a; }`);
-            await sandbox.exposeGuest('small', `() => [new File(['x'], 'photo.png', { type: 'image/png' }), new Blob([], { type: 'text/plain' })].map(file => [file.name ?? null, file.type])`);
-            expect(await sandbox.callOutcome('bigFile')).toMatchObject({ status: 'rejected', code: 'RESULT_NOT_TRANSFERABLE' });
+            await sandbox.exposeGuest('small', `() => { const a = []; a.length = 1000; a[5] = 1; return a.length; }`);
             expect(await sandbox.callOutcome('sparse')).toMatchObject({ status: 'rejected', code: 'RESULT_NOT_TRANSFERABLE' });
-            expect(await sandbox.callOutcome('small')).toEqual({ status: 'resolved', value: [['photo.png', 'image/png'], [null, 'text/plain']] });
+            expect(await sandbox.callOutcome('small')).toEqual({ status: 'resolved', value: 1000 });
             expect(await sandbox.state()).toBe('ready');
         });
+    });
     });
 }

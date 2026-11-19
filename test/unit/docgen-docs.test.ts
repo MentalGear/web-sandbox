@@ -20,17 +20,19 @@ const read = (file: string) => readFileSync(path.join(ROOT, file), 'utf8');
 /** The regions each document carries: deleting one would otherwise go unseen, since an absent region is never stale. */
 const REGIONS: Record<string, string[]> = {
     'docs/API.md': [
-        'configuration', 'csp-cooperative', 'csp-strict', 'host-lines', 'termination-reasons', 'limits', 'budgets', 'cookie-facts', 'host-site-facts', 'cookie-carriers', 'connect-facts', 'host-source-rules', 'trusted-types-rules',
+        'configuration', 'csp-cooperative', 'csp-strict', 'guest-text', 'host-lines', 'termination-reasons', 'start-refusals', 'limits', 'budgets', 'cookie-facts', 'host-site-facts', 'cookie-carriers', 'connect-facts', 'host-source-rules', 'trusted-types-rules',
         // rendered from the TSDoc of the public API (tools/docgen/extractors/api.ts)
         'api-define', 'api-element', 'api-methods', 'api-reactions', 'api-events', 'api-sandbox-log', 'api-violation', 'api-fetch-record',
         'api-fetch-bridge', 'api-call-limits', 'api-exports-values', 'api-exports-types',
+        // the package's two builds, from the build flag (tools/docgen/extractors/build.ts; ADR-009)
+        'builds', 'build-flag-command',
         // the files of examples/sealed-app/, quoted as they are (tools/docgen/extractors/examples.ts)
         'example:sealed-app-html', 'example:sealed-app-css', 'example:sealed-app-host', 'example:sealed-app-guest',
     ],
     'docs/ADR-005-strict-mode.md': ['adr005-ports', 'adr005-init-view'],
     'docs/THREAT-MODEL.md': ['cookie-facts', 'host-site-facts', 'cookie-carriers', 'connect-facts', 'inherited-context', 'sealed-reach', 'sealed-reach-chokepoints', 'engine-ledger'],
     'README.md': ['cookie-sentence', 'connect-sentence'],
-    'ARCHITECTURE.md': ['realms', 'stringified', 'csp-sealed', 'channels', 'frames', 'lifecycle-states', 'lifecycle-diagram', 'lifecycle-inputs', 'lifecycle-effects', 'module-map'],
+    'ARCHITECTURE.md': ['realms', 'stringified', 'csp-sealed', 'builds', 'channels', 'frames', 'lifecycle-states', 'lifecycle-diagram', 'lifecycle-inputs', 'lifecycle-effects', 'module-map'],
 };
 
 describe('the generated docs', () => {

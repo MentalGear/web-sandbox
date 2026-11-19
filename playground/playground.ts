@@ -1,11 +1,14 @@
 import "./playground-state.ts"
 
-import { WebSandbox, defineWebSandbox } from '@src/host.ts';
+// the build with the network modes: the presets show every mode (ADR-009)
+import { WebSandbox, defineWebSandbox } from '@src/network.ts';
 defineWebSandbox();
 
 import { SandboxDevTools } from '@src/devtools.ts';
 import { DEFAULT_PRESET, PRESETS, type Preset } from '@src/lib/presets.ts';
+import { APP_OPTIONS } from '@src/lib/config-schema.ts';
 import type { SandboxConfig } from '@src/host.ts';
+import type { FileEntry } from '@src/lib/files.ts';
 
 // -----------------
 
@@ -36,9 +39,9 @@ declare global {
         clearLogs(): void;
         resetSandbox(): Promise<void>;
         SandboxControl: {
-            sandboxElement: WebSandbox;
+            readonly sandboxElement: WebSandbox;
             execute(code: string): void;
-            setConfig(config: SandboxConfig): void;
+            start(config: SandboxConfig): WebSandbox;
             getLogs(): LogEntry[];
             clearLogs(): void;
         };
@@ -53,50 +56,128 @@ function byId<T extends HTMLElement = HTMLElement>(id: string): T {
 }
 
 const capturedLogs: LogEntry[] = [];
-const sandbox = byId<WebSandbox>('sandbox');
-const vfSandbox = byId<WebSandbox>('virtual-files-sandbox');
+// An element runs one app, given once with start(): every run (a preset, "Run Code", "Run as HTML", "Run
+// (Virtual-Files)", a changed rule) starts a fresh element in the place of the last one. index.html holds the first
+// two, which have no app until the first run.
+let sandbox = byId<WebSandbox>('sandbox');
+let vfSandbox = byId<WebSandbox>('virtual-files-sandbox');
 const logsDiv = byId('logs');
 let firstLog = true;
+
+// The files of the selected preset, given to both sandboxes, and the code "Run (Virtual-Files)" adds as index.html
+let presetFiles: Record<string, FileEntry> = {};
+let virtualFiles: Record<string, FileEntry> = {};
 
 console.log("Elements found:", sandbox, logsDiv);
 
 // Initialize DevTools
-// We attach devtools to the virtual-files sandbox as it's more relevant there
-const devtools = new SandboxDevTools(vfSandbox);
+// We attach devtools to the virtual-files sandbox as it's more relevant there; it follows each new element
+let devtools = new SandboxDevTools(vfSandbox);
+let devtoolsOn = false;
 const toggleBtn = document.getElementById('toggleDevTools');
 if (toggleBtn) {
-    toggleBtn.onclick = () => devtools.toggle();
+    toggleBtn.onclick = () => {
+        devtoolsOn = !devtoolsOn;
+        devtools.toggle();
+    };
 }
 
-// Listen for readiness on the sandbox elements directly
-sandbox.addEventListener('ready', () => {
+// Listen for readiness on each direct sandbox element
+function onSandboxReady() {
     byId('sandbox-status').textContent = 'Sandbox: Ready';
     byId('sandbox-status').style.color = '#4caf50';
     window.appendLocalLog('Direct sandbox is ready!');
-    
+
     const runBtn = document.getElementById('runButton') as HTMLButtonElement;
     if (runBtn) runBtn.disabled = false;
 
     const runHtmlBtn = document.getElementById('runHtmlButton') as HTMLButtonElement;
     if (runHtmlBtn) runHtmlBtn.disabled = false;
-});
+}
 
-vfSandbox.addEventListener('ready', () => {
+function onVirtualFilesReady() {
     const vfStatus = document.getElementById('virtual-files-status');
     if (vfStatus) {
         vfStatus.textContent = 'Virtual-Files: Active';
         vfStatus.style.color = '#4caf50';
     }
     window.appendLocalLog('Virtual-files sandbox is ready!');
-    
+
     const runVfBtn = document.getElementById('runVirtualButton') as HTMLButtonElement;
     if (runVfBtn) runVfBtn.disabled = false;
-});
+}
 
-// fileschanged carries only the changed paths; the tree is rebuilt from the element's own list
-vfSandbox.addEventListener('fileschanged', () => {
+/** A config of the rules editor as start()'s two arguments: the app's own options, and the grants. */
+function splitRules(rules: Record<string, unknown>, files: Record<string, FileEntry>): [Record<string, unknown>, Record<string, unknown>] {
+    const app: Record<string, unknown> = { files };
+    const grants: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(rules)) {
+        if ((APP_OPTIONS as readonly string[]).includes(key)) app[key] = value;
+        else grants[key] = value;
+    }
+    return [app, grants];
+}
+
+/**
+ * Starts `rules` (and `html`, when given) with `files` on a fresh element in the place of `old`, with the same id and
+ * style; throws start()'s refusal, and then leaves `old` as it is.
+ */
+function startFresh(old: WebSandbox, rules: Record<string, unknown>, files: Record<string, FileEntry>, onReady: () => void, html?: string): WebSandbox {
+    const fresh = document.createElement('web-sandbox') as WebSandbox;
+    fresh.id = old.id;
+    fresh.setAttribute('style', old.getAttribute('style') ?? '');
+    fresh.addEventListener('ready', onReady);
+    fresh.addEventListener('sandbox-log', onSandboxLog);
+    const [app, grants] = splitRules(html === undefined ? rules : { ...rules, html }, files);
+    fresh.start(app, grants as never);
+    old.replaceWith(fresh);
+    return fresh;
+}
+
+function startSandbox(rules: Record<string, unknown>, html?: string) {
+    sandbox = startFresh(sandbox, rules, presetFiles, onSandboxReady, html);
+}
+
+function startVirtualFiles(rules: Record<string, unknown>, html?: string) {
+    vfSandbox = startFresh(vfSandbox, rules, { ...presetFiles, ...virtualFiles }, onVirtualFilesReady, html);
+    // fileschanged carries only the changed paths; the tree is rebuilt from the element's own list
+    vfSandbox.addEventListener('fileschanged', () => window.updateVirtualFilesView());
     window.updateVirtualFilesView();
-});
+    devtools.deactivate();
+    devtools = new SandboxDevTools(vfSandbox);
+    if (devtoolsOn) devtools.activate();
+}
+
+/** The rules editor's config, or null (with the error shown) when it is no JSON. */
+function readRules(): Record<string, unknown> | null {
+    const rulesEditor = byId<HTMLTextAreaElement>('rulesEditor');
+    const rulesError = byId('rulesError');
+    try {
+        // Strip trailing commas to allow more relaxed JSON input
+        const cleanedStr = rulesEditor.value.replace(/,(\s*[\]}])/g, '$1');
+        const rules = JSON.parse(cleanedStr);
+        rulesEditor.classList.remove('error-border');
+        rulesError.textContent = '';
+        return rules;
+    } catch (e) {
+        rulesEditor.classList.add('error-border');
+        rulesError.textContent = 'Invalid JSON: ' + (e as Error).message;
+        return null;
+    }
+}
+
+/** Runs `start`, and shows start()'s refusal of the rules (a key in the wrong place, an option of the wrong type) where a JSON error is shown. */
+function started(start: () => void): boolean {
+    try {
+        start();
+        return true;
+    } catch (e) {
+        byId<HTMLTextAreaElement>('rulesEditor').classList.add('error-border');
+        byId('rulesError').textContent = (e as Error).message;
+        window.appendLocalLog('Not started: ' + (e as Error).message);
+        return false;
+    }
+}
 
 // Populate presets dropdown
 const select = byId<HTMLSelectElement>('presetSelect');
@@ -117,8 +198,9 @@ window.appendLocalLog = (msg: string) => {
     appendLog({ source: 'playground', message: msg, level: 'log' });
 };
 
-// Log events are dispatched on each sandbox element and bubble up to window; event.target names the sandbox
-window.addEventListener('sandbox-log', (event) => {
+// Log events are dispatched on each sandbox element and do not bubble: every element gets this listener when it is
+// started (startFresh); event.target names the sandbox
+function onSandboxLog(event: Event) {
     const data = (event as CustomEvent<LogEntry>).detail;
     // Map sandbox log format to UI log format if needed
     // Sandbox: { type: 'LOG', level: 'info', args: [...] }
@@ -137,7 +219,7 @@ window.addEventListener('sandbox-log', (event) => {
     };
     capturedLogs.push(logEntry);
     appendLog(logEntry);
-});
+}
 
 window.addEventListener('load', () => {
     const loaded = window.playground.loadState();
@@ -211,12 +293,10 @@ window.loadPreset = () => {
     byId<HTMLTextAreaElement>('rulesEditor').value = JSON.stringify(preset.rules, null, 2);
     byId<HTMLTextAreaElement>('code').value = preset.code;
 
-    // Files are part of the environment: replace the previous preset's files on both sandboxes before
-    // applyNetworkRules() rebuilds them, so "Run Code", "Run as HTML" and "Run (Virtual-Files)" all see them.
-    for (const element of [sandbox, vfSandbox]) {
-        element.unregisterFiles();
-        element.registerFiles(preset.files ?? {});
-    }
+    // Files are part of the app: the preset's files replace the previous preset's, and applyNetworkRules() starts both
+    // sandboxes with them, so "Run Code", "Run as HTML" and "Run (Virtual-Files)" all see them.
+    presetFiles = { ...preset.files };
+    virtualFiles = {};
 
     window.applyNetworkRules();
     window.playground.saveState();
@@ -285,7 +365,9 @@ window.updateVirtualFilesView = () => {
 };
 
 window.runHtml = () => {
-    sandbox.load(byId<HTMLTextAreaElement>('code').value);
+    const rules = readRules();
+    if (rules === null) return;
+    started(() => startSandbox(rules, byId<HTMLTextAreaElement>('code').value));
 };
 
 window.onRulesBlur = () => {
@@ -303,33 +385,16 @@ window.debounceApplyRules = () => {
 }
 
 window.applyNetworkRules = () => {
-    const rulesEditor = byId<HTMLTextAreaElement>('rulesEditor');
-    const rulesError = byId('rulesError');
-    const rulesStr = rulesEditor.value;
-    try {
-        // Strip trailing commas to allow more relaxed JSON input
-        const cleanedStr = rulesStr.replace(/,(\s*[\]}])/g, '$1');
-        const rules = JSON.parse(cleanedStr);
-        rulesEditor.classList.remove('error-border');
-        rulesError.textContent = '';
+    const rules = readRules();
+    if (rules === null) return false;
+    // Start both sandboxes afresh with the rules
+    if (!started(() => { startSandbox(rules); startVirtualFiles(rules); })) return false;
 
-        // Apply to both sandboxes
-        sandbox.setConfig(rules);
-        
-        vfSandbox.setConfig(rules);
-        
-        // Visual feedback that we are resetting the environment
-        byId('sandbox-status').textContent = 'Sandbox: Initializing...';
-        byId('sandbox-status').style.color = '#ffb74d';
-        window.appendLocalLog('Applying configuration...');
-        return true;
-
-
-    } catch (e) {
-        rulesEditor.classList.add('error-border');
-        rulesError.textContent = 'Invalid JSON: ' + (e as Error).message;
-        return false;
-    }
+    // Visual feedback that we are resetting the environment
+    byId('sandbox-status').textContent = 'Sandbox: Initializing...';
+    byId('sandbox-status').style.color = '#ffb74d';
+    window.appendLocalLog('Applying configuration...');
+    return true;
 }
 
 window.runCode = () => {
@@ -342,23 +407,17 @@ window.runCode = () => {
 }
 
 window.runVirtualFiles = () => {
-    window.applyNetworkRules();
-
+    const rules = readRules();
+    if (rules === null) return;
     const code = byId<HTMLTextAreaElement>('code').value;
-    const vfSandboxEl = vfSandbox;
 
     window.appendLocalLog('Registering the code as index.html and loading it...');
 
-    try {
-        // The code becomes a file next to the preset's files (readable as sandboxFiles.text('index.html'))
-        // and is loaded as the guest's markup, where references to registered files by path
-        // (<script src>, <link href>, <img src>, …) load them (README "Files").
-        vfSandboxEl.registerFiles({ 'index.html': code });
-        vfSandboxEl.load(code);
-    } catch (e) {
-        window.appendLocalLog('Error during virtual-files execution: ' + (e as Error).message);
-        console.error(e);
-    }
+    // The code becomes a file next to the preset's files (readable as sandboxFiles.text('index.html'))
+    // and is loaded as the guest's markup, where references to registered files by path
+    // (<script src>, <link href>, <img src>, …) load them (README "Files").
+    virtualFiles = { 'index.html': code };
+    started(() => { startSandbox(rules); startVirtualFiles(rules, code); });
 }
 
 window.clearLogs = () => {
@@ -370,8 +429,8 @@ window.resetSandbox = async () => {
     byId<HTMLButtonElement>('runButton').disabled = true;
     // Clear host-side state
     localStorage.removeItem('safeSandbox_customState');
-    // For WebSandbox, we just re-initialize
-    sandbox.setConfig({});
+    // For WebSandbox, we just start a fresh one with the defaults
+    started(() => startSandbox({}));
 }
 
 // Listen for reset completion, from this page only. Every guest frame can post to this window (broad review PD7: its
@@ -385,7 +444,9 @@ window.addEventListener('message', (event) => {
 });
 
 window.SandboxControl = {
-    sandboxElement: sandbox,
+    get sandboxElement() {
+        return sandbox;
+    },
     execute: (code: string) => {
         if (byId('sandbox-status').textContent !== 'Sandbox: Ready') {
             console.warn("SandboxControl: Execution blocked, sandbox not ready.");
@@ -393,8 +454,10 @@ window.SandboxControl = {
         }
         sandbox.execute(code);
     },
-    setConfig: (config: SandboxConfig) => {
-        sandbox.setConfig(config);
+    // a fresh direct sandbox with `config` (the rules editor's shape); its element, to listen to
+    start: (config: SandboxConfig) => {
+        startSandbox(config as Record<string, unknown>);
+        return sandbox;
     },
     getLogs: () => {
         return capturedLogs;

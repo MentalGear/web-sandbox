@@ -4,6 +4,7 @@ import { srcsetCandidates } from "./srcset";
 import { admitsAll, linkKinds, type LoadKindName } from "./load-kinds";
 import { parseInert } from "./trusted-types";
 import { mintUncodedError } from "./minted-errors";
+import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT, virtualPathOf } from "./references";
 
 /**
  * Markup references to registered files (ADR-004). Host-only: nothing here is stringified into
@@ -53,26 +54,12 @@ import { mintUncodedError } from "./minted-errors";
  * URLs, so the rewrite grants the guest nothing it could not already do with sandboxFiles.url().
  */
 
-/** The URL guest markup is resolved against: a document at the root of the files. */
-export const VIRTUAL_DOCUMENT_URL = 'https://vfs.invalid/index.html';
-export const VIRTUAL_ROOT = 'https://vfs.invalid/';
+
+// What the view and the file store read of a reference too, in every build (references.ts).
+export { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT, virtualPathOf };
 
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 
-// The attributes that name a file by one URL, with the kind of load each makes (load-kinds.ts): 'link' takes its
-// kinds from the link's rel and as (linkKinds). srcset (always images) and CSS are handled below, by their
-// own parsers; <iframe src>, <embed>, <object>, <a href>, imagesrcset and anything inside <template> stay as
-// written. Imports inside inline modules are the module graph's (rewriteGuestMarkup, below).
-export const REFERENCES: readonly (readonly [element: string, attribute: string, kind: LoadKindName | 'link'])[] = [
-    ['script', 'src', 'script'],
-    ['link', 'href', 'link'],
-    ['img', 'src', 'image'],
-    ['source', 'src', 'media'], // <source src> belongs to <audio> and <video>; <picture> sources use srcset
-    ['video', 'src', 'media'],
-    ['video', 'poster', 'image'],
-    ['audio', 'src', 'media'],
-    ['track', 'src', 'track'],
-];
 const REFERENCE_SELECTOR = REFERENCES.map(([element, attribute]) => `${element}[${attribute}]`).join(', ');
 const SRCSET_SELECTOR = 'img[srcset], source[srcset]';
 
@@ -92,26 +79,6 @@ export function kindMismatchMessage({ path, type, kinds }: KindMismatch): string
     return `[Sandbox] guest markup names ${JSON.stringify(path.slice(0, 80))} for a load of ${what}, but its type is ${type}, so the reference was left as written and will not load. A file is named only by loads its type is for (a script only by JavaScript, a stylesheet only by text/css, …).`;
 }
 
-/**
- * The path in the files' URL space that `value` names when resolved against `baseUrl`, or null when it
- * cannot name a file: empty or blank, unparsable, outside VIRTUAL_ROOT (another origin, or credentials
- * or a port in the URL), or with a query or a fragment (even an empty one). Whether a file is registered
- * at that path is the caller's question. Used for markup (against VIRTUAL_DOCUMENT_URL) and for CSS
- * (against the stylesheet's own virtual URL, files.ts).
- */
-export function virtualPathOf(value: string, baseUrl: string): string | null {
-    if (/^[\u0000-\u0020]*$/.test(value)) return null; // what the URL parser strips: nothing left is the base itself
-    let href: string;
-    try {
-        href = new URL(value, baseUrl).href;
-    } catch {
-        return null;
-    }
-    if (!href.startsWith(VIRTUAL_ROOT)) return null;
-    const path = href.slice(VIRTUAL_ROOT.length);
-    if (path.includes('?') || path.includes('#')) return null;
-    return path;
-}
 
 /**
  * The registered path that `value` names when resolved against `baseUrl` (by default

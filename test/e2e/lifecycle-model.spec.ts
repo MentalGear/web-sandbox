@@ -3,6 +3,9 @@ import { generate, shrink } from '../model/generator';
 import { OPS, STATES, type Cmd, type Sequence } from '../model/lifecycle-model';
 import type { RunResult } from '../model/runner';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The model-based lifecycle suite (backlog S61.2, S65): seeded sequences of operations, guest steps and re-entrant
  * listener plans run against the real element, every step checked against the reference model in test/model/ (see
@@ -107,10 +110,10 @@ test.describe("round 4's L-1 as a property: no `ready` inside a DOM operation", 
                 return seed / 2147483648;
             };
             const cmds: Cmd[] = [
-                { op: 'register', files: { 'agent.js': 'AGENT', 'bad.js': 'BAD', 'data.txt': 'data' } },
                 {
-                    op: 'setConfig',
+                    op: 'start',
                     cfg: { kind: 'valid', mode, scriptUnsafe: true, guestWrites: false, watchdog: undefined, execTimeout: undefined, html: 'plain', fetch: false, limits: 'none', variant: 0, ...(mode === 'cooperative' ? { noScripts: true } : {}), ...(mode === 'strict' ? { entry: 'agent.js' as const } : {}) },
+                    methods: null,
                 },
                 { op: 'insert' },
                 { op: 'settle' },

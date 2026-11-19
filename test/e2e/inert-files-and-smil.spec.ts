@@ -1,9 +1,12 @@
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { chromiumViewLinkUrls, inView, waitInView } from './strict-view';
 import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import type { SandboxConfig } from '@src/host';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Inert files and SMIL (each label below is cited as FR:<label>), where browser behaviour decides:
@@ -27,10 +30,14 @@ async function exposeMark(sandbox: SandboxDriver) {
 }
 const marks = (sandbox: SandboxDriver) => sandbox.page.evaluate(() => [...(window as any).marks] as string[]);
 
+// Lists the pending writes and commits the values listed at `paths`, in one task.
 const commit = (sandbox: SandboxDriver, paths: string[], options?: unknown) => sandbox.page.evaluate(({ paths, options }) => {
     try {
-        (document.querySelector('web-sandbox') as any).commitGuestWrites(paths, options);
-        return 'ok';
+        const el = document.querySelector('web-sandbox') as any;
+        const listed = el.listGuestWrites();
+        const chosen: unknown[] = [];
+        for (const write of listed) if (paths.includes(write.path)) chosen.push(write);
+        return el.commitGuestWrites(chosen, options) ? 'ok' : 'stale';
     } catch (e: any) {
         return String(e?.code);
     }
@@ -41,22 +48,25 @@ const SCRIPT = (name: string, allowed: string) => `bridge.call('mark', ${JSON.st
 
 test.describe('W1: a committed inert file is never a script of the next build', () => {
     for (const writer of ['cooperative', 'worker', 'strict'] as const) {
-        test(`written in ${writer} mode: app.js committed as text/plain gets no script slot and never runs in the next build's <script src>; ok.js committed as JavaScript with { code: true } runs (positive control)`, async ({ sandbox }) => {
+        test(`written in ${writer} mode: app.txt, a script's text committed as text/plain, gets no script slot and never runs in the next build's <script src>; ok.js, JavaScript by its path, committed with { code: true } runs (positive control)`, async ({ sandbox }) => {
             await exposeMark(sandbox);
             expect(await sandbox.mount({ mode: writer, guestWrites: true })).toBe('ready');
             expect(await sandbox.inGuest(`
-                await sandboxFiles.write('app.js', { content: ${JSON.stringify(SCRIPT('app', recorder.allowed))}, type: 'text/plain' });
-                await sandboxFiles.write('ok.js', { content: ${JSON.stringify(SCRIPT('ok', recorder.allowed))}, type: 'text/javascript' });
-                return sandboxFiles.list();`)).toEqual(['app.js', 'ok.js']);
-            expect(await commit(sandbox, ['app.js'])).toBe('ok'); // inert: no { code: true } needed
+                await sandboxFiles.write('app.txt', ${JSON.stringify(SCRIPT('app', recorder.allowed))});
+                await sandboxFiles.write('ok.js', ${JSON.stringify(SCRIPT('ok', recorder.allowed))});
+                return sandboxFiles.list();`)).toEqual(['app.txt', 'ok.js']);
+            // the next build is another app, so an element of its own: it gets the written files as this one lists them,
+            // each with the type the write recorded, its path's
+            expect(await sandbox.collectWrites()).toEqual(['app.txt', 'ok.js']);
+            expect(await commit(sandbox, ['app.txt'])).toBe('ok'); // inert: no { code: true } needed
             expect(await commit(sandbox, ['ok.js'])).toBe('FILES_NOT_ALLOWED'); // code needs the second opt-in
             expect(await commit(sandbox, ['ok.js'], { code: true })).toBe('ok');
 
-            // The next build, in cooperative mode with host markup naming both. Classic scripts run in order, so once the
-            // inline script after them has reported, app.js would have run before ok.js if it ran at all.
+            // The next build, a second element in cooperative mode with host markup naming both. Classic scripts run in order, so once the
+            // inline script after them has reported, app.txt would have run before ok.js if it ran at all.
             const config: SandboxConfig = {
                 mode: 'cooperative',
-                html: '<script src="app.js"></script><script src="ok.js"></script><script>bridge.call("mark", "after")</script>',
+                html: '<script src="app.txt"></script><script src="ok.js"></script><script>bridge.call("mark", "after")</script>',
                 origins: { images: [recorder.allowed] },
             };
             expect(await sandbox.mount(config)).toBe('ready');
@@ -66,28 +76,26 @@ test.describe('W1: a committed inert file is never a script of the next build', 
             expect(await marks(sandbox)).toEqual(['ok', 'after']);
             expect(recorder.paths('allowed').filter(p => p.startsWith('/w1-'))).toEqual(['/w1-ok.svg']);
             // the reason is visible: the element said why the reference was left as written
-            expect(await sandbox.inGuest(`return [...document.scripts].map(s => s.getAttribute('src')).filter(Boolean).map(src => src.startsWith('blob:') ? 'blob:' : src)`)).toEqual(['app.js', 'blob:']);
+            expect(await sandbox.inGuest(`return [...document.scripts].map(s => s.getAttribute('src')).filter(Boolean).map(src => src.startsWith('blob:') ? 'blob:' : src)`)).toEqual(['app.txt', 'blob:']);
         });
     }
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
-        test('an entry committed as text/plain is not a JavaScript file and does not start; the same content committed as JavaScript starts (positive control)', async ({ sandbox }) => {
+        test.use({ build: buildOfMode(mode) });
+        test('an entry the guest rewrites is JavaScript by its path: its commit needs { code: true }, a write that claims another type is refused, and the committed entry starts (positive control)', async ({ sandbox }) => {
             await exposeMark(sandbox);
-            expect(await sandbox.mount({ mode, guestWrites: true })).toBe('ready');
-            await sandbox.inGuest(`
-                await sandboxFiles.write('app.js', { content: "bridge.call('mark', 'app')", type: 'text/plain' });
-                await sandboxFiles.write('ok.js', { content: "bridge.call('mark', 'ok')", type: 'text/javascript' });
-                return true;`);
-            expect(await commit(sandbox, ['app.js'])).toBe('ok');
-            expect(await commit(sandbox, ['ok.js'], { code: true })).toBe('ok');
-            const reason = await sandbox.page.evaluate((mode) => new Promise(resolve => {
-                const s = document.querySelector('web-sandbox') as any;
-                s.addEventListener('terminated', (e: CustomEvent) => resolve(e.detail.reason), { once: true });
-                s.setConfig({ mode, entry: 'app.js' });
-            }), mode);
-            expect(reason).toBe('the guest entry is not a registered JavaScript file');
-            expect(await sandbox.mount({ mode, entry: 'ok.js' })).toBe('ready');
-            await expect.poll(() => marks(sandbox), { timeout: 8000 }).toEqual(['ok']);
+            // the app's entry is a JavaScript file it was started with; the guest writes its own over it, and the next
+            // build (reset()) starts what was committed
+            expect(await sandbox.registerFiles({ 'app.js': 'void 0' })).toBe('ok');
+            expect(await sandbox.mount({ mode, guestWrites: true, entry: 'app.js' })).toBe('ready');
+            expect(await sandbox.inGuest(`
+                const claimed = await sandboxFiles.write('app.js', { content: "bridge.call('mark', 'claimed')", type: 'text/plain' }).then(() => 'written', (e) => e.code);
+                await sandboxFiles.write('app.js', "bridge.call('mark', 'app')");
+                return claimed;`)).toBe('INVALID_FILE');
+            expect(await commit(sandbox, ['app.js'])).toBe('FILES_NOT_ALLOWED');
+            expect(await commit(sandbox, ['app.js'], { code: true })).toBe('ok');
+            expect(await sandbox.reset()).toBe('ready');
+            await expect.poll(() => marks(sandbox), { timeout: 8000 }).toEqual(['app']);
         });
     });
 
@@ -130,6 +138,7 @@ test.describe('F1: rendered markup cannot re-animate an attribute the renderer c
     const XLINK = 'http://www.w3.org/1999/xlink';
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test("a link's href animated by <set>, <animate> and on xlink:href: getAttribute, baseVal and animVal all stay the inert constant, no animation element is left, and Chromium's accessibility tree exposes no guest URL", async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             const html = `<svg xmlns:xlink="${XLINK}" width="300" height="80">`
@@ -202,6 +211,8 @@ test.describe('F2: workerExecutionTimeout cannot be evaded: at the deadline the 
 
     for (const mode of ['worker', ...VIEW_MODES] as const) {
         test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
+        test.describe(`${mode} mode`, () => {
             test('control: code still looping at the deadline terminates', async ({ sandbox }) => {
                 expect(await sandbox.mount({ mode, workerExecutionTimeout: BUDGET })).toBe('ready');
                 await watch(sandbox);
@@ -257,6 +268,7 @@ test.describe('F2: workerExecutionTimeout cannot be evaded: at the deadline the 
                 // c's deadline caught it: within its budget plus the grace, well before the later call's own deadline would add one
                 expect(first!.at).toBeLessThan(2000 + BUDGET + 1250 + 1000);
             });
+        });
         });
     }
 });

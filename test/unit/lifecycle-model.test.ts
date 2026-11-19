@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Divergence, LifecycleModel, unknownModeReason, type Cmd, type ConfigDesc, type Observation } from '../model/lifecycle-model';
+import { AGENT_PATH, Divergence, ENTRY_NOT_REGISTERED_REASON, ENTRY_TEXTS, LifecycleModel, type Cmd, type ConfigDesc, type Observation } from '../model/lifecycle-model';
 import { generate, mulberry32, shrink } from '../model/generator';
 
 /**
@@ -29,8 +29,7 @@ function op(model: LifecycleModel, cmd: Cmd, inside: () => void = () => {}, now 
 
 function standing(mode: 'strict' | 'cooperative' | 'worker', config: ConfigDesc = valid(mode)): LifecycleModel {
     const model = new LifecycleModel(mode);
-    op(model, { op: 'register', files: { 'agent.js': 'AGENT', 'data.txt': 'data' } }, () => model.event(seen(model, 'fileschanged', { paths: ['agent.js', 'data.txt'] }, { depth: 1 })));
-    op(model, { op: 'setConfig', cfg: config });
+    op(model, { op: 'start', cfg: config, methods: 'echo' });
     op(model, { op: 'insert' });
     expect(model.state).toBe('loading');
     return model;
@@ -52,36 +51,41 @@ describe('the lifecycle model on the round reports', () => {
     });
 
     describe('round 4, L-3: the no-repeat rule holds for every `terminated`, not only a build\'s', () => {
-        const reason = unknownModeReason('Strict');
+        const reason = ENTRY_NOT_REGISTERED_REASON;
+        // A ready strict app whose files lack its entry, as a commit of the guest's removal leaves them: its next
+        // build is refused with that reason.
+        function withoutItsEntry(): LifecycleModel {
+            const model = standing('strict');
+            model.event(seen(model, 'ready', null));
+            delete model.files['agent.js'];
+            return model;
+        }
         function trace(model: LifecycleModel) {
-            // terminate(reason) from ready; its listener sets a config refused with that very reason
+            // terminate(reason) from ready; its listener rebuilds, and the build is refused with that very reason
             op(model, { op: 'terminate', reason }, () => {
                 model.event(seen(model, 'terminated', { reason }, { depth: 1 }));
-                op(model, { op: 'setConfig', cfg: { kind: 'unknownMode', mode: 'Strict' } });
+                op(model, { op: 'reset' });
                 model.eventEnd('terminated');
             });
         }
         it('before the fix: a second `terminated` with the reason is a divergence', () => {
-            const model = standing('strict');
-            model.event(seen(model, 'ready', null));
+            const model = withoutItsEntry();
             trace(model);
             expect(model.pendingTermination).toBeNull();
             expect(() => model.event(seen(model, 'terminated', { reason }))).toThrow(/unexpected terminated/);
         });
         it('after it: the rebuild ends `terminated` and dispatches nothing', () => {
-            const model = standing('strict');
-            model.event(seen(model, 'ready', null));
+            const model = withoutItsEntry();
             trace(model);
             expect(model.state).toBe('terminated');
             expect(model.quiet).toBe(true);
             model.finish();
         });
         it('a refusal with another reason is dispatched, in a task', () => {
-            const model = standing('strict');
-            model.event(seen(model, 'ready', null));
+            const model = withoutItsEntry();
             op(model, { op: 'terminate', reason: 'bye' }, () => {
                 model.event(seen(model, 'terminated', { reason: 'bye' }, { depth: 1 }));
-                op(model, { op: 'setConfig', cfg: { kind: 'unknownMode', mode: 'Strict' } });
+                op(model, { op: 'reset' });
                 model.eventEnd('terminated');
             });
             expect(model.pendingTermination).toEqual({ reason, gen: model.gen });
@@ -182,6 +186,49 @@ describe('the lifecycle model on the round reports', () => {
     });
 });
 
+describe('design 01: an element with no app stays idle', () => {
+    it('inserted, moved, reset, terminated or removed, it builds nothing and dispatches nothing; a call is refused at once', () => {
+        const model = new LifecycleModel('strict');
+        for (const cmd of [{ op: 'insert' }, { op: 'insert' }, { op: 'reset' }, { op: 'terminate', reason: 'bye' }, { op: 'foreign' }, { op: 'insert' }, { op: 'remove' }, { op: 'insert' }] as Cmd[]) {
+            op(model, cmd);
+            expect([model.state, model.env, model.pendingTermination], cmd.op).toEqual(['idle', null, null]);
+        }
+        const call = op(model, { op: 'call', method: 'act', spec: { k: 'mark' } }).callId!;
+        expect(() => model.settled(call, { status: 'rejected', code: 'TIMEOUT' }, 1)).toThrow(/expected TERMINATED/);
+    });
+    it('a `terminated` or a `ready` from it is a divergence; start() then builds it', () => {
+        const model = new LifecycleModel('strict');
+        op(model, { op: 'insert' });
+        expect(() => op(model, { op: 'terminate', reason: 'bye' }, () => model.event(seen(model, 'terminated', { reason: 'bye' }, { depth: 1 })))).toThrow(/unexpected terminated/);
+        const fresh = new LifecycleModel('strict');
+        op(fresh, { op: 'insert' });
+        expect(() => fresh.event(seen(fresh, 'ready', null))).toThrow(/ready while the model is idle/);
+        op(fresh, { op: 'start', cfg: valid('strict'), methods: 'echo' });
+        expect(fresh.state).toBe('loading');
+    });
+});
+
+describe('design 01, I1: one app per element', () => {
+    it('a second start() throws a TypeError in every state and changes nothing; not throwing it is a divergence', () => {
+        const model = standing('strict');
+        expect(op(model, { op: 'start', cfg: valid('cooperative'), methods: null }).expectThrow).toBe('TypeError');
+        expect(model.state).toBe('loading');
+        model.event(seen(model, 'ready', null));
+        const again = model.begin({ op: 'start', cfg: valid('strict'), methods: 'echo' }, 0);
+        expect(() => model.end(again, { threw: null, warned: 0, state: 'ready' })).toThrow(/threw null, expected TypeError/);
+    });
+    it('a start() whose arguments are unusable throws and binds nothing: a later one binds', () => {
+        const model = new LifecycleModel('strict');
+        for (const cfg of [{ kind: 'unknownMode', mode: 'iframe' }, { kind: 'unusable', why: 'notObject' }, valid('strict', { scriptUnsafe: 'true' }), valid('strict', { watchdog: -1 }), valid('strict', { limits: 'bogus' }), valid('strict', { entry: 'missing.js' })] as ConfigDesc[]) {
+            expect(op(model, { op: 'start', cfg, methods: 'echo' }).expectThrow, JSON.stringify(cfg)).toBe('TypeError');
+            expect(model.started).toBe(false);
+        }
+        expect(op(model, { op: 'start', cfg: valid('strict', { execTimeout: 'NaN' }), methods: 'echo' }).expectThrow).toBe('TypeError');
+        expect(op(model, { op: 'start', cfg: valid('cooperative', { execTimeout: 'NaN' }), methods: 'echo' }).expectThrow).toBeNull(); // cooperative mode ignores it
+        expect(model.started).toBe(true);
+    });
+});
+
 describe("backlog S72: the view's first overrun is a host line the model allows in a standing strict environment", () => {
     const line = (model: LifecycleModel) => seen(model, 'sandbox-log', { type: 'LOG', level: 'warn', args: ['[Sandbox] the view spent more than 2000 ms on one operation; a second such operation within 5 minutes ends the sandbox.'], source: 'host' });
     it('strict, loading or ready: allowed', () => {
@@ -223,5 +270,25 @@ describe('the generator', () => {
         const culprit = sequence.cmds[Math.floor(sequence.cmds.length / 2)]!;
         const minimal = await shrink(sequence, async (candidate) => candidate.cmds.includes(culprit), 200);
         expect(minimal.cmds).toEqual([culprit]);
+    });
+});
+
+describe('the generator', () => {
+    // What an entry of another text does when it runs is not the model's to predict (ENTRY_TEXTS): a write over the
+    // entry with a plain text would end the next build with "the guest entry failed to start", which the model forbids.
+    it('writes over the entry only one of the entry texts, in every command, argument getter and listener plan', () => {
+        const texts: string[] = [];
+        const collect = (cmd: Cmd | undefined) => {
+            if (!cmd || cmd.op !== 'call') return;
+            if (cmd.spec.k === 'write' && cmd.spec.path === AGENT_PATH) texts.push(cmd.spec.text);
+            collect(cmd.getter);
+        };
+        for (let seed = 1; seed <= 2000; seed++) {
+            const sequence = generate(seed);
+            for (const cmd of sequence.cmds) collect(cmd);
+            for (const plan of sequence.plans) collect(plan.action);
+        }
+        expect(texts.length).toBeGreaterThan(100);
+        expect([...new Set(texts)].filter(text => !ENTRY_TEXTS.includes(text))).toEqual([]);
     });
 });

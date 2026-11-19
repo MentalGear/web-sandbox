@@ -1,6 +1,8 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
 import { checkIn } from './check-in';
+import { startWith } from './start-app';
 
 /**
  * Host side: the execution budget (BL:B8; FR:F2: a free event loop at each deadline) and the rule for work handed to a
@@ -14,7 +16,7 @@ async function mount(config?: Record<string, unknown>, connect = true) {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     if (connect) document.body.appendChild(el);
-    if (config) el.setConfig(config);
+    if (config) startWith(el, config);
     return el;
 }
 
@@ -112,13 +114,14 @@ describe('B8, focused review F2: workerExecutionTimeout requires a free event lo
         expect(el._executionProbes.size).toBe(0);
     });
 
-    it('cooperative mode has no budget, and a budget that is not a finite number > 0 is off', async () => {
-        for (const [mode, budget] of [['cooperative', 50], ['worker', '50'], ['worker', -1], ['worker', Infinity]] as const) {
-            const { el, reasons, pings, grace } = await start(mode, budget);
-            el.execute('for (;;) {}');
-            vi.advanceTimersByTime(1000 + grace);
-            expect([reasons, pings()], `${mode} ${String(budget)}`).toEqual([[], []]);
-            vi.useRealTimers();
+    it('cooperative mode has no budget, and a budget that is not a finite number > 0 is refused by start()', async () => {
+        const { el, reasons, pings, grace } = await start('cooperative', 50);
+        el.execute('for (;;) {}');
+        vi.advanceTimersByTime(1000 + grace);
+        expect([reasons, pings()], 'cooperative 50').toEqual([[], []]);
+        vi.useRealTimers();
+        for (const budget of ['50', -1, Infinity]) {
+            await expect(start('worker', budget), String(budget)).rejects.toThrow(/workerExecutionTimeout must be a finite number > 0 \(milliseconds\), or 0 for off/);
         }
     });
 });

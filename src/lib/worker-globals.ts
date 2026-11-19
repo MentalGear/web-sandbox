@@ -1,5 +1,16 @@
 /**
- * What guest code may find on a worker's global object, in worker mode and in strict mode (VR:V1; ADR-005 G4 amendment).
+ * What guest code may find on a worker's global object, in worker mode, in strict mode and in sealed mode: one allowlist ({@link WORKER_GLOBALS}) and the two that derive from it.
+ */
+
+/**
+ * The names of the platform's request makers (the three the request gate governs, request-gate.ts, and the two helper
+ * interfaces of `XMLHttpRequest`): the one list that both readers take. Strict mode's worker keeps them and gates them;
+ * sealed mode's worker has no network, so it does not have them at all ({@link SEALED_WORKER_GLOBALS}).
+ */
+export const NETWORK_WORKER_GLOBALS = ['fetch', 'XMLHttpRequest', 'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'WebSocket'] as const;
+
+/**
+ * The allowlist of worker mode, from which strict mode's and sealed mode's derive (VR:V1; ADR-005 G4 amendment).
  *
  * Why an allowlist. A worker inherits its creator's policy, and connect-src is meant to govern every request it
  * makes, but an engine can miss one of its network APIs: Firefox (146) sent `new EventSource(url)` from a worker to
@@ -61,8 +72,9 @@ export const WORKER_GLOBALS: readonly string[] = [
     'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'structuredClone', 'reportError', 'atob', 'btoa',
     'console', 'performance', 'crypto', 'indexedDB', 'createImageBitmap', 'scheduler',
     'DedicatedWorkerGlobalScope', 'WorkerGlobalScope', 'WorkerLocation', 'WorkerNavigator',
-    // the four that request, each governed by the policy on every engine (measured)
-    'fetch', 'XMLHttpRequest', 'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'WebSocket', 'importScripts',
+    // the four that request, each governed by the policy on every engine (measured): the network names
+    // (NETWORK_WORKER_GLOBALS), which sealed mode's worker does not have, and importScripts
+    ...NETWORK_WORKER_GLOBALS, 'importScripts',
     // values and events
     'Request', 'Response', 'Headers', 'FormData', 'AbortController', 'AbortSignal', 'Event', 'EventTarget',
     'CustomEvent', 'ErrorEvent', 'MessageEvent', 'ProgressEvent', 'PromiseRejectionEvent', 'CloseEvent',
@@ -131,6 +143,15 @@ const secureContextOnly = (list: readonly string[]) => (name: string) => list.in
  * worker requests only through fetch, XMLHttpRequest and WebSocket, which the request gate governs (in-sandbox-script.ts).
  */
 export const STRICT_WORKER_GLOBALS: readonly string[] = WORKER_GLOBALS.filter(name => name !== 'importScripts' && !secureContextOnly(SECURE_CONTEXT_ONLY.globals)(name));
+
+/**
+ * Sealed mode's worker (ADR-008): {@link STRICT_WORKER_GLOBALS} without the request makers ({@link NETWORK_WORKER_GLOBALS}).
+ * Sealed mode has no network, so its worker does not have `fetch`, `XMLHttpRequest` or `WebSocket` (nor the two
+ * `XMLHttpRequest` helper interfaces) as names, and nothing in its source captures or installs them: a name that is
+ * absent needs no check that refuses it. {@link keepOnlyWorkerGlobals} deletes each from the global object and from the
+ * scope prototypes it lives on, as any name off the list.
+ */
+export const SEALED_WORKER_GLOBALS: readonly string[] = STRICT_WORKER_GLOBALS.filter(name => !(NETWORK_WORKER_GLOBALS as readonly string[]).includes(name));
 
 /**
  * The allowlist a build passes to {@link keepOnlyWorkerGlobals}: `globals` without `WebAssembly` unless `scriptUnsafe`

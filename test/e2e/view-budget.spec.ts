@@ -1,8 +1,11 @@
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, buildOfMode } from './fixture';
 import { inView, waitInView } from './strict-view';
 import { busyShare, describeShare, lag, startLag, viewBound } from './host-share';
 import { VIEW_MAX_OPERATION_MS } from '@src/lib/in-sandbox-view';
 import { VIEW_MODES, type ViewMode } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The strict view's budget (R1:R1-1 and R1:R1-2; ADR-005). The view runs on the host
@@ -26,6 +29,7 @@ async function mountEntry(mode: ViewMode, sandbox: SandboxDriver, source: string
 }
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('R1-1: renders of 261 000 characters of text into 200 targets every 20 ms leave the host page responsive; the view holds at most VIEW_MAX_CHARACTERS', async ({ sandbox, page, browserName }) => {
         test.setTimeout(60000);
         await mountEntry(mode, sandbox, `

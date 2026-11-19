@@ -2,6 +2,9 @@ import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
 import { fromPreset } from '../../../test/e2e/presets';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Research 13: popup exfiltration (backlog S12, issue #6 N3).
  * A popup is a new top-level window: neither the guest's CSP nor the wrapper's frame-src applies to it.
@@ -15,21 +18,20 @@ const recorder = useRecorder();
 const preset = fromPreset('popup-exfiltration');
 const openPopup = (target: string) => preset.aimedAt(target);
 
-test('13.1 allow-popups passed as a regular capability is dropped, so no popup leaves', async ({ sandbox, context, page }) => {
+test('13.1 allow-popups passed as a regular capability is refused, and without it no popup leaves', async ({ sandbox, context, page }) => {
     let popups = 0;
     context.on('page', () => popups++);
-    const warnings: string[] = [];
-    page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
 
-    // the preset's rules pass allow-popups as a regular capability
-    await sandbox.mount(preset.rules);
+    // the preset's rules pass allow-popups as a regular capability: start() refuses them, naming it
+    await expect(sandbox.mount(preset.rules)).rejects.toThrow('[Sandbox] start(): "allow-popups" is not allowed in "capabilities".');
+    // the rules the embedder is left with once it takes the capability out
+    await sandbox.mount(preset.granted);
     await sandbox.run(openPopup(recorder.blocked));
 
     expect(await sandbox.waitForLog('POPUP ')).toBe('POPUP refused');
     await page.waitForTimeout(1000);
     expect(popups).toBe(0);
     expect(recorder.paths('blocked')).toEqual([]);
-    expect(warnings.join('\n')).toContain('"allow-popups" is not allowed in "capabilities"');
 });
 
 test('13.2 the explicit unsafeCapabilities opt-in still allows popups — and warns', async ({ sandbox, context, page, browserName }) => {

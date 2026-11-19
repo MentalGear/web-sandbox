@@ -1,7 +1,11 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { inView, waitInView } from './strict-view';
 import { boxOf, mountInput, sleep, take, type Kept } from './view-input';
 import { VIEW_MODES } from './view-modes';
+import { asNumber } from './guest-value';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode's wheel and scroll input, and set({ scroll }) (research 23), on every engine:
@@ -32,6 +36,7 @@ const VIRTUAL = `
     bridge.expose('jump', (top) => { sandboxView.set('list', { scroll: { top } }); return true; });`;
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('wheel: the deltas of what a frame coalesced are summed, with the pointer where it was', async ({ sandbox, page, browserName }) => {
         await mountInput(mode, sandbox, browserName, `sandboxView.on('wheel', 'pad', keep('wheel'));`);
         const box = await boxOf(page);
@@ -89,9 +94,9 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         await inView(page, browserName, `(() => { globalThis.__frames = 0; const tick = () => { globalThis.__frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick); return true; })()`);
         expect(await sandbox.call('start')).toBe(true);
         await sleep(500);
-        const before = { n: await sandbox.call<number>('count'), frames: await inView<number>(page, browserName, 'globalThis.__frames') as number };
+        const before = { n: asNumber(await sandbox.call('count')), frames: await inView<number>(page, browserName, 'globalThis.__frames') as number };
         await sleep(2000);
-        const after = { n: await sandbox.call<number>('count'), frames: await inView<number>(page, browserName, 'globalThis.__frames') as number };
+        const after = { n: asNumber(await sandbox.call('count')), frames: await inView<number>(page, browserName, 'globalThis.__frames') as number };
         const loops = after.n - before.n;
         const frames = after.frames - before.frames;
         expect(loops).toBeGreaterThan(5); // it does loop

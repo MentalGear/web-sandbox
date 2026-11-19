@@ -1,5 +1,8 @@
-import { test, expect, type CallOutcome, SEALED_HAS_NO_EXECUTE } from './fixture';
+import { test, expect, type CallOutcome, SEALED_HAS_NO_EXECUTE, buildOfMode } from './fixture';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The element's lifecycle (backlog B2, ADR-003): `state` follows idle → loading → ready and agrees
@@ -11,13 +14,15 @@ import { VIEW_MODES } from './view-modes';
 const MODES = ['cooperative', 'worker', ...VIEW_MODES] as const;
 
 const RESET_TEXT = '[Sandbox] call() rejected: the sandbox was reset or terminated.';
-const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.';
+const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset() to start it again.';
 
 function terminatedRefusal(message: string): CallOutcome {
     return { status: 'rejected', isError: true, code: 'TERMINATED', keys: ['code'], message };
 }
 
 for (const mode of MODES) {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe(`lifecycle (${mode})`, () => {
         test('state goes idle → loading → ready as the element is mounted, and reads ready when the event fires', async ({ sandbox, page }) => {
             test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
@@ -25,7 +30,7 @@ for (const mode of MODES) {
             const report = await page.evaluate(async (mode) => {
                 const el = document.createElement('web-sandbox') as any;
                 const seen: string[] = [el.state];
-                el.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true, mode }); // detached: config only
+                el.start({}, { capabilities: ['allow-scripts'], scriptUnsafe: true, mode }); // detached: the app is stored only
                 seen.push(el.state);
                 const framesWhileDetached = el.shadowRoot.querySelectorAll('iframe').length;
                 const atReady = new Promise(resolve => el.addEventListener('ready', () => resolve(el.state), { once: true }));
@@ -166,5 +171,6 @@ for (const mode of MODES) {
             await sandbox.exposeGuest('sum', '(a, b) => a + b');
             expect(await sandbox.call('sum', 4, 5)).toBe(9);
         });
+    });
     });
 }

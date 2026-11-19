@@ -1,0 +1,6 @@
+{
+  "name": "app-esbuild",
+  "private": true,
+  "dependencies": { "fake-sealed": "file:../fake-sealed-1.0.0.tgz" },
+  "devDependencies": { "esbuild": "0.28.2" }
+}

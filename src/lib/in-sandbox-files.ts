@@ -47,7 +47,8 @@ import type { FileSnapshotEntry } from './files';
  * guarantee, this one only saves the round trip). With it:
  *   - nothing is checked here: the host validates path, entry, quota and rate and answers, and this map
  *     changes only after its answer, so the host is the single source of truth and a refused request
- *     leaves both sides unchanged; the type a written file reads back with is the host's (the store's);
+ *     leaves both sides unchanged; a write sends a path and bytes only, and the type a written file reads back
+ *     with is the host's, the one its path's extension has (I8);
  *   - the bytes are copied when write() is called (a Blob is immutable, so reading it later reads the same
  *     bytes), and requests leave in call order whatever a Blob's read takes;
  *   - list(), read() and text() show the guest's acknowledged writes and removals; url() of a written path
@@ -262,7 +263,6 @@ export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((requ
         if (isBlob(content)) return after(apply(blobBytes, content, []) as Promise<ArrayBuffer>, (buffer: ArrayBuffer) => construct(Uint8ArrayConstructor, [buffer]) as Uint8Array<ArrayBuffer>);
         return null;
     };
-    const isContent = (value: unknown) => typeof value !== 'object' || value === null || isBuffer(value) || isView(value) || isBlob(value);
     // Requests leave in call order: each is sent only after the one before it was (its `ready` may be a Blob's read).
     let order: Promise<unknown> = apply(resolved, PromiseConstructor, [undefined]);
     const noop = () => {};
@@ -273,24 +273,21 @@ export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((requ
         return result;
     };
 
+    // A write carries a path and bytes, and nothing else (I8): the type is the host's, from the path. An entry that is not
+    // content (a `{ content, type }` included) is sent as null, and the host refuses it with INVALID_FILE.
     const write = (path: unknown, entry: unknown): Promise<void> => {
         if (!writeFiles) return refuse(notAllowed());
         const send = writeFiles;
         const target = typeof path === 'string' ? path : null;
         let ready: Uint8Array<ArrayBuffer> | Promise<Uint8Array<ArrayBuffer>> | null;
-        let type: unknown;
-        let wrapped: boolean;
         // Everything that inspects the guest's entry runs inside the try (FR:W4): a brand
         // check on a Proxy can throw, and write() must reject then, never throw where the caller awaits a promise.
         try {
-            wrapped = !isContent(entry);
-            ready = copyOf(wrapped ? (entry as { content?: unknown }).content : entry);
-            if (wrapped) type = (entry as { type?: unknown }).type;
+            ready = copyOf(entry);
         } catch (e) {
             return refuse(e);
         }
-        const typeOverride = typeof type === 'string' ? type : null;
-        return inTurn(ready, (bytes: Uint8Array<ArrayBuffer> | null) => after(send({ change: 'write', path: target, entry: wrapped ? { content: bytes, type: typeOverride } : bytes }), (answer: any) => {
+        return inTurn(ready, (bytes: Uint8Array<ArrayBuffer> | null) => after(send({ change: 'write', path: target, entry: bytes }), (answer: any) => {
             // the host recorded it: its answer names the path and the type the store gave it
             if (bytes && answer && answer.change === 'write' && answer.path === target) set(files, target as string, { blob: construct(BlobConstructor, [[bytes], { type: answer.type }]) as Blob, url: null });
         }));

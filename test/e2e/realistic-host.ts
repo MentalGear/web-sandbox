@@ -4,9 +4,8 @@ import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 import { VIEW_STILL_STYLE } from '@src/lib/in-sandbox-view';
 import type { InheritedContextId } from '@src/lib/inherited-context';
-import { expect, ORIGIN, type SandboxDriver } from './fixture';
+import { buildOfPage, expect, ORIGIN, type Build, type SandboxDriver } from './fixture';
 import { HOST_COOKIES, REALISTIC_HOST_PATH, type ApiHit, type PageHeader, type SessionRecord } from './realistic-host-server';
-import { isDevServerNoise } from './dev-server-noise';
 
 /**
  * A host page that looks like a production application, for every test that wants one (S74, class A; CONTRIBUTING.md,
@@ -167,8 +166,7 @@ export class RealisticHost {
         const { page } = sandbox;
         // (the Chromium line about a first build that runs no script is not a policy violation of the library's)
         page.on('console', (message) => {
-            // (the dev server's HMR client, which the e2e server runs without a socket, says so on Firefox)
-            if (message.type() === 'error' && !message.text().startsWith('Blocked script execution') && !isDevServerNoise(message.text())) this.consoleErrors.push(message.text());
+            if (message.type() === 'error' && !message.text().startsWith('Blocked script execution')) this.consoleErrors.push(message.text());
             if (message.type() === 'warning') this.consoleWarnings.push(message.text());
         });
         page.on('pageerror', (error) => { this.pageErrors.push(String(error)); });
@@ -209,9 +207,10 @@ export class RealisticHost {
         if (options.guestCode !== 'execute' && options.ttDefault !== false) query.set('tt-default', '1');
         await page.goto(`${options.origin ?? ORIGIN}${REALISTIC_HOST_PATH}/page?${query}`);
         await page.waitForFunction(() => (window as any).harnessReady === true);
-        // the element's first build (no script to run) has finished: its 'ready' is not a later build's (a host policy can end it
-        // already: a Trusted Types list that does not name the library's policy)
-        await page.waitForFunction(() => ['ready', 'terminated'].includes((document.querySelector('web-sandbox') as any).state));
+        // the element's first build (no script to run) has finished, or it has none (the default build's element has no app
+        // and stays idle): its 'ready' is not a later build's (a host policy can end the network build's already: a
+        // Trusted Types list that does not name the library's policy)
+        await page.waitForFunction(() => ['idle', 'ready', 'terminated'].includes((document.querySelector('web-sandbox') as any).state));
         // The host site's cookies. An engine that refuses a `Secure` cookie on an http page (WebKit) is given it by the
         // context instead: the page is a test server's, a production page is https.
         if (options.cookies !== false) {
@@ -226,14 +225,18 @@ export class RealisticHost {
         }
     }
 
-    /** The view bootstrap's hash as the page serves it (read once per worker, from a page with no policy). */
+    /**
+     * The view bootstrap's hash as the page serves it, read from a page with no policy: once per worker for each build of
+     * the library a test's pages run (ADR-009: the default build's bootstrap is the view alone, so its hash is its own).
+     */
     private async viewHash(): Promise<string> {
-        if (viewHashOfThisRun === undefined) {
+        const build = buildOfPage(this.page);
+        if (viewHashOfThisRun[build] === undefined) {
             await this.page.goto(`${HOST_BASE}/page?session=hash&sw=0&cookies=0`);
             await this.page.waitForFunction(() => (window as any).harnessReady === true);
-            viewHashOfThisRun = await this.page.evaluate(() => (window as any).viewScriptHash() as string);
+            viewHashOfThisRun[build] = await this.page.evaluate(() => (window as any).viewScriptHash() as string);
         }
-        return viewHashOfThisRun;
+        return viewHashOfThisRun[build];
     }
 
     /** What the backend recorded; `clear` empties it. */
@@ -275,11 +278,11 @@ export class RealisticHost {
         return this.page.evaluate(() => [...((window as any).hostErrors ?? [])]);
     }
 
-    /** setConfig() on the element, and the lifecycle events from then on, once it settled. */
+    /** start() on a fresh element in the place of the last one (startFresh()), and its lifecycle events, once it settled. */
     async configure(config: object): Promise<HostEvent[]> {
         const { page } = this;
         await page.evaluate(() => { (window as any).sandboxEvents.length = 0; });
-        await page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
+        await page.evaluate((c) => startFresh(c), config as any);
         await page.waitForTimeout(300); // a termination right after 'ready' would show here
         return page.evaluate(() => [...(window as any).sandboxEvents]);
     }
@@ -327,7 +330,7 @@ export class RealisticHost {
 }
 
 const GUEST_TAG = 'HOSTGUEST';
-let viewHashOfThisRun: string | undefined;
+const viewHashOfThisRun: Partial<Record<Build, string>> = {};
 
 /** Wraps a guest body: it runs once and logs what it returned (or its throw) under a tag the host reads. */
 function guestProgram(body: string, count: number): string {

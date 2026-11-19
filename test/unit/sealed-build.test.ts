@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { code, graphOf, member, reach } from './call-graph';
 import { hostPageOrigin, hostSiteOrigins } from '@src/lib/host-site';
@@ -17,6 +18,7 @@ import { limitValues } from '@src/lib/limits';
 import { refuseCodeFromStrings } from '@src/lib/code-from-strings';
 import { reasonText } from '@src/lib/reasons';
 import { inheritedContext } from '../../tools/docgen/extractors/inherited-context';
+import { startWith } from './start-app';
 
 /**
  * Sealed mode's build path (docs/research/24_sealed_mode, step 2): strict mode's view and worker with no network, and no
@@ -91,6 +93,13 @@ async function mount() {
     return el;
 }
 
+/** A new element in the document, started with `config` and the app's `files`. */
+const started = async (config: Record<string, unknown>, files?: Record<string, unknown>) => startWith(await mount(), config, { files });
+
+const clearNetwork = () => {
+    for (const fn of Object.values(NETWORK)) fn.mockClear();
+};
+
 beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'info').mockImplementation(() => {});
@@ -108,38 +117,36 @@ afterEach(() => {
 // ---- the host page's origin, and the network code, at run time
 
 describe("the sealed path reads nothing of the host page's origin or site, and runs no network code", () => {
-    it('setConfig(), reset(), load(), registerFiles() and a switch from strict mode: no read of the host page and no network code, in the config or the build', async () => {
-        const el = await mount();
-        el.registerFiles({ 'main.js': 'void 0', 'a.css': 'p { color: red }', 'b.png': 'x', 'c.json': '{}' });
-        el.setConfig({ mode: 'strict' }); // a strict build first, which runs the network code
-        for (const fn of Object.values(NETWORK)) fn.mockClear();
-        el.setConfig(SEALED_EVERY);
+    it('start(), reset(), a removal and an insertion, after a strict element: no read of the host page and no network code, in the config or the build', async () => {
+        const FILES = { 'main.js': 'void 0', 'a.css': 'p { color: red }', 'b.png': 'x', 'c.json': '{}' };
+        await started({ mode: 'strict' }, FILES); // a strict build first, which runs the network code
+        clearNetwork();
+        const el = await started(SEALED_EVERY, FILES);
         expect(el.state).toBe('loading');
         el.reset();
-        el.load('<p>again</p>');
-        el.registerFiles({ 'd.css': 'p { color: blue }' });
-        el.setConfig({ mode: 'sealed' });
-        el.setConfig({ mode: 'sealed', origins: undefined, fetchBridge: undefined });
-        expect(el.state).toBe('loading');
+        el.remove();
+        document.body.appendChild(el);
+        const plain = await started({ mode: 'sealed' }, { ...FILES, 'd.css': 'p { color: blue }' });
+        const undefinedOptions = await started({ mode: 'sealed', origins: undefined, fetchBridge: undefined });
+        expect([el.state, plain.state, undefinedOptions.state]).toEqual(['loading', 'loading', 'loading']);
         expect(called()).toEqual([]);
 
-        // a strict build with a bridge, then sealed again: the switch reads nothing, and leaves no bridge
-        el.setConfig(STRICT_NETWORK);
-        expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(2);
-        for (const fn of Object.values(NETWORK)) fn.mockClear();
-        el.setConfig({ mode: 'sealed' });
+        // a strict build with a bridge, then a sealed element: it reads nothing, and has no bridge
+        const strict = await started(STRICT_NETWORK);
+        expect(strict.shadowRoot.querySelectorAll('iframe')).toHaveLength(2);
+        clearNetwork();
+        const sealed = await started({ mode: 'sealed' });
         expect(called()).toEqual([]);
-        expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(1);
-        expect([el._fetchBridge, el._bridgeFrame]).toEqual([null, null]);
+        expect(sealed.shadowRoot.querySelectorAll('iframe')).toHaveLength(1);
+        expect([sealed._fetchBridge, sealed._bridgeFrame]).toEqual([null, null]);
     });
 
     it('positive control: strict mode with origins and fetchBridge runs every one of them, the host page read in the config and the bridge at attach', async () => {
-        const el = await mount();
-        for (const fn of Object.values(NETWORK)) fn.mockClear();
-        el.setConfig(STRICT_NETWORK);
+        clearNetwork();
+        await started(STRICT_NETWORK);
         expect(called()).toEqual(Object.keys(NETWORK).filter(name => name !== 'cooperativePolicy').sort());
-        for (const fn of Object.values(NETWORK)) fn.mockClear();
-        el.setConfig({ ...STRICT_NETWORK, mode: 'cooperative', capabilities: ['allow-scripts'] });
+        clearNetwork();
+        await started({ ...STRICT_NETWORK, mode: 'cooperative', capabilities: ['allow-scripts'] });
         expect(called()).toContain('cooperativePolicy');
         expect(called()).toContain('hostPageOrigin');
     });
@@ -170,21 +177,20 @@ describe("the sealed path reads nothing of the host page's origin or site, and r
 
 describe('T4: a sealed build wires no network source: its policy, its gate list, no bridge frame, nothing about origins in INIT_VIEW', () => {
     const build = async (config: Record<string, unknown>) => {
-        const el = await mount();
-        el.registerFiles({ 'main.js': 'void 0', 'a.css': 'p {}', 'b.png': 'x', 'c.json': '{}', 'd.woff2': 'x', 'e.mp4': 'x' });
-        el.setConfig({ ...config, entry: 'main.js' });
+        const el = await started({ ...config, entry: 'main.js' }, { 'main.js': 'void 0', 'a.css': 'p {}', 'b.png': 'x', 'c.json': '{}', 'd.woff2': 'x', 'e.mp4': 'x' });
         expect(el.state).toBe('loading');
         return { el, prepared: el._prepareBuild(), features: featuresOf(el._strictInit.workerSource) };
     };
 
-    it('sealed: the view policy is sealedViewPolicy over its file kinds, the gate list is [], sandboxFetch() refuses in the guest, one frame, INIT_VIEW names no origins, the build has no network', async () => {
+    it('sealed: the view policy is sealedViewPolicy over its file kinds, no gate and no gate list, sandboxFetch() refuses in the guest, one frame, INIT_VIEW names no origins, the build has no network', async () => {
         const { el, prepared, features } = await build({ mode: 'sealed' });
         const kinds = new Set<SealedFileKind>(['styles', 'images', 'fonts', 'media']);
         expect(policyOf(el)).toBe(sealedViewPolicy({ fileKinds: kinds, bootstrapHash: HASH }));
         expect(networkSources(policyOf(el))).toEqual([]);
         expect(directives(policyOf(el)).get('connect-src')).toEqual(["'none'"]);
-        expect(features.connect).toEqual([]);
+        expect(features).not.toHaveProperty('connect');
         expect(features.sealed).toBe(true);
+        expect(el._strictInit.workerSource).not.toContain('function requestGate(');
         expect(features).not.toHaveProperty('fetchBridge');
         // the prelude's text: the ready line names the build's own mode, and the prelude is built as strict mode's (BD7:NEW-1)
         expect(el._strictInit.workerSource).toMatch(/\? ?['"]sealed['"] ?: ?mode\} Ready/);
@@ -238,9 +244,7 @@ describe("a sealed build carries no state of the host page into the worker's fea
         const control = document.title;
         expect(control).toContain(MARK); // the markers are in the page
         for (const config of [{ mode: 'sealed' }, {}, SEALED_EVERY]) {
-            const el = await mount();
-            el.registerFiles({ 'main.js': 'void 0', 'a.css': 'p {}' });
-            el.setConfig({ ...config, entry: 'main.js', html: '<p>hello</p>' });
+            const el = await started({ ...config, entry: 'main.js', html: '<p>hello</p>' }, { 'main.js': 'void 0', 'a.css': 'p {}' });
             expect(el.state, JSON.stringify(config)).toBe('loading');
             const text = handedOver(el);
             expect(text.length).toBeGreaterThan(1000); // it reads what the build hands over, not an empty string
@@ -251,8 +255,7 @@ describe("a sealed build carries no state of the host page into the worker's fea
 
     it('the check sees a leak: with the page title put into the features, the marker is found', async () => {
         poison();
-        const el = await mount();
-        el.setConfig({ mode: 'sealed', html: `<p>${document.title}</p>` }); // the leak the check is for, made by hand
+        const el = await started({ mode: 'sealed', html: `<p>${document.title}</p>` }); // the leak the check is for, made by hand
         expect(handedOver(el)).toContain(MARK);
     });
 });
@@ -311,12 +314,12 @@ describe("sealed mode's sandboxFetch(): defined, and refused in the guest with F
 
 /** The network code by node: the reads of the host page, the narrowing, the origins, the bridge, the non-sealed templates. */
 const FORBIDDEN = [
-    'src/lib/host-site.ts#hostPageOrigin', 'src/lib/host-site.ts#hostSiteOrigins', 'src/host.ts#readHostPage',
-    'src/lib/csp/host-connect.ts#hostReach', 'src/lib/csp/origins.ts#parseOrigins', 'src/lib/config-schema.ts#limitHostReach',
+    'src/lib/host-site.ts#hostPageOrigin', 'src/lib/host-site.ts#hostSiteOrigins', 'src/lib/network-config.ts#readHostPage',
+    'src/lib/csp/host-connect.ts#hostReach', 'src/lib/csp/origins.ts#parseOrigins', 'src/lib/network-config.ts#limitHostReach',
     'src/lib/fetch-bridge.ts#toFetchPolicy', 'src/lib/fetch-bridge.ts#createFetchBridge',
     'src/lib/bridge-frame.ts#prepareBridgeFrame', 'src/lib/bridge-frame.ts#createBridgeFrame', 'src/lib/frame-documents.ts#buildBridgeDocument',
     'src/lib/csp/csp-generator.ts#connectSources', 'src/lib/csp/csp-generator.ts#strictViewPolicy', 'src/lib/csp/csp-generator.ts#cooperativePolicy', 'src/lib/csp/csp-generator.ts#bridgeFramePolicy',
-    'src/host.ts#this._reach', 'src/host.ts#this._startFetchBridge', 'src/host.ts#this._prepareNetwork', 'src/host.ts#this._gateConnect', 'src/host.ts#this._guestPolicy', 'src/host.ts#this._policyInput',
+    'src/lib/network-host.ts#this._reach', 'src/lib/network-host.ts#this._startFetchBridge', 'src/lib/network-host.ts#this._prepareNetwork', 'src/lib/network-host.ts#this._gateConnect', 'src/lib/network-host.ts#this._guestPolicy', 'src/lib/network-host.ts#this._policyInput',
 ];
 const forbiddenIn = (paths: Map<string, string[]>) => FORBIDDEN.filter(node => paths.has(node)).map(node => paths.get(node)!.join(' → '));
 
@@ -338,14 +341,14 @@ describe('T5: the call graph of the sealed build path reaches no network code', 
         }
         const whole = reach('src/host.ts', member('_prepareBuild'));
         expect(forbiddenIn(whole).map(trail => trail.split(' → ').at(-1))).toEqual(expect.arrayContaining([
-            'src/host.ts#this._reach', 'src/lib/csp/host-connect.ts#hostReach', 'src/host.ts#this._prepareNetwork', 'src/lib/bridge-frame.ts#prepareBridgeFrame',
+            'src/lib/network-host.ts#this._reach', 'src/lib/csp/host-connect.ts#hostReach', 'src/lib/network-host.ts#this._prepareNetwork', 'src/lib/bridge-frame.ts#prepareBridgeFrame',
             'src/lib/csp/csp-generator.ts#connectSources', 'src/lib/csp/csp-generator.ts#strictViewPolicy', 'src/lib/csp/csp-generator.ts#cooperativePolicy',
         ]));
         // and strict mode's own frame reaches the narrowing's output, the gate list, the template and the bridge
-        expect(forbiddenIn(reach('src/host.ts', member('_prepareStrictFrame'))).length).toBeGreaterThan(0);
+        expect(forbiddenIn(reach('src/lib/network-host.ts', member('_prepareStrictFrame'))).length).toBeGreaterThan(0);
         // the attach reaches the bridge, and through it the host page's origin: what the sealed attach must not run
         expect(forbiddenIn(reach('src/host.ts', member('_attachBuild'))).map(trail => trail.split(' → ').at(-1))).toEqual(expect.arrayContaining([
-            'src/host.ts#this._startFetchBridge', 'src/lib/bridge-frame.ts#createBridgeFrame', 'src/lib/fetch-bridge.ts#createFetchBridge', 'src/lib/host-site.ts#hostPageOrigin',
+            'src/lib/network-host.ts#this._startFetchBridge', 'src/lib/bridge-frame.ts#createBridgeFrame', 'src/lib/fetch-bridge.ts#createFetchBridge', 'src/lib/host-site.ts#hostPageOrigin',
         ]));
     });
 
@@ -367,32 +370,30 @@ describe('T5: the call graph of the sealed build path reaches no network code', 
 
     it("the attach runs the network only for a build that has one: without that statement it reaches no network code, and a sealed build has none (T4)", () => {
         const attach = member('_attachBuild');
-        const guarded = 'prepared.network ? this._startFetchBridge(prepared.network) : null;';
+        const guarded = 'prepared.network ? networkElement(this)?._startFetchBridge(prepared.network) ?? null : null;';
         expect(attach.split(guarded)).toHaveLength(2);
         expect(forbiddenIn(reach('src/host.ts', attach.replace(guarded, '')))).toEqual([]);
     });
 
-    it("the host page's origin and site are read in two places of host.ts: readHostPage (the config, when a network rule asks) and the bridge's start", () => {
-        const host = graphOf('src/host.ts');
-        const readers = [...host.units].filter(([, body]) => /\bhostPageOrigin\(|\bhostSiteOrigins\(/.test(body)).map(([name]) => name).sort();
-        expect(readers).toEqual(['readHostPage', 'this._startFetchBridge']);
-        const handedOn = [...host.units].filter(([name, body]) => name !== 'readHostPage' && /\breadHostPage\b/.test(body)).map(([name]) => name);
-        expect(handedOn).toEqual(['this._applyConfig']);
+    it("the host page's origin and site are read nowhere in the element's class, and in two places of the network modes: readHostPage (the config, when a network rule asks) and the bridge's start", () => {
+        const readersIn = (file: string) => [...graphOf(file).units].filter(([, body]) => /\bhostPageOrigin\(|\bhostSiteOrigins\(/.test(body)).map(([name]) => name).sort();
+        expect(readersIn('src/host.ts')).toEqual([]);
+        expect(readersIn('src/lib/network-config.ts')).toEqual(['readHostPage']);
+        expect(readersIn('src/lib/network-host.ts')).toEqual(['this._startFetchBridge']);
+        // the class hands the config the reader the seam holds, which a build without the network modes does not have
+        expect(member('start')).toContain('readStart(app, grants, networkModes()?.readHostPage ?? NO_HOST_PAGE)');
     });
 
-    it("config-schema.ts: the host page is asked (host()) only by the rules of the network options, which sealed mode never runs (readIn)", () => {
-        const text = code('src/lib/config-schema.ts');
+    it("the host page is asked (host()) only by the rules of the network options, which are the network modes' (network-config.ts) and which sealed mode never runs (readIn)", () => {
+        // config-schema.ts defines `host` and never calls it: no rule of its own reads the host page
+        expect([...code('src/lib/config-schema.ts').matchAll(/\bhost\(\)/g)]).toEqual([]);
+        const text = code('src/lib/network-config.ts');
         const asks = [...text.matchAll(/\bhost\(\)/g)].map(match => match.index!);
-        const ruleOf = (name: string) => {
-            const start = text.indexOf(`\n    ${name}: {`);
-            return [start, text.indexOf('\n    },', start)] as const;
-        };
-        const rules = NETWORK_OPTIONS.map(ruleOf);
-        for (const [start, end] of rules) {
-            expect(start, 'a network rule').toBeGreaterThan(0);
-            expect(end).toBeGreaterThan(start);
-        }
-        // the one definition (normaliseConfig's `host`), and the asks inside the two rules
+        const table = text.indexOf('\nexport const NETWORK_RULES = {');
+        const rules = [[table, text.indexOf('\n} as const;', table)] as const];
+        expect(table, 'the network rules').toBeGreaterThan(0);
+        for (const name of NETWORK_OPTIONS) expect(text.slice(...rules[0]!), name).toContain(`\n    ${name}: (`);
+        // the asks are inside the two rules, and nowhere else
         const outside = asks.filter(index => !rules.some(([start, end]) => index > start && index < end));
         expect(outside.map(index => text.slice(index - 40, index + 10).trim())).toEqual([]);
         expect(asks.length).toBeGreaterThanOrEqual(NETWORK_OPTIONS.length);
@@ -402,7 +403,7 @@ describe('T5: the call graph of the sealed build path reaches no network code', 
 
 // ---- T6: the egress table's sealed column
 
-describe("T6: the egress table's sealed column: every surface of sealed mode is strict mode's but the bridge's, and no channel reaches the network", () => {
+describe("T6: the egress table's sealed column: every surface of sealed mode is strict mode's but the bridge's, and no channel reaches the network but the embedder's links", () => {
     it('the sealed column is the strict column without the bridge frame: every row that lists sealed is strict\'s, and no bridge-frame row lists it', () => {
         const key = (row: (typeof EGRESS)[number]) => `${row.realm}|${row.surface}|${row.owner}`;
         const sealed = EGRESS.filter(row => row.modes.includes('sealed')).map(key).sort();
@@ -415,31 +416,29 @@ describe("T6: the egress table's sealed column: every surface of sealed mode is 
     });
 
     it('the sealed build installs the listeners of its column and has none of the realms the column leaves out: no bridge frame; strict mode with fetchBridge has one', async () => {
-        const el = await mount();
-        el.setConfig({ mode: 'sealed' });
+        const el = await started({ mode: 'sealed' });
         expect(featuresOf(el._strictInit.workerSource).listeners).toEqual(bootstrapListeners('sealed'));
         expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(1);
-        el.setConfig(STRICT_NETWORK);
-        expect(featuresOf(el._strictInit.workerSource).listeners).toEqual(bootstrapListeners('strict'));
-        expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(2);
+        const strict = await started(STRICT_NETWORK);
+        expect(featuresOf(strict._strictInit.workerSource).listeners).toEqual(bootstrapListeners('strict'));
+        expect(strict.shadowRoot.querySelectorAll('iframe')).toHaveLength(2);
     });
 
-    it("every channel says what it reaches of the network in sealed mode, none, and the build bears out the two that could: the view's loads and sandboxFetch()", async () => {
-        for (const row of CHANNEL_BUDGETS) expect(row.sealed, row.channel).toMatch(/^(none\b|not a channel of sealed mode$)/);
+    it("every channel says what it reaches of the network in sealed mode, none but the embedder's links, and the build bears out the two that could: the view's loads and sandboxFetch()", async () => {
+        for (const row of CHANNEL_BUDGETS) expect(row.sealed, row.channel).toMatch(/^(none\b|only\b|not a channel of sealed mode$)/);
         const channel = (start: string) => CHANNEL_BUDGETS.find(row => row.channel.startsWith(start))!;
+        // the one channel that reaches beyond the host page is the embedder's own grant, the URLs of `links` (design 02, I6)
+        expect(CHANNEL_BUDGETS.filter(row => row.sealed.startsWith('only')).map(row => row.channel)).toEqual([channel('Strict and sealed: the user\'s click on a link the view marked').channel]);
+        expect(channel('Strict and sealed: the user\'s click on a link the view marked').sealed).toContain('only the URLs the embedder lists in `links`');
         expect(channel('`sandboxFetch()`').sealed).toContain('rejects in the guest');
         expect(channel("Strict: the view's loads").sealed).toContain('`blob:`');
         // the view's loads: no network source in the sealed view's policy; strict mode's lists its origins (positive control)
-        const el = await mount();
-        el.registerFiles({ 'b.png': 'x' });
-        el.setConfig({ mode: 'sealed', guestWrites: true });
+        const el = await started({ mode: 'sealed', guestWrites: true }, { 'b.png': 'x' });
         expect(networkSources(policyOf(el))).toEqual([]);
         expect(directives(policyOf(el)).get('img-src')).toEqual(['blob:']);
-        el.setConfig(STRICT_NETWORK);
-        expect(networkSources(policyOf(el))).toContain(LISTED);
+        expect(networkSources(policyOf(await started(STRICT_NETWORK, { 'b.png': 'x' })))).toContain(LISTED);
         // sandboxFetch(): the sealed worker's bootstrap is told so (the guest's refusal: the describe above)
-        el.setConfig({ mode: 'sealed' });
-        expect(featuresOf(el._strictInit.workerSource).sealed).toBe(true);
+        expect(featuresOf((await started({ mode: 'sealed' }))._strictInit.workerSource).sealed).toBe(true);
     });
 
     it('docs/API.md renders the column', () => {
@@ -452,7 +451,7 @@ describe("T6: the egress table's sealed column: every surface of sealed mode is 
 // ---- T9: INHERITED_CONTEXT's sealed field
 
 describe("T9: every row of the host page's context says what it is in sealed mode, and the build bears out the rows sealed mode drops", () => {
-    it('every row has its standing; a row that does not apply says why; 15 remain, 2 are reduced, 5 do not apply (research 24, §1.4)', () => {
+    it('every row has its standing; a row that does not apply says why; 15 remain, 3 are reduced, 5 do not apply (research 24, §1.4; the autofill row, research 29)', () => {
         const rows = inheritedContextRows();
         for (const row of rows) {
             expect(['remains', 'reduced', 'not-applicable'], row.id).toContain(row.sealed?.standing);
@@ -461,43 +460,40 @@ describe("T9: every row of the host page's context says what it is in sealed mod
         }
         const by = (standing: string) => rows.filter(row => row.sealed.standing === standing).map(row => row.id).sort();
         expect(by('not-applicable')).toEqual(['ancestorOrigins', 'cookies', 'referrer', 'serviceWorker', 'uiSurfaces']);
-        expect(by('reduced')).toEqual(['cspFetch', 'cspReporting']);
+        expect(by('reduced')).toEqual(['autofill', 'cspFetch', 'cspReporting']);
         expect(by('remains')).toHaveLength(15);
         expect(rows).toHaveLength(Object.keys(INHERITED_CONTEXT).length);
     });
 
-    it("the rows dropped for 'no-network' and the reduced cspFetch: a sealed build makes no request path (no network source, an empty gate, no bridge frame, no origins); strict mode with a network has each (positive control)", async () => {
+    it("the rows dropped for 'no-network' and the reduced cspFetch: a sealed build makes no request path (no network source, no request gate, no bridge frame, no origins); strict mode with a network has each (positive control)", async () => {
         const noNetwork = inheritedContextRows().filter(row => row.sealed.standing === 'not-applicable' && row.sealed.because === 'no-network').map(row => row.id);
         expect(noNetwork.sort()).toEqual(['cookies', 'referrer', 'serviceWorker']);
         const paths = async (config: Record<string, unknown>) => {
-            const el = await mount();
-            el.registerFiles({ 'a.css': 'p {}', 'b.png': 'x' });
-            el.setConfig(config);
+            const el = await started(config, { 'a.css': 'p {}', 'b.png': 'x' });
             const policy = directives(policyOf(el));
             return {
                 sources: networkSources(policyOf(el)),
                 fetchSources: ['img-src', 'font-src', 'media-src', 'style-src', 'connect-src'].flatMap(name => policy.get(name)!).filter(source => !["'none'", "'unsafe-inline'", 'blob:'].includes(source)),
-                gate: featuresOf(el._strictInit.workerSource).connect as string[],
+                gate: (el._strictInit.workerSource as string).includes('function requestGate('),
+                connect: featuresOf(el._strictInit.workerSource).connect as string[] | undefined,
                 bridge: el.shadowRoot.querySelectorAll('iframe').length > 1,
                 origins: Object.keys(el._strictInit).includes('origins'),
             };
         };
-        expect(await paths({ mode: 'sealed' })).toEqual({ sources: [], fetchSources: [], gate: [], bridge: false, origins: false });
+        expect(await paths({ mode: 'sealed' })).toEqual({ sources: [], fetchSources: [], gate: false, connect: undefined, bridge: false, origins: false });
         const strict = await paths(STRICT_NETWORK);
         expect(strict.sources.length).toBeGreaterThan(0);
         expect(strict.fetchSources.length).toBeGreaterThan(0);
-        expect(strict.gate.length).toBeGreaterThan(0);
+        expect(strict.gate).toBe(true);
+        expect(strict.connect!.length).toBeGreaterThan(0);
         expect([strict.bridge, strict.origins]).toEqual([true, true]);
     });
 
     it("the rows dropped for 'no-guest-document': a sealed build is the strict view, which has none; a cooperative build has one (positive control)", async () => {
         const rows = inheritedContextRows().filter(row => row.sealed.standing === 'not-applicable' && row.sealed.because === 'no-guest-document').map(row => row.id);
         expect(rows.sort()).toEqual(['ancestorOrigins', 'uiSurfaces']);
-        const el = await mount();
-        el.setConfig({ mode: 'sealed' });
-        expect(el._prepareBuild().strictInit).not.toBeNull();
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
-        expect(el._prepareBuild().strictInit).toBeNull();
+        expect((await started({ mode: 'sealed' }))._prepareBuild().strictInit).not.toBeNull();
+        expect((await started({ mode: 'cooperative', capabilities: ['allow-scripts'] }))._prepareBuild().strictInit).toBeNull();
     });
 
     it("docs/THREAT-MODEL.md renders the column", () => {
@@ -513,31 +509,28 @@ describe("T9: every row of the host page's context says what it is in sealed mod
 describe("the warning about scripts in `html` names sealed mode in sealed mode", () => {
     it('sealed says sealed mode (the default), once per element; strict says strict mode', async () => {
         const warn = vi.mocked(console.warn);
-        const el = await mount();
         // what the view noted it dropped of the initial view (VIEW_INITIAL), which the element warns from (BD7:LIM-1)
-        const viewDropped = (dropped: string[]) => {
+        const viewDropped = (el: any, dropped: string[]) => {
             const { port1 } = new MessageChannel();
             el._viewPort = port1;
             el._onViewMessage(port1, { type: 'VIEW_INITIAL', dropped });
             port1.close();
         };
-        el.setConfig({ mode: 'sealed', html: '<script>x()</script>' });
-        viewDropped(['script']);
-        el.setConfig({ mode: 'sealed', html: '<p onclick="y()">y</p>' });
-        viewDropped(['handler']);
+        const el = await started({ mode: 'sealed', html: '<script>x()</script><p onclick="y()">y</p>' });
+        viewDropped(el, ['script']);
+        el.reset();
+        viewDropped(el, ['handler']);
         const said = () => warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('runs no script in `html`'));
         expect(said()).toEqual(["[Sandbox] sealed mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`."]);
-        el.setConfig({ mode: 'strict', html: '<script>x()</script>' });
-        viewDropped(['script']);
+        viewDropped(await started({ mode: 'strict', html: '<script>x()</script>' }), ['script']);
         expect(said()[1]).toBe("[Sandbox] strict mode runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.");
     });
 
     it("a registered stylesheet's network URL: sealed mode's warning names no origin to list, strict mode's does", async () => {
         const warn = vi.mocked(console.warn);
-        const el = await mount();
-        el.registerFiles({ 'a.css': `p { background: url(${LISTED}/x.png) }` });
-        el.setConfig({ mode: 'sealed' });
-        el.setConfig({ mode: 'strict' });
+        const files = { 'a.css': `p { background: url(${LISTED}/x.png) }` };
+        await started({ mode: 'sealed' }, files);
+        await started({ mode: 'strict' }, files);
         const said = warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('registered stylesheet "a.css"'));
         expect(said).toHaveLength(2);
         expect(said[0]).toMatch(/^\[Sandbox\] sealed mode: .*sealed mode has no network\. Register the file instead\.$/);
@@ -552,41 +545,36 @@ describe("sealed mode's wirings are held by the unit run: the code-from-string r
     const refusal = refuseCodeFromStrings.toString();
 
     it("the worker's source holds the code-from-string refusal exactly when scriptUnsafe is off: always in sealed mode, in strict mode without scriptUnsafe", async () => {
-        const el = await mount();
-        el.registerFiles({ 'main.js': 'void 0' });
-        const sourceOf = (config: Record<string, unknown>) => {
-            el.setConfig(config);
+        const sourceOf = async (config: Record<string, unknown>) => {
+            const el = await started(config, { 'main.js': 'void 0' });
             expect(el.state, JSON.stringify(config)).toBe('loading');
             return el._strictInit.workerSource as string;
         };
         for (const config of [{}, { mode: 'sealed' }, { mode: 'sealed', entry: 'main.js' }, { mode: 'strict' }, { mode: 'strict', entry: 'main.js' }]) {
-            const source = sourceOf(config);
+            const source = await sourceOf(config);
             expect(source.split(refusal), `${JSON.stringify(config)}: the refusal runs once, before the entry`).toHaveLength(2);
             expect(source.indexOf(refusal), JSON.stringify(config)).toBeLessThan(source.indexOf('\n(function () {\n'));
         }
         // positive control: strict mode's scriptUnsafe runs strings as code, so its worker has no refusal
-        expect(sourceOf({ mode: 'strict', scriptUnsafe: true }).includes(refusal)).toBe(false);
+        expect((await sourceOf({ mode: 'strict', scriptUnsafe: true })).includes(refusal)).toBe(false);
     });
 
     it("an entry that holds an import expression is refused by the build in sealed and strict mode, with its reason; one without builds", async () => {
-        const el = await mount();
-        const reasons: string[] = [];
-        el.addEventListener('terminated', (event: CustomEvent) => reasons.push(event.detail.reason));
         for (const mode of ['sealed', 'strict'] as const) {
             for (const entry of ["import('https://x.example/a')", "import.source('https://x.example/a')", "import /* */ . defer('https://x.example/a')", "x = 1; // import(later)"]) {
-                el.registerFiles({ 'main.js': entry });
-                el.setConfig({ mode, entry: 'main.js' });
+                const el = await started({ mode, entry: 'main.js' }, { 'main.js': entry });
                 expect(el.state, `${mode}: ${entry}`).toBe('terminated');
                 expect(el._buildRefusal(), `${mode}: ${entry}`).toBe(reasonText('entryImport'));
             }
-            el.registerFiles({ 'main.js': 'const imports = 1; sandboxView.render("<p>x</p>");' });
-            el.setConfig({ mode, entry: 'main.js' });
+            const el = await started({ mode, entry: 'main.js' }, { 'main.js': 'const imports = 1; sandboxView.render("<p>x</p>");' });
             expect(el.state).toBe('loading');
             expect(el._buildRefusal(), `${mode}: no import expression`).toBeNull();
         }
         // the termination says why
-        el.registerFiles({ 'main.js': "import.defer('https://x.example/a')" });
-        el.setConfig({ entry: 'main.js' });
+        const el = await mount();
+        const reasons: string[] = [];
+        el.addEventListener('terminated', (event: CustomEvent) => reasons.push(event.detail.reason));
+        startWith(el, { entry: 'main.js' }, { files: { 'main.js': "import.defer('https://x.example/a')" } });
         await vi.waitFor(() => expect(reasons.at(-1)).toBe(reasonText('entryImport')));
     });
 });

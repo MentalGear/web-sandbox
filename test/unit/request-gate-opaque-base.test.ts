@@ -15,7 +15,7 @@ const saved = Object.getOwnPropertyDescriptor(globalThis, 'location');
 
 beforeAll(() => {
     Object.defineProperty(globalThis, 'location', { value: new URL('blob:null/0b3c1f5e-8f2a-4a3e-9d57-2f4f8d3d7a11'), configurable: true });
-    gate.install([], { mode: 'strict', sealedMode: true });
+    gate.install([], { mode: 'strict' });
 });
 afterAll(() => {
     if (saved) Object.defineProperty(globalThis, 'location', saved);
@@ -26,7 +26,7 @@ describe('a relative XMLHttpRequest URL against a base that cannot resolve one (
         clear();
         const request = new XMLHttpRequest();
         expect(() => request.open('GET', url, false)).not.toThrow();
-        expect(() => request.send()).toThrow(expect.objectContaining({ name: 'NetworkError', message: 'XMLHttpRequest refused by the sandbox: sealed mode has no network; call a method the host page exposes instead' }));
+        expect(() => request.send()).toThrow(expect.objectContaining({ name: 'NetworkError', message: 'XMLHttpRequest refused by the sandbox: the origin is not in its origins.connect' }));
         expect(opened).toEqual(['about:blank']); // a placeholder the platform is never asked to send
         expect(sent).toEqual([]);
         expect(reports()).toEqual([expect.objectContaining({ type: 'VIOLATION', directive: 'connect-src', sourceFile: GATE_SOURCE_FILE })]);
@@ -43,7 +43,7 @@ describe('a relative XMLHttpRequest URL against a base that cannot resolve one (
 describe('a relative WebSocket URL against a base that cannot resolve one (BD6:NEW-2)', () => {
     it.each(['/socket', 'socket', '//elsewhere.example/socket'])('new WebSocket(%s) is refused in the gate\'s words and reported, not a parse error', (url) => {
         clear();
-        expect(() => new WebSocket(url)).toThrow(expect.objectContaining({ name: 'SecurityError', message: 'WebSocket refused by the sandbox: sealed mode opens no WebSocket (it has no network)' }));
+        expect(() => new WebSocket(url)).toThrow(expect.objectContaining({ name: 'SecurityError', message: 'WebSocket refused by the sandbox: strict mode opens no WebSocket' }));
         expect(reports()).toEqual([expect.objectContaining({ type: 'VIOLATION', directive: 'connect-src', sourceFile: GATE_SOURCE_FILE })]);
     });
 

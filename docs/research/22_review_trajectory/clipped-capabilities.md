@@ -69,6 +69,8 @@ Rows are grouped by scope in the order: sandbox flags, policy surface, host page
 | 46 | View time budget | None, then 200 ms per second | 200 ms/s charged in full; one operation over 2 s is survived once with a warning, a second within 5 minutes ends the sandbox | R2:M-3, R5:M-2 (hard end replaced by S72) | Single very expensive operations (e.g. a 250 000-character textarea in WebKit) | no |
 | 47 | Call rate and size | Unbounded, then 5 000 calls/s | `callLimits` default 1 000 calls and 64 MiB per second; 33 MiB per call; 256 inbound calls in flight; `BUSY` past them | AR:B7, R1:R3-3, R3:M-2, R4:M-6 | High-frequency or very large guest calls | yes for the rates (`callLimits`); no for the 33 MiB and 256 caps |
 | 48 | Logs and uncaught errors | Unbounded | 1 000 lines/s, 64 arguments, 64 Ki characters per string; more than 1 000 uncaught errors/rejections per second (or 1 Mi characters) ends the sandbox | AR:B3, R1:R3-3, R5:N-1 | Chatty logging; error-storm apps | no |
+| **Builds (the package as built by default)** | | | | | | |
+| 53 | Strict, cooperative and worker mode, `origins`, `fetchBridge`, `execute()` and `scriptUnsafe`, in the package as built by default | Every mode in the one package | The default build is sealed mode alone: their code is not in its bundle, their types are not in its declarations, and a config that asks for one is refused with the reason `networkModesOff` | The owner's decision D9 (2026-11-07) on the review trajectory ([ADR-009](../../ADR-009-network-modes-build-flag.md)); no single finding | Every mode but sealed, and the network, unless the package is built with the flag | yes: a build flag, `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` (not a config option) |
 
 ## Applied after pass 3
 

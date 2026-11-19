@@ -39,21 +39,21 @@ export const REALMS = {
     'cooperative': {
         summary: "Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts.",
         guestCode: true,
-        builder: 'src/host.ts, _getSandboxCommsScript',
+        builder: 'src/lib/network-host.ts, _getSandboxCommsScript',
         channels: ['announcement', 'logic-port'],
         egress: 'cooperative',
     },
     'worker-frame': {
         summary: "Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup.",
         guestCode: false,
-        builder: 'src/host.ts, _getWorkerBootstrapScript',
+        builder: 'src/lib/network-host.ts, _getWorkerBootstrapScript',
         channels: ['announcement', 'worker'],
         egress: 'frame',
     },
     'worker': {
         summary: "Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code.",
         guestCode: true,
-        builder: 'src/host.ts, _getWorkerBootstrapScript',
+        builder: 'src/lib/network-host.ts, _getWorkerBootstrapScript',
         channels: ['logic-port', 'worker'],
         egress: 'worker',
     },
@@ -74,13 +74,20 @@ export const REALMS = {
     'bridge-frame': {
         summary: "The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it.",
         guestCode: false,
-        builder: 'src/lib/in-sandbox-view.ts, viewBootstrapSource',
+        builder: 'src/lib/network-install.ts, BRIDGE_BOOTSTRAP',
         channels: ['announcement', 'bridge-init', 'bridge-port'],
         egress: 'bridge-frame',
     },
 } as const satisfies Record<string, RealmRow>;
 
 export type RealmId = keyof typeof REALMS;
+
+/**
+ * The realms only the network modes build (ADR-009): cooperative mode's guest document, worker mode's frame and worker,
+ * and the fetch bridge's frame. The default build builds none of them, so a function stringified into these alone is
+ * not in its bundle (test/unit/default-build.test.ts).
+ */
+export const NETWORK_MODE_REALMS = ['cooperative', 'worker-frame', 'worker', 'bridge-frame'] as const satisfies readonly RealmId[];
 
 /** A scan of the stringified code applies (true), or the reason it does not. */
 export type Scan = true | string;
@@ -109,6 +116,7 @@ const OWN_RECORDS = 'it reads a string and the tokens and references it makes it
 /** Every function the library stringifies into a realm. */
 export const STRINGIFIED = {
     inSandboxScript: { module: 'src/lib/in-sandbox-script.ts', realms: ['cooperative', 'worker', 'strict-worker'], capture: true, readOnce: true, typeofRead: true },
+    requestGate: { module: 'src/lib/request-gate.ts', realms: ['cooperative', 'worker', 'strict-worker'], capture: true, readOnce: true, typeofRead: true },
     createBroker: { module: 'src/lib/rpc.ts', realms: ['cooperative', 'worker', 'strict-worker'], capture: true, readOnce: true, typeofRead: true },
     createSizeOf: { module: 'src/lib/structured-size.ts', realms: ['cooperative', 'worker', 'strict-worker'], capture: true, readOnce: true, typeofRead: true },
     inSandboxFiles: { module: 'src/lib/in-sandbox-files.ts', realms: ['cooperative', 'worker', 'strict-worker', 'view'], capture: true, readOnce: true, typeofRead: true },
@@ -129,6 +137,7 @@ export const STRINGIFIED = {
     keepsUrl: { module: 'src/lib/css-references.ts', realms: ['view'], capture: NO_GUEST, readOnce: 'it reads a string it is given and calls the function it is given, in a realm that runs no guest code', typeofRead: true },
     styleMarkup: { module: 'src/lib/style-markup.ts', realms: ['view'], capture: NO_GUEST, readOnce: 'it reads strings it is given and the matches it makes itself, in a realm that runs no guest code', typeofRead: true },
     viewInputOutbox: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
+    viewControlNames: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     isStyleProperty: { module: 'src/lib/in-sandbox-view.ts', realms: ['view', 'strict-worker'], capture: 'it names no global and calls only the function it is given (the strict prelude gives it a captured charCodeAt)', readOnce: 'its arguments are a string and a list of the library\'s, never an object of the guest\'s', typeofRead: true },
     checkSandboxEnvironment: { module: 'src/lib/environment-check.ts', realms: ['cooperative', 'worker-frame', 'view', 'bridge-frame'], capture: RUNS_FIRST, readOnce: true, typeofRead: true },
     inBridgeFrame: { module: 'src/lib/in-bridge-frame.ts', realms: ['bridge-frame'], capture: NO_GUEST, readOnce: true, typeofRead: true },

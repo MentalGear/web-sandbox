@@ -1,6 +1,7 @@
 /**
  * The element's events (class D/L, docs/research/18_finding_classes/README.md; R5:L-3): every event the
- * element dispatches is made here, by one constructor, from one table of the types and whether each bubbles. The
+ * element dispatches is made here, by one constructor, from one table of the types, whether each bubbles and whether it
+ * carries guest data. The
  * constructor freezes the detail deeply, so the first listener cannot change what a later listener reads: every detail is
  * one state seen by every listener, never a copy one of them rewrote.
  *
@@ -21,16 +22,35 @@
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
 
-/** Every event the element dispatches, and whether it bubbles (docs/API.md, Events). */
+/**
+ * Every event the element dispatches (docs/API.md, Events): whether it bubbles, whether its detail carries data the
+ * guest chose (`guestData`), and the builds that dispatch it. An event that carries guest data does not bubble (design
+ * 01, I5): a listener on an ancestor receives it only if it was added for the capture phase, so a bubbling listener on a
+ * shared ancestor never mixes one app's data with another's. test/unit/element-events.test.ts holds the table to it.
+ *
+ * - `sandbox-log`: the guest's console lines and errors (the element's own lines ride it too);
+ * - `violation`: what the guest's realm or its view reports, a claim of the guest's;
+ * - `fileswritten`: the path the guest wrote;
+ * - `fileschanged`: the paths a commit changed, which the guest's writes named;
+ * - `fetch`: the URL the guest asked for. The network build's only.
+ * `ready` carries nothing, and `terminated` the library's reason or the embedder's own.
+ *
+ * The table's type holds the rule: a row with `guestData: true` and `bubbles: true` does not compile.
+ */
+type ElementEventBuilds = { readonly builds: 'every' | 'network' };
+type GuestDataEvent = ElementEventBuilds & { readonly guestData: true; readonly bubbles: false };
+type LibraryDataEvent = ElementEventBuilds & { readonly guestData: false; readonly bubbles: boolean };
+type ElementEventRow = GuestDataEvent | LibraryDataEvent;
+
 export const ELEMENT_EVENTS = Object.freeze({
-    'ready': { bubbles: false },
-    'terminated': { bubbles: false },
-    'sandbox-log': { bubbles: true },
-    'violation': { bubbles: true },
-    'fetch': { bubbles: true },
-    'fileschanged': { bubbles: false },
-    'fileswritten': { bubbles: true },
-} as const);
+    'ready': { bubbles: false, guestData: false, builds: 'every' },
+    'terminated': { bubbles: false, guestData: false, builds: 'every' },
+    'sandbox-log': { bubbles: false, guestData: true, builds: 'every' },
+    'violation': { bubbles: false, guestData: true, builds: 'every' },
+    'fetch': { bubbles: false, guestData: true, builds: 'network' },
+    'fileschanged': { bubbles: false, guestData: true, builds: 'every' },
+    'fileswritten': { bubbles: false, guestData: true, builds: 'every' },
+} as const satisfies Readonly<Record<string, ElementEventRow>>);
 
 export type ElementEventType = keyof typeof ELEMENT_EVENTS;
 
@@ -70,7 +90,7 @@ export function freezeDeep<T>(value: T): T {
     return value;
 }
 
-/** The one constructor of the element's events: `type` with its bubbling from ELEMENT_EVENTS, its detail frozen deeply. */
+/** The one constructor of the element's events: `type` with its bubbling from ELEMENT_EVENTS, its detail frozen deeply. None is `composed`. */
 export function elementEvent(type: ElementEventType, detail: unknown = null): CustomEvent {
     return new CustomEvent(type, { detail: freezeDeep(detail), bubbles: ELEMENT_EVENTS[type].bubbles });
 }

@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { VIEW_RENDER_MAX_LENGTH, viewBootstrapHash, viewBootstrapText } from '@src/lib/in-sandbox-view';
 import { ConfigRefusal, normaliseConfig } from '@src/lib/config-schema';
@@ -7,6 +8,7 @@ import { NO_ORIGINS, type SandboxOrigins } from '@src/lib/csp/origins';
 import { scriptInMarkup } from '@src/lib/markup-scripts';
 import { runBootstrap } from './sandbox-environment';
 import type { SandboxConfig } from '@src/host';
+import { startWith } from './start-app';
 
 /**
  * Sealed mode is the default (ADR-008; T8 of docs/research/24_sealed_mode): a config that names no mode builds strict
@@ -53,11 +55,10 @@ afterEach(() => {
 });
 
 describe('T8: a config that names no mode is sealed', () => {
-    it.each([['inserted, never configured', undefined], ['setConfig({})', {}], ['setConfig with html only', { html: '<p>hi</p>' }]])('%s: the view document holds only the sealed policy and the hashed bootstrap', async (_, config) => {
+    it.each([['start({})', {}], ['start() with html only', { html: '<p>hi</p>' }]])('%s: the view document holds only the sealed policy and the hashed bootstrap', async (_, config) => {
         const el = await element();
-        el.registerFiles(FILES);
+        startWith(el, config, { files: FILES });
         document.body.appendChild(el);
-        if (config) el.setConfig(config);
         expect(el._config.mode).toBe('sealed');
         expect(built(el)).toEqual({ scripts: [viewBootstrapText()], policy: SEALED_POLICY(), body: 0, flags: 'allow-scripts allow-forms', frames: 1 });
         expect(Object.keys(el._strictInit)).not.toContain('origins'); // sealed mode's INIT_VIEW names no origins
@@ -66,9 +67,8 @@ describe('T8: a config that names no mode is sealed', () => {
     it.each([['mode only', { mode: 'strict' }], ['mode and html', { mode: 'strict', html: '<p>hi</p>' }]])("strict, named (%s): the same view and bootstrap, with strict mode's policy", async (_, config) => {
         expect(STRICT_POLICY()).not.toBe(SEALED_POLICY());
         const el = await element();
-        el.registerFiles(FILES);
+        startWith(el, config, { files: FILES });
         document.body.appendChild(el);
-        el.setConfig(config);
         expect(el._config.mode).toBe('strict');
         expect(built(el)).toEqual({ scripts: [viewBootstrapText()], policy: STRICT_POLICY(), body: 0, flags: 'allow-scripts allow-forms', frames: 1 });
     });
@@ -77,11 +77,13 @@ describe('T8: a config that names no mode is sealed', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await element();
         document.body.appendChild(el);
-        el.setConfig({ mode: 'strict', origins: { scripts: ['https://cdn.example'] } });
+        startWith(el, { mode: 'strict', origins: { scripts: ['https://cdn.example'] } });
         expect(el._origins.scripts).toEqual([]);
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.startsWith('[Sandbox] origins.scripts is not used in strict mode'))).toHaveLength(1);
-        el.setConfig({ mode: 'cooperative', origins: { scripts: ['https://cdn.example'] } });
-        expect(el._origins.scripts).toEqual(['https://cdn.example']);
+        const cooperative = await element();
+        document.body.appendChild(cooperative);
+        startWith(cooperative, { mode: 'cooperative', origins: { scripts: ['https://cdn.example'] } });
+        expect(cooperative._origins.scripts).toEqual(['https://cdn.example']);
     });
 
     it('the types say the same: a config without a mode is a sealed config, and strict mode is named', () => {
@@ -102,7 +104,7 @@ describe('T8: a config that names no mode is sealed', () => {
 
 // BD7:LIM-3 (class E-cpu): `html` had no size cap, and the view parses the whole of its initial markup before its renderer
 // can refuse any of it. Markup longer than one render (the initial view is one) is refused where it arrives.
-describe('html longer than one render is refused at configuration, by setConfig() and load() (BD7:LIM-3)', () => {
+describe('html longer than one render is refused at configuration, by start() (BD7:LIM-3)', () => {
     const LONG = `<p>${'x'.repeat(VIEW_RENDER_MAX_LENGTH)}</p>`;
     const FITS = `<p>${'x'.repeat(VIEW_RENDER_MAX_LENGTH - 7)}</p>`;
     const reasons = (el: any) => {
@@ -123,31 +125,24 @@ describe('html longer than one render is refused at configuration, by setConfig(
         for (const config of [{ html: FITS }, { mode: 'strict', html: FITS }, { mode: 'cooperative', html: LONG }, { mode: 'worker', html: LONG }]) {
             expect(normaliseConfig(config, host).refusal, `${config.mode} ${config.html.length}`).toBeNull();
         }
-        expect(TERMINATION_REASONS.htmlTooLong.decidedBy).toBe('config');
+        expect(TERMINATION_REASONS.htmlTooLong.decidedBy).toBe('start');
     });
 
-    it('setConfig() keeps nothing of it; load() keeps the html it had; both end the build with the reason, and the view never gets it', async () => {
+    it('start() keeps nothing of it: it throws the reason, and the view never gets it; html that fits builds', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await element();
         document.body.appendChild(el);
         const seen = reasons(el);
-        el.setConfig({ html: '<p>kept</p>' });
-        el.setConfig({ html: LONG });
+        for (const mode of [undefined, 'sealed', 'strict']) {
+            expect(() => startWith(el, { ...(mode ? { mode } : {}), html: LONG }), String(mode)).toThrow(new TypeError(`[Sandbox] start(): ${reasonText('htmlTooLong')}.`));
+        }
         await settled();
-        expect(el.state).toBe('terminated');
-        expect(el._config.html).toBe('<p>kept</p>');
-        el.setConfig({ html: '<p>kept</p>' });
+        expect([el.started, seen]).toEqual([false, []]);
+        expect(el._strictInit?.html ?? '').not.toBe(LONG);
+        startWith(el, { html: FITS });
         expect(el.state).toBe('loading');
-        el.load(LONG);
-        await settled();
-        expect(el.state).toBe('terminated');
-        expect(seen).toEqual([reasonText('htmlTooLong'), reasonText('htmlTooLong')]);
-        expect(el._config.html).toBe('<p>kept</p>');
-        expect(el._strictInit).toBeNull();
+        expect(el._strictInit.html).toBe(FITS);
         el.reset(); // the html it kept builds
-        expect(el.state).toBe('loading');
-        expect(el._strictInit.html).toBe('<p>kept</p>');
-        el.load(FITS);
         expect(el._strictInit.html).toBe(FITS);
     });
 });
@@ -200,8 +195,8 @@ describe('scriptInMarkup: script elements and handler attributes, read with an i
 });
 
 // BD7:LIM-1 (class A, the host realm): the element read `html` with the host page's DOMParser to decide this warning, and
-// Chromium checks the host page's policy as it parses (a style attribute against style-src, with its sample reported; a
-// <base> against base-uri, with the guest's URL reported). The view's renderer notes what it drops of the initial view
+// Chromium and WebKit check the host page's policy as they parse (a style attribute against style-src, with its sample
+// reported on Chromium; Chromium also a <base> against base-uri, with the guest's URL reported). The view's renderer notes what it drops of the initial view
 // (VIEW_INITIAL), and the element warns from that: a strict or sealed build reads no markup in the host page's realm.
 describe('html that holds script warns once per element, from what the view dropped of it (BD7:LIM-1)', () => {
     // The view's notice of what it dropped of the initial view, on the element's current view port.
@@ -212,18 +207,20 @@ describe('html that holds script warns once per element, from what the view drop
         port1.close();
     };
 
-    it('a script, then a handler, across setConfig(), reset() and load(): one warning', async () => {
+    it('a script, then a handler, across reset() and the notices of its builds: one warning; clean markup none', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const clean = await element();
+        document.body.appendChild(clean);
+        startWith(clean, { html: '<p>clean</p>' });
+        viewDropped(clean, ['reference']);
+        expect(scriptWarnings(warn)).toEqual([]);
         const el = await element();
         document.body.appendChild(el);
-        el.setConfig({ html: '<p>clean</p>' });
-        viewDropped(el, ['reference']);
-        expect(scriptWarnings(warn)).toEqual([]);
-        el.setConfig({ html: '<script>console.log(1)</script>' });
+        startWith(el, { html: '<script>console.log(1)</script><button onclick="go()">go</button>' });
         viewDropped(el, ['script']);
         el.reset();
         viewDropped(el, ['script']);
-        el.load('<button onclick="go()">go</button>');
+        el.reset();
         viewDropped(el, ['handler']);
         expect(scriptWarnings(warn)).toEqual([SCRIPT_WARNING]);
     });
@@ -232,9 +229,9 @@ describe('html that holds script warns once per element, from what the view drop
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await element();
         document.body.appendChild(el);
-        el.setConfig({ mode: 'strict', html: '<script>console.log(1)</script>' });
+        startWith(el, { mode: 'strict', html: '<script>console.log(1)</script>' });
         viewDropped(el, ['script', 'handler', 'reference']);
-        el.load('<button onclick="go()">go</button>');
+        el.reset();
         viewDropped(el, ['handler']);
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('runs no script in `html`'))).toEqual([STRICT_SCRIPT_WARNING]);
     });
@@ -244,7 +241,7 @@ describe('html that holds script warns once per element, from what the view drop
         for (let i = 0; i < 2; i++) {
             const el = await element();
             document.body.appendChild(el);
-            el.setConfig({ html: '<script>1</script>' });
+            startWith(el, { html: '<script>1</script>' });
             viewDropped(el, ['script']);
         }
         expect(scriptWarnings(warn)).toHaveLength(2);
@@ -255,29 +252,37 @@ describe('html that holds script warns once per element, from what the view drop
         const el = await element();
         document.body.appendChild(el);
         for (const dropped of [['reference'], [], 'script', null, { 0: 'script', length: 1 }, ['reference', 'x', 'y', 'script']]) viewDropped(el, dropped);
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], html: '<script>1</script>' });
-        viewDropped(el, ['script']);
+        const cooperative = await element();
+        document.body.appendChild(cooperative);
+        startWith(cooperative, { mode: 'cooperative', capabilities: ['allow-scripts'], html: '<script>1</script>' });
+        viewDropped(cooperative, ['script']);
         expect(scriptWarnings(warn)).toEqual([]);
-        el.setConfig({ html: '<img src="x" onerror="1">' });
-        viewDropped(el, ['handler']); // positive control: a handler alone warns
+        const handler = await element();
+        document.body.appendChild(handler);
+        startWith(handler, { html: '<img src="x" onerror="1">' });
+        viewDropped(handler, ['handler']); // positive control: a handler alone warns
         expect(scriptWarnings(warn)).toEqual([SCRIPT_WARNING]);
     });
 
-    it("a strict or sealed build parses no markup in the host page's realm: setConfig(), load(), reset() and insertion; cooperative mode's documented parse is seen (positive control)", async () => {
+    it("a strict or sealed build parses no markup in the host page's realm: start(), reset() and insertion; cooperative mode's documented parse is seen (positive control)", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const parses = vi.spyOn(DOMParser.prototype, 'parseFromString');
         const html = '<p style="color: red">a</p><style>p { color: blue }</style><svg><style>rect { fill: red }</style></svg><base href="https://x.example/?secret=1"><script>1</script><img src="x" onerror="1">';
         const el = await element();
-        el.setConfig({ html });
+        startWith(el, { html });
         document.body.appendChild(el); // insertion builds
-        el.setConfig({ mode: 'strict', html });
         el.reset();
-        el.load(html);
-        el.setConfig({ html: `${html}<i>sealed</i>` });
-        el.load(html);
-        expect(el.state).toBe('loading');
+        el.remove();
+        document.body.appendChild(el);
+        const strict = await element();
+        document.body.appendChild(strict);
+        startWith(strict, { mode: 'strict', html }); // start() of an element in the document builds
+        strict.reset();
+        expect([el.state, strict.state]).toEqual(['loading', 'loading']);
         expect(parses.mock.calls.length, 'DOMParser calls of strict and sealed builds').toBe(0);
-        el.setConfig({ mode: 'cooperative', html }); // no allow-scripts: the element says what will not run, read with an inert parser
+        const cooperative = await element();
+        document.body.appendChild(cooperative);
+        startWith(cooperative, { mode: 'cooperative', html }); // no allow-scripts: the element says what will not run, read with an inert parser
         expect(parses.mock.calls.length, "cooperative mode's documented host-side parse").toBeGreaterThan(0);
     });
 });

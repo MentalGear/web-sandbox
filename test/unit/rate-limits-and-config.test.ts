@@ -1,8 +1,10 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FileStore } from '@src/lib/files';
-import { createGuestWrites, GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND } from '@src/lib/guest-writes';
+import { createGuestWrites, GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND, parseCommitArguments, type MintedWrites } from '@src/lib/guest-writes';
+import { commitAt, commitOverlayAt } from './guest-commit';
 import { createLogLimiter, LOG_EVENTS_PER_SECOND } from '@src/lib/sandbox-log';
 import { AUTO_RESIZE_MAX_UPDATES_PER_SECOND, startAutoResize } from '@src/lib/auto-resize';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
@@ -11,18 +13,19 @@ import { cooperativePolicy, strictViewPolicy } from '@src/lib/csp/csp-generator'
 import { deepMerge } from '@src/lib/utils';
 import { prng } from './policy-helpers';
 import { playBridgeFrame } from './check-in';
+import { startWith, type AppSetup } from './start-app';
 
 /**
  * Rate limits and config hardening (FR:W1 to FR:F6), host and library side: the guarantees
  * that only library logic decides. The browser halves are in test/e2e/inert-files-and-smil.spec.ts.
  */
 
-async function mount(config?: Record<string, unknown>) {
+async function mount(config?: Record<string, unknown>, setup: AppSetup = {}) {
     const { defineWebSandbox } = await import('@src/host');
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    if (config) el.setConfig(config);
+    if (config) startWith(el, config, setup);
     return el;
 }
 
@@ -158,24 +161,48 @@ describe('W3: a removal mark never outlives the stored file it names', () => {
     it('the host unregistering the path after the mark: the mark is neither listed nor committed; a live mark is (positive control)', () => {
         const store = new FileStore(() => {});
         store.register({ 'a.txt': 'a', 'b.txt': 'b' });
-        const writes = createGuestWrites({ store });
+        const minted: MintedWrites = new WeakMap();
+        const writes = createGuestWrites({ store, minted });
         expect(writes.handle({ change: 'remove', path: 'a.txt' })).toEqual({ path: 'a.txt', change: 'remove' });
         expect(writes.handle({ change: 'remove', path: 'b.txt' })).toEqual({ path: 'b.txt', change: 'remove' });
+        const early = writes.list(); // both marks, listed while a.txt is stored
         store.unregister(['a.txt']);
+        // the forgotten mark's value is stale, so a list with it commits nothing (I4)
+        expect(writes.commit(parseCommitArguments(early, undefined, minted).entries, false)).toBeNull();
         expect(writes.list()).toEqual([{ path: 'b.txt', change: 'remove' }]);
-        expect(writes.commit(['a.txt', 'b.txt'], false)).toEqual(['b.txt']);
+        expect(commitOverlayAt(writes, minted, ['a.txt', 'b.txt'], false)).toEqual(['b.txt']);
         expect(writes.list()).toEqual([]);
         expect(store.list()).toEqual([]);
     });
+});
 
-    it('on the element: listGuestWrites() after unregisterFiles() shows no mark for the path', async () => {
-        const el = await mount({ guestWrites: true });
-        el.registerFiles({ 'a.txt': 'a' });
-        el.reset();
-        el._guestWrites.handle({ change: 'remove', path: 'a.txt' });
-        expect(el.listGuestWrites()).toEqual([{ path: 'a.txt', change: 'remove' }]);
-        el.unregisterFiles(['a.txt']);
-        expect(el.listGuestWrites()).toEqual([]);
+describe('one diff (class D): a commit takes a change off the pending list, never out of the guest\'s view', () => {
+    // The guest's sandboxFiles changes only through the host's answers, so a committed write is still what it sees.
+    it('a committed write: removing it is recorded as a removal of the stored file, the view stops showing it, and a second removal is none', () => {
+        const store = new FileStore(() => {});
+        store.register({ 'a.txt': 'a' });
+        const minted: MintedWrites = new WeakMap();
+        const writes = createGuestWrites({ store, built: store.copy(), minted });
+        expect(writes.handle({ change: 'write', path: 'n.txt', entry: 'n' })).toMatchObject({ path: 'n.txt', change: 'write' });
+        expect(commitOverlayAt(writes, minted, ['n.txt'], false)).toEqual(['n.txt']);
+        expect(writes.list()).toEqual([]);
+        expect(writes.record({ change: 'remove', path: 'n.txt' })).toEqual({ answer: { path: 'n.txt', change: 'remove' }, diff: { listed: true, view: true, shown: null } });
+        expect(writes.list()).toEqual([{ path: 'n.txt', change: 'remove' }]);
+        expect(writes.handle({ change: 'remove', path: 'n.txt' })).toEqual({ path: 'n.txt', change: 'none' });
+        expect(commitOverlayAt(writes, minted, ['n.txt'], false)).toEqual(['n.txt']);
+        expect(store.list().map(file => file.path)).toEqual(['a.txt']);
+    });
+
+    it('the same bytes written again after their commit change what is listed, not what the guest sees; a committed removal stays removed (positive control)', () => {
+        const store = new FileStore(() => {});
+        store.register({ 'a.txt': 'a' });
+        const minted: MintedWrites = new WeakMap();
+        const writes = createGuestWrites({ store, built: store.copy(), minted });
+        writes.handle({ change: 'write', path: 'n.txt', entry: 'n' });
+        writes.handle({ change: 'remove', path: 'a.txt' });
+        expect(commitOverlayAt(writes, minted, ['n.txt', 'a.txt'], false)).toEqual(['a.txt', 'n.txt']);
+        expect(writes.record({ change: 'write', path: 'n.txt', entry: 'n' }).diff).toMatchObject({ listed: true, view: false });
+        expect(writes.handle({ change: 'remove', path: 'a.txt' })).toEqual({ path: 'a.txt', change: 'none' });
     });
 });
 
@@ -188,14 +215,15 @@ describe('W4: sandboxFiles.write() and remove() always return a promise', () => 
         let result: unknown;
         expect(() => { result = api.write('a.txt', proxy); }).not.toThrow();
         expect(result).toBeInstanceOf(Promise);
-        await expect(result).rejects.toMatchObject({ name: 'TypeError' });
-        // sandboxFiles tells content apart by brand checks (R2:C-1), which run no trap; reading the entry does
+        await result;
+        // sandboxFiles tells content apart by brand checks (R2:C-1), which run no trap, and reads nothing else of an entry
+        // that is not content (I8): it is sent as null, for the host to refuse
         const hostile = new Proxy({}, { get() { throw new Error('trap'); } });
-        await expect(api.write('b.txt', hostile)).rejects.toThrow('trap');
-        expect(sent).toEqual([]);
-        // positive control: a plain entry is sent
+        await api.write('b.txt', hostile);
+        expect(sent).toEqual([{ change: 'write', path: 'a.txt', entry: null }, { change: 'write', path: 'b.txt', entry: null }]);
+        // positive control: a plain entry is sent as its bytes
         await api.write('c.txt', 'c');
-        expect(sent).toHaveLength(1);
+        expect(sent).toHaveLength(3);
     });
 });
 
@@ -207,40 +235,39 @@ describe('F3: a reason, event or host line never carries the text of a caught er
         return reasons;
     };
 
-    it('setConfig() with a value structured clone refuses (a function; Chromium quotes its source in the message) or a getter that throws', async () => {
+    it('start() with a value structured clone refuses (a function; Chromium quotes its source in the message) names the error, not its text; a getter that throws is the embedder\'s own error', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
         const reasons = terminations(el);
-        // each build's 'terminated' comes in a task of its own (R1:R3-2), so each is awaited
+        // a build's 'terminated' comes in a task of its own (R1:R3-2)
         const settled = () => new Promise(resolve => setTimeout(resolve, 0));
-        el.setConfig({ html: 'x', hook: function hook() { return SECRET; } });
+        expect(() => el.start({ html: 'x' }, { capabilities: [function hook() { return SECRET; }] })).toThrow(/^\[Sandbox\] start\(\): capabilities cannot be copied \(DataCloneError\): an option holds data only/);
+        const thrown: unknown[] = [new RangeError(SECRET), { name: SECRET, message: SECRET }, SECRET];
+        for (const error of thrown) {
+            let caught: unknown = null;
+            try {
+                el.start({}, { get mode() { throw error; } });
+            } catch (given) {
+                caught = given;
+            }
+            expect(caught).toBe(error);
+        }
         await settled();
-        el.setConfig({ get mode() { throw new RangeError(SECRET); } });
-        await settled();
-        el.setConfig({ get mode() { throw { name: SECRET, message: SECRET }; } });
-        await settled();
-        el.setConfig({ get mode() { throw SECRET; } });
-        await settled();
-        expect(reasons).toEqual([
-            'the configuration could not be used (DataCloneError)',
-            'the configuration could not be used (RangeError)',
-            'the configuration could not be used (Error)',
-            'the configuration could not be used (string)',
-        ]);
+        expect([el.started, reasons]).toEqual([false, []]);
         for (const call of warn.mock.calls) expect(String(call[0])).not.toContain(SECRET);
     });
 
     it('a build that throws ends with a fixed reason and the error name; a kind given a string is refused the same way', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const refused = await mount();
+        const settled = () => new Promise(resolve => setTimeout(resolve, 0));
+        expect(() => startWith(refused, { mode: 'strict', origins: { images: `x; ${SECRET}` } })).toThrow(/^\[Sandbox\] start\(\): origins\.images must be a list of origins\.$/);
         const el = await mount();
         const reasons = terminations(el);
-        const settled = () => new Promise(resolve => setTimeout(resolve, 0));
-        el.setConfig({ mode: 'strict', origins: { images: `x; ${SECRET}` } });
-        await settled();
         el._guestPolicy = () => { throw new Error(SECRET); };
-        el.setConfig({ mode: 'strict' });
+        startWith(el, { mode: 'strict' });
         await settled();
-        expect(reasons).toEqual(['the configuration could not be used (TypeError: origins.images is not a list)', 'the environment could not be built (Error)']);
+        expect(reasons).toEqual(['the environment could not be built (Error)']);
         for (const call of warn.mock.calls) expect(String(call[0])).not.toContain(SECRET);
     });
 
@@ -328,16 +355,16 @@ describe("F5: 'unsafe-eval' is written in one place, the generator, and only wit
 });
 
 describe('F6: a refused config is never stored', () => {
-    it("strict mode with origins: null is refused before anything is stored: the previous config stays", async () => {
+    it("strict mode with origins: null is refused before anything is stored: the element stays as a new one", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        // (worker mode ignores html, which the schema stores as its default there: watchdogTimeout marks the previous config)
-        const el = await mount({ mode: 'worker', watchdogTimeout: 9, workerExecutionTimeout: 7, origins: { images: ['https://kept.example'] } });
+        const el = await mount();
+        const fresh = await mount();
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
-        el.setConfig({ mode: 'strict', origins: null });
+        expect(() => startWith(el, { mode: 'strict', watchdogTimeout: 9, workerExecutionTimeout: 7, origins: null })).toThrow(/^\[Sandbox\] start\(\): origins must be an object of origin lists\.$/);
         await new Promise(resolve => setTimeout(resolve, 0)); // a build's 'terminated' comes in a task (R1:R3-2)
-        expect(reasons).toEqual(['the configuration could not be used (TypeError: origins is not an object)']);
-        expect([el._config.mode, el._config.watchdogTimeout, el._config.workerExecutionTimeout, el._origins.images]).toEqual(['worker', 9, 7, ['https://kept.example']]);
+        expect(reasons).toEqual([]);
+        expect([el.started, el._config, el._origins]).toEqual([fresh.started, fresh._config, fresh._origins]);
     });
 
     it('origins that is not an object, or a kind that is not a list, is refused in every mode, before a build', async () => {
@@ -345,16 +372,24 @@ describe('F6: a refused config is never stored', () => {
         const el = await mount();
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
+        const thrown: string[] = [];
         for (const mode of ['cooperative', 'worker', 'strict']) {
             for (const value of [null, 'https://a.example', ['x'], 5, { images: 'https://a.example' }, { connect: null }]) {
-                el.setConfig({ mode, origins: value });
-                await new Promise(resolve => setTimeout(resolve, 0)); // each build's 'terminated' in a task (R1:R3-2)
+                try {
+                    startWith(el, { mode, origins: value });
+                } catch (error) {
+                    expect(error).toBeInstanceOf(TypeError);
+                    thrown.push((error as Error).message);
+                }
+                await new Promise(resolve => setTimeout(resolve, 0)); // a build's 'terminated' would come in a task (R1:R3-2)
             }
         }
-        // the reason names the option (BD3:NEW-3)
-        const refusals = ['origins is not an object', 'origins is not an object', 'origins is not an object', 'origins is not an object', 'origins.images is not a list', 'origins.connect is not a list'];
-        expect(reasons).toEqual(['cooperative', 'worker', 'strict'].flatMap(() => refusals.map(refusal => `the configuration could not be used (TypeError: ${refusal})`)));
-        el.setConfig({ mode: 'strict', origins: { images: ['https://a.example'] } });
+        // the refusal names the option (BD3:NEW-3)
+        const notAnObject = '[Sandbox] start(): origins must be an object of origin lists.';
+        const refusals = [notAnObject, notAnObject, notAnObject, notAnObject, '[Sandbox] start(): origins.images must be a list of origins.', '[Sandbox] start(): origins.connect must be a list of origins.'];
+        expect(thrown).toEqual(['cooperative', 'worker', 'strict'].flatMap(() => refusals));
+        expect([el.started, reasons]).toEqual([false, []]);
+        startWith(el, { mode: 'strict', origins: { images: ['https://a.example'] } });
         expect(el.state).toBe('loading'); // positive control
     });
 });
@@ -397,24 +432,23 @@ describe('W1: a reference names a file only for the kind of load its type is for
         return ['app.js', 'ok.js', 'host.js', 'style.txt', 'pic.css', 'pic.png'].filter(path => text.includes(`,${JSON.stringify(path)},`));
     };
 
-    it('a guest-written app.js committed as text/plain (no { code: true } needed) gets no script slot in the next build; JavaScript committed with { code: true } does (positive control)', async () => {
+    it('a guest-written app.txt committed as text/plain (no { code: true } needed) gets no script slot in the next build; JavaScript committed with { code: true } does (positive control)', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], guestWrites: true, html: '<script src="app.js"></script><script src="ok.js"></script>' });
-        el._guestWrites.handle({ change: 'write', path: 'app.js', entry: { content: new TextEncoder().encode('globalThis.ran = 1'), type: 'text/plain' } });
-        el._guestWrites.handle({ change: 'write', path: 'ok.js', entry: { content: new TextEncoder().encode('globalThis.ok = 1'), type: 'text/javascript' } });
-        el.commitGuestWrites(['app.js']);
-        el.commitGuestWrites(['ok.js'], { code: true });
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], guestWrites: true, html: '<script src="app.txt"></script><script src="ok.js"></script>' });
+        el._guestWrites.handle({ change: 'write', path: 'app.txt', entry: new TextEncoder().encode('globalThis.ran = 1') });
+        el._guestWrites.handle({ change: 'write', path: 'ok.js', entry: new TextEncoder().encode('globalThis.ok = 1') });
+        commitAt(el, ['app.txt']);
+        commitAt(el, ['ok.js'], { code: true });
         el.reset();
-        expect(el.listFiles().map((f: any) => [f.path, f.type])).toEqual([['app.js', 'text/plain'], ['ok.js', 'text/javascript']]);
+        expect(el.listFiles().map((f: any) => [f.path, f.type])).toEqual([['app.txt', 'text/plain'], ['ok.js', 'text/javascript']]);
         expect(slotsOf(el)).toEqual(['ok.js']);
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('"app.js"') && m.includes('text/plain'))).toHaveLength(1);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('"app.txt"') && m.includes('text/plain'))).toHaveLength(1);
     });
 
     it('the same for host-registered files: x.js registered as text/plain is not a script; a stylesheet link never names a text file, an image never a stylesheet; an image does (positive control)', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], html: '<script src="host.js"></script><link rel="stylesheet" href="style.txt"><img src="pic.css"><img src="pic.png">' });
-        el.registerFiles({ 'host.js': { content: 'globalThis.ran = 1', type: 'text/plain' }, 'style.txt': 'a {}', 'pic.css': 'a {}', 'pic.png': new Uint8Array([137, 80]) });
-        el.reset();
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], html: '<script src="host.js"></script><link rel="stylesheet" href="style.txt"><img src="pic.css"><img src="pic.png">' },
+            { files: { 'host.js': { content: 'globalThis.ran = 1', type: 'text/plain' }, 'style.txt': 'a {}', 'pic.css': 'a {}', 'pic.png': new Uint8Array([137, 80]) } });
         expect(slotsOf(el)).toEqual(['pic.png']);
     });
 });

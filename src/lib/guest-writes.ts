@@ -4,22 +4,28 @@
  * With `guestWrites: true` the guest's `sandboxFiles.write()` and `sandboxFiles.remove()` ask the host, through
  * the reserved broker method `sandbox:write` (WRITE_METHOD), to record a change. Nothing the guest writes ever
  * reaches the store, a policy or a guest by itself: it is recorded here, in an overlay that belongs to the
- * environment that wrote it, and only the embedder's explicit commitGuestWrites(paths) applies part of it to the
+ * environment that wrote it, and only the embedder's explicit commitGuestWrites(writes) applies part of it to the
  * store (FileStore.apply(), files.ts), where the next build picks it up like any registered file. Off (the
  * default), there is no overlay and the method refuses every request with FILES_NOT_ALLOWED.
  *
  * What holds by construction:
- *   - One set of rules. A write is checked by CheckedFile.from(), the same path and entry validation as
- *     registerFiles(), so its type is the type the store assigns (override or extension table), and the
+ *   - One set of rules. A write is checked by CheckedFile.fromGuest(), the path validation of the app's files and the
+ *     content of a FileContent, and its type is a function of its path (I8): FILE_TYPES's for the extension, or
+ *     FALLBACK_TYPE. The guest gives a path and bytes, and a write that carries a type of its own is refused. The
  *     write-time quota is FileStore.check() of the build's store with the overlay and this write applied: the count and
- *     the registered bytes, exactly apply()'s first step, without lexing. The commit is FileStore.apply(), the
- *     full check including what module and stylesheet rewrites add. So a write the host could never register is
- *     refused at once with registerFiles()'s own code, and a commit can still be refused (FILES_QUOTA_EXCEEDED)
- *     if the host registered more in between; a refused commit changes neither the store nor the overlay.
+ *     the registered bytes, exactly apply()'s first step, without lexing (lexing every write would cost each request
+ *     what only a commit needs). The commit is FileStore.apply(), the full check including what module and stylesheet
+ *     rewrites add. So a write whose files or bytes the store could never hold is refused at once with the store's own
+ *     code; a write that fits by its bytes and not with what its rewrites add (a stylesheet of many `url()`
+ *     references; docs/design/REVIEW-3.md, finding 3) is recorded and listed, and every commit of it is refused
+ *     FILES_QUOTA_EXCEEDED, which tells the embedder so. A refused commit changes neither the store nor the overlay,
+ *     so the other listed values still commit without it.
  *   - The host is the single source of truth. A refused request changes nothing here; the guest's own view
  *     (in-sandbox-files.ts) changes only after this module's answer.
- *   - Removal marks are bounded by the build and by the store, with one predicate (`markable`) for recording and for
- *     listing: a removal is recorded only for a path the build delivered and the store still holds (one the overlay
+ *   - Removal marks are bounded by the guest's base and by the store, with one predicate (`markable`) for recording and
+ *     for listing. The base is what the build delivered with the guest's own committed writes over it: a commit takes a
+ *     change off the pending list, never out of the guest's view. A removal is recorded only for a path of the base the
+ *     store still holds (one the overlay
  *     wrote is then simply forgotten); a path the guest cannot see is answered `change: 'none'` (the guest rejects
  *     NOT_FOUND) and records nothing. A mark whose path the host unregistered later is forgotten before the marks are
  *     listed or committed, so a listed mark always names a stored file. A removal of a path the build delivered and
@@ -30,8 +36,14 @@
  *     announces 'fileswritten' exactly when the first changed, and tells the strict view exactly when the second did, so
  *     the list, the announcement and the view cannot disagree about what a request did.
  *   - Code needs a second opt-in. A commit refuses any file whose type is not on INERT_TYPES unless
- *     `{ code: true }`: JavaScript, HTML, SVG, XML, WebAssembly and every type not listed (an override included).
- *     The type checked is the CheckedFile's, the one the store will load the file as, never the file name.
+ *     `{ code: true }`: JavaScript, HTML, SVG, XML, WebAssembly and every extension the table does not have. The type
+ *     checked is the CheckedFile's, the one the store will load the file as, which is the one its name says.
+ *   - A commit stores only what the embedder was handed, while it is still what is pending (I4, BD5:DOC-6). Every
+ *     recorded change is an entry of its own, and list() mints frozen values the element knows by identity
+ *     (MintedWrites, a WeakMap from the value to its entry). A commit looks each value's own entry up and applies it
+ *     only while that entry is its path's entry in this overlay: a newer change at the path, a commit, and a build (a
+ *     new overlay) each leave it out. Nothing is compared by content, so a copy of a value names no entry. One stale
+ *     value commits nothing (all or none).
  *   - The rate is bounded per environment: at most GUEST_WRITES_PER_SECOND requests are handled and at most
  *     GUEST_WRITE_BYTES_PER_SECOND bytes recorded in any one-second window, refused with FILES_BUSY. That also
  *     bounds the host's 'fileswritten' events (one per recorded change).
@@ -40,7 +52,9 @@
  *
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
-import { CheckedFile, checkPath, describePath, fileError, MAX_TOTAL_BYTES, type FileStore } from './files';
+import { CheckedFile, checkPath, describePath, fileError, INERT_TYPES, MAX_TOTAL_BYTES, type FileStore } from './files';
+import { guestBytes, type GuestBytes } from './guest-bytes';
+import { mintUncodedError } from './minted-errors';
 import { createRateLimiter } from './rate-limit';
 
 /** The reserved broker method the guest's sandboxFiles.write() and remove() call (rpc.ts, reserved names). */
@@ -58,37 +72,40 @@ export const GUEST_WRITES_PER_SECOND = 100;
  */
 export const GUEST_WRITE_BYTES_PER_SECOND = MAX_TOTAL_BYTES;
 
-/**
- * The types commitGuestWrites() applies without `{ code: true }`: images, fonts, audio and video the browser
- * only decodes, plain text, JSON and CSS. Exact strings, no prefixes: `image/svg+xml` is a document that can
- * carry script, and a guest's type override (`image/x-anything`) is not on the list either. Everything else —
- * JavaScript, HTML, SVG, XML, WebAssembly, unknown types — runs or is parsed as code somewhere and needs the
- * explicit flag. Kept equal to the extension table's image/font/audio/video types (minus SVG) by a test.
- */
-export const INERT_TYPES: ReadonlySet<string> = new Set([
-    'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'image/x-icon', 'image/bmp',
-    'font/woff', 'font/woff2', 'font/ttf', 'font/otf',
-    'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/flac',
-    'video/mp4', 'video/webm', 'video/ogg',
-    'text/plain', 'application/json', 'text/css',
-]);
+/** The types commitGuestWrites() applies without `{ code: true }` (files.ts, beside the table they come from). */
+export { INERT_TYPES };
 
 /**
  * One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size`
- * and a copy of the written bytes in `content`) or a removal. Each call reports fresh objects. A change reaches the
- * files only through `commitGuestWrites()`.
+ * and the written bytes in `content`, a {@link GuestBytes}) or a removal. Each call reports fresh frozen objects, and a change reaches the
+ * files only when such an object is given to `commitGuestWrites()`, which knows the objects its element returned by identity.
  *
  * @remarks
- * The `path`, the `type` and the `content` are the guest's: attacker text. Never make an object URL of `content` with the
- * guest's `type` (or none) and open it: an SVG or HTML file is then a document of your origin. Show an image in the sandbox
- * view, or in an `<img>` from a `Blob` you typed `image/png` after checking its signature; offer anything else as a download.
- * Show a path or a type with `textContent`, never
+ * The `path` and the `content` are the guest's: attacker text and attacker bytes. The `type` is the library's for the path's extension
+ * (`application/octet-stream` for one it does not know), never a type the guest gave, so it always agrees with the name;
+ * the guest still chooses it by choosing the path (`evil.svg` is `image/svg+xml`). Show an image the app made in the sandbox
+ * view, or in an `<img>` from `content.image()`, which types a `Blob` by the bytes' signature and is never SVG; offer
+ * anything else with `content.save()`, which saves the file under a name the library chose. Never make an object URL of
+ * `content.bytes()` with the write's `type` (or none) and open it: an SVG or HTML file is then a document of your origin.
+ * Show a path with `textContent`, never
  * in an HTML, URL, `eval`, template or `console` format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,`
  * and `@`, so one written into a single-quoted attribute can end it and add one).
  */
 export type GuestWrite =
-    | { path: string; change: 'write'; type: string; size: number; content: Uint8Array }
-    | { path: string; change: 'remove' };
+    | { readonly path: string; readonly change: 'write'; readonly type: string; readonly size: number; readonly content: GuestBytes }
+    | { readonly path: string; readonly change: 'remove' };
+
+/**
+ * One recorded change of an overlay: the written file, or null for a removal mark. Each request that records a change
+ * makes a new one, so an entry is that change by identity (I4).
+ */
+export interface PendingWrite {
+    readonly path: string;
+    readonly file: CheckedFile | null;
+}
+
+/** The values one element minted (list()), each to the entry it was made from (I4). */
+export type MintedWrites = WeakMap<GuestWrite, PendingWrite>;
 
 /**
  * What the host answers a request, the guest's only source for changing its view. `none`: a removal of a path in
@@ -109,6 +126,8 @@ export interface GuestWritesOptions {
      * registered after the build, which the guest otherwise never sees.
      */
     built?: FileStore;
+    /** The element's minted values, which list() adds each value it makes to; a fresh map when left out. */
+    minted?: MintedWrites;
     now?: () => number;
 }
 
@@ -129,14 +148,14 @@ export interface GuestWrites {
     handle(request: unknown): GuestWriteAnswer;
     /** The same, with what it changed: the one diff the host derives the announcement and the view's change from. */
     record(request: unknown): { answer: GuestWriteAnswer; diff: GuestWriteDiff };
-    /** The pending changes, sorted by path. */
+    /** The pending changes, sorted by path: values minted now, each added to `minted`. */
     list(): GuestWrite[];
     /**
-     * Applies the pending changes at `paths` (already validated paths; one without a pending change is skipped) to
-     * the store, atomically, and forgets them. Returns what the store reports as changed. Throws FILES_NOT_ALLOWED
-     * for a non-inert write without `code`, or the store's refusal; then nothing changes.
+     * Applies the given entries (parseCommitArguments) to the store, atomically, and forgets them, if every one is its
+     * path's current entry here; returns what the store reports as changed. If any is stale, returns null and changes
+     * nothing. Throws FILES_NOT_ALLOWED for a non-inert write without `code`, or the store's refusal; then nothing changes.
      */
-    commit(paths: readonly string[], code: boolean): string[];
+    commit(entries: readonly PendingWrite[], code: boolean): string[] | null;
     /**
      * The pending change at `path`, as recorded: the written file (its store type and bytes, not a copy: read them, never
      * change them), null for a removal mark, undefined for none. Strict mode reads it right after handle() to show the
@@ -152,10 +171,16 @@ const REMOVE_CALLER = 'sandboxFiles.remove()';
 const COMMIT_CALLER = 'commitGuestWrites()';
 
 /** One overlay per environment, created by the build when guestWrites is on. */
-export function createGuestWrites({ store, built = store, now = () => performance.now() }: GuestWritesOptions): GuestWrites {
-    // path → the write (a CheckedFile) or a removal mark (null). Never holds a refused request.
-    const overlay = new Map<string, CheckedFile | null>();
-    // Paths of the build the guest removed from its own view (its answer said 'remove'), marked or not: a second removal
+export function createGuestWrites({ store, built = store, minted = new WeakMap(), now = () => performance.now() }: GuestWritesOptions): GuestWrites {
+    // path → the write (a CheckedFile) or a removal mark (null). Never holds a refused request. Each recorded change
+    // is a new entry (pend), which is what a minted value commits by (I4).
+    const overlay = new Map<string, PendingWrite>();
+    const pend = (path: string, file: CheckedFile | null) => overlay.set(path, Object.freeze({ path, file }));
+    // Writes the host committed: off the pending list, still in the guest's view, which changes only through the host's
+    // answers. The guest's base is the build's files with these over them.
+    const committed = new Map<string, CheckedFile>();
+    const inBase = (path: string) => committed.has(path) || built.has(path);
+    // Paths of the guest's base it removed from its own view (its answer said 'remove'), marked or not: a second removal
     // is 'none', as the guest's sandboxFiles does not list the path. A write to the path brings it back.
     const removedInView = new Set<string>();
     // The one predicate a removal mark is recorded by and kept by (R5:L-4): it names a file the store holds.
@@ -173,10 +198,11 @@ export function createGuestWrites({ store, built = store, now = () => performanc
     const overlaid = (path: string, file: CheckedFile) => {
         const put = new Map<string, CheckedFile>();
         const remove: string[] = [];
-        for (const [pending, change] of overlay) {
+        for (const [pending, { file: change }] of overlay) {
             if (pending === path || change === null) continue;
             put.set(pending, change);
         }
+        for (const [kept, file] of committed) if (kept !== path && !overlay.has(kept) && !removedInView.has(kept)) put.set(kept, file);
         for (const removed of removedInView) if (removed !== path && !put.has(removed)) remove.push(removed);
         put.set(path, file);
         return { put, remove };
@@ -195,24 +221,24 @@ export function createGuestWrites({ store, built = store, now = () => performanc
 
         if (change === 'remove') {
             checkPath(path, REMOVE_CALLER);
-            const written = overlay.get(path);
-            const inBuild = built.has(path);
-            // what the guest sees: what it wrote, else what the build delivered and it did not remove
-            if (!written && (!inBuild || removedInView.has(path))) return { path, change: 'none' };
-            if (inBuild) removedInView.add(path);
+            const written = overlay.get(path)?.file;
+            const based = inBase(path);
+            // what the guest sees: what it wrote, else its base's file it did not remove
+            if (!written && (!based || removedInView.has(path))) return { path, change: 'none' };
+            if (based) removedInView.add(path);
             // A file the overlay wrote over nothing is forgotten, not marked: a mark only ever names a stored path.
-            if (inBuild && markable(path)) overlay.set(path, null);
+            if (based && markable(path)) pend(path, null);
             else overlay.delete(path);
             return { path, change: 'remove' };
         }
         if (change !== 'write') throw fileError('INVALID_FILE', 'a guest write request is { change: "write", path, entry } or { change: "remove", path }.');
 
-        const file = CheckedFile.from(path, source.entry, WRITE_CALLER);
-        const valid = path as string; // CheckedFile.from() checked it
+        const file = CheckedFile.fromGuest(path, source.entry, WRITE_CALLER);
+        const valid = path as string; // CheckedFile.fromGuest() checked it
         built.check(overlaid(valid, file), WRITE_CALLER);
         // After the quota, so a write past the cap is FILES_QUOTA_EXCEEDED whatever the rate.
         if (!bytes.admit(time, file.bytes.length)) throw busy(`${WRITE_CALLER} refused`);
-        overlay.set(valid, file);
+        pend(valid, file);
         removedInView.delete(valid);
         return { path: valid, change: 'write', type: file.type, size: file.bytes.length };
     };
@@ -230,16 +256,17 @@ export function createGuestWrites({ store, built = store, now = () => performanc
     // forgetStaleMarks), or nothing.
     const listedAt = (path: string): Listed => {
         if (!overlay.has(path)) return null;
-        const change = overlay.get(path)!;
+        const change = overlay.get(path)!.file;
         if (change === null) return markable(path) ? 'remove' : null;
         return change;
     };
-    // What the guest's own sandboxFiles holds at `path`, which is what the strict view may show: what it wrote, else the
-    // build's file it did not remove, else nothing.
+    // What the guest's own sandboxFiles holds at `path`, which is what the strict view may show: what it wrote, else its
+    // base's file it did not remove (a committed write of its own, else the build's), else nothing.
     const shownAt = (path: string): Shown => {
-        const written = overlay.get(path);
+        const written = overlay.get(path)?.file;
         if (written) return written;
-        return built.has(path) && !removedInView.has(path) ? 'built' : null;
+        if (removedInView.has(path)) return null;
+        return committed.get(path) ?? (built.has(path) ? 'built' : null);
     };
     // Two states of a path are the same when they hold the same thing: a file by its type and bytes (writing the same
     // bytes again changes nothing anyone can see), anything else by itself.
@@ -275,28 +302,42 @@ export function createGuestWrites({ store, built = store, now = () => performanc
     // mislead whoever reads the list, so it is forgotten here, where marks are read: list() and commit() call
     // this first, and handle() needs no copy of it (a removal of such a path is answered 'none' anyway).
     const forgetStaleMarks = () => {
-        for (const [path, change] of [...overlay]) if (change === null && !markable(path)) overlay.delete(path);
+        for (const [path, { file }] of [...overlay]) if (file === null && !markable(path)) overlay.delete(path);
+    };
+
+    // A frozen value of one entry, which the element knows by identity (I4). `content` reads the entry's bytes and hands
+    // out only copies and Blobs of them (guest-bytes.ts, I9): what the embedder does to what it gets changes neither the
+    // entry nor what a commit stores, which is the entry's own file.
+    const mint = (entry: PendingWrite): GuestWrite => {
+        const { path, file } = entry;
+        const value: GuestWrite = Object.freeze(file === null
+            ? { path, change: 'remove' as const }
+            : { path, change: 'write' as const, type: file.type, size: file.bytes.length, content: guestBytes(path, file.bytes) });
+        minted.set(value, entry);
+        return value;
     };
 
     const list = (): GuestWrite[] => {
         forgetStaleMarks();
         const writes: GuestWrite[] = [];
-        for (const path of [...overlay.keys()].sort()) {
-            const file = overlay.get(path)!;
-            writes.push(file === null ? { path, change: 'remove' } : { path, change: 'write', type: file.type, size: file.bytes.length, content: file.bytes.slice() });
-        }
+        for (const path of [...overlay.keys()].sort()) writes.push(mint(overlay.get(path)!));
         return writes;
     };
 
-    const commit = (paths: readonly string[], code: boolean): string[] => {
+    // An entry is current while it is its path's entry here; an older one, a committed one and another overlay's are not.
+    const allCurrent = (entries: readonly PendingWrite[]) => {
+        for (const entry of entries) if (overlay.get(entry.path) !== entry) return false;
+        return true;
+    };
+
+    const commit = (entries: readonly PendingWrite[], code: boolean): string[] | null => {
         forgetStaleMarks();
+        if (!allCurrent(entries)) return null;
         const put = new Map<string, CheckedFile>();
-        const remove: string[] = [];
-        for (const path of paths) {
-            if (!overlay.has(path)) continue;
-            const file = overlay.get(path)!;
+        const remove = new Set<string>();
+        for (const { path, file } of entries) {
             if (file === null) {
-                remove.push(path);
+                remove.add(path);
                 continue;
             }
             if (!code && !INERT_TYPES.has(file.type)) {
@@ -305,26 +346,37 @@ export function createGuestWrites({ store, built = store, now = () => performanc
             put.set(path, file);
         }
         // Every check before any change: apply() throws and changes nothing, and the overlay is untouched then.
-        const changed = store.apply({ put, remove }, COMMIT_CALLER);
-        for (const path of put.keys()) overlay.delete(path);
-        for (const path of remove) overlay.delete(path);
+        const changed = store.apply({ put, remove: [...remove] }, COMMIT_CALLER);
+        for (const [path, file] of put) {
+            overlay.delete(path);
+            committed.set(path, file);
+        }
+        for (const path of remove) {
+            overlay.delete(path);
+            committed.delete(path);
+        }
         return changed;
     };
 
     const handle = (request: unknown): GuestWriteAnswer => record(request).answer;
 
-    return { handle, record, list, commit, change: (path: string) => overlay.get(path), close: () => { closed = true; } };
+    return { handle, record, list, commit, change: (path: string) => overlay.get(path)?.file, close: () => { closed = true; } };
 }
 
 /**
- * Checks commitGuestWrites()'s arguments: `paths` is an array of valid paths (required: there is no commit-all),
- * and only a literal `true` in `options.code` commits non-inert files. Throws INVALID_PATH.
+ * Checks commitGuestWrites()'s arguments before anything is applied: `writes` is an array (required: there is no
+ * commit-all) of values this element minted (`minted`), each read once into its entry, and only a literal `true` in
+ * `options.code` commits non-inert files. Throws a TypeError for anything else, a copy of a minted value included (I4).
  */
-export function parseCommitArguments(paths: unknown, options: unknown): { paths: string[]; code: boolean } {
-    if (!Array.isArray(paths)) throw fileError('INVALID_PATH', `${COMMIT_CALLER} expects an array of paths.`);
-    for (const path of paths) {
-        checkPath(path, COMMIT_CALLER);
+export function parseCommitArguments(writes: unknown, options: unknown, minted: MintedWrites): { entries: PendingWrite[]; code: boolean } {
+    if (!Array.isArray(writes)) throw mintUncodedError(TypeError, `[Sandbox] ${COMMIT_CALLER} expects an array of the values listGuestWrites() returned.`);
+    const values: unknown[] = [...writes];
+    const entries: PendingWrite[] = [];
+    for (const value of values) {
+        const entry = minted.get(value as GuestWrite);
+        if (!entry) throw mintUncodedError(TypeError, `[Sandbox] ${COMMIT_CALLER} takes only values this element's listGuestWrites() returned, never a copy of one.`);
+        entries.push(entry);
     }
     const code = options !== null && typeof options === 'object' && (options as { code?: unknown }).code === true;
-    return { paths: [...paths], code };
+    return { entries, code };
 }

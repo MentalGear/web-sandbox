@@ -3,6 +3,9 @@ import type { SandboxConfig } from '@src/host';
 import type { OriginKind } from '@src/lib/csp/origins';
 import { useRecorder, wss } from './recorder';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Precondition probe for "δ blob-URL files" (docs/archive/research/blob-delivery-probe.md): the host pushes
  * file contents over the broker and the guest turns each into a blob: URL created in its OWN realm,
@@ -569,14 +572,14 @@ const outboundAttempts = (target: string) => `
 
 // The violations each engine reports on the host for outboundAttempts(target), in cooperative or worker mode: the
 // fetch and the WebSocket by the library's request gate on every engine; the script loads where the engine raises a
-// report in a worker (Chromium only).
+// report in a worker (Chromium and WebKit).
 function outboundViolations(target: string, mode: 'cooperative' | 'worker', browserName: string): string[] {
     const fetch = `connect-src ${target}/fetch`;
     const websocket = `connect-src ${wss(target)}/ws`;
     const imported = `script-src-elem ${target}/module.js`;
     if (mode === 'cooperative') return [fetch, websocket, `img-src ${target}/img.svg`, imported].sort();
     // ledger: worker-violation-reports
-    if (browserName === 'chromium') return [fetch, websocket, imported, `script-src-elem ${target}/script.js`].sort();
+    if (browserName === 'chromium' || browserName === 'webkit') return [fetch, websocket, imported, `script-src-elem ${target}/script.js`].sort();
     return [fetch, websocket].sort();
 }
 

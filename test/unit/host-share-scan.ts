@@ -122,3 +122,26 @@ export function handTimedScaling(source: string): MeterHit[] {
     }
     return hits;
 }
+
+// A test's declaration, on its own line: it(…, test(…, it.each(…)(…
+const TEST_DECLARATION = /^\s*(?:it|test)\b/;
+// The time limit a scaling test declares there (test/unit/scaling.ts).
+const SCALING_TIMEOUT = /\{\s*timeout:\s*SCALING_TIMEOUT_MS\s*\}/;
+
+/**
+ * Each call of scalingRatio() in a test that does not declare SCALING_TIMEOUT_MS on its declaration line: the runner's
+ * default time limit, or a number of the test's own, bounds the machine's load on it (T9's class).
+ */
+export function scalingWithoutItsTimeout(source: string): MeterHit[] {
+    const hits: MeterHit[] = [];
+    const lines = source.split('\n');
+    for (let index = 0; index < lines.length; index++) {
+        const text = lines[index]!;
+        if (!/\bscalingRatio\(/.test(text) || /^\s*(?:\/\/|\*|import\b)/.test(text)) continue;
+        let declared = index;
+        while (declared >= 0 && !TEST_DECLARATION.test(lines[declared]!)) declared--;
+        if (declared >= 0 && SCALING_TIMEOUT.test(lines[declared]!)) continue;
+        hits.push({ pattern: 'a scaling measure under a time limit that is not SCALING_TIMEOUT_MS', line: index + 1, text: text.trim() });
+    }
+    return hits;
+}

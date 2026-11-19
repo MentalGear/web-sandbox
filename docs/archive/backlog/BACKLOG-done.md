@@ -2002,8 +2002,56 @@ an early return in `frameCommittedNewDocumentNavigation`, then `FFPage` holding 
 the frame or its parent attached) had nothing left to do and was removed, with `patchedDependencies`; so was
 `realistic-host.ts`'s detour through `about:blank` before a COOP page, which had lowered the odds of the same loss.
 On Firefox the directive matrix records the driver's frame events (`recordFrameEvents`), and `waitInView` lists the
-page's frames and those events when it fails (test/e2e/strict-view.ts). [S88](../../BACKLOG.md#s88)'s upgrade brings the
+page's frames and those events when it fails (test/e2e/strict-view.ts). [S88](#s88)'s upgrade brings the
 fix from upstream and removes the setup. The case was neither retried nor skipped.
+
+### <a id="s80"></a>S80 · The event-read scan was never built; the guest's event getters are unguarded by any test — ✅ **done** (P2 · S · medium)
+
+*S74 board BD1:TST-1, medium; class G with E-cpu.* Reverting R5:N-2 and R5:N-6 (the bootstrap's `error` and
+`unhandledrejection` listeners read the event through `readEvent`'s getters captured before guest code) passes the whole
+suite: 147 unit tests and 107 e2e tests on Chromium with each mutant (the `reason` read, then the `message` and `error`
+reads, taken directly). Under the mutant a strict guest that redefines `PromiseRejectionEvent.prototype.reason` (the
+class is on `WORKER_GLOBALS`) makes the library count a small string for a rejection whose real, large reason Firefox
+reports to the host page's thread, and R5:N-1 is open again. Research 18 promised the scan rule ("after the capture
+point, a property read on a listener's parameter or on a value received from the guest is an error, except as an
+argument to the helpers"); it does not exist: `read-once.test.ts` allows a single direct read and
+`bootstrap-capture-and-measure.test.ts` has a fixed accessor list (`size`, `byteLength`, `byteOffset`, `buffer`,
+`data`, `ports`, `source`) without `reason`, `message` or `error`.
+
+**Fix, by construction.** Chokepoint: `readEvent` (exists). Add the promised rule to `usesAfterCapture`: inside a function
+passed to `addGlobalListener` or `listen`, or any function whose parameter is named `event`, a member read
+`<param>.<name>` other than `isTrusted`, `type` and `defaultPrevented` is an error. The reviewer's two probes become the
+positive controls: a unit test and an e2e (a strict entry redefines `PromiseRejectionEvent.prototype.reason` to return
+`'x'`, then raises three rejections of 2 Mi characters; the sandbox must end with the uncaught-budget reason), for the
+`error` and `unhandledrejection` rows of `bootstrapListeners`. Check that the new test fails with the mutant.
+
+**Done.** The scan goes by registrations, never by a parameter's name: `test/unit/event-read-scan.ts` enumerates every
+place where the code of a guest realm hands a function to the platform as a listener (a captured `addEventListener` or
+`on…` setter, a direct call, an `on…` assignment), follows each to the functions it can be, and fails on a registration
+it cannot follow. A listener's first parameter is the event; a member read of it other than `isTrusted` (the one
+property a guest cannot redefine), a destructuring, a spread or a literal that holds it is an error, and every other
+read goes through `readEvent`'s captured getters (`test/unit/event-reads.test.ts`). `type` and `defaultPrevented`, which
+this item first allowed, are accessors the guest can replace, and are not allowed. The behaviour has its tests too: a
+unit test per mode the listeners run in (`test/unit/egress.test.ts`) and `test/e2e/uncaught-event-reads.spec.ts`, where
+a guest replaces the event accessors and the uncaught-characters budget must still end the sandbox, in worker, strict
+and sealed mode (WebKit mutes the error text, so its error flood is skipped: the `webkit-muted-errors` row of the
+engine ledger).
+
+### <a id="s88"></a>S88 · Upgrade Playwright for Ubuntu 26.04 runners — ✅ **done**
+
+*Not a finding.* Playwright 1.58.1 refuses to install its browsers on Ubuntu 26.04, which `ubuntu-latest` became on
+2026-11-06, so the workflows had been pinned to `ubuntu-24.04`.
+
+**Done.** `@playwright/test` and `playwright` are at 1.65.1 (Chromium 159, Firefox 159, WebKit 27.2). From 1.64.0
+Firefox's Juggler names each content channel uniquely ([S86](#s86)), so the e2e global
+setup that rewrote it, its unit test and both `globalSetup` entries are gone. The engine ledger, the cookie facts, the
+strict-mode probes and every engine-specific expectation were measured again on the new browsers, in full on all three:
+24 behaviours had changed. Two of them widen cooperative mode's limits ([S44](../../BACKLOG.md#s44): Firefox's keystrokes after the
+guest takes focus, WebKit's `writeText()` after any click in the guest); `test/e2e/view-focus-capture.spec.ts` asserts
+that a strict or sealed guest takes no focus without a user's gesture on any engine.
+
+CI runs on `ubuntu-26.04` (`.github/workflows/ci.yml`), and its runs on that image pass on all three engines
+(first on 2026-11-15).
 
 ### <a id="t6"></a>T6 · Two CPU-heavy unit tests failed once on a loaded machine — ✅ **done**
 
@@ -2597,6 +2645,28 @@ an uncommitted overlay is gone after `reset()`, and a committed one fires `files
 
 ## D · Packaging & Distribution
 
+### <a id="bl-d1"></a>D1 · Ship an installable package — ✅ **done**
+
+**Done**: public entry `src/index.ts`; `exports` / `types` / `main` point at `dist/`, built by
+`bun run build:lib` (bun bundle + `tsc` declarations). `scripts/smoke-package.sh` runs `bun pm pack`,
+installs the tarball into a scratch project, type-checks and bundles a consumer (CI). The e2e spec
+`test/e2e/package.spec.ts` mounts a sandbox from `dist/` under a custom tag. `private` is gone from `package.json`, which names the licence
+(Apache-2.0, H5) and packs the `LICENSE`; publishing is the owner's step.
+
+Every solution we compare against installs with one command. We do not install at all, which caps
+adoption regardless of how good the isolation is.
+
+**Verified in `package.json`**: `"private": true`; `"main": "dev-server.ts"` — **a file that does
+not exist**; no `exports`, no `types`; `build-dist` emits JS without declarations. `README.md`
+also documents a `server.ts` that does not exist (the dev server is a Vite plugin in
+`vite.config.ts`).
+
+**Work**: drop `private`, add `exports` + `types` with declaration emit, fix `main`, align the
+README with the real entry points.
+
+**Acceptance**: a packed tarball imports cleanly in a scratch project with working types, and a
+smoke test mounts a sandbox through the public entry point (with B4).
+
 ### <a id="bl-d2"></a>D2 · CI — ✅ **done**
 
 **Done**: `.github/workflows/ci.yml` runs unit tests and both builds, and the e2e suite on Chromium,
@@ -2675,6 +2745,16 @@ clean and runs in CI.
 `docs/research/README.md` now indexes all twelve findings with a per-finding status against the
 current opaque-origin architecture, distinguishing "closed by construction" from "open". A
 `docs/README.md` index was added alongside it.
+
+### <a id="bl-h5"></a>H5 · Missing repo basics — ✅ **done**
+
+**Done**: `CONTRIBUTING.md`; `format` / `format:check` scripts; `.prettierrc` stripped of the Svelte
+and Tailwind plugins it was copied with. `format:check` is not a CI gate yet (101 files predate the
+config). The `LICENSE` is the Apache License 2.0 (owner, 2026-11-15).
+
+No `LICENSE`, no `CONTRIBUTING.md`, and `.prettierrc` exists with no `format` script and no
+formatting check. **Work**: add a license (blocks D1 — publishing without one is a non-starter),
+a short contributing note, and `format` / `format:check` scripts.
 
 ---
 

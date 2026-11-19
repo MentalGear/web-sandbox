@@ -1,5 +1,8 @@
 import { test, expect } from './fixture';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Class L (S74; LM-2): embedder code that runs inside a release of the element's own teardown, with a real focus event.
  * The wrapper's removal fires the host window's `focus` on Firefox when the guest frame holds focus, and a focused
@@ -35,7 +38,7 @@ for (const trigger of ['host terminate()', 'guest-forged second announcement'] a
             w.reentered = 0;
             w.thrown = [] as string[];
             let forged = false;
-            el.expose('shouldForge', () => (forged ? false : (forged = true)));
+            sandboxCollectMethod('shouldForge', () => (forged ? false : (forged = true))); // the app's host method, given with the mount below
             const listener = () => {
                 if (w.reentered === 0 && el.state === 'terminated') {
                     w.reentered++;

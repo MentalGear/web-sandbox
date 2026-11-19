@@ -12,15 +12,16 @@ import { flatten, parseDocComment, readApiModel, type ApiMember } from '../../to
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const MODEL = path.join(ROOT, 'etc/web-sandbox.api.json');
+// the build with the network modes: its model holds every export, the default build's among them (ADR-009)
+const MODEL = path.join(ROOT, 'etc/web-sandbox.network.api.json');
 
 const label = (item: ApiMember) => `${item.kind} ${item.path || '(constructor)'}`;
 
 describe('TSDoc coverage of the public API', () => {
     const items = flatten(readApiModel(MODEL));
 
-    it('reads the model: the exports of src/index.ts are all there', () => {
-        const exported = readFileSync(path.join(ROOT, 'src/index.ts'), 'utf8');
+    it("reads the model: the exports of the package's entries are all there (src/sealed.ts, which every build exports, and the network build's src/network.ts)", () => {
+        const exported = ['src/sealed.ts', 'src/network.ts'].map(file => readFileSync(path.join(ROOT, file), 'utf8')).join('\n');
         const names = new Set(items.filter(item => !item.path.includes('.')).map(item => item.name));
         for (const name of ['WebSandbox', 'defineWebSandbox', 'SandboxConfig', 'FetchRecord', 'WebSandboxEventMap', 'SAFE_CAPABILITIES']) expect(names.has(name), name).toBe(true);
         expect(exported).toContain('WebSandboxEventMap');
@@ -48,7 +49,7 @@ describe('TSDoc coverage of the public API', () => {
 
     // The public fields and exports that carry text the guest chose: their TSDoc (and so docs/API.md, rendered from it)
     // says how to show it. terminated.reason is the library's own text and is not listed.
-    const GUEST_TEXT_FIELDS = ['WebSandboxEventMap', 'WebSandbox.expose', 'SandboxLog.args', 'SandboxViolation.blockedURI', 'SandboxViolation.sourceFile', 'FetchRecord', 'RpcError'] as const;
+    const GUEST_TEXT_FIELDS = ['WebSandboxEventMap', 'HostMethod', 'SandboxLog.args', 'SandboxViolation.blockedURI', 'SandboxViolation.sourceFile', 'FetchRecord', 'RpcError'] as const;
 
     it.each(GUEST_TEXT_FIELDS)('%s says to show guest-controlled text with textContent, never in an HTML, URL, eval or template sink', (field) => {
         const item = items.find(entry => entry.path === field);

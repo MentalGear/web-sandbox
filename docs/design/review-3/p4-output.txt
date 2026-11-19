@@ -1,0 +1,28 @@
+[WebServer] $ rm -rf dist && bun scripts/build-lib.ts && bun scripts/emit-declarations.ts && bun scripts/declaration-specifiers.ts && bun scripts/declaration-base.ts
+[WebServer] build-lib: dist/index.js, the default build, view bootstrap 'sha256-PvrgNtLuJLKtC6xw0Q55EBOc0EFJMr2DUpmzodtoKDs=' (132572 characters)
+[WebServer] build-lib: dist/sealed-document.html, sealed mode's served document (153744 characters)
+[WebServer] emit-declarations: dist/index.d.ts, the default build's (src/index.ts)
+[WebServer] declaration specifiers: 23 file(s) given .js extensions
+[WebServer] declaration base: WebSandbox extends HTMLElement in dist/host.d.ts
+[WebServer] build-lib: dist-network/index.js, the network build, view bootstrap 'sha256-wtrApecDQGT0AoZL8GNMddNrlDNfGZafGd8wfAO+nyY=' (136795 characters)
+[WebServer] build-lib: dist-network/sealed-document.html, sealed mode's served document (153744 characters)
+[WebServer] 
+[WebServer]   VITE v6.4.1  ready in 142 ms
+[WebServer] 
+[WebServer]   ➜  Local:   http://localhost:26417/
+[WebServer]   ➜  Network: use --host to expose
+[WebServer] 
+[WebServer]   ➜  Playground: http://localhost:26417/playground/index.html
+
+Running 4 tests using 1 worker
+
+[review-3] chromium: one held Enter (1 + 9 repeats): 1 window.open call(s), 1 tab(s) reached the listed URL
+  ✓  1 [chromium] › docs/design/review-3/links-key-repeat.spec.ts:73:1 › one held Enter on the marked link the guest focused: how many window.open calls, and how many tabs (9.8s)
+[review-3] chromium: one held Enter, two links: window.open of A; tabs reached A
+  ✓  2 [chromium] › docs/design/review-3/links-key-repeat.spec.ts:111:1 › one held Enter, two marked links: the guest chooses the listed URL of every repeat (10.1s)
+[review-3] firefox: one held Enter (1 + 9 repeats): 10 window.open call(s), 10 tab(s) reached the listed URL
+  ✓  3 [firefox] › docs/design/review-3/links-key-repeat.spec.ts:73:1 › one held Enter on the marked link the guest focused: how many window.open calls, and how many tabs (11.9s)
+[review-3] firefox: one held Enter, two links: window.open of ABBBBBBBBB; tabs reached ABBBBBBBBB
+  ✓  4 [firefox] › docs/design/review-3/links-key-repeat.spec.ts:111:1 › one held Enter, two marked links: the guest chooses the listed URL of every repeat (12.2s)
+
+  4 passed (47.6s)

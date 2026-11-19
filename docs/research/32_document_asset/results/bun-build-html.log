@@ -1,0 +1,8 @@
+$ bun build index.html --outdir dist
+Bundled 4 modules in 4ms
+
+  index-4z0td1bc.js  1.53 KB    (entry point)
+  index.html         157 bytes  (entry point)
+
+
+--- server output

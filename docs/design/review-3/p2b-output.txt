@@ -1,0 +1,6 @@
+chromium | path ".png"     | library ".png.download"      | "png.download", "png.download", "png.download", "png.download", "png.download"
+chromium | path "x.exe~"   | library "x.exe~.download"    | "x.exe~.download", "x.exe~.download", "x.exe~.download", "x.exe~.download", "x.exe~.download"
+chromium | path "x.exe"    | library "x.exe.download"     | "x.exe.download", "x.exe.download", "x.exe.download", "x.exe.download", "x.exe.download"
+chromium | path ".env"     | library ".env.download"      | "env.download", "env.download", "env.download", "env.download", "env.download"
+chromium | path "x~"       | library "x~.download"        | "x~.download", "x~.download", "x~.download", "x~.download", "x~.download"
+chromium | path "x.txt~"   | library "x.txt~.download"    | "x.txt~.download", "x.txt~.download", "x.txt~.download", "x.txt~.download", "x.txt~.download"

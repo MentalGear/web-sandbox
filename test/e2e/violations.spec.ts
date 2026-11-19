@@ -1,6 +1,9 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Backlog S5: CSP violations in the guest reach the host as a 'violation' event on the element.
@@ -22,7 +25,7 @@ import { VIEW_MODES } from './view-modes';
 const ATTACKER = 'https://attacker.test';
 
 test.describe('1. a refused load is reported on the host', () => {
-    test('image and fetch: one event each, with directive, blockedURI and source position; it bubbles to window with the element as target', async ({ sandbox, page }) => {
+    test('image and fetch: one event each, with directive, blockedURI and source position; it does not bubble, with the element as target', async ({ sandbox, page }) => {
         expect(await sandbox.mount()).toBe('ready');
         const outcome = await sandbox.inGuest(`
             const img = await new Promise(res => { const i = new Image(); i.onload = () => res('loaded'); i.onerror = () => res('refused'); i.src = '${ATTACKER}/img'; });
@@ -42,13 +45,13 @@ test.describe('1. a refused load is reported on the host', () => {
             if (detail.lineNumber !== undefined) expect(detail.lineNumber).toBeGreaterThan(0);
         }
 
-        // dispatched on the element itself, bubbling (the harness hears it on window)
+        // dispatched on the element itself, not bubbling (the harness hears it on window in the capture phase)
         const onElement = await page.evaluate(() => new Promise<{ bubbles: boolean; isElement: boolean; directive: string }>(resolve => {
             const el = document.querySelector('web-sandbox')!;
             el.addEventListener('violation', (e) => resolve({ bubbles: e.bubbles, isElement: e.target === el, directive: (e as CustomEvent).detail.directive }), { once: true });
             (el as any).execute(`new Image().src = 'https://attacker.test/again'`);
         }));
-        expect(onElement).toEqual({ bubbles: true, isElement: true, directive: 'img-src' });
+        expect(onElement).toEqual({ bubbles: false, isElement: true, directive: 'img-src' });
     });
 
     test('a second sandbox reports its own violations, told apart by event.target', async ({ sandbox }) => {
@@ -147,7 +150,7 @@ test.describe('3. a report is a guest claim', () => {
 // reports"; API.md, `violation`): WebKit raises no securitypolicyviolation event in a worker, and Firefox raises worker
 // mode's importScripts() refusals in the frame that made the worker, which reports nothing.
 test.describe('4. worker mode', () => {
-    test('a refused fetch is reported by the request gate on every engine; importScripts() refusals are what the engine raises (Chromium only)', async ({ sandbox, browserName }) => {
+    test('a refused fetch is reported by the request gate on every engine; importScripts() refusals are what the engine raises (Chromium and WebKit)', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');
         const outcome = await sandbox.inGuest(`
             const fetched = await fetch('${ATTACKER}/worker-fetch', { mode: 'no-cors' }).then(() => 'reached', () => 'refused');
@@ -160,15 +163,16 @@ test.describe('4. worker mode', () => {
         const reported = (await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI} ${v.sourceFile ?? ''}`.trim()).sort();
         const gate = `connect-src ${ATTACKER}/worker-fetch ${GATE_SOURCE_FILE}`;
         expect(reported.filter(line => line.startsWith('connect-src'))).toEqual([gate]);
-        // importScripts() is the engine's: Chromium raises it in the worker, Firefox in the frame, WebKit nowhere
+        // importScripts() is the engine's: Chromium and WebKit raise it in the worker, Firefox in the frame
         // ledger: worker-violation-reports
-        expect(reported.filter(line => line.startsWith('script-src')).map(line => line.split(' ').slice(0, 2).join(' '))).toEqual(browserName === 'chromium' ? [`script-src-elem ${ATTACKER}/worker-import.js`] : []);
+        expect(reported.filter(line => line.startsWith('script-src')).map(line => line.split(' ').slice(0, 2).join(' '))).toEqual(browserName === 'chromium' || browserName === 'webkit' ? [`script-src-elem ${ATTACKER}/worker-import.js`] : []);
     });
 });
 
 
 test.describe('5. strict and sealed mode', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('view reports are labelled view, the request gate\'s logic (the same on every engine); a flood on the logic port is logic and uses up only the logic cap', async ({ sandbox, page }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             // the worker's own refusal, by the request gate; the strict worker has no importScripts

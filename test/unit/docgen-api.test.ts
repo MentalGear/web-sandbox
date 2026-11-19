@@ -33,7 +33,7 @@ describe('the rendered reference follows the code', () => {
 
     it('describes every exported name of the API model, and each member of a container, as an item a marker can name', () => {
         const items = indexItems(plugin);
-        for (const id of ['api:WebSandbox', 'api:WebSandbox.setConfig', 'api:SandboxConfig', 'api:FetchRecord', 'api:SandboxLog.source', 'api:defineWebSandbox', 'api:viewScriptHash']) expect(items.has(id), id).toBe(true);
+        for (const id of ['api:WebSandbox', 'api:WebSandbox.start', 'api:NetworkModeMethods.execute', 'api:SandboxConfig', 'api:FetchRecord', 'api:SandboxLog.source', 'api:defineWebSandbox', 'api:viewScriptHash']) expect(items.has(id), id).toBe(true);
     });
 
     it('the events table has one row per event of the element, in the table of element-events.ts, with its bubbling from there', () => {

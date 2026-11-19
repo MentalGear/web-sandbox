@@ -1,5 +1,5 @@
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
-import { graphOf, unitOf } from './call-graph';
+import { graphOf, memberNode, memberOwner, unitOf } from './call-graph';
 
 /**
  * Which functions of the host realm receive guest content (HOST_PASSES, src/lib/host-passes.ts; class A's third realm):
@@ -302,9 +302,11 @@ class UnitScan {
             const isMember = before === SyntaxKind.DotToken || before === SyntaxKind.QuestionDotToken;
             let unit: string | undefined;
             let whole = false;
-            if (isMember && tokens[i - 2]?.kind === SyntaxKind.ThisKeyword) {
-                if (units.has(`this.${token.text}`)) unit = `${file}#this.${token.text}`;
-                else if (FIELD_UNITS[token.text] && tokens[i + 1]?.kind === SyntaxKind.DotToken) {
+            // a member of the element: the file's own, the other element file's, or the network modes' through the seam (call-graph.ts)
+            const owner = isMember ? memberOwner(file, token.text, tokens[i - 2]) : null;
+            if (owner !== null) unit = `${owner}#this.${token.text}`;
+            else if (isMember && tokens[i - 2]?.kind === SyntaxKind.ThisKeyword) {
+                if (FIELD_UNITS[token.text] && tokens[i + 1]?.kind === SyntaxKind.DotToken) {
                     // this._files.register(files): a call on the object the field holds
                     const method = i + 2;
                     const open = tokens[method + 1]?.kind === SyntaxKind.OpenParenToken ? method + 1 : -1;
@@ -338,7 +340,7 @@ export function guestContentUnits(entries: readonly GuestEntryPoint[]): Map<stri
     const held = new Map<string, Set<string>>(); // the names already followed in a unit
     const queue: { node: string; names: string[]; reads: readonly string[]; trail: string[] }[] = [];
     for (const entry of entries) {
-        const node = `src/host.ts#this.${entry.member}`;
+        const node = memberNode(entry.member);
         const names = entry.holds.filter(name => !name.startsWith('this.'));
         const reads = entry.holds.filter(name => name.startsWith('this.'));
         queue.push({ node, names, reads, trail: [node] });

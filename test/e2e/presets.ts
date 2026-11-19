@@ -1,4 +1,5 @@
 import { PRESETS, type Preset, type PresetId, type PresetRules } from '@src/lib/presets';
+import { SAFE_CAPABILITIES } from '@src/csp-directives';
 
 /**
  * The one way a spec reaches a preset (backlog T4): `fromPreset('id')`, with the id as a string literal, so
@@ -10,6 +11,12 @@ export interface PresetForSpec {
     readonly run: Preset['run'];
     /** The preset's rules, a fresh copy: pass to sandbox.mount(), or spread and extend for a positive control. */
     readonly rules: PresetRules;
+    /**
+     * The rules with every capability left out that start() refuses in `capabilities` (one that reaches outside the
+     * sandbox, which only `unsafeCapabilities` grants): what the sandbox runs once the embedder takes out what was
+     * refused, for a preset whose rules ask for such a capability.
+     */
+    readonly granted: PresetRules;
     readonly code: string;
     /** `code` first (under the name 'code'), then each variant, in order. */
     readonly payloads: [string, string][];
@@ -22,6 +29,14 @@ export interface PresetForSpec {
     aimedAt(target: string, payload?: string): string;
 }
 
+function grantedOf(rules: PresetRules): PresetRules {
+    const granted = structuredClone(rules);
+    if (granted.capabilities === undefined) return granted;
+    const safe: readonly string[] = SAFE_CAPABILITIES;
+    granted.capabilities = granted.capabilities.filter(capability => safe.includes(capability));
+    return granted;
+}
+
 export function fromPreset(id: PresetId): PresetForSpec {
     const preset: Preset = PRESETS[id];
     const payloads: [string, string][] = [['code', preset.code], ...Object.entries(preset.variants ?? {})];
@@ -29,6 +44,7 @@ export function fromPreset(id: PresetId): PresetForSpec {
         id,
         run: preset.run,
         rules: structuredClone(preset.rules),
+        granted: grantedOf(preset.rules),
         code: preset.code,
         payloads,
         files: { ...preset.files },

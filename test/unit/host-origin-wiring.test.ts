@@ -1,4 +1,6 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { startWith } from './start-app';
 
 /**
  * The element hands the host page to the config (host.ts, `normaliseConfig(copy, { hostOrigin, hostSites })`, from
@@ -6,7 +8,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
  * so the host-reach warnings fire in a real element: an origin
  * list naming the page's own origin or a host on its site, and `fetchBridge.allow` naming the page's own origin
  * (BD1:NEW-1; docs/API.md, `origins`). test/unit/config-schema.test.ts gives the origin by hand; these go through
- * `setConfig`.
+ * `start()`.
  */
 
 async function mount(config: Record<string, unknown>) {
@@ -14,7 +16,7 @@ async function mount(config: Record<string, unknown>) {
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    el.setConfig(config);
+    startWith(el, config);
     return el;
 }
 

@@ -14,11 +14,12 @@ Three needs meet in the element's lifecycle:
 
 ## Decision
 
-1. **One bubbling event on the element.** `sandbox-log` is dispatched on the sandbox element with `bubbles: true`.
-   A listener on the element hears only that sandbox; a listener on `window` hears every sandbox, with the element as
-   `event.target`, and `SandboxDevTools` listens on its element. Not `composed`: the element lives in the embedding
-   page's DOM, and the library's events have no reason to cross a consumer's shadow boundary. The name stays
-   namespaced because it bubbles: a generic `log` would collide with other code listening on `window`.
+1. **One event on the element.** `sandbox-log` is dispatched on the sandbox element, and does not bubble: it carries
+   the guest's data, and a bubbling listener on a shared ancestor would mix one app's lines with another's (design 01,
+   I5). A listener on the element hears only that sandbox, and `SandboxDevTools` listens on its element; a capture
+   listener on `window` still hears every sandbox, with the element as `event.target`. Not `composed`: the element
+   lives in the embedding page's DOM, and the library's events have no reason to cross a consumer's shadow boundary.
+   The name stays namespaced: a generic `log` would collide with other code listening on `window`.
 2. **Four states, no `running`.** `state` is `idle`, `loading`, `ready` or `terminated`. A listener of `ready` or
    `terminated` always reads the state its event announces: the state is stored before any effect runs, and the event
    is dispatched after it. There is no `running` state because nothing could make it true: `execute()` is
@@ -67,18 +68,15 @@ transitions, generated from the code. The rules this ADR decides, each one a cas
   view), as the [Budgets table](API.md#budgets) says per channel. `reset()` is the embedder's choice after a termination,
   because rebuilding would bring back a sandbox the embedder did not ask for and fire no event.
 - **Every build failure is a termination.** A build that threw (a directive given a string instead of a list, for
-  example) ends with `terminated` and `the environment could not be built (<error name>)`. `setConfig()` copies its
-  argument with `structuredClone` first, so a config that cannot be copied (a `Proxy`, a function value) or is not an
-  object terminates with `the configuration could not be used (<error name>)`, applies nothing, and keeps every build
-  closed until a usable config arrives, like an unknown mode. The copy also means that arrays the caller changes later
-  never change the policy a `reset()` builds. Each failed build attempt is one termination with its reason.
-- **A refused build's `terminated` comes in a task**, like `ready`: `state` is `terminated` when `setConfig()`,
-  `reset()` or `load()` returns, and a listener added right after hears the event. An answer that is no longer the state
+  example) ends with `terminated` and `the environment could not be built (<error name>)`. What `start()` refuses is no
+  termination: it validates the app and the grants whole and throws, storing nothing, for options it cannot take, and
+  copies what it stores (`structuredClone` of each option), so arrays the caller changes later never change the policy a
+  `reset()` builds. Each failed build attempt is one termination with its reason.
+- **A refused build's `terminated` comes in a task**, like `ready`: `state` is `terminated` when `start()` or
+  `reset()` returns, and a listener added right after hears the event. An answer that is no longer the state
   (another build, or the element's removal, before the task) is never dispatched. While a build termination is being
-  dispatched, a nested build from the same inputs (no `setConfig()`, `load()` or file change in between) ends with the
-  same answer and dispatches nothing again, so a `terminated` listener that calls `reset()` cannot recurse.
-- **`setConfig()` of the configuration the standing environment was built from is no change**: no rebuild, while the
-  environment is `loading` or `ready` and nothing else a build reads (`load()`, the files) changed since.
+  dispatched, a nested build refused with the same reason ends with that answer and dispatches nothing again, so a
+  `terminated` listener that calls `reset()` cannot recurse.
 - **No environment, one rule for work.** While `idle` (not in the document) or `terminated`, `call()` rejects at once
   with `TERMINATED` and `execute()` warns and does nothing.
 - **A reason, a host line or a console warning never carries the text of an error it caught**: only a fixed text and
@@ -222,7 +220,7 @@ already decide. The embedder's `watchdogTimeout` cannot bound `loading` (it is o
 - A guest that never finishes parsing is `ready` and alive: the calls it is sent time out, and the watchdog, where it
   is on, keeps measuring its event loop.
 - `watchdogTimeout` covers the guest's startup scripts (it starts at `ready`); `autoResize` may report while the
-  document is still loading; `load()` and `setConfig()` reach `ready` as soon as the guest checks in.
+  document is still loading; `start()` and `reset()` reach `ready` as soon as the guest checks in.
 
 Costs and limits:
 

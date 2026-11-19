@@ -4,7 +4,7 @@
  * Strict mode admits exactly one script in its view document, the library's bootstrap, by its SHA-256
  * hash. The hash is computed here, synchronously, when the first strict view is built, and cached by
  * the caller. Synchronous on purpose: crypto.subtle.digest() returns a promise, and building an
- * environment is synchronous end to end (setConfig(), load(), reset() and the element's lifecycle
+ * environment is synchronous end to end (start(), reset() and the element's lifecycle
  * invariants in ADR-003 rely on that). Hashing the text at run time always matches what this page actually
  * serves. In the published bundle that text is a string literal built with the package (R2:C-8;
  * in-sandbox-view.ts, viewBootstrapText), so the hash is also a constant of the package that an

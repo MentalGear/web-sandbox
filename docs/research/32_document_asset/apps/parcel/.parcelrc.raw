@@ -1,0 +1,6 @@
+{
+  "extends": "@parcel/config-default",
+  "transformers": { "**/fake-sealed/*.html": ["@parcel/transformer-raw"] },
+  "packagers": { "**/fake-sealed/*.html": "@parcel/packager-raw" },
+  "optimizers": { "**/fake-sealed/*.html": [] }
+}

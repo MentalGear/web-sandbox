@@ -1,11 +1,13 @@
 /**
- * ARCHITECTURE.md's module map: each file of src/ with the role its header comment gives. The only extractor that reads
- * source text: a module's role is prose, and its header comment is where the code keeps it.
+ * ARCHITECTURE.md's module map: each file of src/ with the build it is part of (src/lib/build-modules.ts) and the role
+ * its header comment gives. The only extractor that reads source text: a module's role is prose, and its header comment
+ * is where the code keeps it.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { ID_CITATION } from '../../../docs/ids';
 import { signatureOf, type Item } from '../engine';
+import { BUILD_MODULES, type ModuleClass } from '../../../src/lib/build-modules';
 import { code, row, table, type Extractor } from './markdown';
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
@@ -64,13 +66,21 @@ export function headerSentence(source: string): string | undefined {
 
 const summaries = () => moduleFiles().map(file => ({ file, role: headerSentence(readFileSync(path.join(ROOT, file), 'utf8')) }));
 
+/** The build a module is part of, as the map says it (src/lib/build-modules.ts; ADR-009). */
+const BUILD_OF = { sealed: 'every build', network: 'network', data: 'none (a registry)' } as const satisfies Record<ModuleClass, string>;
+const buildOf = (file: string): string => {
+    const of = (BUILD_MODULES as Record<string, ModuleClass>)[file];
+    if (of === undefined) throw new Error(`docgen: ${file} has no row in BUILD_MODULES (src/lib/build-modules.ts)`);
+    return BUILD_OF[of];
+};
+
 const items = (): Item[] => summaries().map(({ file, role }) => ({
     id: `module:${file}`,
-    signature: signatureOf({ role }),
-    render: () => row([code(file), role ?? '(no header comment)']),
+    signature: signatureOf({ role, build: buildOf(file) }),
+    render: () => row([code(file), buildOf(file), role ?? '(no header comment)']),
 }));
 
 export const modules: Extractor = {
     items,
-    regions: { 'module-map': () => table(['Module', 'Role'], items().map(item => item.render())) },
+    regions: { 'module-map': () => table(['Module', 'Build', 'Role'], items().map(item => item.render())) },
 };

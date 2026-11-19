@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { inSandboxScript } from '@src/lib/in-sandbox-script';
+import { requestGate } from '@src/lib/request-gate';
 import { connectSources } from '@src/lib/csp/csp-generator';
 import { parseOrigins } from '@src/lib/csp/origins';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
@@ -7,7 +7,7 @@ import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 import { createGateHarness } from './request-gate-harness';
 
 /**
- * The request gate of the guest bootstrap (in-sandbox-script.ts; S74): the URL check as one table of cases, what a refused
+ * The request gate of the guest bootstrap of the network modes (request-gate.ts; S74): the URL check as one table of cases, what a refused
  * request does and reports, the credentials it never sends, and that the platform's originals cannot be reached from the
  * realm afterwards, at run time (jsdom) and in the text (the scan below). The browsers decide what the gate's refusals
  * look like to a guest on each engine: test/e2e/request-gate.spec.ts.
@@ -260,7 +260,7 @@ describe('a relative URL resolves against the realm\'s base, as the platform res
     });
 });
 
-describe("a refusal in strict and worker mode names the option that admits an origin (BD6:NEW-1; sealed mode's words: request-gate-sealed-refuses.test.ts)", () => {
+describe("a refusal in strict and worker mode names the option that admits an origin (BD6:NEW-1)", () => {
     it('fetch() and a synchronous XMLHttpRequest say the origin is not in origins.connect', async () => {
         const error = await fetch('https://elsewhere.example/x').then(() => null, (refused: Error) => refused);
         expect(error?.message).toBe('fetch() refused by the sandbox: the origin is not in its origins.connect');
@@ -319,7 +319,7 @@ describe('the originals cannot be reached from the realm (BD1:ISO-2)', () => {
 });
 
 /**
- * The structural part: in the bootstrap's text, each original the gate captures is only ever called (the callee of
+ * The structural part: in the gate's text, each original the gate captures is only ever called (the callee of
  * `apply(`/`construct(`), tested (`typeof`, a condition), aliased to a name that obeys the same rule, or handed to the
  * gate's own installers (`replaceGlobal`, `adopt`) as the original they remove or adopt. Never returned, stored, posted or
  * passed to anything else. And the platform's request makers are read from the global object only in the captured list.
@@ -354,8 +354,8 @@ function originalUses(text: string): string[] {
     return found;
 }
 
-describe('the originals in the bootstrap\'s text', () => {
-    const text = inSandboxScript.toString();
+describe('the originals in the gate\'s text', () => {
+    const text = requestGate.toString();
 
     it('each original is only called, tested, aliased under the same rule, or handed to the gate\'s installers', () => {
         expect(originalUses(text)).toEqual([]);

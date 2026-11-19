@@ -3,16 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <title>Package e2e harness</title>
-    <!-- Mounts the sandbox through the built package (dist/), not the sources: backlog D1 -->
+    <!--
+        Mounts the sandbox through the built package, not the sources (backlog D1): dist/, the package as `bun run build:lib`
+        writes it (the default build), or dist-network/, the bundle of the build with the network modes, which the e2e
+        server builds beside it (playwright.config.ts). The fixture names the build the test asked for (window.sandboxBuild).
+    -->
     <script type="module">
-        import { defineWebSandbox, viewScriptHash } from '/dist/index.js';
+        const bundle = window.sandboxBuild === 'network' ? '/dist-network/index.js' : '/dist/index.js';
+        const { defineWebSandbox, viewScriptHash } = await import(/* @vite-ignore */ bundle);
 
         defineWebSandbox('packaged-sandbox');
         window.sandboxLogs = [];
+        // sandbox-log does not bubble (design 01, I5): the harness hears it in the capture phase
         window.addEventListener('sandbox-log', (event) => {
             window.sandboxLogs.push((event.detail?.args || []).map(String).join(' '));
-        });
+        }, true);
         window.viewScriptHash = viewScriptHash;
+        // the element below has no app, so it builds nothing as it is upgraded; a build a spec starts is its own
+        const element = document.querySelector('packaged-sandbox');
+        if (element.state === 'loading') {
+            await new Promise(resolve => {
+                element.addEventListener('ready', resolve, { once: true });
+                element.addEventListener('terminated', resolve, { once: true });
+            });
+        }
         window.harnessReady = true;
     </script>
 </head>

@@ -1,5 +1,7 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineWebSandbox } from '@src/host';
+import { startWith } from './start-app';
 
 /**
  * The wrapper's load completes a build only for a frame that is still the element's (BD2:TST-7, class L; R4:L-1). The
@@ -21,7 +23,7 @@ function built() {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    el.setConfig({ mode: 'cooperative', capabilities: [], html: '<p>x</p>' });
+    startWith(el, { mode: 'cooperative', capabilities: [], html: '<p>x</p>' });
     const terminated: string[] = [];
     el.addEventListener('terminated', (event: Event) => terminated.push((event as CustomEvent).detail.reason));
     return { el, terminated, frame: el._iframe as HTMLIFrameElement };

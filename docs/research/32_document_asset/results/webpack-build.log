@@ -1,0 +1,11 @@
+$ npx webpack && cp public/index.html dist/
+asset main.js 1.69 KiB [emitted] [minimized] (name: main)
+asset 486bcb520bae9fb307b2.html 752 bytes [emitted] [immutable] [from: node_modules/fake-sealed/sealed-document.html] [minimized] (auxiliary name: main)
+runtime modules 1.44 KiB 3 modules
+orphan modules 1.64 KiB [orphan] 2 modules
+cacheable modules 2.08 KiB (javascript) 1.87 KiB (asset)
+  ./main.js + 2 modules 2.04 KiB [built] [code generated]
+  ./node_modules/fake-sealed/sealed-document.html 1.87 KiB (asset) 42 bytes (javascript) [built] [code generated]
+webpack 5.112.2 compiled successfully in 252 ms
+
+--- server output

@@ -154,7 +154,13 @@ to 19, missed its pings with nothing busy (WebKit seed 225 at 500 sequences, bef
 | `test/e2e/lifecycle-model.spec.ts` | N sequences per engine, plus round 4's L-1 as a property. |
 | `test/unit/lifecycle-model.test.ts` | The model itself, on hand-written traces of round 4's L-1 and L-3 and round 5's L-1, L-2 and L-3. |
 
-**The rules of `446017a` it holds the element to.**
+**The rules it holds the element to.**
+- One app per element (design 01, I1): a `start()` that succeeds binds the app and its grants for the element's life; a
+  second `start()`, and one whose arguments are unusable, throw and change nothing. An element with no app builds
+  nothing: inserted, reset or terminated, it stays `idle` and dispatches nothing.
+- A build is refused for what the app's files hold when it starts: a strict entry they do not hold, or one whose text
+  calls `import()`. A committed guest write can make either, so a `reset()` of a bound app is then refused, with its
+  `terminated`, and so is every build after it until a commit puts the entry back.
 - `ready` is the only flush point, in every mode: a call made while `loading` that times out before `ready` never runs.
 - One "no repeat" rule for every `terminated`: a build started while a `terminated` is dispatched, and refused with that
   very reason, ends `terminated` without another event.
@@ -174,17 +180,20 @@ to 19, missed its pings with nothing busy (WebKit seed 225 at 500 sequences, bef
   second overrun's termination stays a divergence.
 
 **What it generates.** One mode per sequence (by seed), 0–3 re-entrant listener plans on `ready`, `terminated`,
-`sandbox-log`, `fileswritten` and `fetch`, a prologue, then 3–6 segments of churn, calm guest steps, or a scenario (an
-argument getter that runs an action, calls with timeouts around the check-in, a move 12–30 ms into a rebuild, a
-termination the element starts, guest writes listed and committed). The operations: insert, remove, move to and from a
-foreign document, `setConfig()` (valid, an unknown mode, unusable configs), the same config again, `load()`, `reset()`,
-`terminate()`, `registerFiles()` (and a refused batch), `unregisterFiles()`, `expose()`, `call()`, `callWithTimeout()`,
-`execute()`, `listGuestWrites()`, `commitGuestWrites()` and the guest steps of the agent's `act(spec)` (logs, a throw, an
-uncaught error, busy loops, writes and removals, fetches, calls to the host, a late expose).
+`sandbox-log`, `fileswritten` and `fetch`, a prologue (the app started, mostly before the insertion), then 3–6 segments
+of churn, calm guest steps, or a scenario (an argument getter that runs an action, calls with timeouts around the
+check-in, a move 12–30 ms into a rebuild, a second `start()`, guest writes listed and committed, the entry rewritten by
+the guest and committed, then rebuilt). One sequence in five starts an app that ends itself (the watchdog,
+`workerExecutionTimeout` or a failing entry). The operations: insert, remove, move to and from a foreign document,
+`start(app, grants)` (valid, an unknown mode, unusable arguments, a second one), `reset()`, `terminate()`, `call()`,
+`callWithTimeout()`, `execute()`, `listGuestWrites()`, `commitGuestWrites()` and the guest steps of the agent's
+`act(spec)` (logs, a throw, an uncaught error, busy loops, writes and removals, fetches, calls to the host, a late
+expose). The app's files are the agent (`agent.js`, the strict entry), an entry that throws, one that calls `import()`,
+and a data file; the guest writes and removes `agent.js` among its paths, and what it writes there is one of the three
+entry texts, so a committed write leaves the next build an entry the model can predict.
 
 **Coverage.** The spec prints the (operation, state, mode) combinations each chunk reached (`MEASURED …`) and the keys
-(`COVERAGE …`): 18 operations × 4 states × 3 modes = 216 combinations. At `446017a`, 40 sequences per engine reach
-174–176 of them, and 500 sequences per engine all 216 on Chromium, Firefox and WebKit. The other keys count what the
+(`COVERAGE …`), of the model's 12 operations (`OPS`) in 4 states and 3 modes. The other keys count what the
 checks saw: a refusal's `terminated` from a task, terminations the element started (strict and worker mode; cooperative
 mode's watchdog fires only where the frame has its own process), `fileswritten` announced and not, guest calls answered
 `ARGS_NOT_TRANSFERABLE` and `BUSY`, `fetch` records.
@@ -240,8 +249,9 @@ The lifecycle reducer (`src/lib/lifecycle.ts`) is checked against the same model
 `begin`, `end`, `event` and `eventEnd` as `runner.ts` does. Listener plans run as nested steps inside the dispatch.
 
 **The fake element.**
-- It is the adapter `host.ts` becomes: setConfig() clones and applies its argument with the real config schema, and the
-  files are a map of paths.
+- It is `host.ts`'s adapter: `start()` reads its two arguments with the element's own reading (`readStart`), and the
+  files are a `FileStore`, as the element's are; a build refuses a strict entry they do not hold, or one that calls
+  `import()`, as `_buildRefusal` does.
 - A build's fake guest checks in after a seeded delay of fake time: the strict view after its ports, the bootstrap's
   announcement, or the wrapper's load alone without a bootstrap. One build in 40 (never two in a row) never checks in,
   so the load deadline ends it.
@@ -250,9 +260,22 @@ The lifecycle reducer (`src/lib/lifecycle.ts`) is checked against the same model
 - Nothing an old environment's guest or timers deliver is cancelled at a teardown. The reducer must drop it by its
   generation, which is stronger than the element, whose listeners and ports go with their environment.
 
-**What it leaves out.** Calls, `execute()`, `commitGuestWrites()` and `listGuestWrites()` are filtered out of the
-commands and the plans, since they need a guest that answers. So are the guest's logs, writes and fetches, and the
-terminations a guest causes. The e2e suite covers them.
+- Its guest answers one kind of call, the guest's writes and removals (`act` with a `write` or `remove` step, plain
+  arguments, the default timeout), through the element's own overlay (`createGuestWrites`) as `_handleGuestWrite` does:
+  `fileswritten` first when the listed entry changed, then the answer, unless a listener tore the environment down.
+  `listGuestWrites()` and `commitGuestWrites()` are the overlay's, so a committed change of the strict entry reaches the
+  next build's refusal.
+
+**What it leaves out.** Every other call, and `execute()`, are filtered out of the commands and the plans, since they
+need a real guest that answers. So are the guest's logs and fetches, and the terminations a guest causes. The e2e suite
+covers them.
+
+**The transitions it makes.** `test/unit/lifecycle-transitions.test.ts` runs 1,000 sequences through the reducer runner
+and checks that they make only the transitions listed from the reducer's declaration (`lifecycleTransitions`), and that
+the listed ones they never make are exactly a list kept in the test, each with its reason: unreachable by the element or
+the executor (a `connect` of a standing build, a `dispatchStarted` outside `terminated`, …), or not reached by the model
+(a second announcement, a navigated wrapper, a host page's refusal, a build that throws, a refused rebuild from
+`loading`, for which the files would have to change while loading). Of the 60 listed transitions the runs make 37.
 
 **What it checks besides the model.**
 - After every operation and task, the reducer's state is the model's: the same state and pending build termination, no

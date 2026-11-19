@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -17,6 +18,8 @@ import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { stringifiedFor } from './stringified';
 import { runBootstrap } from './sandbox-environment';
 import { keptCss } from '@src/lib/css-references';
+import { commitAt } from './guest-commit';
+import { startWith } from './start-app';
 
 const TYPEOF_SCANNED = await stringifiedFor('typeofRead');
 
@@ -225,21 +228,19 @@ describe('C-5: an inbound request whose arguments cannot be carried is answered 
     });
 });
 
-describe('C-6: a callLimits value below 1 takes the default, with the warning', () => {
+describe('C-6: a callLimits value below 1 is refused by start(), and the default budget stays', () => {
     it.each([0.5, 0.001, Number.MIN_VALUE])('%s', (value) => {
-        const { el, warn } = element();
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: value, maxBytesPerSecond: value } });
-        expect(el._callBudget).toEqual({ calls: 1000, bytes: 67108864 });
-        const warnings = warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('callLimits'));
-        expect(warnings).toEqual([
-            `[Sandbox] callLimits.maxPerSecond must be a finite number >= 1; ${value} was ignored: the default 1000 applies.`,
-            `[Sandbox] callLimits.maxBytesPerSecond must be a finite number >= 1; ${value} was ignored: the default 67108864 applies.`,
-        ]);
+        for (const field of ['maxPerSecond', 'maxBytesPerSecond']) {
+            const { el } = element();
+            expect(() => startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { [field]: value } }), field).toThrow(new RegExp(`callLimits\\.${field} must be a finite number >= 1`));
+            expect(el.started).toBe(false);
+            expect(el._callBudget).toEqual({ calls: 1000, bytes: 67108864 });
+        }
     });
 
     it('1 is a budget of one call per second (the edge)', () => {
         const { el } = element();
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: 1, maxBytesPerSecond: 1 } });
+        startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: 1, maxBytesPerSecond: 1 } });
         expect(el._callBudget).toEqual({ calls: 1, bytes: 1 });
     });
 });
@@ -247,7 +248,7 @@ describe('C-6: a callLimits value below 1 takes the default, with the warning', 
 describe('M-6: the default call budget is 1000 calls and 64 MiB per second', () => {
     it('the element, and the literal both ends take', () => {
         const { el } = element();
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'] });
         expect(el._callBudget).toEqual({ calls: 1000, bytes: 67108864 });
         expect(el._getSandboxCommsScript('cooperative', [])).toContain('"callBudget":{"calls":1000,"bytes":67108864}');
     });
@@ -278,7 +279,7 @@ describe("L-2: a listener of the first of an entry failure's two events that end
         ["terminate('mine')", (el: any) => el.terminate('mine')],
     ])('%s', async (_name, act) => {
         const { el } = element();
-        el.setConfig({ mode: 'strict' });
+        startWith(el, { mode: 'strict' });
         const { port1: view } = new MessageChannel();
         el._viewPort = view;
         const heard = logs(el);
@@ -291,7 +292,7 @@ describe("L-2: a listener of the first of an entry failure's two events that end
 
     it('without such a listener both lines arrive, host first (positive control)', async () => {
         const { el } = element();
-        el.setConfig({ mode: 'strict' });
+        startWith(el, { mode: 'strict' });
         const { port1: view } = new MessageChannel();
         el._viewPort = view;
         const heard = logs(el);
@@ -304,9 +305,10 @@ describe("L-2: a listener of the first of an entry failure's two events that end
 describe("L-3: one rule for every 'terminated': a rebuild from its listener that gives the same answer is not dispatched again", () => {
     it("terminate(reason) whose reason a rebuild from the listener repeats: one 'terminated'", async () => {
         const { el } = element();
-        el.registerFiles({ 'agent.js': 'void 0' });
-        el.setConfig({ mode: 'strict', entry: 'agent.js' });
-        el.unregisterFiles(['agent.js']);
+        startWith(el, { mode: 'strict', entry: 'agent.js', guestWrites: true }, { files: { 'agent.js': 'void 0' } });
+        // the guest removes its entry and the host commits the removal: the next build has no entry
+        await el._handleGuestWrite(el._guestWrites, { change: 'remove', path: 'agent.js' });
+        commitAt(el, ['agent.js']);
         const reason = 'the guest entry is not a registered JavaScript file';
         const heard: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => { heard.push(e.detail.reason); el.reset(); });
@@ -318,8 +320,7 @@ describe("L-3: one rule for every 'terminated': a rebuild from its listener that
 
     it('a listener that changes what decides the answer builds normally (positive control)', async () => {
         const { el } = element();
-        el.registerFiles({ 'agent.js': 'void 0' });
-        el.setConfig({ mode: 'strict', entry: 'agent.js' });
+        startWith(el, { mode: 'strict', entry: 'agent.js' }, { files: { 'agent.js': 'void 0' } });
         const heard: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => { heard.push(e.detail.reason); el.reset(); }, { once: true });
         el.terminate('the guest entry is not a registered JavaScript file');
@@ -342,14 +343,11 @@ describe('L-4: a guest removal is announced only when it is listed', () => {
         expect(writes.list()).toEqual([]);
     });
 
-    it("the element: no 'fileswritten' for it, and listGuestWrites() is empty; a removal of a stored path is announced and listed (positive control)", async () => {
+    it("the element: a removal of a stored path is announced and listed (positive control)", async () => {
         const { el } = element();
-        el.registerFiles({ 'agent.js': 'void 0', 'pic.png': new Uint8Array([1]), 'keep.png': new Uint8Array([2]) });
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], guestWrites: true });
-        el.unregisterFiles(['pic.png']);
+        startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'], guestWrites: true }, { files: { 'agent.js': 'void 0', 'pic.png': new Uint8Array([1]), 'keep.png': new Uint8Array([2]) } });
         const announced: string[][] = [];
         el.addEventListener('fileswritten', (e: CustomEvent) => announced.push([...e.detail.paths]));
-        await el._handleGuestWrite(el._guestWrites, { change: 'remove', path: 'pic.png' });
         expect([announced, el.listGuestWrites()]).toEqual([[], []]);
         await el._handleGuestWrite(el._guestWrites, { change: 'remove', path: 'keep.png' });
         expect([announced, el.listGuestWrites()]).toEqual([[['keep.png']], [{ path: 'keep.png', change: 'remove' }]]);
@@ -359,7 +357,7 @@ describe('L-4: a guest removal is announced only when it is listed', () => {
 describe("M-4: the strict view's error lines are cut once composed", () => {
     it.each(['GUEST_ERROR', 'GUEST_UNCAUGHT'])('%s: the guest line is at most 2048 characters, "Uncaught " included', (type) => {
         const { el } = element();
-        el.setConfig({ mode: 'strict' });
+        startWith(el, { mode: 'strict' });
         const { port1: view } = new MessageChannel();
         el._viewPort = view;
         const heard = logs(el);
@@ -409,7 +407,7 @@ describe("M-5: the view's guest-error rate limit says so the first time it drops
 
     it('the host turns the notice into one warn line per environment, labelled as the guest relay\'s own', () => {
         const { el } = element();
-        el.setConfig({ mode: 'strict' });
+        startWith(el, { mode: 'strict' });
         const { port1: view } = new MessageChannel();
         el._viewPort = view;
         const heard = logs(el);
@@ -502,11 +500,11 @@ describe('the docs say what the code does', () => {
     it('I-1: API.md says an aborted record of a torn-down environment can arrive after reset(), while the next build loads', () => {
         const api = read('docs/API.md').replace(/\s+/g, ' ');
         expect(api).toContain("an `'aborted'` record of a torn-down environment can arrive after the call that tore it down, while the next build is loading");
-        expect(api).toContain('(by `reset()`, `load()`, `setConfig()`, `terminate()` or removal)');
+        expect(api).toContain('(by `reset()`, `terminate()` or removal)');
     });
 
     it("I-2: API.md's events table qualifies the fetch event by fetchBridge", () => {
-        expect(read('docs/API.md')).toMatch(/^\| `fetch` \| `FetchRecord` \| yes \| .*Dispatched only with `fetchBridge` configured/m);
+        expect(read('docs/API.md')).toMatch(/^\| `fetch` \| `FetchRecord` \| no \| .*Dispatched only with `fetchBridge` configured/m);
     });
 
     it('I-2: the backlog does not say the guest has no sandboxFetch without the bridge', () => {

@@ -1,0 +1,14 @@
+q4b.run {"engine":"webkit","config":"default","version":"27.2","date":"2026-11-15T12:58:08.787Z","load1":0.56}
+q4b {"engine":"webkit","config":"default","case":"idle","median":13,"range":"12-14","gaps":[14,13,14,12,12],"load1":[0.56,0.52,0.52,0.48,0.48]}
+q4b {"engine":"webkit","config":"default","case":"today's view","median":1210,"range":"1200-1211","gaps":[1210,1211,1210,1207,1200],"load1":[0.48,0.44,0.44,0.48,0.48]}
+q4b {"engine":"webkit","config":"default","case":"today's worker","median":12,"range":"12-14","gaps":[12,12,14,12,13],"load1":[0.52,0.52,0.56,0.56,0.52]}
+q4b {"engine":"webkit","config":"default","case":"same-origin F","median":1211,"range":"1200-1211","gaps":[1211,1211,1211,1200,1200],"load1":[0.52,0.64,0.64,0.64,0.58]}
+q4b {"engine":"webkit","config":"default","case":"same-origin C","median":1210,"range":"1201-1210","gaps":[1201,1209,1210,1210,1210],"load1":[0.58,0.7,0.7,0.72,0.72]}
+q4b {"engine":"webkit","config":"default","case":"same-origin W","median":14,"range":"12-16","gaps":[14,15,12,16,13],"load1":[0.75,0.75,0.77,0.77,0.7]}
+q4b {"engine":"webkit","config":"default","case":"cross-site F","median":1201,"range":"1200-1211","gaps":[1201,1210,1211,1200,1200],"load1":[0.7,0.7,0.73,0.73,0.75]}
+q4b {"engine":"webkit","config":"default","case":"cross-site C","median":1209,"range":"1201-1210","gaps":[1210,1209,1201,1209,1202],"load1":[0.75,0.77,0.77,0.71,0.71]}
+q4b {"engine":"webkit","config":"default","case":"cross-site W","median":13,"range":"13-13","gaps":[13,13,13,13,13],"load1":[0.65,0.65,0.65,0.6,0.6]}
+q4b {"engine":"webkit","config":"default","case":"other-domain F","median":1200,"range":"1200-1201","gaps":[1200,1200,1200,1200,1201],"load1":[0.63,0.63,0.74,0.74,0.76]}
+q4b {"engine":"webkit","config":"default","case":"other-domain C","median":1210,"range":"1209-1210","gaps":[1209,1209,1210,1210,1210],"load1":[0.76,0.7,0.7,0.64,0.64]}
+q4b {"engine":"webkit","config":"default","case":"other-domain W","median":15,"range":"13-26","gaps":[15,13,16,26,15],"load1":[0.64,0.59,0.59,0.63,0.63]}
+q4b {"engine":"webkit","config":"default","case":"control: cross-site frame, no sandbox","median":1200,"range":"1200-1211","gaps":[1207,1211,1200,1200,1200],"load1":[0.66,0.66,0.68,0.68,0.63]}

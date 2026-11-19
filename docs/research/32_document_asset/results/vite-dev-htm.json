@@ -1,0 +1,48 @@
+{
+  "id": "vite-dev-htm",
+  "app": "vite",
+  "variant": "htm",
+  "build": null,
+  "serve": {
+    "cmd": "npx vite --host 127.0.0.1 --port $PORT --strictPort"
+  },
+  "buildExitCode": null,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5176/node_modules/fake-sealed/sealed-document.htm",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "http://127.0.0.1:5176/node_modules/fake-sealed/sealed-document.htm",
+  "rawHref": "http://127.0.0.1:5176/node_modules/fake-sealed/sealed-document.htm",
+  "rawOrigin": "http://127.0.0.1:5176",
+  "appOrigin": "http://127.0.0.1:5176",
+  "scriptOrigin": "http://127.0.0.1:5176",
+  "documentOrigin": "http://127.0.0.1:5176",
+  "status": 200,
+  "contentType": "text/html;charset=utf-8",
+  "length": 1911,
+  "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "iframe": {
+    "status": 200,
+    "contentType": "text/html;charset=utf-8",
+    "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+    "bytesEqual": true
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": true,
+  "bytesEqual": true,
+  "fileName": "sealed-document.htm",
+  "console": [
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "error: Applying inline style violates the following Content Security Policy directive 'default-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-XkenByKsXTgsp1sB8zaz1en11bw/1JHNCxZJmVnrsIM='), or a nonce ('nonce-...') is required to enable inline execution. Note also that 'style-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-FzGRmXVa1n31Lrsg3i/S1CDsp/2WGN+LBSNOJ6zgqFw='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "outputFiles": [],
+  "documentFilesInOutput": [],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "vite": "8.3.8"
+  }
+}

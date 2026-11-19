@@ -9,13 +9,39 @@ bun run typecheck    # tsc over src, tests, playground and research specs
 bun run test         # unit (vitest) then e2e (playwright; builds the package first)
 WEB_SANDBOX_MODEL_RUNS=2000 bun run test:e2e test/e2e/lifecycle-model.spec.ts  # nightly: the lifecycle model suite at 2000 sequences per engine (CI runs 40)
 bun run test:probes  # the strict-mode design probes (research 15) ADR-005 rests on, on their own server
-bun run build:lib    # dist/: bundled ESM + type declarations
-bun run api:check    # the public API against its reviewed report, etc/web-sandbox.api.md; api:update accepts a change
+bun run build:lib    # dist/: bundled ESM + type declarations of the default build (sealed mode alone)
+WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib   # the same of the build with the network modes (strict, cooperative, worker, origins, fetchBridge)
+bun run api:check    # each build's public API against its reviewed report, etc/web-sandbox.api.md and etc/web-sandbox.network.api.md; api:update accepts a change
 bun run docs:check   # the generated regions and the sections' markers against the code; docs:gen rewrites the regions
 ./scripts/smoke-package.sh   # bun pm pack, install into a scratch project, type-check and bundle
 ```
 
 CI runs all of the above, with the e2e suite and the probes on Chromium, Firefox and WebKit.
+
+## Two builds
+
+The package is sealed mode alone unless it is built with `WEB_SANDBOX_NETWORK_MODES=1`
+([ADR-009](docs/ADR-009-network-modes-build-flag.md)). The flag is declared once, `NETWORK_MODES_FLAG`
+(`src/lib/build-flag.ts`), and nothing else names the variable but the two scripts of `package.json` that build both.
+
+- **Where code goes.** Every module of `src/` has a row in `BUILD_MODULES` (`src/lib/build-modules.ts`): `sealed`,
+  `network` or `data`. A `sealed` module imports no `network` module, not even for a type; a new module gets its row, and
+  `test/unit/default-build.test.ts` fails without one. Code of strict, cooperative or worker mode, of `origins` or of
+  `fetchBridge` goes in a `network` module; what the element needs of it is a method of `NetworkMethods`
+  (`src/lib/network-host.ts`) or a value of the seam's slot (`src/lib/network-modes.ts`).
+- **Unit tests.** A file's build is its imports. A file that tests a network mode or option starts with
+  `import '@src/network';`, which installs the network modes; any other file's element is the default build's, where
+  such a config is refused with the reason `networkModesOff`.
+- **E2e tests.** A test names its build: `test.use({ build: 'network' })` at the top of a file of network-mode tests,
+  and `test.use({ build: buildOfMode(mode) })` in a `describe` of a loop over modes; the fixture's default is
+  `'default'`. The fixture tells every page of the test its build, each harness page loads that build's entry
+  (`test/e2e/library.ts`), and `setConfig()` on such a page throws for a config that is the other build's to test: a
+  network mode on the default build, a sealed config on the network build. A test whose subject is exactly that (the
+  default build's refusal; the network build's own sealed mode) says `test.use({ otherBuildConfigs: true })`. A spec
+  that opens a browser context of its own calls `pairWithBuild(context, build)`.
+- **Docs and the API gate.** `bun run api:update` writes both builds' reports and doc models. The reference in
+  docs/API.md is rendered from the network build's model (it has every export) and marks what only that build has from
+  the default build's.
 
 ## End-to-end tests
 
@@ -31,12 +57,15 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
   (`test/e2e/server.ts`; `bun -e 'import("./test/e2e/server.ts").then(m => console.log(m.E2E_ORIGIN))'` prints it), and
   `WEB_SANDBOX_E2E_PORT` overrides it. Specs never name a port: they use `ORIGIN` and `HARNESS` from
   `test/e2e/fixture.ts`, or a path relative to `baseURL`. `bun run dev` stays on 4444.
+- **The bundles.** The server's start builds `dist/` (the default build) and `dist-network/` (the bundle of the build
+  with the network modes); `package.spec.ts` mounts each from its bundle.
 - **Reuse.** Locally Playwright reuses a server that is already running, but only one that answers
   `/__e2e-root?root=<this checkout>` with 200: the e2e server of this very checkout (`vite.config.ts`). Any other server
   answers 409 (or 404, a `bun run dev` or a checkout from before this), so Playwright starts this checkout's own; if the
   port is taken, the run stops with "Port … is already in use" rather than testing another checkout's code. Free the port
-  or set `WEB_SANDBOX_E2E_PORT`. A reused server serves `dist/` as it was built when it started: rebuild
-  (`bun run build:lib`) before running `package.spec.ts` against it.
+  or set `WEB_SANDBOX_E2E_PORT`. A reused server serves `dist/` and `dist-network/` as they were built when it
+  started: rebuild (`bun run build:lib`, and `WEB_SANDBOX_NETWORK_MODES=1 bun scripts/build-lib.ts --out dist-network`)
+  before running `package.spec.ts` against it.
 - **What the host page has left.** A spec that measures the host page's ticks, a busy share or its longest stall uses
   `test/e2e/host-share.ts` (the best of N windows against the page's own idle baseline, the documented bounds, the
   stall meter), never a meter of its own: `test/unit/host-share.test.ts` fails on one (backlog T9). One window on each
@@ -183,10 +212,13 @@ rendered from this text ([below](#generated-docs-and-their-markers)).
 stand beside the bound as an example, with its date and engine; it is never generated, and no test pins it.
 
 **The guards**, in the unit run and CI:
-- `bun run api:check`: the public API against its reviewed report, [etc/web-sandbox.api.md](etc/web-sandbox.api.md),
-  and the checked-in doc model [etc/web-sandbox.api.json](etc/web-sandbox.api.json) (the declarations with their TSDoc,
-  which the generated reference reads) against what the build writes; `bun run api:update` accepts a change, which the PR
-  then shows.
+- `bun run api:check`: each build's public API against its reviewed report,
+  [etc/web-sandbox.api.md](etc/web-sandbox.api.md) (the default build) and
+  [etc/web-sandbox.network.api.md](etc/web-sandbox.network.api.md) (the build with the network modes), and the
+  checked-in doc models [etc/web-sandbox.api.json](etc/web-sandbox.api.json) and
+  [etc/web-sandbox.network.api.json](etc/web-sandbox.network.api.json) (the declarations with their TSDoc, which the
+  generated reference reads) against what the builds write; `bun run api:update` accepts a change, which the PR then
+  shows. It leaves `dist/` as the default build.
 - `bun run docs:check`: every generated region equals what the code renders, and no handwritten section is stale
   ([below](#generated-docs-and-their-markers)).
 - `test/unit/doc-links.test.ts`: every relative link and anchor in the Markdown files, and every ID in the registry's
@@ -211,8 +243,9 @@ docs/API.md and the port table of ADR-005 are built this way.
   `test/e2e/sealed-app.spec.ts` runs those files on all three engines, so the page shows code that works.
 - **The public API's reference** (docs/API.md's registration, the element's property and methods, the events and their
   details, the `fetchBridge` and `callLimits` tables and the lists of exports) is rendered from the TSDoc of the exports,
-  by `tools/docgen/extractors/api.ts`, from api-extractor's doc model: [etc/web-sandbox.api.json](etc/web-sandbox.api.json),
-  checked in so that `docs:check` needs no build. After you change a declaration or its TSDoc, run `bun run api:update`
+  by `tools/docgen/extractors/api.ts`, from api-extractor's doc models: [etc/web-sandbox.network.api.json](etc/web-sandbox.network.api.json),
+  the build that exports everything, and [etc/web-sandbox.api.json](etc/web-sandbox.api.json), by which the lists say
+  which exports only the network build has; both are checked in so that `docs:check` needs no build. After you change a declaration or its TSDoc, run `bun run api:update`
   (it also accepts the API report's change, which the PR shows), then `bun run docs:gen`. Write the TSDoc as the page
   should say it: a citation of a finding or an item goes in parentheses by itself (the page leaves it out), an ADR
   becomes a link, and `docs/API.md#slug` a link within the page. A new method is placed in the page's order in

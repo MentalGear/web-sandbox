@@ -43,11 +43,16 @@ Each ADR states its decision as it stands; how it changed is in [the archive](ar
 - [**ADR-008 — Sealed mode**](ADR-008-sealed-mode.md) — the default has no network: strict mode's view and worker with
   no network code on its path, a config with no mode that names `origins` or `fetchBridge` refused with a reason that
   names `mode: 'strict'`, and the review board's scope.
+- [**ADR-009 — The network modes behind a build flag**](ADR-009-network-modes-build-flag.md) — the package is sealed mode
+  alone: strict, cooperative and worker mode, `origins` and `fetchBridge` are in the build only with
+  `WEB_SANDBOX_NETWORK_MODES=1`, by two entries and a classified module graph, never a run-time switch.
 
 ## Planning
 
 - [**BACKLOG.md**](BACKLOG.md) — the open work: what is not done, is deferred or waits for the owner, and the
   limits documented as accepted. Finished items are in the archive.
+- [**design/**](design/README.md) — a design that is not built: one app per element (`start(app)`), what an app hands
+  to the host page, and the served document (D8), with the invariant each part must hold and the order of the work.
 
 ## Research
 

@@ -1,0 +1,46 @@
+{
+  "id": "parcel-build-noext",
+  "app": "parcel",
+  "variant": "noext",
+  "build": "npx parcel build index.html --dist-dir dist --no-cache --no-source-maps",
+  "serve": {
+    "static": "dist"
+  },
+  "buildExitCode": 0,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5197/sealed-document.48086a9d.",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "http://127.0.0.1:5197/sealed-document.48086a9d.",
+  "rawHref": "http://127.0.0.1:5197/sealed-document.48086a9d.",
+  "rawOrigin": "http://127.0.0.1:5197",
+  "appOrigin": "http://127.0.0.1:5197",
+  "scriptOrigin": "http://127.0.0.1:5197",
+  "documentOrigin": "http://127.0.0.1:5197",
+  "status": 200,
+  "contentType": "application/octet-stream",
+  "length": 1911,
+  "sha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "iframe": {
+    "error": "response.body: Protocol error (Network.getResponseBody): No resource with given identifier found"
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": false,
+  "bytesEqual": true,
+  "fileName": "sealed-document.48086a9d.",
+  "console": [],
+  "outputFiles": [
+    "index.html (215 B)",
+    "parcel.d0cb4a66.js (825 B)",
+    "sealed-document.48086a9d. (1911 B)"
+  ],
+  "documentFilesInOutput": [
+    "./dist/sealed-document.48086a9d."
+  ],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "parcel": "2.16.4"
+  }
+}

@@ -126,17 +126,20 @@ describe("the host page's policy comes from hostContentSecurityPolicy alone (BD4
             });
         }
         expect(calls).toHaveLength(1);
-        const host = read('src/host.ts');
-        const tokens = tokenize(host);
-        const [open, close] = methodBody(tokens, '_reach');
+        // `_reach` is a method of the network modes (network-host.ts), which the network build installs on the element
+        const network = tokenize(read('src/lib/network-host.ts'));
+        const [open, close] = methodBody(network, '_reach');
         const call = Number(calls[0]!.split(':')[1]);
-        expect(calls[0]!.startsWith('src/host.ts:') && call > open && call < close, 'the call is in `_reach`').toBe(true);
-        const body = tokens.slice(open, close).map(token => token.text).join('');
+        expect(calls[0]!.startsWith('src/lib/network-host.ts:') && call > open && call < close, 'the call is in `_reach`').toBe(true);
+        const body = network.slice(open, close).map(token => token.text).join('');
         expect(body).toContain('hostReach(this._origins,this._fetchPolicy,this._config.hostContentSecurityPolicy,');
 
-        const readers = [methodBody(tokens, '_reach'), methodBody(tokens, '_trustedTypes')];
-        const reads = tokens.flatMap((token, i) => (token.text === 'hostContentSecurityPolicy' && tokens[i - 1]?.kind === SyntaxKind.DotToken ? [i] : []));
-        expect(reads.length, 'positive control: the scan sees the reads').toBeGreaterThanOrEqual(2);
-        for (const index of reads) expect(readers.some(([from, to]) => index > from && index < to), host.slice(tokens[index]!.start - 80, tokens[index]!.end)).toBe(true);
+        // the option is read in `_reach` there, and in the element's class only by the Trusted Types rule
+        const readsOf = (tokens: Token[]) => tokens.flatMap((token, i) => (token.text === 'hostContentSecurityPolicy' && tokens[i - 1]?.kind === SyntaxKind.DotToken ? [i] : []));
+        const within = (tokens: Token[], name: string) => { const [from, to] = methodBody(tokens, name); return (index: number) => index > from && index < to; };
+        const host = tokenize(read('src/host.ts'));
+        expect(readsOf(network).length + readsOf(host).length, 'positive control: the scan sees the reads').toBeGreaterThanOrEqual(2);
+        expect(readsOf(network).every(within(network, '_reach'))).toBe(true);
+        expect(readsOf(host).every(within(host, '_trustedTypes'))).toBe(true);
     });
 });

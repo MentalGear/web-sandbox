@@ -1,5 +1,8 @@
-import { test, expect, type MountConfig } from './fixture';
+import { test, expect, type MountConfig, buildOfMode } from './fixture';
 import { busyShare, describeShare, viewBound } from './host-share';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Findings of R2 where the browser decides, on Chromium, Firefox and WebKit. The host page's own policy
@@ -28,32 +31,36 @@ test.describe("Review round 2, L-1 and L-5: in another window's document", () =>
             const events: string[] = [];
             el.addEventListener('ready', () => events.push('ready'));
             el.addEventListener('terminated', () => events.push('terminated'));
-            let filesChanged = 0;
-            el.addEventListener('fileschanged', () => filesChanged++);
             frame.contentDocument!.body.appendChild(el);
-            const methods = ['reset', 'load', 'setConfig', 'call', 'registerFiles'].every(name => typeof el[name] === 'function');
+            const methods = ['reset', 'start', 'call'].every(name => typeof el[name] === 'function');
             const states = [el.state];
             el.reset();
             states.push(el.state);
-            el.load('<p>x</p><script>parent.parent.postMessage("GUEST RAN", "*")</script>');
-            states.push(el.state);
-            el.setConfig({ mode: 'cooperative', origins: 5 });
-            states.push(el.state);
-            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] }); // usable again: still nothing built here
-            states.push(el.state);
-            el.registerFiles({ 'a.txt': 'a' });
+            // an element without its app, given one there: a refused start() and a usable one both build nothing
+            const fresh = document.createElement('web-sandbox') as any;
+            fresh.addEventListener('ready', () => events.push('fresh ready'));
+            fresh.addEventListener('terminated', () => events.push('fresh terminated'));
+            frame.contentDocument!.body.appendChild(fresh);
+            try { fresh.start({}, { mode: 'cooperative', origins: 5 }); } catch { /* refused: the element stays as new */ }
+            states.push(fresh.state);
+            fresh.start({ html: '<p>x</p><script>parent.parent.postMessage("GUEST RAN", "*")</script>' }, { mode: 'cooperative', capabilities: ['allow-scripts'] });
+            states.push(fresh.state);
             const code = await el.call('anything').then(() => 'resolved', (error: any) => error.code);
             await new Promise(resolve => setTimeout(resolve, 300));
-            const frames = el.shadowRoot.querySelectorAll('iframe').length;
-            document.body.appendChild(el); // positive control: back in its own document, it builds
-            return { methods, states, code, events, frames, filesChanged, back: el.state };
+            const frames = el.shadowRoot.querySelectorAll('iframe').length + fresh.shadowRoot.querySelectorAll('iframe').length;
+            // positive control: back in their own document, both build
+            document.body.appendChild(el);
+            document.body.appendChild(fresh);
+            return { methods, states, code, events, frames, back: [el.state, fresh.state] };
         });
-        expect(result).toEqual({ methods: true, states: ['idle', 'idle', 'idle', 'idle', 'idle'], code: 'TERMINATED', events: [], frames: 0, filesChanged: 1, back: 'loading' });
+        expect(result).toEqual({ methods: true, states: ['idle', 'idle', 'idle', 'idle'], code: 'TERMINATED', events: [], frames: 0, back: ['loading', 'loading'] });
     });
 });
 
 test.describe('C-3: what a call answers is measured as it is posted, by an allow-list', () => {
     for (const [mode, config] of Object.entries(MODES)) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: a guest method answering a large Error or ImageData is refused RESULT_NOT_TRANSFERABLE (each measured ~16 bytes before); a small answer resolves`, async ({ sandbox }) => {
             expect(await sandbox.mount(config)).toBe('ready');
             await sandbox.exposeGuest('bigError', `() => new Error('x'.repeat(${PAST_BUDGET}))`);
@@ -77,6 +84,7 @@ test.describe('C-3: what a call answers is measured as it is posted, by an allow
                 twoFaced: 'resolved 5', // the snapshot measured is the one posted: the getter is read once
                 small: 'resolved 3 a',
             });
+        });
         });
     }
 });

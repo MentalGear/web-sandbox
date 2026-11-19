@@ -44,17 +44,17 @@ all, with the realms named as there (`strict-worker` is the guest's worker). `VI
 on, and the render port is the view's and the worker's alone
 ([ADR-002](ADR-002-host-guest-broker.md#strict-mode-renders-bypass-the-host)).
 
-<!-- describes: adr005:ports sig:1cc6 -->
+<!-- describes: adr005:ports sig:c225 -->
 <!-- generated:begin adr005-ports -->
 | Port | Ends | Carries |
 | :--- | :--- | :--- |
 | logic | host ↔ strict-worker | `EXECUTE`, `PING`, `PONG`, `RPC_REQ`, `RPC_RES`, `LOG`, `VIOLATION`, `UNCAUGHT_PAST_BUDGET` |
-| view | host ↔ view | `VIOLATION`, `RESIZE`, `UNCAUGHT_PAST_BUDGET`, `VIEW_READY`, `VIEW_INITIAL`, `VIEW_PING`, `VIEW_PONG`, `VIEW_WRITE`, `VIEW_WRITTEN`, `VIEW_FIRST_OVERRUN`, `VIEW_OVERRUN`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `GUEST_TEXT_DROPPED`, `TRUSTED_TYPES_REFUSED`, `WORKER_REFUSED` |
+| view | host ↔ view | `VIOLATION`, `RESIZE`, `UNCAUGHT_PAST_BUDGET`, `VIEW_READY`, `VIEW_INITIAL`, `VIEW_LINK`, `VIEW_PING`, `VIEW_PONG`, `VIEW_WRITE`, `VIEW_WRITTEN`, `VIEW_FIRST_OVERRUN`, `VIEW_OVERRUN`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `GUEST_TEXT_DROPPED`, `TRUSTED_TYPES_REFUSED`, `WORKER_REFUSED` |
 | render | view ↔ strict-worker (the host is not on this path) | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_TEXT`, `VIEW_SET`, `VIEW_LISTEN`, `VIEW_ACK`, `VIEW_EVENT`, `VIEW_EVENT_ACK` |
 <!-- generated:end -->
 
 <!-- generated:begin adr005-init-view -->
-On the wrapper's one `load`, the host posts `INIT_VIEW { workerSource, entryDone, viewFiles, html, autoResize, allowAnimations, allowAutoplay, origins }` to the view with the logic and view ports.
+On the wrapper's one `load`, the host posts `INIT_VIEW { workerSource, entryDone, viewFiles, html, autoResize, allowAnimations, allowAutoplay, origins, links }` to the view with the logic and view ports.
 <!-- generated:end -->
 
 The bootstrap accepts exactly one `INIT_VIEW`, from `parent.parent`, in a capture listener that stops it there; it
@@ -80,7 +80,8 @@ creates the render port, spawns the worker from a `blob:` URL (`worker-src blob:
   is given the guest's `html`, entry or files, whose every pass there is a row of `HOST_PASSES`
   (`src/lib/host-passes.ts`), and `test/unit/host-passes.test.ts` fails on a parser or a sink reachable from the view's
   frame builders. A `DOMParser` of the host realm would have the browser check the guest's styles and `<base>` against
-  the host page's policy, and report them (Chromium; BD7:LIM-1). `html` longer than `VIEW_RENDER_MAX_LENGTH`, the most
+  the host page's policy, and report them (a style attribute: Chromium, though not in a `DOMParser`'s document, and
+  WebKit; a `<base>`: Chromium; BD7:LIM-1; [research 25](research/25_cssom_styles/README.md)). `html` longer than `VIEW_RENDER_MAX_LENGTH`, the most
   one render takes, is refused at configuration (`htmlTooLong`).
 - **Cooperative mode's limits are a frozen list.** No new guest-realm patch is made in cooperative mode; a new finding there
   is documented as a limit (README "Cooperative-mode limits", the same in API.md and backlog S44). The list: the
@@ -144,14 +145,14 @@ creates the render port, spawns the worker from a `blob:` URL (`worker-src blob:
 ### API
 
 ```js
-sandbox.registerFiles({ 'main.js': `sandboxView.render('<button id="go">Go</button>');
-    sandboxView.on('click', 'go', (e) => sandboxView.render('<p>clicked ' + e.target.id + '</p>'));` });
-sandbox.setConfig({ mode: 'strict', entry: 'main.js' });
+const files = { 'main.js': `sandboxView.render('<button id="go">Go</button>');
+    sandboxView.on('click', 'go', (e) => sandboxView.render('<p>clicked ' + e.target.id + '</p>'));` };
+sandbox.start({ entry: 'main.js', files }, { mode: 'strict' });
 ```
 
-- `mode: 'strict'`, `entry` (a registered JavaScript path; the worker runs it first, as a classic script); `html` / `load()`
-  is the initial view; `execute()` runs in the worker (needs `scriptUnsafe`); `call()` and `expose()` talk to the worker's
-  `bridge`; `watchdogTimeout` and `workerExecutionTimeout` watch the worker.
+- `mode: 'strict'`, `entry` (the path of a JavaScript file of the app's; the worker runs it first, as a classic script);
+  `html` is the initial view; `execute()` runs in the worker (needs `scriptUnsafe`); `call()` and the host methods talk to
+  the worker's `bridge`; `watchdogTimeout` and `workerExecutionTimeout` watch the worker.
 - In the worker, `sandboxView.render(html, into?)` replaces the view's body, or the children of the element whose id is
   `into`; at most `VIEW_RENDER_MAX_LENGTH` (256 Ki) characters; latest wins per target. `sandboxView.text(id, text)` makes a
   string an element's only content, assigned and never parsed, so a guest escapes nothing; `sandboxView.set(id, { value?,
@@ -221,8 +222,8 @@ refused if it contains any, or anything that would end or re-enter the script el
 - **No guest style is an inline style** (S74, class A: `INHERITED_CONTEXT.cspReporting`, BD6:ISO-2;
   [research 25](research/25_cssom_styles/README.md)). The view inherits the host page's policy list, whose `style-src`
   checks every `style` attribute and `<style>` element, refuses them where the page lists hashes, and reports each
-  refusal to the page's endpoint with the style's first characters. Chromium checks a `style` attribute as it parses it,
-  in the inert template too. So the parser is never given one: the view encodes the markup first (`styleMarkup`,
+  refusal to the page's endpoint with the style's first characters. Chromium and WebKit check a `style` attribute as they
+  parse it, in the inert template too (Firefox on insertion). So the parser is never given one: the view encodes the markup first (`styleMarkup`,
   `src/lib/style-markup.ts`), which renames every run of `style` the tokenizer could read as an attribute name, makes
   every `<style>` a `noframes` (raw text the same way, ended by its renamed end tag) and every guest `noframes` an element
   of another name, and the renderer reads the texts and values back without the insertions. A style attribute's text
@@ -254,8 +255,12 @@ refused if it contains any, or anything that would end or re-enter the script el
   `href` and `xlink:href`, any MathML element) with one constant, `INERT_HREF = 'about:blank#'`, before insertion; no option
   turns it off. The browser's own actions on a link — "copy link address", "open in new tab", dragging — need no page event,
   so the view cannot cancel them, and they would carry the guest's URL; with the constant they carry none. The worker never had the URL
-  (event details carry ids), so routing is unchanged, and an embedder who wants links that leave the sandbox exposes a host
-  method (`openExternal(key)`, which maps a key to an address the host holds) that the worker calls on click. `about:blank#` is absolute, so it means the same in any
+  (event details carry ids), so routing is unchanged. An embedder who wants links that leave the sandbox lists their URLs
+  in `links` ([design 02](design/02-what-an-app-hands-over.md#links-the-users-click-on-a-listed-link-opens-it)): the
+  renderer marks an HTML `a` whose `href` is one of them, character for character, and still gives it the constant; the
+  user's trusted click on it sends the host page the link's index, and the host page opens its own copy of the URL. A host
+  method that the worker calls on click (`openExternal(key)`) lets the guest choose the moment instead, within the
+  browser's 5 seconds of any click ([research 30](research/30_links_popup/README.md)). `about:blank#` is absolute, so it means the same in any
   document; every engine reports it unchanged as the link's URL and its drag data; and opening it loads the empty
   `about:blank`, no request. `#` resolves to the same only through the view's inherited `about:blank` base; `""` differs per
   engine; `about:invalid` and `javascript:` differ per engine; `data:,` opens a document. Removing `href` or rewriting to a
@@ -299,8 +304,8 @@ refused if it contains any, or anything that would end or re-enter the script el
   (a probe worker tells it from Firefox's message-less syntax error). The view's two HTML and script sinks go through one
   Trusted Types policy (`web-sandbox`) where the host page requires them (API.md, "Host page policy").
 - **Focus never leaves the host page for the sandbox on the guest's say.** A sandboxed frame's `focus()` without user
-  activation takes focus from the host page's focused element in Chromium and Firefox (Chromium also its keystrokes);
-  WebKit keeps it. So `set({ focus: true })` focuses only while the view's `document.hasFocus()`: the user last clicked or
+  activation takes focus from the host page's focused element in Firefox (not its keystrokes); Chromium (159) and WebKit
+  keep it. So `set({ focus: true })` focuses only while the view's `document.hasFocus()`: the user last clicked or
   tabbed into the sandbox and the window is focused. Otherwise the view refuses it (`VIEW_FOCUS` in the ack, a line in the
   guest's log) and applies the rest of the call.
 
@@ -335,7 +340,7 @@ every engine, WebKit included, with the same fields. `fetch` and `XMLHttpRequest
 the gate refuses every `WebSocket`, a listed origin's too, and `origins.connect` keeps no `wss://` entry: a handshake
 carries the cookies the browser attaches by site, which nothing strips, so strict mode has no cookie carrier at all
 (`STRICT_COOKIE_CARRIERS`, `src/lib/cookie-facts.ts`); a streamed `fetch()` response, or a socket the host page opens
-and relays through `expose()`, takes its place. The originals
+and relays through a host method, takes its place. The originals
 cannot be reached: every copy on the global object's prototype chain is removed (a worker's `fetch` lives on
 `WorkerGlobalScope.prototype`), and each prototype's `constructor` names the gated constructor. The browser's policy stays
 underneath: what the gate admits it still checks, and a redirect it refuses is reported per engine.

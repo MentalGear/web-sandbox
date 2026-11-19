@@ -4,7 +4,7 @@ import {
     isJavaScriptType, isStylesheetType, isValidMimeType, isValidPath, mimeTypeFor, referenceCost, rewriteCost, SLOT_URL_BYTES,
     type ByteEdits, type FileError, type FileErrorCode, type FileSnapshotEntry, type PathRule,
 } from './files';
-import { createGuestWrites, parseCommitArguments } from './guest-writes';
+import { createGuestWrites } from './guest-writes';
 
 const BASE = 'https://vfs.invalid/';
 
@@ -112,16 +112,16 @@ describe('a refused path: the message names the rule it breaks', () => {
         expect(new Set(texts).size).toBe(texts.length);
     });
 
-    it.each(Object.entries(BREAKS).filter(([, path]) => path !== null))('%s: the first rule broken, and the text of registerFiles(), unregisterFiles() and the commit', (rule, path) => {
+    it.each(Object.entries(BREAKS).filter(([, path]) => path !== null))('%s: the first rule broken, and the text of register(), unregister() and a guest write', (rule, path) => {
         expect(brokenPathRule(path)).toBe(rule);
         const text = PATH_RULES[rule as PathRule].text;
         const store = new FileStore(() => {});
         const refusals: [string, { code?: string; message?: string }][] = [
-            ['unregisterFiles()', refusal(() => store.unregister([path]))],
-            ['commitGuestWrites()', refusal(() => parseCommitArguments([path], undefined))],
+            ['unregister()', refusal(() => store.unregister([path]))],
+            ['sandboxFiles.write()', refusal(() => createGuestWrites({ store }).handle({ change: 'write', path, entry: 'x' }))],
         ];
-        // a key of registerFiles()' object is always a string
-        if (typeof path === 'string') refusals.push(['registerFiles()', refusal(() => store.register({ [path]: 'x' }))]);
+        // a key of register()'s object is always a string
+        if (typeof path === 'string') refusals.push(['register()', refusal(() => store.register({ [path]: 'x' }))]);
         for (const [caller, error] of refusals) {
             expect(error.code, caller).toBe('INVALID_PATH');
             expect(error.message, caller).toBe(`[Sandbox] ${caller} refused the path ${describePath(path)}: ${text}.`);
@@ -825,7 +825,7 @@ describe('FileStore.apply(): the one mutation (backlog C5: register, unregister 
     it('refusal messages name the caller', () => {
         const store = new FileStore(() => {});
         try { store.apply({ put: new Map([['../x', '']]) }, 'commitGuestWrites()'); } catch (e: any) { expect(e.message).toContain('commitGuestWrites() refused'); }
-        try { store.register({ '../x': '' }); } catch (e: any) { expect(e.message).toContain('registerFiles() refused'); }
-        try { store.unregister(['../x']); } catch (e: any) { expect(e.message).toContain('unregisterFiles() refused'); }
+        try { store.register({ '../x': '' }); } catch (e: any) { expect(e.message).toContain('register() refused'); }
+        try { store.unregister(['../x']); } catch (e: any) { expect(e.message).toContain('unregister() refused'); }
     });
 });

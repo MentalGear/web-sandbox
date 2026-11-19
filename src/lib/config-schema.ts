@@ -2,7 +2,7 @@
  * The config schema (class C, docs/research/18_finding_classes/README.md, design 4; R5:L-2, R5:N-5): where a
  * field's validity is decided together with the fields it depends on, once, before anything is stored or built. Its
  * configuration (S67): every option's default, accepted values,
- * clamp, warnings and modes are declared once in CONFIG_SCHEMA, normaliseConfig() is the one reading of a setConfig()
+ * clamp, warnings and modes are declared once in CONFIG_SCHEMA, normaliseConfig() is the one reading of a start()
  * argument, and the cross-field invariants are declared once in CONFIG_INVARIANTS. host.ts keeps no validation of its
  * own: it stores what normaliseConfig() returns, says its warnings once per element and message, and refuses what it
  * refuses.
@@ -25,18 +25,17 @@
 import type { CallLimits } from '../host';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, type SafeCapability, type UnsafeCapability } from '../csp-directives';
 import { filterCapabilities } from './capabilities';
-import { carriedTo, COOKIE_CARRIER_IDS, COOKIE_CARRIERS, cookieCarriersIn, sameSiteCookieClause, withCode, type CookieCarrierId } from './cookie-facts';
-import { NO_ORIGINS, ORIGIN_KINDS, parseOrigins, shown, type OriginPolicy } from './csp/origins';
-import { isPrivateHost, isPrivateOrigin, PRIVATE_NETWORK_REASON, toFetchPolicy, type FetchPolicy } from './fetch-bridge';
-import { hostSiteUndecided, onHostSite } from './host-site';
-import type { Origin } from './origin';
+import { NO_ORIGINS, ORIGIN_KINDS, shown, type OriginPolicy } from './csp/origin-kinds';
+import { NETWORK_MODES_FLAG } from './build-flag';
+import { networkModes } from './network-modes';
 import { RPC_MAX_BYTES, type BudgetRefusal } from './rpc';
 import { MAX_TOTAL_BYTES } from './files';
 import { VIEW_RENDER_MAX_LENGTH } from './in-sandbox-view';
 import { defineData, hasOwnField, ownField, type Complete, type Holds } from './utils';
 import { watchdogBudget } from './watchdog';
-import { fixedDetail, reasonText, type LibraryDetail } from './reasons';
+import { fixedDetail, joinDetails, reasonText, type LibraryDetail } from './reasons';
 import { mintUncodedError } from './minted-errors';
+import { LINK_RULES, NO_LINKS, readLinks } from './links';
 
 /** The per-second budget of the calls the guest makes, per environment: what both ends count. */
 export interface CallBudget {
@@ -78,17 +77,18 @@ export const CALL_LIMIT_FIELDS = ['maxPerSecond', 'maxBytesPerSecond'] as const 
 type CallLimitFieldsComplete = Holds<Complete<keyof CallLimits, typeof CALL_LIMIT_FIELDS>>;
 
 /**
- * The call budget `callLimits` asks for (from the copy setConfig() took). Each field is a finite number >= 1, else its
+ * The call budget `callLimits` asks for (from the copy start() took). Each field is a finite number >= 1, else its
  * default: left out, silently; anything else (Infinity, a number below 1, NaN, a string), with a warning. There is no
  * "off": a budget that can be lifted is one a config typo lifts. Nor a budget that admits nothing (R4:C-6):
  * below 1, every call would be BUSY forever, without a word, since no call weighs less than 1. A byte budget below
- * RPC_MAX_BYTES is kept, with one warning: calls heavier than it are refused ARGS_NOT_TRANSFERABLE (heaviestCall). Never
- * throws: a callLimits that is not an object is warned about and gives the defaults.
+ * RPC_MAX_BYTES is kept, with one warning: calls heavier than it are refused ARGS_NOT_TRANSFERABLE (heaviestCall). A
+ * callLimits that is not an object gives the defaults. A value it cannot take goes to `invalid` (a warning by default;
+ * start()'s reading refuses it there, InvalidValue), the warning about a valid small byte budget to `warn`.
  */
-export function callBudgetOf(callLimits: unknown, warn: (message: string) => void): Readonly<CallBudget> {
+export function callBudgetOf(callLimits: unknown, warn: (message: string) => void, invalid: InvalidValue = warningOnly(warn)): Readonly<CallBudget> {
     if (callLimits === undefined) return DEFAULT_CALL_BUDGET;
     if (!callLimits || typeof callLimits !== 'object' || Array.isArray(callLimits)) {
-        warn(`[Sandbox] callLimits must be an object; ${shown(callLimits)} was ignored: the defaults apply (${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes} bytes per second).`);
+        invalid(`[Sandbox] callLimits must be an object; ${shown(callLimits)} was ignored: the defaults apply (${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes} bytes per second).`, `[Sandbox] start(): callLimits must be an object, not ${shown(callLimits)}.`);
         return DEFAULT_CALL_BUDGET;
     }
     const limits = callLimits as Record<string, unknown>;
@@ -96,13 +96,19 @@ export function callBudgetOf(callLimits: unknown, warn: (message: string) => voi
         const value = ownField(limits, name);
         if (value === undefined) return fallback;
         if (typeof value === 'number' && Number.isFinite(value) && value >= 1) return value;
-        warn(`[Sandbox] callLimits.${name} must be a finite number >= 1; ${typeof value === 'number' ? String(value) : shown(value)} was ignored: the default ${fallback} applies.`);
+        const given = typeof value === 'number' ? String(value) : shown(value);
+        invalid(`[Sandbox] callLimits.${name} must be a finite number >= 1; ${given} was ignored: the default ${fallback} applies.`, `[Sandbox] start(): callLimits.${name} must be a finite number >= 1, not ${given}.`);
         return fallback;
     };
     const budget = Object.freeze({ calls: field('maxPerSecond', DEFAULT_CALL_BUDGET.calls), bytes: field('maxBytesPerSecond', DEFAULT_CALL_BUDGET.bytes) });
     if (budget.bytes < RPC_MAX_BYTES) warn(`[Sandbox] callLimits.maxBytesPerSecond is ${budget.bytes}, below the largest call (${RPC_MAX_BYTES} bytes): a call heavier than ${budget.bytes} bytes is refused with ARGS_NOT_TRANSFERABLE.`);
     return budget;
 }
+
+/** An InvalidValue that only warns: the lenient reading. */
+export const warningOnly = (warn: (message: string) => void): InvalidValue => (warning) => {
+    if (warning !== null) warn(warning);
+};
 
 /** Why a guest call past the budget is refused (BUSY): the same words in the guest's broker (in-sandbox-script.ts). */
 export const callBudgetText = (budget: Readonly<CallBudget>) => `more than ${budget.calls} calls or ${budget.bytes} bytes of calls in one second`;
@@ -143,11 +149,14 @@ export const isSandboxMode = (mode: unknown): mode is SandboxMode => (SANDBOX_MO
 export const STRICT_VIEW_MODES = ['strict', 'sealed'] as const satisfies readonly SandboxMode[];
 export const hasStrictView = (mode: unknown): boolean => (STRICT_VIEW_MODES as readonly unknown[]).includes(mode);
 
-/** The modes that take the options that open the network, `origins` and `fetchBridge`: every mode but sealed. */
-export const NETWORK_MODES = ['strict', 'cooperative', 'worker'] as const satisfies readonly SandboxMode[];
+/**
+ * The modes that take the options that open the network, `origins` and `fetchBridge`: every mode but sealed. They are
+ * the network modes, which a build has only with its flag on (build-flag.ts).
+ */
+export const NETWORK_MODES = NETWORK_MODES_FLAG.modes satisfies readonly SandboxMode[];
 
 /** The options that open the network, which sealed mode does not have. */
-export const NETWORK_OPTIONS = ['origins', 'fetchBridge'] as const;
+export const NETWORK_OPTIONS = NETWORK_MODES_FLAG.options;
 
 /**
  * A config refused with a reason of the library's own (TERMINATION_REASONS), not "could not be used": the element's
@@ -158,6 +167,19 @@ export class ConfigRefusal extends Error {
         super(reason);
         this.name = 'ConfigRefusal';
     }
+}
+
+/**
+ * In a build without the network modes (the default build: build-flag.ts), a config that asks for one of them (NETWORK_MODES)
+ * or for an option that opens the network (NETWORK_OPTIONS, with any value but `undefined`) is refused whole, with a
+ * reason that names the flag (`networkModesOff`): never read as sealed mode, and never stripped of the option (research
+ * 24, D9; the mechanism of sealedNetworkRefusal). Decided before any option is read, so nothing of the config is applied.
+ */
+export function networkModesOffRefusal(mode: unknown, source: Record<string, unknown>): ConfigRefusal | null {
+    if (networkModes() !== null) return null;
+    const asksForMode = (NETWORK_MODES as readonly unknown[]).includes(mode);
+    const asksForOption = NETWORK_OPTIONS.some(name => ownField(source, name) !== undefined);
+    return asksForMode || asksForOption ? mintUncodedError(ConfigRefusal, reasonText('networkModesOff')) : null;
 }
 
 /**
@@ -185,7 +207,7 @@ export function sealedScriptUnsafeRefusal(mode: unknown, source: Record<string, 
 
 /**
  * Strict and sealed mode's `html` longer than one render may be (VIEW_RENDER_MAX_LENGTH: the initial view is a render) is
- * refused with its reason (`htmlTooLong`), by setConfig() (normaliseConfig) and load() (host.ts) alike, before anything
+ * refused with its reason (`htmlTooLong`), by start() (normaliseConfig), before anything
  * stores or reads it (BD7:LIM-3): the view parses the whole of its initial markup before its renderer can refuse any of
  * it, so the bound is decided here, where the markup arrives. Cooperative mode's `html` is its guest document, which the
  * browser parses as it is, and worker mode's is ignored.
@@ -208,8 +230,23 @@ export function renamedModeNote(mode: unknown): LibraryDetail {
 /** A mode as a warning shows it (a reason never does: BD5:DOC-2): a string, clamped, or its type. */
 export const describeMode = (mode: unknown): string => (typeof mode === 'string' ? JSON.stringify(mode.slice(0, 32)) : `of type ${mode === null ? 'null' : typeof mode}`);
 
+// A build without the network modes has sealed mode alone (ADR-009): what an unknown mode's refusal and warning add
+// there, so that neither sends its reader to a mode the build refuses next.
+const SEALED_ALONE_NOTE = fixedDetail(`; this build has sealed mode alone (${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on} builds the others)`);
+
+/** "; this build has sealed mode alone (…)" in a build without the network modes, else ''. */
+export function buildModesNote(): LibraryDetail {
+    return networkModes() === null ? SEALED_ALONE_NOTE : fixedDetail('');
+}
+
 /** Why no environment is built for a mode that is not one (the build's refusal, _buildRefusal), or null. */
-export const unknownModeReason = (mode: unknown): string | null => (isSandboxMode(mode) ? null : reasonText('unknownMode', renamedModeNote(mode)));
+export const unknownModeReason = (mode: unknown): string | null => (isSandboxMode(mode) ? null : reasonText('unknownMode', joinDetails(renamedModeNote(mode), buildModesNote())));
+
+/** The warning for a mode that is not one: the modes there are, the build's own among them, and what start() takes. */
+export function unknownModeNotice(mode: unknown): string {
+    const startsWith = networkModes() === null ? "'sealed', or no mode" : 'one of them';
+    return `[Sandbox] mode ${describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}${renamedModeNote(mode)}${buildModesNote()}: the sandbox starts only with ${startsWith}.`;
+}
 
 // The sandbox flags of strict mode's view, always (why: host.ts, at its import): listing one of them in `capabilities`
 // there asks for nothing more, so it is kept, not dropped.
@@ -241,16 +278,19 @@ export interface StoredConfig {
     watchdogTimeout: number;
     autoResize: boolean;
     guestWrites: boolean;
+    /** The URLs a click on a marked link opens (links.ts), in the embedder's order: none where the mode has no view. */
+    links: readonly string[];
     allowAnimations: boolean;
     allowAutoplay: boolean;
     /** The host page's policy as the embedder gave it, `false` (the page sends none), or absent: the connect lists are dropped (host-connect.ts, hostReach). */
     hostContentSecurityPolicy?: string | false;
 }
 
-/** What one setConfig() argument normalises to: everything a build reads of the configuration. */
+/** What start()'s options normalise to: everything a build reads of the configuration. */
 export interface NormalisedConfig {
     config: StoredConfig;
-    fetchPolicy: FetchPolicy | null;
+    /** The validated `fetchBridge` option (fetch-bridge.ts, FetchPolicy), which only the network modes read; null when off, and in sealed mode. */
+    fetchPolicy: object | null;
     origins: OriginPolicy;
     callBudget: Readonly<CallBudget>;
 }
@@ -274,6 +314,19 @@ export interface NormaliseContext {
     hostSites: readonly string[];
 }
 
+/**
+ * A value an option does not take. Read for start(), the argument is refused with a TypeError whose message is
+ * `refusal`, and nothing is stored (design 01, "start(app, grants)": start() throws for the shape and type of each
+ * option); read leniently, the warning is said (none when null) and the rule's fallback is stored.
+ */
+export type InvalidValue = (warning: string | null, refusal: string) => void;
+
+/**
+ * How a value an option cannot take is read: start() refuses it; the lenient reading warns and stores the option's
+ * fallback, which defaultConfig() (an argument that names nothing) and the schema's tests use.
+ */
+export type ConfigReading = 'lenient' | 'start';
+
 /** What an option's rules see while one argument is normalised. */
 export interface OptionInput {
     /** the argument's own value for the option (undefined when it has none) */
@@ -285,6 +338,8 @@ export interface OptionInput {
     /** the host page (NormaliseContext), read when a rule first asks for it, at most once per argument */
     host: () => NormaliseContext;
     warn: (message: string) => void;
+    /** a value the option does not take (InvalidValue): a refusal for start(), a warning when read leniently */
+    invalid: InvalidValue;
 }
 
 /**
@@ -292,6 +347,10 @@ export interface OptionInput {
  * (the network options' rules), and at most once per argument.
  */
 export type HostPage = NormaliseContext | (() => NormaliseContext);
+
+/** Whose an option is: the app's (its author wrote it) or the embedder's (what the embedder allows the app). */
+export const OPTION_OWNERS = ['app', 'embedder'] as const;
+export type OptionOwner = (typeof OPTION_OWNERS)[number];
 
 /**
  * One option, declared once: its default, the modes that read it, and how a given value becomes the stored one.
@@ -302,9 +361,14 @@ export type HostPage = NormaliseContext | (() => NormaliseContext);
  *    one; the others are ignored silently, as docs/API.md says.
  *  - `read`: the stored value of a given one, with a warning for what it could not take. A throw refuses the config.
  *  - `notice`: what an option in use says about itself (an unsafe value enabled).
- * A removed option (`removed`) is never stored: it is ignored, with that warning.
+ *  - `owner`: whose the option is (I17, design 01): the app's own content, which `start()` takes in its first argument
+ *    (SandboxApp), or the embedder's, which it takes in the second (SandboxGrants). Each argument refuses an option of
+ *    the other. Every key of the schema has one, a removed one included (test/unit/config-schema.test.ts).
+ * A removed option (`removed`) is never stored: it is ignored, with that warning, by start(), whose
+ * grants take it as the embedder's key it always was.
  */
 export interface OptionRule {
+    readonly owner?: OptionOwner;
     readonly default?: unknown;
     readonly documented?: string;
     readonly modes?: readonly SandboxMode[];
@@ -319,119 +383,42 @@ const ALL_MODES = SANDBOX_MODES;
 const noStrictView = (mode: unknown) => !hasStrictView(mode);
 const asList = <T>(value: T[] | undefined): T[] => value ?? [];
 
-/** Only a literal true enables a switch: each one is interpolated into a bootstrap as a literal. */
-const literalTrue = ({ given }: OptionInput) => given === true;
+/**
+ * Only a literal true enables a switch: each one is interpolated into a bootstrap as a literal. The lenient reading takes any
+ * other value as false, silently; start() refuses one that is not a boolean, unless the mode ignores the option.
+ */
+const literalTrue = (name: 'autoResize' | 'scriptUnsafe' | 'guestWrites') => ({ given, mode, invalid }: OptionInput): boolean => {
+    if (given !== undefined && typeof given !== 'boolean' && !ignoredIn(name, mode)) invalid(null, `[Sandbox] start(): ${name} must be a boolean, not ${shown(given)}.`);
+    return given === true;
+};
 
 /**
  * A delay in ms: a finite number > 0, else 0, off (watchdog.ts, watchdogBudget). Anything else than 0 or a left-out option
  * that gives off says so once (BD4:NEW-3), as a refused `callLimits` field does, unless the mode ignores the option.
  */
-const delay = (name: 'watchdogTimeout' | 'workerExecutionTimeout', off: string) => ({ given, mode, warn }: OptionInput): number => {
+const delay = (name: 'watchdogTimeout' | 'workerExecutionTimeout', off: string) => ({ given, mode, invalid }: OptionInput): number => {
     const ms = watchdogBudget(given);
     if (ms === 0 && given !== undefined && given !== 0 && !ignoredIn(name, mode)) {
-        warn(`[Sandbox] ${name} must be a finite number > 0 (milliseconds), or 0 for off; ${typeof given === 'number' ? String(given) : shown(given)} was ignored: ${off}.`);
+        const value = typeof given === 'number' ? String(given) : shown(given);
+        invalid(`[Sandbox] ${name} must be a finite number > 0 (milliseconds), or 0 for off; ${value} was ignored: ${off}.`, `[Sandbox] start(): ${name} must be a finite number > 0 (milliseconds), or 0 for off, not ${value}.`);
     }
     return ms;
 };
 
+/** `links` read by its rules (links.ts): the list, or a refusal of the config that names the rule it breaks. */
+const linksOf = (given: unknown): readonly string[] => {
+    const read = readLinks(given);
+    if ('refused' in read) throw mintUncodedError(ConfigRefusal, reasonText('linksRefused', fixedDetail(LINK_RULES[read.refused])));
+    return read.links;
+};
+
 /** One of the view's switches (strict mode): its default when left out, the boolean it is, else false with a warning. */
-const viewSwitch = (name: ViewSwitch) => ({ given, mode, warn }: OptionInput): boolean => {
+const viewSwitch = (name: ViewSwitch) => ({ given, mode, invalid }: OptionInput): boolean => {
     if (given === undefined) return VIEW_SWITCHES[name];
     if (typeof given === 'boolean') return given;
-    if (hasStrictView(mode)) warn(`[Sandbox] ${name} must be a boolean; ${shown(given)} was taken as false: ${VIEW_SWITCH_OFF[name]}.`);
+    if (hasStrictView(mode)) invalid(`[Sandbox] ${name} must be a boolean; ${shown(given)} was taken as false: ${VIEW_SWITCH_OFF[name]}.`, `[Sandbox] start(): ${name} must be a boolean, not ${shown(given)}.`);
     return false;
 };
-
-/**
- * The one pass over a parsed `origins` that decides what a listed origin reaches beyond the internet at large, in every
- * list (ORIGIN_KINDS: every kind, so a new kind is covered), with one warning per list and reason.
- * Its inputs about the host page are `context.hostSites` (host-site.ts, `hostSiteOrigins`) and `context.hostOrigin`:
- *  - An origin on the host page's site (onHostSite, host-site.ts: on the site of the page's origin, of its top-level
- *    URL or of a page that frames it; the site of a host is the host, or every host that shares its last two labels;
- *    for an address, `localhost` or a single-label host, that host only) may receive the host site's cookies with a
- *    guest request (INHERITED_CONTEXT.cookies; the engines differ, and only Chromium's wrapper frame, credentialless,
- *    sends none), so it is dropped from the policy in every mode. The rule needs no probe of the page, and it can only
- *    refuse more than the browser's public-suffix list would (two sites under a suffix of several labels, such as
- *    `github.io`), which the warning says (SITE_RULE).
- *  - When the host page's site is undecided (hostSiteUndecided: an opaque origin, or one that cannot be read, among
- *    them; BD4:ISO-1, BD4:ISO-3), the rule cannot say which hosts an engine counts as the host page's site, so every
- *    entry that a request carrying cookies can reach in the mode is dropped too (COOKIE_CARRIERS, its `modes` and
- *    `reaches`, cookie-facts.ts: `wss://` entries in worker mode; in cooperative mode every list; none in strict
- *    mode, which has no carrier), with a warning that says why (UNDECIDED_SITE_RULE).
- *  - A loopback, private or link-local host (isPrivateHost) is a machine or network of the user's, which the guest then
- *    reaches, and engines differ on whether a page of the public web may do that: kept, with a warning, only when the
- *    host page is itself on one (`hostOrigin`); dropped, with a warning, otherwise (PRIVATE_NETWORK_REASON).
- * fetchBridge.allow says the same for its entries (toFetchPolicy); the fetch bridge sends no credentials, so it is what
- * the warnings point to. Returns `policy` itself when nothing is dropped.
- */
-export function limitHostReach(policy: OriginPolicy, context: NormaliseContext, warn: (message: string) => void, mode: unknown): OriginPolicy {
-    const { hostOrigin, hostSites } = context;
-    const hostIsPrivate = isPrivateOrigin(hostOrigin);
-    const undecided = hostSiteUndecided(hostSites);
-    // a mode that is not one refuses every build; until then it counts as every mode
-    const carriers = undecided === null ? [] : isSandboxMode(mode) ? cookieCarriersIn(mode) : COOKIE_CARRIER_IDS;
-    const kept: Record<string, readonly Origin[]> = {};
-    let dropped = false;
-    for (const kind of ORIGIN_KINDS) {
-        const keep: Origin[] = [];
-        const siteRefused: string[] = [];
-        const undecidedRefused: string[] = [];
-        const localRefused: string[] = [];
-        const listed: string[] = [];
-        for (const origin of policy[kind]) {
-            // one entry per origin, with every reason it is listed for
-            const reasons: string[] = [];
-            const onSite = onHostSite(origin, hostSites);
-            const carried = !onSite && carriedTo(carriers, kind, origin);
-            const onLocal = isPrivateHost(new URL(origin).hostname);
-            if (onSite) reasons.push(origin === hostOrigin ? "the host page's own origin" : "on the host page's site");
-            if (carried) reasons.push("the host page's site is undecided");
-            if (onLocal) reasons.push('a loopback, private or link-local host');
-            const entry = `${origin} (${reasons.join(', ')})`;
-            if (onSite) { siteRefused.push(entry); continue; }
-            if (carried) { undecidedRefused.push(entry); continue; }
-            if (onLocal && !hostIsPrivate) { localRefused.push(entry); continue; }
-            keep.push(origin);
-            if (onLocal) listed.push(entry);
-        }
-        kept[kind] = Object.freeze(keep);
-        if (siteRefused.length > 0) {
-            dropped = true;
-            warn(`[Sandbox] origins.${kind} dropped ${siteRefused.join(', ')}: ${SITE_COOKIES}; the library admits no origin on the host page's site, in any mode. ${SITE_RULE}`);
-        }
-        if (undecidedRefused.length > 0) {
-            dropped = true;
-            warn(`[Sandbox] origins.${kind} dropped ${undecidedRefused.join(', ')}: ${undecided}, so no entry is admitted that ${carrierNames(carriers)} can reach, as it could be on that site: ${SITE_COOKIES}. ${UNDECIDED_SITE_RULE}`);
-        }
-        if (localRefused.length > 0) {
-            dropped = true;
-            warn(`[Sandbox] origins.${kind} dropped ${localRefused.join(', ')}: ${PRIVATE_NETWORK_REASON}.`);
-        }
-        if (listed.length > 0) warn(`[Sandbox] origins.${kind} lists ${listed.join(', ')}: a loopback, private or link-local host is the user's own machine or network, which the guest then reaches. Prefer the fetch bridge (fetchBridge.allow), whose requests carry no credentials.`);
-    }
-    return dropped ? (Object.freeze(kept) as OriginPolicy) : policy;
-}
-
-/** The carriers a warning names, as a sentence names each (COOKIE_CARRIERS `short`). */
-const carrierNames = (carriers: readonly CookieCarrierId[]): string => {
-    const names = carriers.map(id => withCode(COOKIE_CARRIERS[id].short, text => text));
-    return names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
-};
-
-/**
- * What the warning of an undecided host site says of its rule (host-site.ts, hostSiteUndecided): what leaves the site
- * undecided, and the way to reach such an origin.
- */
-export const UNDECIDED_SITE_RULE = "The host page's site is that of its own origin, of its top-level URL and of every page that frames it; an opaque origin among them (a sandboxed document), or one the browser does not give (a page of another origin above the host page, where the browser has no location.ancestorOrigins), leaves it undecided. Use the fetch bridge (fetchBridge.allow), whose requests carry no credentials, to reach such an origin.";
-
-/**
- * What the same-site drop warning says of its rule (host-site.ts, onHostSite): where it can refuse more than the
- * browser's public-suffix list would, and the way to reach such an origin.
- */
-export const SITE_RULE = "An origin counts as on the site when its host is the page's host or shares the page's last two labels (for an address, localhost or a single-label host, that host only), so under a public suffix of several labels (two github.io or two co.uk sites) another site's origin may be refused too. Use the fetch bridge (fetchBridge.allow), whose requests carry no credentials, to reach such an origin.";
-
-// What the warnings say of the host site's cookies: one sentence, rendered from the engine facts (cookie-facts.ts).
-const SITE_COOKIES = sameSiteCookieClause();
 
 /**
  * The schema: every option of SandboxConfig, in the order its rules run. The warnings come in that order: the values
@@ -439,96 +426,120 @@ const SITE_COOKIES = sameSiteCookieClause();
  */
 export const CONFIG_SCHEMA = {
     mode: {
+        owner: 'embedder',
         // sealed, the mode with no network, is the default (ADR-008): a config that names no mode and names origins or
         // fetchBridge is a sealed config, so it is refused (sealedNetworkRefusal), never read as strict
         default: 'sealed', documented: "`'sealed'`", modes: ALL_MODES,
         // any other value is kept, and refused at every build (unknownModeReason), never read as the default (AR:A4)
         read: ({ given }) => (given === undefined ? 'sealed' : given),
-        notice: ({ mode }) => (isSandboxMode(mode) ? [] : [`[Sandbox] mode ${describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}${renamedModeNote(mode)}: the sandbox will not start until setConfig() names one of them.`]),
+        notice: ({ mode }) => (isSandboxMode(mode) ? [] : [unknownModeNotice(mode)]),
     },
     capabilities: {
+        owner: 'embedder',
         default: [], documented: '`[]`', modes: ALL_MODES,
         // strict mode's view always has its own flags (STRICT_VIEW_FLAGS), so listing one of them there is not dropped
-        read: ({ given, mode, warn }) => asList(filterCapabilities(given, (hasStrictView(mode ?? 'sealed') ? STRICT_CAPABILITIES : SAFE_CAPABILITIES) as readonly SafeCapability[], 'capabilities', warn)),
+        read: ({ given, mode, invalid }) => asList(filterCapabilities(given, (hasStrictView(mode ?? 'sealed') ? STRICT_CAPABILITIES : SAFE_CAPABILITIES) as readonly SafeCapability[], 'capabilities', invalid)),
     },
     unsafeCapabilities: {
+        owner: 'embedder',
         default: [], documented: '`[]`', modes: ['cooperative', 'worker'], ignoredIn: hasStrictView,
-        read: ({ given, warn }) => asList(filterCapabilities(given, UNSAFE_CAPABILITIES, 'unsafeCapabilities', warn)),
+        read: ({ given, invalid }) => asList(filterCapabilities(given, UNSAFE_CAPABILITIES, 'unsafeCapabilities', invalid)),
         notice: (_, read) => (read as string[]).map(capability => `[Sandbox] unsafe capability "${capability}" is enabled: it lets guest content act outside the sandbox.`),
         ignoredWarning: ({ mode }, read) => ((read as string[]).length > 0 ? `[Sandbox] unsafeCapabilities are not available in ${mode as string} mode and were dropped: ${(read as string[]).join(', ')}.` : null),
     },
     html: {
+        owner: 'app',
         default: '', documented: "`''`", modes: ['strict', 'sealed', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
         // a string or nothing (R1:R1-3): anything else is dropped with a warning, never refuses the config; in strict and
         // sealed mode one longer than VIEW_RENDER_MAX_LENGTH refused it before any rule ran (htmlRefusal, BD7:LIM-3)
-        read: ({ given, present, warn }) => {
+        read: ({ given, present, invalid }) => {
             if (typeof given === 'string') return given;
-            if (present) warn(`[Sandbox] "html" must be a string; ${shown(given)} was dropped.`);
+            if (present) invalid(`[Sandbox] "html" must be a string; ${shown(given)} was dropped.`, `[Sandbox] start(): "html" must be a string, not ${shown(given)}.`);
             return '';
         },
     },
     // Not in sealed mode, which has no network: a sealed config that names it is refused before any option is read
     // (sealedNetworkRefusal), and sealed mode never runs its rule (readIn), so the host page is not asked.
     fetchBridge: {
+        owner: 'embedder',
+        // its rule is the network modes' (network-config.ts, NETWORK_RULES): read only in a build that has them
         default: null, documented: 'off', modes: NETWORK_MODES, ignoredIn: (mode) => mode === 'sealed',
-        read: ({ given, warn, host }) => toFetchPolicy(given, warn, host().hostOrigin),
     },
     callLimits: {
+        owner: 'embedder',
         default: DEFAULT_CALL_BUDGET, documented: `${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes / 1048576} MiB per second`, modes: ALL_MODES,
-        read: ({ given, warn }) => callBudgetOf(given, warn),
+        read: ({ given, warn, invalid }) => callBudgetOf(given, warn, invalid),
     },
     // the raw policy, replaced by `origins` (ADR-007): ignored, never adapted, so it fails closed (no origin)
-    connectionsAllowed: { removed: '[Sandbox] connectionsAllowed was removed; use origins. It was ignored: the guest policy admits only the exact origins listed in `origins` (see docs/API.md#origins).' },
+    connectionsAllowed: { owner: 'embedder', removed: '[Sandbox] connectionsAllowed was removed; use origins. It was ignored: the guest policy admits only the exact origins listed in `origins` (see docs/API.md#origins).' },
     // configured the removed Service-Worker hub (ADR-004)
-    virtualFilesUrl: { removed: '[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).' },
+    virtualFilesUrl: { owner: 'embedder', removed: '[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: give the app its files with start() and read them in the guest through sandboxFiles (see docs/ADR-004).' },
     origins: {
+        owner: 'embedder',
+        // Never read in sealed mode, the default (readIn), as fetchBridge; its rule is the network modes' too.
         default: NO_ORIGINS, documented: 'none', modes: NETWORK_MODES, ignoredIn: (mode) => mode === 'sealed',
-        // parsed for the mode the build will have, so strict mode drops `scripts`; a value that cannot be read refuses
-        // the config (origins.ts). Never read in sealed mode, the default (readIn), as fetchBridge.
-        read: ({ given, mode, warn, host }) => limitHostReach(parseOrigins(given, mode, warn), host(), warn, mode),
     },
     hostContentSecurityPolicy: {
+        owner: 'embedder',
         default: undefined, documented: 'none: `origins.connect` and `fetchBridge.allow` are dropped', modes: ALL_MODES,
         // a string (the page's policy text) or false (the page sends none); anything else is ignored with a warning, as if left out
-        read: ({ given, warn }) => {
+        read: ({ given, invalid }) => {
             if (given === undefined || typeof given === 'string' || given === false) return given;
-            warn(`[Sandbox] hostContentSecurityPolicy must be a string or false; ${shown(given)} was ignored, as if it were left out.`);
+            invalid(`[Sandbox] hostContentSecurityPolicy must be a string or false; ${shown(given)} was ignored, as if it were left out.`, `[Sandbox] start(): hostContentSecurityPolicy must be a string or false, not ${shown(given)}.`);
             return undefined;
         },
     },
     autoResize: {
+        owner: 'embedder',
         default: false, documented: '`false`', modes: ['strict', 'sealed', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
-        read: literalTrue,
+        read: literalTrue('autoResize'),
         ignoredWarning: (_, read) => (read === true ? '[Sandbox] autoResize has no effect in worker mode: a worker has no document to measure.' : null),
     },
     entry: {
+        owner: 'app',
         default: undefined, documented: 'none', modes: STRICT_VIEW_MODES, ignoredIn: noStrictView,
-        // a registered path or nothing: it is looked up in each build's snapshot
-        read: ({ given }) => (typeof given === 'string' ? given : undefined),
+        // a path of the app's files or nothing: start() refuses any other value, and checks the path against the files
+        // it is given; each build looks it up in its snapshot (the lenient reading drops any other value silently)
+        read: ({ given, invalid }) => {
+            if (typeof given === 'string') return given;
+            if (given !== undefined) invalid(null, `[Sandbox] start(): "entry" must be a string, not ${shown(given)}.`);
+            return undefined;
+        },
         ignoredWarning: (_, read) => (read ? '[Sandbox] "entry" is used only in strict and sealed mode and was ignored.' : null),
     },
     allowAnimations: {
+        owner: 'embedder',
         default: VIEW_SWITCHES.allowAnimations, documented: '`false`', modes: STRICT_VIEW_MODES, ignoredIn: noStrictView,
         read: viewSwitch('allowAnimations'),
         ignoredWarning: ({ given }) => (given !== undefined ? '[Sandbox] "allowAnimations" is used only in strict and sealed mode and was ignored.' : null),
     },
     allowAutoplay: {
+        owner: 'embedder',
         default: VIEW_SWITCHES.allowAutoplay, documented: '`false`', modes: STRICT_VIEW_MODES, ignoredIn: noStrictView,
         read: viewSwitch('allowAutoplay'),
         ignoredWarning: ({ given }) => (given !== undefined ? '[Sandbox] "allowAutoplay" is used only in strict and sealed mode and was ignored.' : null),
     },
     // in sealed mode, a literal true refuses the config (sealedScriptUnsafeRefusal), so it is always false there
     scriptUnsafe: {
+        owner: 'embedder',
         default: false, documented: '`false`', modes: ALL_MODES,
-        read: literalTrue,
+        read: literalTrue('scriptUnsafe'),
         // the guard rail (S4): on in most presets and every e2e spec, so it says once what it costs
         notice: (_, read) => (read === true ? ["[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content."] : []),
     },
     // not in cooperative mode: the guest document can share the host's thread, so no timer could fire meanwhile; not in
     // sealed mode, whose deadline would be an execute() call's, and sealed mode has no execute() (BD7:DOC-3)
-    workerExecutionTimeout: { default: 0, documented: '`0` (off)', modes: ['strict', 'worker'], ignoredIn: (mode) => mode === 'cooperative' || mode === 'sealed', read: delay('workerExecutionTimeout', 'no execute() deadline applies') },
-    watchdogTimeout: { default: 0, documented: '`0` (off)', modes: ALL_MODES, read: delay('watchdogTimeout', 'no watchdog runs') },
-    guestWrites: { default: false, documented: '`false`', modes: ALL_MODES, read: literalTrue },
+    workerExecutionTimeout: { owner: 'embedder', default: 0, documented: '`0` (off)', modes: ['strict', 'worker'], ignoredIn: (mode) => mode === 'cooperative' || mode === 'sealed', read: delay('workerExecutionTimeout', 'no execute() deadline applies') },
+    watchdogTimeout: { owner: 'embedder', default: 0, documented: '`0` (off)', modes: ALL_MODES, read: delay('watchdogTimeout', 'no watchdog runs') },
+    guestWrites: { owner: 'embedder', default: false, documented: '`false`', modes: ALL_MODES, read: literalTrue('guestWrites') },
+    // the view marks a link whose href is one of them, and the user's click on it opens the listed URL (design 02, I6;
+    // links.ts): a list that breaks a rule refuses the config in every mode, before anything of it is stored
+    links: {
+        owner: 'embedder',
+        default: NO_LINKS, documented: '`[]` (no link opens)', modes: STRICT_VIEW_MODES, ignoredIn: noStrictView,
+        read: ({ given }) => linksOf(given),
+        ignoredWarning: ({ given }) => (given !== undefined ? '[Sandbox] "links" is used only in strict and sealed mode and was ignored: no link opens.' : null),
+    },
 } satisfies Record<string, OptionRule>;
 
 export type OptionName = keyof typeof CONFIG_SCHEMA;
@@ -536,6 +547,20 @@ const RULES = CONFIG_SCHEMA as Record<OptionName, OptionRule>;
 const SCHEMA_NAMES = Object.keys(CONFIG_SCHEMA) as OptionName[];
 /** The options SandboxConfig has, in the schema's order (the removed ones are not options). */
 export const CONFIG_OPTIONS: readonly OptionName[] = SCHEMA_NAMES.filter(name => RULES[name].removed === undefined);
+/**
+ * The keys of the schema an owner has, removed ones included, in the schema's order: what start()'s argument of that
+ * owner may name besides its own key.
+ */
+export const optionsOf = (owner: OptionOwner): readonly OptionName[] => SCHEMA_NAMES.filter(name => RULES[name].owner === owner);
+/** The app's keys (SandboxApp, with `files`). */
+export const APP_OPTIONS = optionsOf('app');
+/** The embedder's keys (SandboxGrants, with `methods`), the removed options among them. */
+export const EMBEDDER_OPTIONS = optionsOf('embedder');
+/** The app's options as a type, derived from the schema: what SandboxApp (host.ts) is checked against. */
+export type AppOptionName = { [K in OptionName]: (typeof CONFIG_SCHEMA)[K] extends { readonly owner: 'app' } ? K : never }[OptionName];
+/** The embedder's options as a type, derived from the schema. */
+export type EmbedderOptionName = { [K in OptionName]: (typeof CONFIG_SCHEMA)[K] extends { readonly removed: string } ? never : (typeof CONFIG_SCHEMA)[K] extends { readonly owner: 'embedder' } ? K : never }[OptionName];
+
 /** The options parsed into a policy or a budget of their own (NormalisedConfig), never into StoredConfig. */
 export const PARSED_APART: readonly OptionName[] = ['fetchBridge', 'callLimits', 'origins'];
 
@@ -543,10 +568,25 @@ export const PARSED_APART: readonly OptionName[] = ['fetchBridge', 'callLimits',
  * The options whose rules normaliseConfig() runs for an argument of `mode`, in the schema's order: every one, except in
  * sealed mode NETWORK_OPTIONS, which hold their defaults there (no origin, no fetch bridge) without their rules running.
  * Their rules are the only ones that read the host page, so a sealed config reads none of it; a sealed config that
- * names either option was refused before (sealedNetworkRefusal).
+ * names either option was refused before (sealedNetworkRefusal). A build without the network modes has no rule for
+ * them to run, in any mode (a mode that is no mode included): a config that names either was refused before
+ * (networkModesOffRefusal).
  */
-export const readIn = (mode: unknown): readonly OptionName[] => (mode === 'sealed' ? SEALED_READ : SCHEMA_NAMES);
+export const readIn = (mode: unknown): readonly OptionName[] => (mode === 'sealed' || networkModes() === null ? SEALED_READ : SCHEMA_NAMES);
 const SEALED_READ: readonly OptionName[] = Object.freeze(SCHEMA_NAMES.filter(name => !(NETWORK_OPTIONS as readonly string[]).includes(name)));
+
+/**
+ * The rule that reads `option`: its own, or for an option that opens the network (NETWORK_OPTIONS) the network modes',
+ * which only a build that has them runs (readIn).
+ */
+function readOf(option: OptionName): (input: OptionInput) => unknown {
+    const own = RULES[option].read;
+    if (own !== undefined) return own;
+    const rules = networkModes()?.rules as Readonly<Record<string, (input: OptionInput) => unknown>> | undefined;
+    const networkRule = rules?.[option];
+    if (networkRule === undefined) throw mintUncodedError(Error, 'an option has no rule in this build');
+    return networkRule;
+}
 
 /** Whether `option` is ignored in `mode`, where it holds its default. */
 export const ignoredIn = (option: OptionName, mode: unknown): boolean => RULES[option].ignoredIn?.(mode) ?? false;
@@ -560,25 +600,30 @@ export interface Normalised {
 }
 
 /**
- * One setConfig() argument (already a structured clone) normalised by the schema: every option's stored value from its
+ * One argument of options (already a structured clone) normalised by the schema: every option's stored value from its
  * own rule, then the cross-field rules (CONFIG_INVARIANTS), and every warning in order. Pure: it warns into the result,
  * never to the console, and never throws. A config that cannot be used (not an object; an `origins` that is not an
  * object, or a kind of it that is not a list) is a refusal, with the warnings said up to it, and nothing of it is kept
  * (FR:F6). Reads own keys only and writes only defined data properties (AR:A7, FR:F4), so no
  * key of the argument reaches a prototype, and nothing but the schema's options reaches the stored config.
+ * `reading` says how a value an option cannot take is read: start()'s refuses it, with a TypeError (InvalidValue); the
+ * lenient one warns and stores the option's fallback.
  */
-export function normaliseConfig(copy: unknown, hostPage: HostPage): Normalised {
+export function normaliseConfig(copy: unknown, hostPage: HostPage, reading: ConfigReading = 'lenient'): Normalised {
     const warnings: string[] = [];
     const warn = (message: string) => { warnings.push(message); };
-    if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return { value: null, warnings, refusal: mintUncodedError(TypeError, 'setConfig() takes an object') };
+    const invalid: InvalidValue = reading === 'start' ? refuseValue : warningOnly(warn);
+    if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return { value: null, warnings, refusal: mintUncodedError(TypeError, 'the options must be an object') };
     const source = copy as Record<string, unknown>;
     let asked: NormaliseContext | null = null;
     const host = (): NormaliseContext => (asked ??= typeof hostPage === 'function' ? hostPage() : hostPage);
     const inputOf = (name: OptionName, mode: unknown): OptionInput => {
         const present = hasOwnField(source, name);
-        return { given: ownField(source, name), present, mode, host, warn };
+        return { given: ownField(source, name), present, mode, host, warn, invalid };
     };
     const mode = RULES.mode.read!(inputOf('mode', undefined));
+    const networkModesOff = networkModesOffRefusal(mode, source);
+    if (networkModesOff !== null) return { value: null, warnings, refusal: networkModesOff };
     const sealedNetwork = sealedNetworkRefusal(mode, source);
     if (sealedNetwork !== null) return { value: null, warnings, refusal: sealedNetwork };
     const sealedScriptUnsafe = sealedScriptUnsafeRefusal(mode, source);
@@ -594,7 +639,7 @@ export function normaliseConfig(copy: unknown, hostPage: HostPage): Normalised {
                 if (hasOwnField(source, name)) warn(rule.removed);
                 continue;
             }
-            values[name] = name === 'mode' ? mode : rule.read!(inputOf(name, mode));
+            values[name] = name === 'mode' ? mode : readOf(name)(inputOf(name, mode));
         }
     } catch (error) {
         return { value: null, warnings, refusal: error };
@@ -616,21 +661,22 @@ export function normaliseConfig(copy: unknown, hostPage: HostPage): Normalised {
         defineData(config, name, Array.isArray(value) ? [...value] : value);
     }
     return {
-        value: { config: config as unknown as StoredConfig, fetchPolicy: values.fetchBridge as FetchPolicy | null, origins: values.origins as OriginPolicy, callBudget: values.callLimits as Readonly<CallBudget> },
+        value: { config: config as unknown as StoredConfig, fetchPolicy: values.fetchBridge as object | null, origins: values.origins as OriginPolicy, callBudget: values.callLimits as Readonly<CallBudget> },
         warnings,
         refusal: null,
     };
 }
 
-// How much a call measures besides the bytes it carries, at most, for the two calls whose payload an option bounds: a
-// sandboxFetch() request (its URL, at most MAX_URL characters measured two bytes each, and its method and a few header
-// names) and a sandboxFetch() result (the URL, the status text and the response's headers, which the browser bounds:
-// Chromium at 256 KiB, measured twice that). A guest write carries its path and its content, a string measured two bytes
-// per character, so a write of the whole file quota measures at most twice MAX_TOTAL_BYTES.
-const FETCH_REQUEST_OVERHEAD = 64 * 1024;
-const FETCH_RESULT_OVERHEAD = 1024 * 1024;
+// start()'s reading of a value an option cannot take: the argument is refused, caught as normaliseConfig's refusal.
+const refuseValue: InvalidValue = (_, refusal) => {
+    throw mintUncodedError(TypeError, refusal);
+};
+
+// How much a guest write measures besides its content, at most: its path. The content is a string measured two bytes per
+// character, so a write of the whole file quota measures at most twice MAX_TOTAL_BYTES.
 const WRITE_OVERHEAD = 64 * 1024;
-const BELOW_LARGEST_CALL = 'below the largest call';
+/** What the warning of a byte budget below the largest call says, as the invariants find it. */
+export const BELOW_LARGEST_CALL = 'below the largest call';
 
 /** A cross-field invariant, declared once: its name, and whether it holds for one normalised config and its warnings. */
 export interface ConfigInvariant {
@@ -654,11 +700,11 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
         name: 'the stored config holds only the schema\'s options, own data on plain prototypes (no assigned or inherited key)',
         holds: ({ config }) => plainData(config, Object.prototype)
             && Object.keys(config).every(key => (CONFIG_OPTIONS as readonly string[]).includes(key) && !PARSED_APART.includes(key as OptionName))
-            && [config.capabilities, config.unsafeCapabilities].every(list => Array.isArray(list) && plainData(list, Array.prototype)),
+            && [config.capabilities, config.unsafeCapabilities, config.links].every(list => Array.isArray(list) && plainData(list, Array.prototype)),
     },
     {
-        name: 'every stored option has its type: switches are booleans, html a string, entry a string or nothing, hostContentSecurityPolicy a string, false or nothing, delays 0 or a finite number > 0',
-        holds: ({ config }) => [config.scriptUnsafe, config.autoResize, config.guestWrites, config.allowAnimations, config.allowAutoplay].every(value => typeof value === 'boolean')
+        name: 'every stored option has its type: switches are booleans, html a string, entry a string or nothing, hostContentSecurityPolicy a string, false or nothing, delays 0 or a finite number > 0, links a list of strings',
+        holds: ({ config }) => config.links.every(link => typeof link === 'string') && [config.scriptUnsafe, config.autoResize, config.guestWrites, config.allowAnimations, config.allowAutoplay].every(value => typeof value === 'boolean')
             && typeof config.html === 'string' && (config.entry === undefined || typeof config.entry === 'string')
             && isDelay(config.watchdogTimeout) && isDelay(config.workerExecutionTimeout)
             && (config.hostContentSecurityPolicy === undefined || config.hostContentSecurityPolicy === false || typeof config.hostContentSecurityPolicy === 'string'),
@@ -669,7 +715,7 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
             && config.unsafeCapabilities.every(capability => (UNSAFE_CAPABILITIES as readonly string[]).includes(capability)),
     },
     {
-        name: 'an option outside its modes holds its default (entry, allowAnimations, allowAutoplay outside strict and sealed; unsafeCapabilities in strict and sealed; html and autoResize in worker; workerExecutionTimeout in cooperative and sealed)',
+        name: 'an option outside its modes holds its default (entry, allowAnimations, allowAutoplay, links outside strict and sealed; unsafeCapabilities in strict and sealed; html and autoResize in worker; workerExecutionTimeout in cooperative and sealed)',
         holds: ({ config }) => CONFIG_OPTIONS.every(name => PARSED_APART.includes(name) || !ignoredIn(name, config.mode) || sameValue((config as unknown as Record<string, unknown>)[name], RULES[name].default)),
     },
     {
@@ -690,22 +736,13 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
         holds: ({ callBudget }, warnings) => warnings.filter(message => message.includes(BELOW_LARGEST_CALL)).length === (callBudget.bytes < RPC_MAX_BYTES ? 1 : 0),
     },
     {
-        name: 'fetchBridge: every budget admits a request (maxBytes, timeoutMs, maxConcurrent are whole numbers >= 1)',
-        holds: ({ fetchPolicy }) => fetchPolicy === null || [fetchPolicy.maxBytes, fetchPolicy.timeoutMs, fetchPolicy.maxConcurrent].every(value => Number.isInteger(value) && value >= 1),
-    },
-    {
-        name: 'fetchBridge: a response of maxBytes fits one call result (RPC_MAX_BYTES), so a response the bridge admits is never refused as a result',
-        holds: ({ fetchPolicy }) => fetchPolicy === null || fetchPolicy.maxBytes + FETCH_RESULT_OVERHEAD <= RPC_MAX_BYTES,
-    },
-    {
-        name: 'fetchBridge × callLimits: a request body of maxBytes (bytes) fits one call the budget carries, or the byte budget said which calls it refuses',
-        holds: ({ fetchPolicy, callBudget }, warnings) => fetchPolicy === null || fetchPolicy.maxBytes + FETCH_REQUEST_OVERHEAD <= heaviestCall(callBudget) || warnings.some(message => message.includes(BELOW_LARGEST_CALL)),
-    },
-    {
         name: 'guestWrites × the file quota × callLimits: a write of the whole quota fits one call the budget carries, or the byte budget said which calls it refuses',
         holds: ({ config, callBudget }, warnings) => !config.guestWrites || 2 * MAX_TOTAL_BYTES + WRITE_OVERHEAD <= heaviestCall(callBudget) || warnings.some(message => message.includes(BELOW_LARGEST_CALL)),
     },
 ];
 
+/** The host page where no rule reads it: sealed mode's, and every config's in a build without the network modes. */
+export const NO_HOST_PAGE: NormaliseContext = Object.freeze({ hostOrigin: '', hostSites: Object.freeze([]) });
+
 /** The stored config of an argument that names nothing: every default. */
-export const defaultConfig = (): StoredConfig => normaliseConfig({}, { hostOrigin: '', hostSites: [] }).value!.config;
+export const defaultConfig = (): StoredConfig => normaliseConfig({}, NO_HOST_PAGE).value!.config;

@@ -17,66 +17,10 @@ export interface CallLimits {
 }
 
 // @public
-export interface CooperativeSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    allowAnimations?: never;
-    allowAutoplay?: never;
-    entry?: never;
-    mode: 'cooperative';
-    workerExecutionTimeout?: never;
-}
-
-// @public
 export function defineWebSandbox(tagName?: string): typeof WebSandbox;
 
 // @public
 export const EXECUTION_TIMEOUT_GRACE_MS = 1000;
-
-// @public
-export const FETCH_ERROR_CODES: readonly FetchErrorCode[];
-
-// @public
-export interface FetchBridgeConfig {
-    allow: string[];
-    headers?: string[];
-    maxBytes?: number;
-    maxConcurrent?: number;
-    methods?: string[];
-    timeoutMs?: number;
-}
-
-// @public
-export type FetchErrorCode = Extract<RpcLibraryCode, `FETCH_${string}`>;
-
-// @public
-export type FetchRecord = {
-    method: string;
-    url: string;
-    durationMs: number;
-} & ({
-    outcome: 'ok';
-    status: number;
-    bytes: number;
-    code?: never;
-    reason?: never;
-} | {
-    outcome: 'refused';
-    code: FetchErrorCode;
-    reason?: string;
-    bytes: 0;
-    status?: never;
-} | {
-    outcome: 'failed';
-    code: FetchErrorCode;
-    status?: number;
-    bytes: number;
-    reason?: never;
-} | {
-    outcome: 'aborted';
-    code: 'FETCH_FAILED';
-    status?: number;
-    bytes: number;
-    reason?: never;
-});
 
 // @public
 export type FileContent = string | Uint8Array;
@@ -103,22 +47,43 @@ export interface FileInfo {
 }
 
 // @public
+export const GUEST_IMAGE_TYPES: readonly ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'];
+
+// @public
 export const GUEST_WRITE_BYTES_PER_SECOND: number;
 
 // @public
 export const GUEST_WRITES_PER_SECOND = 100;
 
 // @public
+export interface GuestBytes {
+    bytes(): Uint8Array;
+    image(): Blob | null;
+    save(): void;
+    readonly size: number;
+    text(): string;
+}
+
+// @public
+export type GuestImageType = (typeof GUEST_IMAGE_TYPES)[number];
+
+// @public
 export type GuestWrite = {
-    path: string;
-    change: 'write';
-    type: string;
-    size: number;
-    content: Uint8Array;
+    readonly path: string;
+    readonly change: 'write';
+    readonly type: string;
+    readonly size: number;
+    readonly content: GuestBytes;
 } | {
-    path: string;
-    change: 'remove';
+    readonly path: string;
+    readonly change: 'remove';
 };
+
+// @public
+export type HostMethod = (...args: unknown[]) => unknown;
+
+// @public
+export const LINK_TABS_PER_SECOND = 2;
 
 // @public
 export const LOAD_TIMEOUT_MS = 5000;
@@ -136,10 +101,7 @@ export const LOG_MAX_STRING = 65536;
 export const MAX_INBOUND_IN_FLIGHT = 256;
 
 // @public
-export interface NetworkSandboxOptions {
-    fetchBridge?: FetchBridgeConfig;
-    origins?: SandboxOrigins;
-}
+export const MAX_LINKS = 32;
 
 // @public
 export interface RpcError extends Error {
@@ -159,10 +121,17 @@ export const SAFE_CAPABILITIES: readonly ["allow-orientation-lock", "allow-scrip
 export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
 
 // @public
-export type SandboxCapability = SafeCapability | (typeof UNSAFE_SANDBOX_FLAGS)[number];
+export interface SandboxApp extends Readonly<Pick<SandboxConfigOptions, 'html' | 'entry'>> {
+    readonly files?: Readonly<Record<string, FileEntry>>;
+}
 
 // @public
-export type SandboxConfig = StrictSandboxConfig | SealedSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
+export type SandboxConfig = SandboxConfigByMode[keyof SandboxConfigByMode];
+
+// @public
+export interface SandboxConfigByMode {
+    sealed: SealedSandboxConfig;
+}
 
 // @public
 export interface SandboxConfigOptions {
@@ -175,8 +144,8 @@ export interface SandboxConfigOptions {
     guestWrites?: boolean;
     hostContentSecurityPolicy?: string | false;
     html?: string;
+    links?: readonly string[];
     scriptUnsafe?: boolean;
-    unsafeCapabilities?: UnsafeCapability[];
     watchdogTimeout?: number;
     workerExecutionTimeout?: number;
 }
@@ -200,6 +169,13 @@ export interface SandboxFiles {
 }
 
 // @public
+export type SandboxGrants = {
+    [Mode in keyof SandboxConfigByMode]: Readonly<Omit<SandboxConfigByMode[Mode], keyof SandboxApp>> & {
+        readonly methods?: Readonly<Record<string, HostMethod>>;
+    };
+}[keyof SandboxConfigByMode];
+
+// @public
 export interface SandboxLog {
     args: readonly unknown[];
     level: SandboxLogLevel;
@@ -209,16 +185,6 @@ export interface SandboxLog {
 
 // @public
 export type SandboxLogLevel = 'log' | 'info' | 'warn' | 'error';
-
-// @public
-export interface SandboxOrigins {
-    connect?: readonly string[];
-    fonts?: readonly string[];
-    images?: readonly string[];
-    media?: readonly string[];
-    scripts?: readonly string[];
-    styles?: readonly string[];
-}
 
 // @public
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
@@ -241,33 +207,6 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
     scriptUnsafe?: false;
     unsafeCapabilities?: never;
 }
-
-// @public
-export interface StrictSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    mode: 'strict';
-    origins?: StrictSandboxOrigins;
-    unsafeCapabilities?: never;
-}
-
-// @public
-export type StrictSandboxOrigins = Omit<SandboxOrigins, 'scripts'> & {
-    readonly scripts?: never;
-};
-
-// @public
-export const UNSAFE_CAPABILITIES: readonly ["allow-downloads", "allow-forms", "allow-modals", "allow-pointer-lock", "allow-popups", "allow-presentation", "fullscreen"];
-
-// @public
-export const UNSAFE_PERMISSIONS: readonly ["fullscreen"];
-
-// @public
-export const UNSAFE_SANDBOX_FLAGS: readonly ["allow-downloads", "allow-forms", "allow-modals", "allow-pointer-lock", "allow-popups", "allow-presentation"];
-
-// @public
-export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
-
-// @public
-export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
 
 // @public
 export const VIEW_INPUT_IN_FLIGHT = 1;
@@ -305,31 +244,25 @@ export interface WebSandbox {
 export class WebSandbox extends HTMLElement {
     constructor();
     adoptedCallback(): void;
-    call<T = unknown>(method: string, ...args: unknown[]): Promise<T>;
-    callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T>;
-    commitGuestWrites(paths: string[], options?: {
+    call(method: string, ...args: unknown[]): Promise<unknown>;
+    callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown>;
+    commitGuestWrites(writes: readonly GuestWrite[], options?: {
         code?: boolean;
-    }): void;
+    }): boolean;
     connectedCallback(): void;
     disconnectedCallback(): void;
-    execute(code: string): void;
-    expose(name: string, fn: (...args: any[]) => unknown): void;
     listFiles(): FileInfo[];
     listGuestWrites(): GuestWrite[];
-    load(html: string): void;
-    registerFiles(files: Record<string, FileEntry>): void;
     reset(): void;
-    setConfig(config: SandboxConfig): void;
+    start(app: SandboxApp, grants?: SandboxGrants): void;
+    get started(): boolean;
     get state(): SandboxState;
     terminate(reason?: string): void;
-    unexpose(names?: string | readonly string[]): void;
-    unregisterFiles(paths?: string[]): void;
 }
 
 // @public
 export interface WebSandboxEventMap extends HTMLElementEventMap {
     'sandbox-log': CustomEvent<SandboxLog>;
-    fetch: CustomEvent<FetchRecord>;
     fileschanged: CustomEvent<{
         readonly paths: readonly string[];
     }>;
@@ -341,16 +274,6 @@ export interface WebSandboxEventMap extends HTMLElementEventMap {
         readonly reason: string;
     }>;
     violation: CustomEvent<SandboxViolation>;
-}
-
-// @public
-export interface WorkerSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    allowAnimations?: never;
-    allowAutoplay?: never;
-    autoResize?: never;
-    entry?: never;
-    html?: never;
-    mode: 'worker';
 }
 
 // (No @packageDocumentation comment for this package)

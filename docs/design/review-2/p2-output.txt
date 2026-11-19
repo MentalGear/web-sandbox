@@ -1,0 +1,15 @@
+chromium | a.download = "" (empty attribute)                              | download, suggested name "a7241fa2-96c3-48db-bfd1-c5a58f18027d" | page titles now: ["host"]
+chromium | a.download = file.name                                         | download, suggested name "report.html.download" | page titles now: ["host"]
+chromium | a.download = "report.html" (the guest path, the natural wrong name) | download, suggested name "report.html" | page titles now: ["host"]
+chromium | no download attribute, same-tab link                           | download, suggested name "2bb14ffc-7433-4116-bf2c-a285ff2a1813" | page titles now: ["host"]
+chromium | window.open(blob URL)                                          | download, suggested name "e2d19ad9-bd3d-4dcd-97cc-31528b2d26a8" | page titles now: ["host",""] (a new page opened)
+firefox  | a.download = "" (empty attribute)                              | download, suggested name "report.html.download" | page titles now: ["host"]
+firefox  | a.download = file.name                                         | download, suggested name "report.html.download" | page titles now: ["host"]
+firefox  | a.download = "report.html" (the guest path, the natural wrong name) | download, suggested name "report.html" | page titles now: ["host"]
+firefox  | no download attribute, same-tab link                           | download, suggested name "report.html.download" | page titles now: ["host"]
+firefox  | window.open(blob URL)                                          | download, suggested name "report.html.download" | page titles now: ["host","?"] (a new page opened)
+webkit   | a.download = "" (empty attribute)                              | download, suggested name "" | page titles now: ["host"]
+webkit   | a.download = file.name                                         | download, suggested name "report.html.download" | page titles now: ["host"]
+webkit   | a.download = "report.html" (the guest path, the natural wrong name) | download, suggested name "report.html" | page titles now: ["host"]
+webkit   | no download attribute, same-tab link                           | download, suggested name "" | page titles now: ["host"]
+webkit   | window.open(blob URL)                                          | download, suggested name "" | page titles now: ["host",""] (a new page opened)

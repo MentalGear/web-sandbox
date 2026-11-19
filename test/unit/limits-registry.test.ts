@@ -33,13 +33,14 @@ function numericConstants(): Array<{ file: string; name: string; typed: boolean 
 
 /** Numeric constants that are not limits of the library, with why. A constant not here and not a row fails the test below. */
 const INTERNAL: Readonly<Record<string, string>> = {
-    'src/lib/config-schema.ts:FETCH_REQUEST_OVERHEAD': 'a term of the config invariant that the call budget holds the largest message of the bridge path (config-schema.ts)',
-    'src/lib/config-schema.ts:FETCH_RESULT_OVERHEAD': 'a term of the same invariant: what a fetch result adds to its body (the head is capped by MAX_RESPONSE_HEAD)',
-    'src/lib/config-schema.ts:WRITE_OVERHEAD': 'a term of the same invariant for a guest write',
+    'src/lib/network-config.ts:FETCH_REQUEST_OVERHEAD': 'a term of the config invariant that the call budget holds the largest message of the bridge path (network-config.ts)',
+    'src/lib/network-config.ts:FETCH_RESULT_OVERHEAD': 'a term of the same invariant: what a fetch result adds to its body (the head is capped by MAX_RESPONSE_HEAD)',
+    'src/lib/config-schema.ts:WRITE_OVERHEAD': 'a term of the config invariant that the call budget holds a guest write of the whole file quota (config-schema.ts)',
     'src/lib/css-references.ts:BACKSLASH': 'the character code of a backslash, a constant of the CSS scanner',
     'src/lib/host-site.ts:MAX_ANCESTORS': "how far up the parent chain the host page's site is read: past it the rest counts as unreadable, so the site is undecided (refused), never wider; a browser nests frames far less deep",
     'src/lib/files.ts:EDIT_OVERHEAD': "a term of the quota's cost model for a rewritten file, not a bound",
     'src/lib/files.ts:SLOT_URL_BYTES': "a term of the quota's cost model for a rewritten stylesheet, not a bound",
+    'src/lib/in-sandbox-view.ts:VIEW_NAME_PREFIX_DIGITS': "how many random digits start the names the view gives the guest's controls (viewControlNames): a property of a name, not a bound",
     'src/lib/files.ts:CHUNK': 'the size of the slices a byte array is turned into text in, an implementation detail',
     'src/lib/long-timer.ts:MAX_TIMER_DELAY': "the platform's longest timer delay",
     'src/lib/rpc.ts:MAX_IN_FLIGHT': "a mirror of MAX_INBOUND_IN_FLIGHT in the stringified broker (api-docs.test.ts keeps it equal)",
@@ -63,7 +64,7 @@ describe('the limits registry lists every bound the code enforces (BD3:LIM-3)', 
     });
 
     it('the bounds pass 3 found without a row are rows, and their constants are the registry\'s', () => {
-        for (const name of ['LOG_OWN_LINES', 'KIND_MAX_LENGTH', 'ERROR_WALK_NODES', 'ERROR_WALK_DEPTH', 'MAX_HEADERS', 'MAX_HEADER_VALUE', 'SAME_DATA_MAX_PAIRS'] as const) {
+        for (const name of ['LOG_OWN_LINES', 'KIND_MAX_LENGTH', 'ERROR_WALK_NODES', 'ERROR_WALK_DEPTH', 'MAX_HEADERS', 'MAX_HEADER_VALUE'] as const) {
             expect(LIMITS[name].label, name).not.toBeNull();
             expect(LIMITS[name].value, name).toBeGreaterThan(0);
         }

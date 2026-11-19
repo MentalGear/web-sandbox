@@ -42,7 +42,8 @@ const makerTarget = (host: RealisticHost, maker: Maker) => host.api(`m-${maker.i
  */
 function guest(host: RealisticHost, name: string): string {
     const runs = buildable.map(maker => `results[${JSON.stringify(maker.id)}] = await Promise.race([${makerCode(maker, makerTarget(host, maker))}, new Promise((resolve) => setTimeout(() => resolve('pending'), 3000))]).then(String, (e) => 'threw ' + (e && e.name));`);
-    return `sandboxView.render('<p id="m-done">done</p>');
+    // the image is the relay's control: the renderer drops its URL and reports it to the element, and no request is made
+    return `sandboxView.render('<p id="m-done">done</p><img src="${host.api('m-relay')}">');
 (async () => {
   try {
     const results = {}, messages = {}, heard = [];
@@ -125,8 +126,8 @@ test.describe('sealed mode: the host page\'s policy can never be checked by the 
         expect(seen.accessors.filter(name => !(name in VIOLATION_EVENT_FIELDS)), 'a field of SecurityPolicyViolationEvent the list does not name').toEqual([]);
         expect(seen.fields).toEqual(Object.fromEntries(seen.accessors.map(name => [name, VIOLATION_EVENT_FIELDS[name]])));
 
-        // the library's own relay still works: the request gate's refusals reach the element
-        expect((await sandbox.violations()).filter(v => v.directive === 'connect-src').length).toBeGreaterThan(0);
+        // the library's own relay still works: the renderer's report of the URL it dropped reaches the element
+        expect((await sandbox.violations()).filter(v => v.directive === 'img-src').length).toBeGreaterThan(0);
         expect(await host.state()).toBe('ready');
 
         // positive control: the endpoint receives the host page's own violation, with the key in the URL it was sent to
@@ -147,9 +148,9 @@ test.describe('sealed mode: the host page\'s policy can never be checked by the 
         }
         await host.page.waitForTimeout(2000);
         expect((await host.hits()).reports).toEqual([]);
-        // scriptUnsafe, which would hand strings to the platform: refused in sealed mode, with its reason
+        // scriptUnsafe, which would hand strings to the platform: refused in sealed mode, with its reason (start() throws it)
         await sandbox.registerFiles({ 'main.js': "sandboxView.render('<p>x</p>');" });
-        expect((await host.configure({ entry: 'main.js', scriptUnsafe: true })).at(-1), covering('cspPolicyText', 'sealed mode refuses scriptUnsafe')).toEqual({ type: 'terminated', reason: reasonText('sealedScriptUnsafe') });
+        await expect(host.configure({ entry: 'main.js', scriptUnsafe: true }), covering('cspPolicyText', 'sealed mode refuses scriptUnsafe')).rejects.toThrow(`[Sandbox] start(): ${reasonText('sealedScriptUnsafe')}.`);
         // positive control: the same entry without the import() builds
         expect((await host.configure({ entry: 'main.js' })).at(-1)).toEqual({ type: 'ready', reason: null });
     });

@@ -1,10 +1,14 @@
-import { test, expect, type SandboxDriver, type MountConfig } from './fixture';
+import { test, expect, type SandboxDriver, type MountConfig, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { lag, quietStall, startLag } from './host-share';
 import { VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS } from '@src/lib/in-sandbox-view';
-import type { StrictSandboxConfig } from '@src/host';
+import type { StrictSandboxConfig } from '@src/lib/network-types';
+import { mountInput } from './view-input';
 import { VIEW_MODES, type ViewMode } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The strict renderer and view (each label below is cited as BR:<label>), where browser
@@ -74,7 +78,9 @@ test.describe('the renderer is an allowlist', () => {
         await render(sandbox, browserName, corpus);
         const read = await inView<any>(page, browserName, `(() => {
             const all = Array.from(document.body.querySelectorAll('*'));
-            const attrs = (id) => { const e = document.getElementById(id); return e ? e.getAttributeNames().sort().map((n) => n + '=' + e.getAttribute(n)) : null; };
+            // a control's name is the view's (RENDER_NAMED_CONTROLS): read as the guest's it stands for, or "nameless"
+            const own = (v) => { const m = /^\\d{18}([-_])(\\d*)$/.exec(v); if (!m) return v; if (m[1] === '_') return '(nameless)'; let g = ''; for (let i = 0; i < m[2].length; i += 5) g += String.fromCharCode(Number(m[2].slice(i, i + 5))); return "(view's for " + g + ")"; };
+            const attrs = (id) => { const e = document.getElementById(id); return e ? e.getAttributeNames().sort().map((n) => n + '=' + (n === 'name' ? own(e.getAttribute(n)) : e.getAttribute(n))) : null; };
             return {
                 svg: Array.from(document.getElementById('s').querySelectorAll('*')).map((e) => e.localName),
                 math: Array.from(document.getElementById('m').querySelectorAll('*')).map((e) => e.localName),
@@ -94,10 +100,11 @@ test.describe('the renderer is an allowlist', () => {
             // a paint reference keeps only a fragment of the document; any other URL becomes "" (keepsUrl, BD7:ISO-1)
             r: ['fill=url("")', 'height=5', 'id=r', 'stroke=url(#g)', 'width=5'],
             g: ['id=g', 'x1=0'],
-            btn: ['id=btn', 'type=button'],
+            // a control's name and a form's autocomplete are the view's (RENDER_NAMED_CONTROLS, RENDER_FORCED_ATTRIBUTES)
+            btn: ['id=btn', 'name=(nameless)', 'type=button'],
             pop: ['id=pop'],
-            frm: ['id=frm', 'name=f'],
-            inp: ['id=inp', 'name=i', 'type=image'],
+            frm: ['autocomplete=off', 'id=frm', 'name=f'],
+            inp: ['autocomplete=off', 'id=inp', "name=(view's for i)", 'type=image'],
             // crossorigin is the renderer's own, the guest's use-credentials replaced (RENDER_CROSSORIGIN_ELEMENTS, S74)
             // the style attribute is the engine's serialization of the declaration the view gave it (sanitizeRender: no inline style)
             img: ['alt=a', 'class=c', 'crossorigin=anonymous', 'id=img', 'referrerpolicy=no-referrer', 'src=https://x.example/i.png', 'style=color: red;', 'width=1'],
@@ -111,6 +118,7 @@ test.describe('the renderer is an allowlist', () => {
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('positive control: an everyday UI keeps its elements and attributes: forms and controls, tables, lists, details, media, an inline SVG icon with a gradient, a MathML formula, a custom element', async ({ sandbox, page, browserName }) => {
             await sandbox.registerFiles({ 'logo.png': { base64: PNG_1X1 } });
             expect(await sandbox.mount(inMode(mode))).toBe('ready');
@@ -140,11 +148,39 @@ test.describe('the renderer is an allowlist', () => {
                 // a <style> is a noframes in the view, holding its text, which the view applies as a constructed stylesheet
                 'svg', 'defs', 'linearGradient', 'stop', 'g', 'path', 'circle', 'text', 'math', 'mfrac', 'mi', 'mn', 'my-card', 'noframes', 'p']);
             expect(read).toMatchObject({
-                n: 'id maxlength name placeholder required type', s: 'id name', c: 'checked id name type', b: 'id name type value', f: 'autocomplete id name',
+                // autocomplete is the view's on every form, input, select and textarea (RENDER_FORCED_ATTRIBUTES)
+                n: 'autocomplete id maxlength name placeholder required type', s: 'autocomplete id name', c: 'autocomplete checked id name type', b: 'id name type value', f: 'autocomplete id name',
                 d: 'id open', dl: 'id open', pr: 'id max value', card: 'class data-id id', v: 'controls crossorigin disablepictureinpicture disableremoteplayback id muted width', icon: 'aria-label height id role viewBox width',
                 logo: true, styled: 'rgb(0, 0, 255)',
             });
             await expect.poll(() => inView(page, browserName, `document.getElementById('logo').naturalWidth`)).toBe(1);
+        });
+
+        test('a select shows the options its markup selects: the one that has `selected`, the last of several, the first that is not disabled where none has it, none in a list box, every one of a multiple select, one in an optgroup; rendered into an element or into the select itself', async ({ sandbox, page, browserName }) => {
+            const options = '<option>x</option><option selected>y</option><option>z</option>';
+            const selects = `<select id="marked">${options}</select>`
+                + '<select id="several"><option selected>x</option><option selected>y</option><option>z</option></select>'
+                + '<select id="plain"><option>x</option><option>y</option><option>z</option></select>'
+                + '<select id="disabled"><option disabled>x</option><option>y</option><option>z</option></select>'
+                + '<select id="listbox" size="3"><option>x</option><option>y</option><option>z</option></select>'
+                + '<select id="multiple" multiple><option selected>x</option><option>y</option><option selected>z</option></select>'
+                + '<select id="grouped"><optgroup label="g"><option>x</option><option>y</option></optgroup><optgroup label="h"><option selected>z</option><option>w</option></optgroup></select>'
+                + '<select id="groups"><optgroup label="g"><option>x</option><option>y</option></optgroup><optgroup label="h"><option>z</option></optgroup></select>';
+            const shown = `(() => {
+                const out = {};
+                for (const select of document.querySelectorAll('select')) out[select.id] = Array.from(select.selectedOptions).map((option) => option.value).join();
+                return out;
+            })()`;
+            const expected = { marked: 'y', several: 'y', plain: 'x', disabled: 'y', listbox: '', multiple: 'x,z', grouped: 'z', groups: 'x' };
+            // the entry renders (sealed mode has no execute()), and renders again when the host asks
+            await mountInput(mode, sandbox, browserName, `bridge.expose('renderInto', (html, into) => { sandboxView.render(html, into); return true; });`, selects + '<div id="box"></div><select id="own"></select><p id="ready">ready</p>');
+            expect(await inView(page, browserName, shown)).toEqual({ ...expected, own: '' });
+            // rendered into an element, and into a select
+            await sandbox.call('renderInto', selects.replaceAll('id="', 'id="in-'), 'box');
+            await sandbox.call('renderInto', options, 'own');
+            await waitInView(page, browserName, `document.getElementById('own').length === 3 && !!document.getElementById('in-groups')`);
+            const inBox = Object.fromEntries(Object.entries(expected).map(([id, value]) => [`in-${id}`, value]));
+            expect(await inView(page, browserName, shown)).toEqual({ ...expected, ...inBox, own: 'y' });
         });
     });
 });
@@ -169,6 +205,7 @@ async function openInNewTab(page: import('@playwright/test').Page, url: string):
 
 test.describe('ST1: nothing the strict view shows opens in a new tab as a document that runs script', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('every URL the view mints is of a type that is not a document: registered SVG and XML-typed files get none, and opening every minted URL runs nothing; a PNG renders (positive control)', async ({ sandbox, page, browserName }) => {
             test.setTimeout(90000);
             const doc = b64(DOCUMENT(recorder.blocked));
@@ -257,6 +294,7 @@ const MARKER_FANOUT = (() => {
 })();
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe('ST2: one render cannot stall the host by fan-out, and the view holds a bounded document', () => {
         for (const [name, markup] of [['SVG <use>', USE_FANOUT], ['SVG markers', MARKER_FANOUT]] as const) {
             test(`a ${markup.length}-character render that instances its content 10^5 times (${name}) does nothing: nothing instancing is left, and the host's longest stall stays under 500 ms`, async ({ sandbox, page, browserName }) => {

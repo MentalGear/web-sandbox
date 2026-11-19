@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='; frame-src 'self'; worker-src blob:">
+<title>sealed document stand-in</title>
+<!-- A comment, kept byte for byte:   two  spaces,	a tab,   and trailing space.   -->
+<style>
+  html   { color-scheme: light dark; }
+  iframe { border: 0; width: 100%; height: 100%; }
+</style>
+</head>
+<body   data-marker="sealed-document"  >
+<script>
+  // inline script: a bundler that processes HTML would hash, move or minify this
+  "use strict";
+  const   marker =   'sealed-document-inline-script';
+  window.addEventListener('message', (event) => {
+    if (event.data === 'ping') { event.source.postMessage({ marker }, '*'); }
+  });
+</script>
+<iframe sandbox="allow-scripts allow-forms" srcdoc="<!doctype html><meta charset=utf-8><script>parent.postMessage('view-ready','*')</script><p>view   with   spaces</p>"></iframe>
+<!--
+padding line to reach about two kilobytes: the quick brown fox jumps over the lazy dog 0123456789
+padding line to reach about two kilobytes: the quick brown fox jumps over the lazy dog 0123456789
+padding line to reach about two kilobytes: the quick brown fox jumps over the lazy dog 0123456789
+padding line to reach about two kilobytes: the quick brown fox jumps over the lazy dog 0123456789
+padding line to reach about two kilobytes: the quick brown fox jumps over the lazy dog 0123456789
+padding line to reach about two kilobytes: the quick brown fox jumps over the lazy dog 0123456789
+padding line to reach about two kilobytes: the quick brown fox jumps over the lazy dog 0123456789
+padding line to reach about two kilobytes: the quick brown fox jumps over the lazy dog 0123456789
+padding line to reach about two kilobytes: the quick brown fox jumps over the lazy dog 0123456789
+-->
+</body>
+</html>

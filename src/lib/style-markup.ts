@@ -5,8 +5,8 @@
  * Why. The view's document inherits the host page's policy list, and a `style` attribute or a `<style>` element is an
  * inline style: the page's `style-src` (and `style-src-attr`, `style-src-elem`) checks it, a page whose `style-src` has a
  * hash or a nonce refuses it, and the browser reports each refusal to the page's endpoint, with the style's first 40
- * characters where the policy has `'report-sample'`. Chromium checks a `style` attribute as it parses it, also into an
- * inert template, a DOMParser document or a document of `document.implementation`; an empty `<style>`, and one whose
+ * characters where the policy has `'report-sample'`. Chromium and WebKit check a `style` attribute as they parse it, also into an
+ * inert template or a document of `document.implementation` (WebKit a DOMParser document too); an empty `<style>`, and one whose
  * `type` is not CSS, are checked once connected (research 25). What no `style-src` governs on any engine is the CSSOM: an
  * element's declaration (`cssText`, `setProperty`) and a constructed stylesheet (`replaceSync`, adopted). So the view
  * applies the guest's styles through those (inSandboxView), and its parser is never given a `style` attribute or a

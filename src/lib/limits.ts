@@ -10,7 +10,7 @@
  *
  * Data only, imported by tests and the docs.
  */
-import { EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_MS, SAME_DATA_MAX_PAIRS, VIEW_LIVENESS_TIMEOUT_MS } from '../host';
+import { EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_MS, VIEW_LIVENESS_TIMEOUT_MS } from '../host';
 import { AUTO_RESIZE_MAX_HEIGHT, AUTO_RESIZE_MAX_UPDATES_PER_SECOND } from './auto-resize';
 import { GUEST_CALL_BYTES_PER_SECOND, GUEST_CALLS_PER_SECOND } from './config-schema';
 import { UNCAUGHT_CHARACTERS_PER_SECOND, UNCAUGHT_PER_SECOND } from './egress';
@@ -18,6 +18,7 @@ import { DEFAULT_FETCH_TIMEOUT_MS, DEFAULT_MAX_BYTES, DEFAULT_MAX_CONCURRENT, MA
 import { MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES } from './files';
 import { MAX_RESPONSE_HEAD } from './in-bridge-frame';
 import { GUEST_WRITE_BYTES_PER_SECOND, GUEST_WRITES_PER_SECOND } from './guest-writes';
+import { LINK_TABS_PER_SECOND, MAX_LINK_LENGTH, MAX_LINKS } from './links';
 import {
     VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_INPUT_IN_FLIGHT, VIEW_SET_STYLE_LIMITS, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS,
     VIEW_MAX_OPERATION_MS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_CHARACTERS_PER_SECOND,
@@ -56,7 +57,6 @@ export const LIMITS = {
     GUEST_CALLS_PER_SECOND: { value: GUEST_CALLS_PER_SECOND, unit: 'count', label: 'Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`)', enforced: "config-schema.ts, admitGuestCall: the host, and the guest's broker by the same rule", exported: false },
     GUEST_CALL_BYTES_PER_SECOND: { value: GUEST_CALL_BYTES_PER_SECOND, unit: 'bytes', label: 'Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`)', enforced: "config-schema.ts, admitGuestCall: the host, and the guest's broker by the same rule", exported: false },
     DEFAULT_TIMEOUT_MS: { value: 30000, unit: 'ms', label: 'Default call timeout (ms)', enforced: 'rpc.ts, createBroker, callWithTimeout', exported: false, mirror: ['src/lib/rpc.ts', 'DEFAULT_TIMEOUT_MS'] },
-    BLOB_TYPE_MAX_LENGTH: { value: 4096, unit: 'characters', label: "Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget on every engine that keeps the type; Chromium empties one of 65 536 characters or more)", enforced: 'structured-size.ts, the byte measure, at both ends of a message and a log line', exported: false, mirror: ['src/lib/structured-size.ts', 'BLOB_TYPE_MAX_LENGTH'] },
     KIND_MAX_LENGTH: { value: 64, unit: 'characters', label: 'Characters of the kind a message names when it refuses a value it does not know (a guest chooses the tag; the name is cut)', enforced: 'structured-size.ts, the byte measure; in-sandbox-script.ts, the console relay', exported: false, mirror: ['src/lib/structured-size.ts', 'KIND_MAX_LENGTH'] },
     ERROR_WALK_NODES: { value: 10000, unit: 'count', label: "Objects a log line is walked through to turn its errors into plain records (an error past it stays, and the measure names it as unsupported)", enforced: 'in-sandbox-script.ts, the console relay, before the line is measured', exported: false, mirror: ['src/lib/in-sandbox-script.ts', 'ERROR_WALK_NODES'] },
     ERROR_WALK_DEPTH: { value: 64, unit: 'count', label: 'Levels of that walk', enforced: 'in-sandbox-script.ts, the console relay, before the line is measured', exported: false, mirror: ['src/lib/in-sandbox-script.ts', 'ERROR_WALK_DEPTH'] },
@@ -77,7 +77,10 @@ export const LIMITS = {
     VIOLATION_MAX_STRING: { value: VIOLATION_MAX_STRING, unit: 'characters', label: null, enforced: 'in-sandbox-script.ts and the view, before posting; violation.ts, toViolationDetail, again on receipt', exported: false },
     AUTO_RESIZE_MAX_HEIGHT: { value: AUTO_RESIZE_MAX_HEIGHT, unit: 'px', label: 'Auto-size: tallest height (px)', enforced: 'auto-resize.ts, the host', exported: true },
     AUTO_RESIZE_MAX_UPDATES_PER_SECOND: { value: AUTO_RESIZE_MAX_UPDATES_PER_SECOND, unit: 'count', label: 'Auto-size: height changes per second (and at most one per frame)', enforced: 'auto-resize.ts, the host', exported: true },
-    VIEW_RENDER_MAX_LENGTH: { value: VIEW_RENDER_MAX_LENGTH, unit: 'characters', label: 'Strict: characters per `sandboxView.render()`, `text()` or `set()` value, and of `html` (the initial view)', enforced: `${PRELUDE}; config-schema.ts, htmlRefusal (html, at setConfig() and load())`, exported: true },
+    MAX_LINKS: { value: MAX_LINKS, unit: 'count', label: 'URLs of `links`', enforced: 'links.ts, readLinks (at start())', exported: true },
+    MAX_LINK_LENGTH: { value: MAX_LINK_LENGTH, unit: 'characters', label: 'Characters of a URL of `links`', enforced: 'links.ts, readLinks (at start())', exported: false },
+    LINK_TABS_PER_SECOND: { value: LINK_TABS_PER_SECOND, unit: 'count', label: 'Tabs one element opens for `links` in any one-second window', enforced: 'host.ts, _openListedLink (links.ts, createLinkTabLimiter)', exported: true },
+    VIEW_RENDER_MAX_LENGTH: { value: VIEW_RENDER_MAX_LENGTH, unit: 'characters', label: 'Strict: characters per `sandboxView.render()`, `text()` or `set()` value, and of `html` (the initial view)', enforced: `${PRELUDE}; config-schema.ts, htmlRefusal (html, at start())`, exported: true },
     VIEW_TARGET_MAX_LENGTH: { value: VIEW_TARGET_MAX_LENGTH, unit: 'characters', label: 'Strict: characters of a render or event target id', enforced: PRELUDE, exported: false },
     VIEW_MAX_ELEMENTS: { value: VIEW_MAX_ELEMENTS, unit: 'count', label: 'Strict: elements in the view', enforced: `${VIEW}, sanitizeRender`, exported: false },
     VIEW_MAX_CHARACTERS: { value: VIEW_MAX_CHARACTERS, unit: 'characters', label: 'Strict: characters in the view (its body\'s serialization)', enforced: VIEW, exported: false },
@@ -113,7 +116,6 @@ export const LIMITS = {
     MAX_HEADER_VALUE: { value: MAX_HEADER_VALUE, unit: 'characters', label: 'Fetch: characters of a request header value', enforced: 'fetch-bridge.ts, the request check', exported: false },
     MAX_URL: { value: MAX_URL, unit: 'characters', label: 'Fetch: characters of a URL, as written and as parsed', enforced: 'fetch-bridge.ts, the request check', exported: false },
     MAX_RESPONSE_HEAD: { value: MAX_RESPONSE_HEAD, unit: 'characters', label: "Fetch: characters of a response's status text and headers, together", enforced: "in-bridge-frame.ts, the bridge's frame, before it posts the head", exported: false },
-    SAME_DATA_MAX_PAIRS: { value: SAME_DATA_MAX_PAIRS, unit: 'count', label: 'Pairs of objects `setConfig()` compares with the configuration the environment was built from (and 64 levels deep); past it the configurations count as different, which only costs a rebuild', enforced: 'host.ts, sameData: the comparison of a configuration with the one the environment was built from, which answers "changed" past it', exported: false },
     GUEST_WRITES_PER_SECOND: { value: GUEST_WRITES_PER_SECOND, unit: 'count', label: 'Guest writes: requests per second, per environment', enforced: 'guest-writes.ts, the host', exported: true },
     GUEST_WRITE_BYTES_PER_SECOND: { value: GUEST_WRITE_BYTES_PER_SECOND, unit: 'bytes', label: 'Guest writes: bytes per second, per environment', enforced: 'guest-writes.ts, the host', exported: true },
 } as const satisfies Record<string, LimitRow>;

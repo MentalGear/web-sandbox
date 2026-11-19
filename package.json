@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Local-first sandbox for untrusted web content: opaque-origin iframe, immutable CSP, no backend.",
   "type": "module",
-  "private": true,
+  "license": "Apache-2.0",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,11 +11,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./sealed-document.html": "./dist/sealed-document.html"
   },
   "files": [
     "dist/index.js",
+    "dist/sealed-document.html",
     "dist/**/*.d.ts",
+    "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ],
   "sideEffects": false,
@@ -26,10 +29,10 @@
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "test:probes": "playwright test -c docs/research/15_strict_mode",
-    "build:lib": "rm -rf dist && bun scripts/build-lib.ts && tsc -p tsconfig.build.json && bun scripts/declaration-specifiers.ts && bun scripts/declaration-base.ts",
+    "build:lib": "rm -rf dist && bun scripts/build-lib.ts && bun scripts/emit-declarations.ts && bun scripts/declaration-specifiers.ts && bun scripts/declaration-base.ts",
     "typecheck": "tsc --noEmit -p .",
-    "api:check": "bun run build:lib && api-extractor run && bun scripts/api-model.ts check",
-    "api:update": "bun run build:lib && api-extractor run --local && bun scripts/api-model.ts update",
+    "api:check": "WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib && api-extractor run -c api-extractor.network.json && bun run build:lib && api-extractor run && bun scripts/api-model.ts check",
+    "api:update": "WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib && api-extractor run --local -c api-extractor.network.json && bun run build:lib && api-extractor run --local && bun scripts/api-model.ts update",
     "docs:gen": "bun tools/docgen/docs.ts",
     "docs:check": "bun tools/docgen/docs.ts --check",
     "format": "prettier --write .",
@@ -37,12 +40,12 @@
   },
   "devDependencies": {
     "@microsoft/api-extractor": "7.59.4",
-    "@playwright/test": "^1.58.1",
+    "@playwright/test": "^1.65.1",
     "@types/bun": "^1.3.8",
     "es-module-lexer": "1.7.0",
     "fast-check": "^4.10.2",
     "jsdom": "^28.0.0",
-    "playwright": "^1.58.1",
+    "playwright": "^1.65.1",
     "prettier": "^3.9.10",
     "typescript": "^7.0.2",
     "vite": "^6.0.0",

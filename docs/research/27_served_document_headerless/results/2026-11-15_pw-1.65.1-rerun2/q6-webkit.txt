@@ -1,0 +1,8 @@
+q6.run {"engine":"webkit","version":"27.2","date":"2026-11-15T01:52:06.068Z","load1":0.47}
+q6 {"engine":"webkit","case":"idle","median":13,"range":"13-14","gaps":[14,14,13,13,13],"load1":[0.47,0.43,0.43,0.39,0.39]}
+q6 {"engine":"webkit","case":"today's srcdoc frame","median":1210,"range":"1200-1212","gaps":[1203,1210,1211,1212,1200],"load1":[0.36,0.36,0.36,0.33,0.33]}
+q6 {"engine":"webkit","case":"served frame","median":1209,"range":"1200-1212","gaps":[1209,1211,1212,1200,1200],"load1":[0.39,0.39,0.43,0.43,0.48]}
+q6 {"engine":"webkit","case":"served frame's srcdoc child","median":1200,"range":"1200-1209","gaps":[1200,1200,1209,1201,1200],"load1":[0.48,0.44,0.44,0.41,0.41]}
+q6 {"engine":"webkit","case":"served frame's blob: worker","median":13,"range":"12-13","gaps":[12,12,13,13,13],"load1":[0.41,0.37,0.37,0.42,0.42]}
+q6 {"engine":"webkit","case":"cross-site frame, no sandbox (control)","median":1211,"range":"1207-1211","gaps":[1211,1211,1211,1207,1210],"load1":[0.47,0.47,0.51,0.51,0.47]}
+q6 {"engine":"webkit","case":"same-origin frame, no sandbox (control)","median":1201,"range":"1201-1210","gaps":[1210,1201,1202,1201,1201],"load1":[0.47,0.43,0.43,0.43,0.48]}

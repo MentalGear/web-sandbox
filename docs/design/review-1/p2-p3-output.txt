@@ -1,0 +1,6 @@
+chromium | F sandbox="allow-scripts" | submit events in C: 0 | non-bubbling event seen by: window-capture, document-capture, ancestor-capture
+chromium | F sandbox="allow-scripts allow-forms" | submit events in C: 2 | non-bubbling event seen by: window-capture, document-capture, ancestor-capture
+firefox | F sandbox="allow-scripts" | submit events in C: 0 | non-bubbling event seen by: window-capture, document-capture, ancestor-capture
+firefox | F sandbox="allow-scripts allow-forms" | submit events in C: 2 | non-bubbling event seen by: window-capture, document-capture, ancestor-capture
+webkit | F sandbox="allow-scripts" | submit events in C: 2 | non-bubbling event seen by: window-capture, document-capture, ancestor-capture
+webkit | F sandbox="allow-scripts allow-forms" | submit events in C: 2 | non-bubbling event seen by: window-capture, document-capture, ancestor-capture

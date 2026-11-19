@@ -10,7 +10,7 @@
  *
  * A release can run embedder code before it returns: a frame's removal fires the host window's `focus` on Firefox, and a
  * focused guest's `pagehide` handler calls `parent.parent.focus()` on every engine. A listener that calls reset(),
- * load() or setConfig() builds a whole new environment from inside the old teardown. Because the fields already say "no
+ * start() builds a whole new environment from inside the old teardown. Because the fields already say "no
  * environment", that build fills fields the outer teardown never touches again, and the outer teardown releases the old
  * environment's resources only. A field written by a release instead (`this._iframe = null` after `remove()`) would
  * overwrite the nested build's, orphan its frame and close its bridge.
@@ -20,8 +20,7 @@
  * entry of the list.
  */
 import type { AutoResizer } from './auto-resize';
-import type { BridgeFrame } from './bridge-frame';
-import type { FetchBridge } from './fetch-bridge';
+import type { FetchHandler } from './network-modes';
 import type { LongTimeout } from './long-timer';
 import type { Watchdog } from './watchdog';
 import { mintError } from './minted-errors';
@@ -48,9 +47,9 @@ export interface EnvironmentFields {
     /** The auto-sizing, when on. */
     _resizer: AutoResizer | null;
     /** The fetch bridge, when on. */
-    _fetchBridge: FetchBridge | null;
+    _fetchBridge: FetchHandler | null;
     /** The frame that makes the bridge's requests. */
-    _bridgeFrame: BridgeFrame | null;
+    _bridgeFrame: { close(): void } | null;
     /** Strict mode: guest writes posted to the view and not yet confirmed, by id. */
     _viewWrites: Map<number, { shown: () => void; lost: (error: Error) => void }>;
     /** The workerExecutionTimeout deadlines. */

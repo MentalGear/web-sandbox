@@ -1,4 +1,7 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * A violation report's strings are cut before they are posted (class E-cpu, "cut before posting"; backlog S61.3's scan,
@@ -42,12 +45,13 @@ const CASES = [
     { name: 'cooperative mode, a fetch of a long data: URL', mode: 'cooperative' as const, prefix: 'data', run: `fetch('data:text/plain,' + 'a'.repeat(${LONG})).catch(() => {}); console.log('sent')` },
     { name: 'cooperative mode, an image from a blob: URL whose path is long', mode: 'cooperative' as const, prefix: 'blob', run: `const i = new Image(); i.src = URL.createObjectURL(new Blob(['x'])) + '#' + 'a'.repeat(${LONG}); console.log('sent')` },
     { name: 'strict mode, the worker\'s fetch of a long https URL', mode: 'strict' as const, prefix: `${ATTACKER}/long-`, run: `fetch('${ATTACKER}/long-' + 'a'.repeat(${LONG})).catch(() => {}); console.log('sent')` },
-    { name: 'sealed mode, the worker\'s fetch of a long https URL', mode: 'sealed' as const, prefix: `${ATTACKER}/long-`, run: `fetch('${ATTACKER}/long-' + 'a'.repeat(${LONG})).catch(() => {}); console.log('sent')` },
     { name: 'strict mode, the view\'s image of a long https URL', mode: 'strict' as const, prefix: `${ATTACKER}/long-`, run: `sandboxView.render('<img src="${ATTACKER}/long-' + 'a'.repeat(${LONG}) + '">'); console.log('sent')` },
     { name: 'sealed mode, the view\'s image of a long https URL', mode: 'sealed' as const, prefix: `${ATTACKER}/long-`, run: `sandboxView.render('<img src="${ATTACKER}/long-' + 'a'.repeat(${LONG}) + '">'); console.log('sent')` },
 ];
 
 for (const { name, mode, prefix, run } of CASES) {
+    test.describe(name, () => {
+    test.use({ build: buildOfMode(mode) });
     test(`${name}: the report crosses cut at ${MAX} characters, and the event says the same`, async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ mode })).toBe('ready');
         await sandbox.run(run);
@@ -66,5 +70,6 @@ for (const { name, mode, prefix, run } of CASES) {
         for (const event of events) expect(event.blockedURI).toBeLessThanOrEqual(MAX);
         // a report of the long URL itself is cut to exactly the limit, its start kept
         for (const frame of raw) if (frame.start.startsWith(prefix) && prefix.startsWith('https')) expect(frame.blockedURI).toBe(MAX);
+    });
     });
 }

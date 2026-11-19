@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -9,6 +10,8 @@ import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { isViewFileType, VIEW_WRITE_TYPES } from '@src/lib/in-sandbox-view';
 import { mimeTypeFor as typeForPath } from '@src/lib/files';
 import { checkIn } from './check-in';
+import { commitAt } from './guest-commit';
+import { startWith } from './start-app';
 
 /**
  * Findings of R5 where the library's own logic decides, each reproduced here first against the code it names.
@@ -97,7 +100,7 @@ const posted = (port: KeptPort) => port.posted.map((frame: any) => frame.type ==
 describe('5:L-1 (class L): a call made while loading that settles before `ready` never runs, in every mode', () => {
     it("strict mode, the owner's repro: a call that times out between the wrapper's load and the view's check-in is never posted", async () => {
         const { el } = element();
-        el.setConfig({ mode: 'strict' });
+        startWith(el, { mode: 'strict' });
         const build = playBuild(el, 'strict');
         const call = el.callWithTimeout(30, 'm', 'ran');
         build.load(); // the queue is not flushed here: the call's frame is not on its way to the guest
@@ -110,7 +113,7 @@ describe('5:L-1 (class L): a call made while loading that settles before `ready`
 
     it('strict mode: a call and an execute() made between the load and `ready` wait for `ready` too, in the order they were made', async () => {
         const { el } = element();
-        el.setConfig({ mode: 'strict', scriptUnsafe: true });
+        startWith(el, { mode: 'strict', scriptUnsafe: true });
         const build = playBuild(el, 'strict');
         el.callWithTimeout(0, 'm', 'before load').catch(() => {});
         build.load();
@@ -137,7 +140,7 @@ describe('5:L-1 (class L): a call made while loading that settles before `ready`
                 vi.useFakeTimers(); // before the element: its broker takes the timers it finds when it is made
                 const next = random(seed * 7919 + mode.length);
                 const { el } = element();
-                el.setConfig(mode === 'cooperative' ? { mode, capabilities: ['allow-scripts'] } : { mode });
+                startWith(el, mode === 'cooperative' ? { mode, capabilities: ['allow-scripts'] } : { mode });
                 const build = playBuild(el, mode);
                 const loadAt = Math.floor(next() * 40);
                 const readyAt = mode === 'strict' ? loadAt + Math.floor(next() * 40) : loadAt;
@@ -203,9 +206,8 @@ describe('5:L-2 (class C): callLimits.maxBytesPerSecond smaller than one call', 
 
     it.each([64, 100])('maxBytesPerSecond: %i — the element answers a call that arrives anyway ARGS_NOT_TRANSFERABLE, and its method does not run', async (bytes) => {
         const { el } = element();
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: bytes } });
         const method = vi.fn(() => 'ran');
-        el.expose('m', method);
+        startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: bytes } }, { methods: { m: method } });
         const answers: any[] = [];
         el._broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'm', args: [] }, (frame: unknown) => answers.push(frame));
         await settle();
@@ -214,11 +216,11 @@ describe('5:L-2 (class C): callLimits.maxBytesPerSecond smaller than one call', 
     });
 
     it('a maxBytesPerSecond below the largest call gives one warning, that calls heavier than it are refused; at or above it, none', () => {
-        const { el, warn } = element();
         for (const bytes of [100, 1048576, RPC_MAX_BYTES - 1, RPC_MAX_BYTES, 67108864]) {
+            const { el, warn } = element();
             warn.mockClear();
-            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: bytes } });
-            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: bytes }, html: 'again' });
+            startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: bytes } });
+            el.reset(); // a rebuild of the same app says it no more
             const said = warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('callLimits'));
             expect(said, String(bytes)).toEqual(bytes < RPC_MAX_BYTES
                 ? [`[Sandbox] callLimits.maxBytesPerSecond is ${bytes}, below the largest call (${RPC_MAX_BYTES} bytes): a call heavier than ${bytes} bytes is refused with ARGS_NOT_TRANSFERABLE.`]
@@ -232,6 +234,7 @@ describe('5:L-2 (class C): callLimits.maxBytesPerSecond smaller than one call', 
 describe('5:L-3 (class D/L): the first listener cannot rewrite a detail for the listeners after it', () => {
     it('terminated: { reason } is frozen; a listener that rewrites it changes nothing for the next', () => {
         const { el } = element();
+        el.start({}); // an element with no app has nothing to terminate
         const seen: unknown[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => { Reflect.set(e.detail, 'reason', 'rewritten'); });
         el.addEventListener('terminated', (e: CustomEvent) => { seen.push(e.detail.reason, Object.isFrozen(e.detail)); });
@@ -239,12 +242,14 @@ describe('5:L-3 (class D/L): the first listener cannot rewrite a detail for the 
         expect(seen).toEqual(['the reason', true]);
     });
 
-    it('fileschanged: { paths } and its array are frozen', () => {
+    it('fileschanged: { paths } and its array are frozen', async () => {
         const { el } = element();
+        startWith(el, { mode: 'strict', guestWrites: true });
         const seen: unknown[] = [];
         el.addEventListener('fileschanged', (e: CustomEvent) => { Reflect.set(e.detail.paths, 0, 'rewritten'); });
         el.addEventListener('fileschanged', (e: CustomEvent) => { seen.push([...e.detail.paths], Object.isFrozen(e.detail), Object.isFrozen(e.detail.paths)); });
-        el.registerFiles({ 'a.txt': 'x' });
+        await el._handleGuestWrite(el._guestWrites, { change: 'write', path: 'a.txt', entry: 'x' });
+        commitAt(el, ['a.txt']); // the files change: 'fileschanged'
         expect(seen).toEqual([['a.txt'], true, true]);
     });
 
@@ -279,24 +284,9 @@ function fakeView(el: any) {
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
 describe('5:N-4 and 5:L-4 (class D): one diff of the guest-write state', () => {
-    it('N-4: a removal of a file the host unregistered after the build is shown in the view, and announced nowhere', async () => {
-        const { el } = element();
-        el.registerFiles({ 'pic.png': PNG });
-        el.setConfig({ mode: 'strict', guestWrites: true });
-        const view = fakeView(el);
-        const heard: string[][] = [];
-        el.addEventListener('fileswritten', (e: CustomEvent) => heard.push([...e.detail.paths]));
-        el.unregisterFiles(['pic.png']);
-        const answer = await el._handleGuestWrite(el._guestWrites, { change: 'remove', path: 'pic.png' });
-        expect(answer).toEqual({ path: 'pic.png', change: 'remove' });
-        expect(el.listGuestWrites()).toEqual([]);
-        expect(heard).toEqual([]);
-        expect(view.shows.get('pic.png')).toBe(false); // the view is told, and drops the old blob: URL
-    });
-
     it('L-4: a withdrawn write (a new path written, then removed) is announced, since the list changed, and listed nowhere; docs/API.md says so', async () => {
         const { el } = element();
-        el.setConfig({ mode: 'strict', guestWrites: true });
+        startWith(el, { mode: 'strict', guestWrites: true });
         fakeView(el);
         const heard: string[][] = [];
         el.addEventListener('fileswritten', (e: CustomEvent) => heard.push([...e.detail.paths]));
@@ -307,7 +297,7 @@ describe('5:N-4 and 5:L-4 (class D): one diff of the guest-write state', () => {
         expect(read('docs/API.md').replace(/\s+/g, ' ')).toContain('A removal of a path the guest wrote and the files do not hold withdraws the write');
     });
 
-    it('a model over random sequences of guest writes and removals and host registrations, removals and commits: the announcement names exactly the paths whose listed entry changed, and the view shows exactly what the guest sees', async () => {
+    it('a model over random sequences of guest writes and removals and host commits: the announcement names exactly the paths whose listed entry changed, and the view shows exactly what the guest sees', async () => {
         const PATHS = ['a.png', 'b.txt', 'c.png', 'd.css'];
         const content = (pathName: string, version: number) => (pathName.endsWith('.png') ? new Uint8Array([...PNG, version]) : `v${version}`);
         for (let seed = 1; seed <= 60; seed++) {
@@ -316,28 +306,19 @@ describe('5:N-4 and 5:L-4 (class D): one diff of the guest-write state', () => {
             const { el } = element();
             const registered: Record<string, unknown> = {};
             for (const candidate of PATHS) if (next() < 0.5) registered[candidate] = content(candidate, 0);
-            if (Object.keys(registered).length > 0) el.registerFiles(registered);
-            el.setConfig({ mode: 'strict', guestWrites: true });
+            startWith(el, { mode: 'strict', guestWrites: true }, { files: registered });
             const view = fakeView(el);
             // what the guest's own sandboxFiles holds (the build's files, then the element's answers): path → its type
             const guest = new Map<string, { type: string; built: boolean }>();
             for (const [candidate] of Object.entries(registered)) guest.set(candidate, { type: typeForPath(candidate), built: true });
             let heard: string[] = [];
             el.addEventListener('fileswritten', (e: CustomEvent) => heard.push(...e.detail.paths));
-            const listed = () => JSON.stringify(el.listGuestWrites().map((entry: any) => (entry.content ? { ...entry, content: [...entry.content] } : entry)));
+            const listed = () => JSON.stringify(el.listGuestWrites().map((entry: any) => (entry.content ? { ...entry, content: [...entry.content.bytes()] } : entry)));
             for (let step = 0; step < 25; step++) {
                 const roll = next();
                 const target = pick();
-                if (roll < 0.15) {
-                    el.registerFiles({ [target]: content(target, step + 1) });
-                    continue;
-                }
-                if (roll < 0.25) {
-                    el.unregisterFiles([target]);
-                    continue;
-                }
                 if (roll < 0.3) {
-                    try { el.commitGuestWrites([target], { code: true }); } catch { /* a refused commit changes nothing */ }
+                    try { commitAt(el, [target], { code: true }); } catch { /* a refused commit changes nothing */ }
                     continue;
                 }
                 const before = JSON.parse(listed()).find((entry: any) => entry.path === target) ?? null;

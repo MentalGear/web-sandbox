@@ -2,6 +2,9 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixture';
 import { useRecorder } from './recorder';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * `ready` means the guest's startup script checked in (backlog S46; ADR-002 and ADR-003 amendments): the host is
  * ready when it accepts the bootstrap's announcement, not when the wrapper frame has loaded (which waits for the
@@ -18,7 +21,7 @@ const SECOND_LOAD = 'the sandbox frame loaded a second time';
 const SECOND_ANNOUNCEMENT = 'the guest frame announced itself again (it reloaded or rewrote its document)';
 const LOAD_TIMEOUT = 'the sandbox did not finish loading';
 
-// Builds an environment from `config` (merged over the baseline) and reports, in ms from setConfig(), when 'ready'
+// Starts the harness's element with `config` (merged over the baseline) and reports, in ms from start(), when 'ready'
 // fired and when the wrapper frame's own load event reached the host page, with the state at that load.
 async function readyAndLoad(page: Page, config: Record<string, unknown>) {
     return page.evaluate((config) => new Promise<{ readyAt: number; loadedAt: number; stateAtLoad: string; terminated: string | null }>((resolve) => {
@@ -28,7 +31,7 @@ async function readyAndLoad(page: Page, config: Record<string, unknown>) {
         let terminated: string | null = null;
         el.addEventListener('ready', () => { readyAt = performance.now() - started; }, { once: true });
         el.addEventListener('terminated', (e: CustomEvent) => { terminated = e.detail.reason; }, { once: true });
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
+        el.start(...sandboxSplit({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config }));
         el.shadowRoot.querySelector('iframe').addEventListener('load', () => {
             resolve({ readyAt, loadedAt: performance.now() - started, stateAtLoad: el.state, terminated });
         }, { once: true });
@@ -58,7 +61,7 @@ test.describe('S46: ready when the guest checks in', () => {
         const report = await page.evaluate((config) => new Promise<any>((resolve) => {
             const el = document.querySelector('web-sandbox') as any;
             const started = performance.now();
-            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
+            el.start(...sandboxSplit({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config }));
             const queued = settleOutcome(el.call('late'));
             el.execute(`console.log('EXECUTED_AFTER ' + typeof globalThis.__recorderRan + ' ' + (globalThis.__late === true))`);
             el.addEventListener('ready', async () => {
@@ -83,7 +86,7 @@ test.describe('S46: ready when the guest checks in', () => {
             + `<script>globalThis.__order = []; bridge.expose('note', (tag) => { __order.push(tag); return __order.slice(); });</script>`;
         const order = await page.evaluate((config) => new Promise<unknown>((resolve) => {
             const el = document.querySelector('web-sandbox') as any;
-            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
+            el.start(...sandboxSplit({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config }));
             el.addEventListener('ready', async () => {
                 el.execute(`__order.push('exec1')`);
                 el.call('note', 'call1');
@@ -98,7 +101,7 @@ test.describe('S46: ready when the guest checks in', () => {
         const html = `<img src="${recorder.allowed}/delay?ms=2000">`;
         const outcome = await page.evaluate((config) => new Promise<unknown>((resolve) => {
             const el = document.querySelector('web-sandbox') as any;
-            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
+            el.start(...sandboxSplit({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config }));
             el.addEventListener('ready', () => {
                 el.addEventListener('terminated', (e: CustomEvent) => resolve({ reason: e.detail.reason, state: el.state }), { once: true });
                 el.shadowRoot.querySelector('iframe').srcdoc = '<p>a document the host did not write</p>';
@@ -139,7 +142,7 @@ test.describe('S46: ready when the guest checks in', () => {
             const started = performance.now();
             el.addEventListener('ready', () => resolve('ready'), { once: true });
             el.addEventListener('terminated', (e: CustomEvent) => resolve({ reason: e.detail.reason, after: performance.now() - started }), { once: true });
-            el.setConfig(config);
+            el.start(...sandboxSplit(config));
         }), { mode: 'cooperative', html, capabilities: [], origins: { images: [recorder.allowed] } });
         expect(outcome).toMatchObject({ reason: LOAD_TIMEOUT });
         expect((outcome as { after: number }).after).toBeGreaterThanOrEqual(4900);

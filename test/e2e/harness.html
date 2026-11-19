@@ -6,32 +6,40 @@
     <!--
         Minimal host page for the e2e and research specs (see test/e2e/fixture.ts).
         Kept separate from the playground so a playground change cannot break the security suite.
+        The library is the build the test asked for (test/e2e/library.ts): the default build, or the one with the network modes.
     -->
     <script type="module">
-        import { defineWebSandbox } from '/src/host.ts';
+        import { buildSettled, loadLibrary } from '/test/e2e/library.ts';
+
+        const { defineWebSandbox } = await loadLibrary();
 
         defineWebSandbox();
 
+        // The events that carry guest data do not bubble (design 01, I5): the harness hears every sandbox's in the capture
+        // phase, which runs down the whole path whatever `bubbles` says
         window.sandboxLogs = [];
         window.addEventListener('sandbox-log', (event) => {
             const args = event.detail?.args || [];
             window.sandboxLogs.push(args.map(String).join(' '));
-        });
+        }, true);
         // CSP violations the guest reports (backlog S5): the evidence channel egress specs assert on
         window.sandboxViolations = [];
         window.addEventListener('violation', (event) => {
             window.sandboxViolations.push({ sandbox: event.target.id || 'main', ...event.detail });
-        });
+        }, true);
         // Every request through the fetch bridge (backlog B5), as the host reports it
         window.sandboxFetches = [];
         window.addEventListener('fetch', (event) => {
             window.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail });
-        });
+        }, true);
         // Every guest write the host recorded (backlog C5), as the host reports it
         window.sandboxWrites = [];
         window.addEventListener('fileswritten', (event) => {
             window.sandboxWrites.push({ sandbox: event.target.id || 'main', paths: [...event.detail.paths], at: performance.now() });
-        });
+        }, true);
+        // the element below was upgraded by defineWebSandbox(); it has no app, so it builds nothing until a spec starts one
+        await customElements.whenDefined('web-sandbox');
+        await buildSettled(document.querySelector('web-sandbox'));
         window.harnessReady = true;
     </script>
     <style>web-sandbox { display: block; width: 400px; height: 300px; }</style>

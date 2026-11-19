@@ -1,4 +1,4 @@
-import type { OriginKind } from "./csp/origins";
+import type { OriginKind } from "./csp/origin-kinds";
 
 /**
  * Which file types each kind of load admits: the one table that both the policy and reference resolution read.

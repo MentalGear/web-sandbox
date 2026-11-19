@@ -1,0 +1,3 @@
+q1b.run {"engine":"firefox","version":"159.0","date":"2026-11-19T02:17:28.586Z","load1":0.31}
+q1b {"engine":"firefox","host":"http://app.insecure.test","hostPage":{"secure":false,"subtle":"undefined"},"inC":{"secure":false,"subtle":"undefined","origin":"null"},"end":"no answer in 4000 ms","decision":null,"errors":["TypeError: can't access property \"digest\", crypto.subtle is undefined"]}
+q1b {"engine":"firefox","host":"http://localhost","hostPage":{"secure":true,"subtle":"object"},"inC":{"secure":true,"subtle":"object","origin":"null"},"end":"content acknowledged","decision":"send","errors":["[JavaScript Error: \"downloadable font: rejected by sanitizer (font-family: \"wscheck\" style:normal weight:400 width:100 src index:0) source: blob:null/7fb420ce-c"]}

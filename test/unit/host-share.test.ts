@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handTimedScaling, meterHits, wallClockBounds } from './host-share-scan';
+import { handTimedScaling, meterHits, scalingWithoutItsTimeout, wallClockBounds } from './host-share-scan';
 import { keptCss } from '@src/lib/css-references';
 
 /**
@@ -26,6 +26,12 @@ const OUTSIDE: Record<string, string> = {
     // research 20 is a standalone script, not a spec: it reports the host timer's longest gap per run (median and range of 5,
     // an idle case beside every loop case, a load guard before each) and asserts nothing, so no bound can fail on a loaded machine
     'docs/research/20_served_document_mode/q4-processes.mjs': 'a standalone probe script that reports a gap per run against an idle case and bounds nothing',
+    // research 27 is a standalone script as research 20's: it reports the host timer's longest gap while a served frame, its
+    // child or its worker loops, and asserts nothing
+    'docs/research/27_served_document_headerless/q6-thread.mjs': 'a standalone probe script that reports a gap per run and bounds nothing',
+    // research 28 is a standalone script as research 27's: it reports the host timer's longest gap while a served file, its
+    // view or its worker loops, on several sites and engines, and asserts nothing
+    'docs/research/28_served_topology/q4-thread.mjs': 'a standalone probe script that reports a gap per run and bounds nothing',
 };
 
 function sources(dir: string): string[] {
@@ -132,6 +138,21 @@ describe('T9: every host-tick measure goes through test/e2e/host-share.ts', () =
         // not: a ratio of two sizes measured in the same run, or a wait that must last
         expect(wallClockBounds(`expect(large / small).toBeLessThan(24);`)).toEqual([]);
         expect(wallClockBounds(`const waited = Date.now() - started;\nexpect(waited).toBeGreaterThan(6000);`)).toEqual([]);
+    });
+
+    it('every test that measures scaling declares the measure\'s own time limit, SCALING_TIMEOUT_MS; one under the runner\'s default, or a number of its own, is caught', () => {
+        const tests = [...sources('src'), ...sources('test/unit'), ...sources('test/model')].filter(file => /\.test\.ts$/.test(file) && file !== 'test/unit/host-share.test.ts');
+        const measuring = tests.filter(file => /\bscalingRatio\(/.test(read(file)));
+        expect(measuring.length).toBeGreaterThan(4);
+        expect(measuring.flatMap(file => scalingWithoutItsTimeout(read(file)).map(hit => `${file}:${hit.line} ${hit.text}`))).toEqual([]);
+        // the shapes it replaced: the runner's default limit, a number in the options, a number after the body
+        const body = `        const result = scalingRatio(size('small', 250), size('large', 2000), { bound: 24 });\n    }`;
+        expect(scalingWithoutItsTimeout(`    it('linear in the controls', async () => {\n${body});`)).toHaveLength(1);
+        expect(scalingWithoutItsTimeout(`    it('linear in the text', { timeout: 60000 }, () => {\n${body});`)).toHaveLength(1);
+        expect(scalingWithoutItsTimeout(`    it.each(cases)('%s: %s', async (_, __, shape) => {\n${body}, 120000);`)).toHaveLength(1);
+        // not: the declared limit, in either form of a declaration
+        expect(scalingWithoutItsTimeout(`    it('linear in the text', { timeout: SCALING_TIMEOUT_MS }, () => {\n${body});`)).toEqual([]);
+        expect(scalingWithoutItsTimeout(`    it.each(cases)('%s: %s', { timeout: SCALING_TIMEOUT_MS }, async (_, __, shape) => {\n${body});`)).toEqual([]);
     });
 
     it('no unit test measures scaling by clock reads of its own, but for a reviewed list; the three it replaced are caught', () => {

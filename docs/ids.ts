@@ -47,7 +47,7 @@ export const BACKLOG_ARCHIVE_FILE = 'docs/archive/backlog/BACKLOG-done.md';
  * (test/unit/doc-links.test.ts) compares the list with the anchors of docs/BACKLOG.md.
  */
 export const OPEN_BACKLOG_ITEMS: readonly string[] = [
-    'S8', 'S25', 'S36', 'S44', 'S49', 'S60', 'S69', 'S70', 'S74', 'S76', 'S79', 'S80', 'S81', 'S82', 'S83', 'S84', 'S85', 'S87', 'S88', 'BL:D1', 'BL:H5',
+    'S8', 'S25', 'S36', 'S44', 'S49', 'S60', 'S69', 'S70', 'S74', 'S76', 'S79', 'S81', 'S82', 'S83', 'S84', 'S85', 'S87', 'S89', 'S90',
 ];
 
 /** The file that holds a backlog item: the backlog while it is open, the archive once it is done. */
@@ -65,6 +65,7 @@ export const ADRS = {
     'ADR-006': 'docs/ADR-006-fetch-bridge.md',
     'ADR-007': 'docs/ADR-007-typed-origins.md',
     'ADR-008': 'docs/ADR-008-sealed-mode.md',
+    'ADR-009': 'docs/ADR-009-network-modes-build-flag.md',
 } as const satisfies Record<`ADR-${number}`, string>;
 
 /** The lifecycle model's findings (research 17), cited bare: `LM-2`. */

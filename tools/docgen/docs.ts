@@ -7,6 +7,7 @@ import type { Plugin } from './engine';
 import { run } from './run';
 import { api } from './extractors/api';
 import { budgets } from './extractors/budgets';
+import { build } from './extractors/build';
 import { config } from './extractors/config';
 import { connectFacts } from './extractors/connect-facts';
 import { cookieFacts } from './extractors/cookie-facts';
@@ -14,6 +15,7 @@ import { csp } from './extractors/csp';
 import { engineLedger } from './extractors/engine-ledger';
 import { examples } from './extractors/examples';
 import { frames } from './extractors/frames';
+import { guestValues } from './extractors/guest-values';
 import { inheritedContext } from './extractors/inherited-context';
 import { lifecycle } from './extractors/lifecycle';
 import { limits } from './extractors/limits';
@@ -23,7 +25,7 @@ import { reasons } from './extractors/reasons';
 import { sealedReach } from './extractors/sealed-reach';
 import { surface } from './extractors/surface';
 
-export const EXTRACTORS: readonly Extractor[] = [api, budgets, config, connectFacts, cookieFacts, csp, engineLedger, examples, frames, inheritedContext, lifecycle, limits, modules, reasons, sealedReach, surface];
+export const EXTRACTORS: readonly Extractor[] = [api, budgets, build, config, connectFacts, cookieFacts, csp, engineLedger, examples, frames, guestValues, inheritedContext, lifecycle, limits, modules, reasons, sealedReach, surface];
 
 export const plugin: Plugin = {
     extractors: {},

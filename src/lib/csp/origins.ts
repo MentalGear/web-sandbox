@@ -1,5 +1,6 @@
 import { parseOrigin, type Origin, type OriginRules } from "../origin";
-import { defineData, ownField } from "../utils";
+import { defineData, ownField, type Complete, type Holds } from "../utils";
+import { NO_ORIGINS, ORIGIN_KINDS, shown, type OriginKind, type OriginPolicy } from "./origin-kinds";
 import { fixedDetail, joinDetails, type LibraryDetail } from "../reasons";
 import { mintUncodedError } from "../minted-errors";
 
@@ -53,7 +54,7 @@ export interface SandboxOrigins {
      * admits `fetch()` and `WebSocket` to the host on every engine, and `https://host` alone admits `fetch()` only. Strict
      * mode opens no WebSocket, since a handshake carries the cookies the browser attaches: a `wss://` entry is dropped
      * with a warning, and the request gate refuses every `WebSocket` (a streamed `fetch()` response, or a socket the host
-     * page opens and relays through `expose()`, takes its place). Cooperative mode's guest document also
+     * page opens and relays through a host method of the grants, takes its place). Cooperative mode's guest document also
      * has EventSource and sendBeacon(), which this list governs; strict and worker mode's worker has neither. The host
      * page's own `connect-src` narrows this list in every engine (`hostContentSecurityPolicy`, without which the whole
      * list is dropped). The guest's fetch(),
@@ -81,14 +82,9 @@ export interface SandboxOrigins {
  */
 export type StrictSandboxOrigins = Omit<SandboxOrigins, 'scripts'> & { readonly scripts?: never };
 
-/** A kind of load `origins` takes origins for: every list of `origins`. */
-export type OriginKind = keyof SandboxOrigins;
-
-/** Every kind, in the order the policy emits their directives. */
-export const ORIGIN_KINDS = ['scripts', 'styles', 'images', 'fonts', 'media', 'connect'] as const satisfies readonly OriginKind[];
-
-/** `origins` as parsed: every kind present, every entry an Origin; frozen, lists included. */
-export type OriginPolicy = { readonly [K in OriginKind]: readonly Origin[] };
+// The kinds, the parsed policy and the empty one are every build's (origin-kinds.ts); the option's lists are exactly the kinds.
+export { NO_ORIGINS, ORIGIN_KINDS, shown, type OriginKind, type OriginPolicy };
+type OriginKindsComplete = Holds<Complete<keyof SandboxOrigins, typeof ORIGIN_KINDS>>;
 
 // https: for any host; plain http: only for loopback (local development); wss: for connections only.
 const RULES: OriginRules = { anyHost: ['https:'], loopbackOnly: ['http:'] };
@@ -100,14 +96,6 @@ export function originRules(kind: OriginKind): OriginRules {
 }
 
 const isKind = (key: string): key is OriginKind => (ORIGIN_KINDS as readonly string[]).includes(key);
-
-// An entry as it may appear in a warning: a string clamped and JSON-quoted (control characters show), else its type.
-// Every config warning shows a value through it (R1:R1-3): JSON.stringify of a BigInt or a cyclic entry would throw
-// and refuse the whole config.
-export const shown = (value: unknown) => (typeof value === 'string' ? JSON.stringify(value.slice(0, 64)) : `a value of type ${value === null ? 'null' : typeof value}`);
-
-/** The empty policy: no origin for any kind. */
-export const NO_ORIGINS: OriginPolicy = parseOrigins(undefined, 'cooperative', () => {});
 
 /** The options whose type refuses a config: `origins` itself, and each of its kinds. */
 export type OriginsOption = 'origins' | OriginKind;
@@ -192,7 +180,7 @@ function originsOf(kind: OriginKind, entries: readonly unknown[], mode: unknown,
  * Why strict mode keeps no `wss://` entry and opens no WebSocket (S74, class A): what the warning of a dropped
  * entry says, and what replaces the socket.
  */
-export const STRICT_NO_SOCKET = "strict mode opens no WebSocket: a handshake carries the cookies the browser attaches by site, which the library cannot strip. Stream a fetch() response instead, or open the socket in the host page and relay it to the guest with expose() (see docs/API.md#origins).";
+export const STRICT_NO_SOCKET = "strict mode opens no WebSocket: a handshake carries the cookies the browser attaches by site, which the library cannot strip. Stream a fetch() response instead, or open the socket in the host page and relay it to the guest through a host method of the grants (see docs/API.md#origins).";
 
 /** The `https://` origin that a `wss://` origin needs beside it: the same host and port. */
 export function httpsTwin(origin: string): string {

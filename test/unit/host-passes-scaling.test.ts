@@ -1,9 +1,12 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOST_PASSES, type HostPassId } from '@src/lib/host-passes';
 import { dynamicImportAt } from '@src/lib/entry-imports';
 import { FileStore, viewStylesheets, type ByteEdits, type FileSnapshotEntry } from '@src/lib/files';
 import { normaliseConfig } from '@src/lib/config-schema';
+import { readStart } from '@src/lib/app-start';
 import { createGuestWrites } from '@src/lib/guest-writes';
+import { guestBytes } from '@src/lib/guest-bytes';
 import { createBroker } from '@src/lib/rpc';
 import { toLogDetail } from '@src/lib/sandbox-log';
 import { toViolationDetail } from '@src/lib/violation';
@@ -13,11 +16,11 @@ import { elementEvent } from '@src/lib/element-events';
 import { scriptInMarkup } from '@src/lib/markup-scripts';
 import { VIEW_RENDER_MAX_LENGTH } from '@src/lib/in-sandbox-view';
 import type { Origin } from '@src/lib/origin';
-import { scalingRatio, type ScalingSize } from './scaling';
+import { scalingRatio, SCALING_TIMEOUT_MS, type ScalingSize } from './scaling';
 
 /**
  * Every pass of the host realm over guest content (HOST_PASSES, src/lib/host-passes.ts) costs time linear in what it
- * takes (class E-cpu; BD7:LIM-2: the entry scan was quadratic on crafted entries, 128 KiB took 13 s inside setConfig()).
+ * takes (class E-cpu; BD7:LIM-2: the entry scan was quadratic on crafted entries, 128 KiB took 13 s inside a build).
  * Each row has its adversarial shapes here, each timed at a small size and at 8 times it with scalingRatio (bound 24:
  * linear takes about 8, quadratic about 64); a row without shapes fails, so a new pass cannot ship untimed.
  */
@@ -67,18 +70,21 @@ const SHAPES: Record<HostPassId, readonly Shape[]> = {
         { name: 'lines of `import//import`', n: 16384, make: n => { const text = 'import//import\n'.repeat(n / 15); return () => dynamicImportAt(text); } },
         { name: 'lines of `//import`', n: 16384, make: n => { const text = '//import\n'.repeat(n / 9); return () => dynamicImportAt(text); } },
     ],
-    configCopy: [{
-        name: 'setConfig() again with the same `html` (the copy and the comparison)', n: VIEW_RENDER_MAX_LENGTH / 8,
-        make: n => {
-            const html = `<p>${chars(n - 7)}</p>`;
-            const el = element;
-            el.setConfig({ html });
-            return () => el.setConfig({ html });
+    startReading: [
+        { name: "start()'s reading of a long `html`", n: VIEW_RENDER_MAX_LENGTH / 8, make: n => { const app = { html: chars(n) }; return () => readStart(app, undefined, { hostOrigin: HOST, hostSites: [HOST] }); } },
+        {
+            name: "start()'s reading of many methods with long names", n: 1000,
+            make: n => {
+                const methods: Record<string, () => void> = {};
+                for (let i = 0; i < n; i++) methods[`${'m'.repeat(200)}${i}`] = () => {};
+                return () => readStart({}, { methods }, { hostOrigin: HOST, hostSites: [HOST] });
+            },
         },
-    }],
+        { name: "start()'s reading of many files with long paths and their entry", n: 120, make: n => { const files = { ...manyFiles(n), 'app.js': 'x' }; return () => readStart({ entry: 'app.js', files }, undefined, { hostOrigin: HOST, hostSites: [HOST] }); } },
+    ],
     configSchema: [{ name: 'normaliseConfig() of a long `html`', n: VIEW_RENDER_MAX_LENGTH / 8, make: n => { const config = { html: chars(n) }; return () => normaliseConfig(config, { hostOrigin: HOST, hostSites: [HOST] }); } }],
     fileStore: [
-        { name: 'registerFiles() of many files with long paths', n: 120, make: n => { const files = manyFiles(n); return () => new FileStore(() => {}).register(files); } },
+        { name: 'the store of many files with long paths', n: 120, make: n => { const files = manyFiles(n); return () => new FileStore(() => {}).register(files); } },
         { name: 'a large binary file', n: 512 * 1024, make: n => { const bytes = new Uint8Array(n).fill(7); return () => new FileStore(() => {}).register({ 'a.bin': bytes }); } },
         {
             name: 'snapshot() of a chain of stylesheets that import each other', n: 120,
@@ -125,6 +131,11 @@ const SHAPES: Record<HostPassId, readonly Shape[]> = {
             return () => writes.record(request);
         },
     }],
+    guestBytes: [
+        { name: "a large write's text(), every character two bytes of UTF-8", n: 128 * 1024, make: n => { const content = guestBytes('w.txt', new TextEncoder().encode(chars(n, 'é'))); return () => content.text(); } },
+        { name: "a large polyglot's image(): a PNG signature, then markup", n: 256 * 1024, make: n => { const bytes = new Uint8Array(n).fill(0x3c); bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); const content = guestBytes('w.png', bytes); return () => content.image(); } },
+        { name: "a large write's bytes()", n: 256 * 1024, make: n => { const content = guestBytes('w.bin', new Uint8Array(n).fill(1)); return () => content.bytes(); } },
+    ],
     rpcFrames: [{
         name: 'a request whose argument is a long list of objects', n: 2000,
         make: n => {
@@ -169,10 +180,10 @@ describe('every pass of the host realm over guest content is linear in it (HOST_
     });
 
     const cases = (Object.keys(SHAPES) as HostPassId[]).flatMap(id => SHAPES[id].map(shape => [id, shape.name, shape] as const));
-    it.each(cases)('%s: %s', async (_, __, shape) => {
+    it.each(cases)('%s: %s', { timeout: SCALING_TIMEOUT_MS }, async (_, __, shape) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         await host();
         const result = scalingRatio(timed(shape.make, shape.n), timed(shape.make, shape.n * 8), { bound: BOUND });
         expect(result.ratio, result.message).toBeLessThan(BOUND);
-    }, 120000);
+    });
 });

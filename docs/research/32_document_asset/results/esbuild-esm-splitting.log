@@ -1,0 +1,7 @@
+$ npx esbuild main.js --bundle --format=esm --splitting --outdir=dist && cp index.html dist/
+
+  dist/main.js  1.5kb
+
+⚡ Done in 3ms
+
+--- server output

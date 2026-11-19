@@ -29,9 +29,9 @@
  */
 import { CODE_FROM_STRING_SINKS } from './code-from-strings';
 import { sealedHostPasses } from './host-passes';
-import { RENDER_ATTRIBUTES, RENDER_ELEMENTS, VIEW_LOAD_KINDS } from './in-sandbox-view';
+import { RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_NAMED_CONTROLS, VIEW_LOAD_KINDS } from './in-sandbox-view';
 import type { InheritedContextId } from './inherited-context';
-import { SECURE_CONTEXT_ONLY, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
+import { NETWORK_WORKER_GLOBALS, SECURE_CONTEXT_ONLY, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
 
 /** The relations of a name to a row. */
 export const REACH_RELATIONS = ['none', 'neutralised', 'remains'] as const;
@@ -46,10 +46,10 @@ export interface Chokepoint {
 
 /** The library's chokepoints a `neutralised` cell may name. */
 export const CHOKEPOINTS = {
-    requestGate: {
-        what: "the request gate: the guest's `fetch`, `XMLHttpRequest` and `WebSocket` admit only the guest policy's `connect-src` sources, which sealed mode has none of, and refuse before the platform",
-        file: 'src/lib/in-sandbox-script.ts',
-        token: 'const replaceGlobal = (name: string, original: unknown, value: unknown, enumerable: boolean) =>',
+    sealedWorkerAllowlist: {
+        what: "sealed mode has no network, so its worker has no `fetch`, `XMLHttpRequest` (with `XMLHttpRequestEventTarget` and `XMLHttpRequestUpload`) or `WebSocket`: the names are gone before the bootstrap runs (SEALED_WORKER_GLOBALS, which has none of NETWORK_WORKER_GLOBALS), and no code that could reach the network is in its source",
+        file: 'src/lib/worker-globals.ts',
+        token: 'export const SEALED_WORKER_GLOBALS',
     },
     sealedFetchRefusal: {
         what: '`sandboxFetch()` refuses in the guest with `FETCH_NOT_ALLOWED` and sends nothing to the host',
@@ -132,7 +132,7 @@ export const CHOKEPOINTS = {
         token: 'export function withKeptReferences(',
     },
     styleEncoding: {
-        what: "the view's parser is given the guest's markup with no `style` attribute and no `<style>` element in it, in any context (styleMarkup renames them first): Chromium checks a style attribute as it parses it",
+        what: "the view's parser is given the guest's markup with no `style` attribute and no `<style>` element in it, in any context (styleMarkup renames them first): Chromium and WebKit check a style attribute as they parse it",
         file: 'src/lib/style-markup.ts',
         token: 'export function styleMarkup(nonce: string): StyleMarkup {',
     },
@@ -166,6 +166,16 @@ export const CHOKEPOINTS = {
         file: 'src/lib/in-sandbox-view.ts',
         token: "addEventListener('click', cancelLink, true);",
     },
+    listedLinkMark: {
+        what: "the renderer marks an HTML `a` whose href, as written, is one of the embedder's `links` character for character, and the view sends the host page that link's index, an integer, on the user's trusted click on it, and nothing else: no URL of the guest's crosses (design 02, I6)",
+        file: 'src/lib/in-sandbox-view.ts',
+        token: 'const markListed = (element: Element) => {',
+    },
+    listedLinkOpen: {
+        what: "the host page opens a URL of its own `links` for an integer index within them, in the task of the view's request, with no opener and no referrer: a new tab of the browser's, on the user's click, which nothing of the guest's is part of",
+        file: 'src/host.ts',
+        token: "window.open(url, '_blank', LINK_WINDOW_FEATURES);",
+    },
     forcedNoReferrer: {
         what: 'the renderer gives every `a`, `area`, `img` and `link` `referrerpolicy="no-referrer"`, whatever the guest wrote',
         file: 'src/lib/in-sandbox-view.ts',
@@ -189,7 +199,7 @@ export const CHOKEPOINTS = {
     noDelegation: {
         what: "strict and sealed mode's frames carry no `allow` attribute: no feature is delegated, so a host Permissions-Policy only narrows what no frame has",
         file: 'src/host.ts',
-        token: 'if (hasStrictView(this._config.mode)) return permissions;',
+        token: 'buildWrapperDocument(view, sandboxFlags, [])',
     },
     viewEventList: {
         what: 'the view forwards only the event types of VIEW_EVENT_TYPES, none of them a media event',
@@ -225,6 +235,21 @@ export const CHOKEPOINTS = {
         what: "every pass of the host realm over guest content a sealed build runs is library code over strings and bytes: it hands nothing of the guest's to a platform parser, loader or policy-checked API, and its cost is linear in what it takes (HOST_PASSES; test/unit/host-passes.test.ts scans every pass and the view's frame builders)",
         file: 'src/lib/host-passes.ts',
         token: 'export const HOST_PASSES = {',
+    },
+    controlNames: {
+        what: "the renderer gives every form control a name of the view's (one per distinct guest name, drawn per view; a nameless control one of its own), whatever the guest wrote, and the view maps it back in what it forwards: no store of the browser keyed by a name or an id matches a control of the view",
+        file: 'src/lib/in-sandbox-view.ts',
+        token: 'export const RENDER_NAMED_CONTROLS',
+    },
+    forcedAutocompleteOff: {
+        what: 'the renderer gives every `form`, `input`, `select` and `textarea` `autocomplete="off"`, and keeps no `autocomplete` of the guest\'s: the browser offers and saves no history of what the user typed in the view',
+        file: 'src/lib/in-sandbox-view.ts',
+        token: "['input', 'autocomplete', 'off'],",
+    },
+    valueModel: {
+        what: "the view's value model: a control's value reaches the worker only as the user entered it into that control, in a trusted event of that control while the user is in it; anything else is undone at every read the view forwards (describe(), a submit's fields)",
+        file: 'src/lib/in-sandbox-view.ts',
+        token: 'const entered = (element: Element, kind: number): boolean => {',
     },
     secureContextRemoval: {
         what: "strict and sealed mode's worker has nothing only a secure context has, and reads `isSecureContext` as false, on every engine and page (SECURE_CONTEXT_ONLY): its globals and navigator members are off the strict allowlists, and the prelude deletes its members and pins `isSecureContext`; the surface Chromium's worker has on every page",
@@ -398,8 +423,8 @@ export const SURFACES = {
     console: { side: 'worker', what: "log lines, which the library relays to the element", names: ['console'] },
     requests: {
         side: 'worker',
-        what: 'make a request',
-        names: words('fetch XMLHttpRequest XMLHttpRequestEventTarget XMLHttpRequestUpload WebSocket'),
+        what: 'make a request: absent from the sealed worker (sealed mode has no network), kept by strict mode behind its request gate',
+        names: NETWORK_WORKER_GLOBALS,
     },
     importScripts: { side: 'worker', what: 'load and run a classic script by URL', names: ['importScripts'] },
     fetchValues: { side: 'worker', what: 'values of a request and its response, which make no request', names: words('Request Response Headers FormData AbortController AbortSignal') },
@@ -522,17 +547,17 @@ export const SURFACES = {
             html:track@label html:track@default html:map@name html:link@type html:link@media html:link@sizes html:style@media
             html:ol@reversed html:ol@start html:ol@type html:li@value html:td@colspan html:td@rowspan html:td@headers
             html:th@colspan html:th@rowspan html:th@headers html:th@scope html:th@abbr html:col@span html:colgroup@span
-            html:time@datetime html:data@value html:del@datetime html:ins@datetime html:form@name html:form@autocomplete
+            html:time@datetime html:data@value html:del@datetime html:ins@datetime html:form@name
             html:form@novalidate html:label@for html:input@type html:input@name html:input@value html:input@checked
             html:input@disabled html:input@readonly html:input@required html:input@placeholder html:input@min html:input@max
             html:input@step html:input@minlength html:input@maxlength html:input@pattern html:input@size html:input@multiple
-            html:input@accept html:input@autocomplete html:input@list html:input@form html:input@dirname html:input@alt
+            html:input@accept html:input@list html:input@form html:input@dirname html:input@alt
             html:button@type html:button@name html:button@value html:button@disabled html:button@form html:select@name
             html:select@multiple html:select@size html:select@disabled html:select@required html:select@form
-            html:select@autocomplete html:option@value html:option@selected html:option@disabled html:option@label
+            html:option@value html:option@selected html:option@disabled html:option@label
             html:optgroup@label html:optgroup@disabled html:textarea@name html:textarea@rows html:textarea@cols
             html:textarea@placeholder html:textarea@disabled html:textarea@readonly html:textarea@required html:textarea@maxlength
-            html:textarea@minlength html:textarea@wrap html:textarea@form html:textarea@autocomplete html:textarea@dirname
+            html:textarea@minlength html:textarea@wrap html:textarea@form html:textarea@dirname
             html:fieldset@name html:fieldset@disabled html:fieldset@form html:output@for html:output@name html:output@form
             html:progress@value html:progress@max html:meter@value html:meter@min html:meter@max html:meter@low html:meter@high
             html:meter@optimum html:details@open html:details@name html:dialog@open
@@ -590,7 +615,7 @@ const STRINGS_REFUSED = neutralised(['codeFromStringRefusal'], "a string never r
 const IMPORT_REFUSED = neutralised(['entryImportRefusal'], 'no worker runs an entry that calls it, so no policy is asked');
 const NO_IMPORT_SCRIPTS = neutralised(['strictWorkerAllowlist'], 'the sealed worker does not have it');
 const NO_WEBASSEMBLY = neutralised(['webAssemblyRemoval'], "the sealed worker does not have it, so no `'wasm-unsafe-eval'` check is made");
-const REQUESTS_GATED = neutralised(['requestGate'], 'every request is refused before the platform: none is made');
+const REQUESTS_ABSENT = neutralised(['sealedWorkerAllowlist'], 'the sealed worker does not have it (sealed mode has no network), so no request is made');
 const NO_FETCH_BRIDGE = neutralised(['sealedFetchRefusal'], 'refused in the guest; nothing reaches the host');
 const NO_GUEST_URL = neutralised(['createObjectUrlRemoval'], 'the sealed worker does not have it');
 const SECURE_CONTEXT_REMOVED = neutralised(['secureContextRemoval'], 'only a secure context has it: the sealed worker does not, on any engine and whatever the host page');
@@ -610,12 +635,12 @@ const NO_NETWORK_IN_CSS = neutralised(['urlKeepRule', 'cssUrlDrop'], "CSS keeps 
 const HOST_PURE = neutralised(['hostPassRule'], "it hands nothing of the guest's to a parser, a loader or a sink of the host realm, so the browser checks none of it against the host page's policy (BD7:LIM-1)");
 const HOST_NOTHING = none("it reads and builds strings and bytes in the host page's realm, and starts, loads and reads nothing this row governs");
 // Every name that would make a request or load by URL, if the library let it: the rows a request reaches share these.
-const REQUEST_MAKERS = { requests: REQUESTS_GATED, fetchBridge: NO_FETCH_BRIDGE, importScripts: NO_IMPORT_SCRIPTS, dynamicImport: IMPORT_REFUSED } as const;
+const REQUEST_MAKERS = { requests: REQUESTS_ABSENT, fetchBridge: NO_FETCH_BRIDGE, importScripts: NO_IMPORT_SCRIPTS, dynamicImport: IMPORT_REFUSED } as const;
 
 // A feature the view allows that only script of the view's document reaches (an API of `document`, `navigator` or `window`,
 // a fetch() option): the view runs no guest code, and the worker's allowlist has none of it.
 const SCRIPT_ONLY = (what: string) => none(`${what}: only script of the view's document reaches it, and the view runs no guest code (the worker has no such name)`);
-const NO_REQUEST = (what: string) => neutralised(['urlKeepRule', 'requestGate'], `${what}: rides on a network request, which the view never makes (it loads only the \`blob:\` URLs it minted) and the worker's request gate refuses`);
+const NO_REQUEST = (what: string) => neutralised(['urlKeepRule', 'sealedWorkerAllowlist'], `${what}: rides on a network request, which the view never makes (it loads only the \`blob:\` URLs it minted) and the worker has no request maker to make`);
 
 /**
  * Every feature the view's document allows (Chromium's `document.featurePolicy.allowedFeatures()`: the features whose
@@ -626,14 +651,6 @@ const NO_REQUEST = (what: string) => neutralised(['urlKeepRule', 'requestGate'],
  */
 export const VIEW_FEATURES: Readonly<Record<string, Cell>> = {
     'picture-in-picture': neutralised(['forcedMediaControls'], "every `<video>` the renderer keeps has `disablepictureinpicture`: its controls and context menu offer no picture-in-picture, and `requestPictureInPicture()` refuses; the host page's own policy decides nothing for it"),
-    'attribution-reporting': SCRIPT_ONLY("the Attribution Reporting API (and the `attributionsrc` attribute, which no allowlist of the renderer has)"),
-    'browsing-topics': SCRIPT_ONLY('the Topics API (`document.browsingTopics()`, and a fetch option)'),
-    'interest-cohort': SCRIPT_ONLY('FLoC (`document.interestCohort()`)'),
-    'join-ad-interest-group': SCRIPT_ONLY('`navigator.joinAdInterestGroup()`'),
-    'run-ad-auction': SCRIPT_ONLY('`navigator.runAdAuction()`'),
-    'private-aggregation': SCRIPT_ONLY('the Private Aggregation API, from shared-storage and auction worklets'),
-    'shared-storage': SCRIPT_ONLY('`window.sharedStorage` and its worklets'),
-    'shared-storage-select-url': SCRIPT_ONLY('`sharedStorage.selectURL()`'),
     'private-state-token-issuance': SCRIPT_ONLY('a fetch() option of the Private State Token API'),
     'private-state-token-redemption': SCRIPT_ONLY('a fetch() option of the Private State Token API'),
     'storage-access': SCRIPT_ONLY('`document.requestStorageAccess()`'),
@@ -641,7 +658,7 @@ export const VIEW_FEATURES: Readonly<Record<string, Cell>> = {
     'sync-xhr': SCRIPT_ONLY("a document's synchronous `XMLHttpRequest`"),
     'gamepad': SCRIPT_ONLY('`navigator.getGamepads()` and the gamepad events'),
     'aria-notify': SCRIPT_ONLY('`ariaNotify()`'),
-    'unload': none("an `unload` handler: the renderer keeps no event handler attribute, and the view runs no guest code"),
+    'media-playback-while-not-visible': none("a media element that keeps playing while its page is not visible: only a user's play on its controls starts one (autoplay is off and the view runs no guest code), and it reads and sends nothing"),
     'ch-ua': NO_REQUEST('a client hint'),
     'ch-ua-mobile': NO_REQUEST('a client hint'),
     'ch-ua-platform': NO_REQUEST('a client hint'),
@@ -668,7 +685,7 @@ export const SEALED_REACH = {
         cells: {
             host: HOST_PURE,
             urlAttribute: neutralised(['baseCheck', 'urlKeepRule', 'rendererUrlDrop'], 'a registered path is resolved by the library, and every other URL is dropped: none is left to resolve against the base'),
-            linkHref: neutralised(['inertHref'], 'the href is replaced before insertion'),
+            linkHref: neutralised(['inertHref', 'listedLinkMark'], 'the href is replaced before insertion, and a listed one is compared as a string: none is resolved'),
             ...REQUEST_MAKERS,
             viewApi: neutralised(['baseCheck', 'urlKeepRule', 'rendererUrlDrop', 'inertHref'], 'what it renders: its URL attributes and links'),
             scope: none("the worker's base is its own `blob:` URL, against which no relative URL resolves, never the document's (probe: test/e2e/sealed-reach.spec.ts)"),
@@ -685,7 +702,7 @@ export const SEALED_REACH = {
             styleElement: STYLE_LOADS,
             styleAttribute: STYLE_LOADS,
             linkRelation: neutralised(['linkRelations'], 'no relation that preloads, prefetches or preconnects is kept'),
-            linkHref: neutralised(['inertHref', 'navigationCancel'], 'nothing is loaded by a link'),
+            linkHref: neutralised(['inertHref', 'navigationCancel', 'listedLinkOpen'], "nothing is loaded by a link; a marked link's click has the host page open the embedder's own URL in a new tab, a navigation no fetch directive governs"),
             svgReference: neutralised(['urlKeepRule', 'svgLocalReferences'], 'a reference keeps only a fragment of the view, which loads nothing'),
             viewApi: remains(['blobLoads'], 'what it renders and sets: the registered files its markup and its styles name, every other URL dropped (urlKeepRule)'),
         },
@@ -755,7 +772,7 @@ export const SEALED_REACH = {
             viewApi: NO_NETWORK_RENDERED,
             urlAttribute: neutralised(['urlKeepRule', 'rendererUrlDrop', 'forcedNoReferrer'], 'no network URL is kept; a `blob:` load sends no referrer'),
             referrerPolicyAttribute: neutralised(['forcedNoReferrer'], "the guest's value is replaced"),
-            linkHref: neutralised(['inertHref', 'navigationCancel'], 'a link navigates nowhere'),
+            linkHref: neutralised(['inertHref', 'navigationCancel', 'listedLinkOpen'], "a link navigates nowhere; a marked link's click has the host page open the embedder's own URL with `noreferrer`, which sends no referrer"),
             styleElement: NO_NETWORK_IN_CSS,
             styleAttribute: NO_NETWORK_IN_CSS,
         },
@@ -779,7 +796,7 @@ export const SEALED_REACH = {
             ...REQUEST_MAKERS,
             viewApi: NO_NETWORK_RENDERED,
             urlAttribute: neutralised(['urlKeepRule', 'rendererUrlDrop', 'forcedCrossorigin'], 'no network URL is kept, and no element load carries credentials; a `blob:` load carries no cookie'),
-            linkHref: neutralised(['inertHref', 'navigationCancel'], 'a link navigates nowhere'),
+            linkHref: neutralised(['inertHref', 'navigationCancel', 'listedLinkOpen'], "a link navigates nowhere; a marked link's click has the host page open the embedder's own URL in a new top-level tab, which carries that site's cookies as a link of the host page's would: no request of the view's carries one"),
             styleElement: NO_NETWORK_IN_CSS,
             styleAttribute: NO_NETWORK_IN_CSS,
             loadKind: none('a `blob:` load is no network request and carries no cookie'),
@@ -877,10 +894,23 @@ export const SEALED_REACH = {
         rest: 'reaches no shared surface of the browser: focus, the clipboard, history, top-level navigation, the host window',
         cells: {
             host: HOST_NOTHING,
-            hyperlink: neutralised(['inertHref', 'navigationCancel'], 'a link navigates nowhere, and its href names nothing of the guest\'s'),
-            linkHref: neutralised(['inertHref', 'navigationCancel'], 'a link navigates nowhere, and its href names nothing of the guest\'s'),
+            hyperlink: neutralised(['inertHref', 'navigationCancel', 'listedLinkMark', 'listedLinkOpen'], "a link navigates nowhere, and its href names nothing of the guest's; a marked one's click has the host page open a URL the embedder lists in a new tab, with no opener"),
+            linkHref: neutralised(['inertHref', 'navigationCancel', 'listedLinkMark', 'listedLinkOpen'], "a link navigates nowhere, and its href names nothing of the guest's; a listed one marks the link, whose click has the host page open its own copy of that URL in a new tab, with no opener"),
             form: neutralised(['navigationCancel'], 'a submission is cancelled, and no form target is kept (no `action`, `formaction` or `target`)'),
-            viewApi: neutralised(['viewFocusRule', 'inertHref', 'navigationCancel'], "`set({ focus })` moves focus inside the view only while the view has the user's focus, and no link it renders navigates"),
+            viewApi: neutralised(['viewFocusRule', 'inertHref', 'navigationCancel', 'listedLinkOpen'], "`set({ focus })` moves focus inside the view only while the view has the user's focus, and no link it renders navigates: a marked one's click has the host page open a URL the embedder lists"),
+        },
+    },
+    autofill: {
+        rest: 'is no field the browser fills, and carries no value of one to the guest',
+        cells: {
+            host: HOST_NOTHING,
+            form: remains(['userField'], "no store of the browser matches its controls (controlNames, forcedAutocompleteOff), and what the browser or an extension writes into one reaches the guest only from the field the user is in, while they are in it; every other change is undone before anything is forwarded (valueModel)"),
+            viewApi: remains(['userField'], 'what it renders: its form controls, whose values its events carry only as the user entered them (valueModel)'),
+            'html:button': neutralised(['valueModel', 'controlNames'], "a button's value and name are the guest's to the guest: no store fills one, and a value put into one is undone before it is forwarded"),
+            'html:input@value': neutralised(['valueModel'], "a field's value reaches the guest only as the guest set it or as the user entered it into that field; any other is undone before it is forwarded"),
+            'html:form': neutralised(['forcedAutocompleteOff', 'controlNames'], "a form of the view has `autocomplete='off'`, whatever the guest wrote, and its controls the view's names: the browser saves nothing typed into it, and matches none of its fields with a store"),
+            ...Object.fromEntries(RENDER_NAMED_CONTROLS.map(control => [`html:${control}@name`, neutralised(['controlNames'], "the guest's name is read and replaced by the view's own, which no store of the browser holds anything under; the guest sees its own name back")])),
+            'html:*@id': neutralised(['controlNames'], "every control has a name of the view's, so a browser that keys a nameless field by its id never keys a control of the view so"),
         },
     },
     eventDispatch: {

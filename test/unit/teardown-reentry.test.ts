@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -6,6 +7,7 @@ import { defineWebSandbox } from '@src/host';
 import { ENVIRONMENT_FIELDS, ENVIRONMENT_RELEASES, releaseEnvironment, type DetachedEnvironment, type EnvironmentField } from '@src/lib/environment';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 import { checkIn } from './check-in';
+import { startWith } from './start-app';
 
 /**
  * Class L (S74; LM-2): embedder code that runs inside a release of the element's own teardown. Removing a frame fires
@@ -60,7 +62,7 @@ function ready(seed: boolean) {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    el.setConfig(CONFIG);
+    startWith(el, CONFIG);
     const { port1 } = new MessageChannel();
     const closed = vi.spyOn(port1, 'close');
     checkIn(el, port1);
@@ -98,13 +100,11 @@ function hookRelease(el: any, field: EnvironmentField, before: () => void): void
     }
 }
 
-const CALLS = ['reset', 'setConfig', 'load', 'terminate'] as const;
+const CALLS = ['reset', 'terminate'] as const;
 type Call = typeof CALLS[number];
 
 const reenterWith = (el: any, call: Call) => () => {
     if (call === 'reset') el.reset();
-    else if (call === 'setConfig') el.setConfig(CONFIG);
-    else if (call === 'load') el.load('<p>y</p>');
     else el.terminate('inner');
 };
 

@@ -1,5 +1,7 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { reasonText } from '@src/lib/reasons';
+import { startWith } from './start-app';
 
 /**
  * The element applies the host page's Trusted Types directives where the browser has none (host.ts, `_trustedTypes`; the
@@ -18,7 +20,7 @@ async function mount(config: Record<string, unknown>) {
     const reasons: string[] = [];
     el.addEventListener('terminated', (event: CustomEvent) => reasons.push(event.detail?.reason));
     document.body.appendChild(el);
-    el.setConfig(config);
+    startWith(el, config);
     return { el, reasons };
 }
 

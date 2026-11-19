@@ -1,6 +1,9 @@
-import { test, expect, SEALED_HAS_NO_EXECUTE } from './fixture';
+import { test, expect, SEALED_HAS_NO_EXECUTE, buildOfMode } from './fixture';
 import { lag, oneApplyStall, quietStall, startLag } from './host-share';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The opt-in liveness watchdog (backlog S6, cooperative and worker mode; ADR-003). With `watchdogTimeout` set, a guest
@@ -172,7 +175,8 @@ test('the watchdog stops when the element is removed or terminated: it never ter
 // The host page's longest stall: ./host-share.ts (startLag, lag).
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
-    test('an endless loop at the entry\'s top level is terminated within the budget on every engine; the host stays responsive; a fixed entry recovers on reset()', async ({ sandbox, page }) => {
+    test.use({ build: buildOfMode(mode) });
+    test('an endless loop at the entry\'s top level is terminated within the budget on every engine; the host stays responsive; a fixed entry recovers on a new element', async ({ sandbox, page }) => {
         await sandbox.registerFiles({ 'main.js': 'while (true) {}' });
         await page.evaluate(() => {
             const s = document.querySelector('web-sandbox') as any;
@@ -194,8 +198,9 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         expect(termination.elapsed).toBeLessThan(DEADLINE);
         expect(await lag(page)).toBeLessThan(quiet + 500); // the guest's loop adds no stall: 500 ms over the machine's own
 
+        // the fixed entry is another app, so another element (reset() would start the same entry again)
         await sandbox.registerFiles({ 'main.js': 'bridge.expose("sum", (a, b) => a + b);' });
-        expect(await sandbox.reset()).toBe('ready');
+        expect(await sandbox.mount({ mode, entry: 'main.js', watchdogTimeout: BUDGET })).toBe('ready');
         expect(await sandbox.call('sum', 1, 2)).toBe(3);
     });
 
@@ -210,6 +215,7 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
 const RENDER_THEN_LOOP_HTML = '<p>' + 'x'.repeat(262144 - 8) + '</p>';
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('a worker that renders 256 Ki characters and then loops is terminated within the budget plus the measured stall of that one render; host round trips stay within one render\'s apply time', async ({ sandbox, page, browserName }) => {
         test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
         // what one apply of this render costs here, now (./host-share.ts): the stall bound below is relative to it

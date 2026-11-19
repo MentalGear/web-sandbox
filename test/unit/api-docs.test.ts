@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as publicApi from '@src/index';
+import * as publicApi from '@src/network';
+import { networkMethodNames } from './element-source';
 import { WebSandbox, VIEW_LIVENESS_TIMEOUT_MS } from '@src/host';
 import { createBroker } from '@src/lib/rpc';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
@@ -96,7 +97,8 @@ function interfaceKeys(file: string, name: string): string[] {
 describe('docs/API.md lists the public surface', () => {
     it('every export of the package entry point', () => {
         const names: string[] = [];
-        for (const block of read('src/index.ts').matchAll(/export (?:type )?\{([^}]+)\}/g)) {
+        // the network build's entry: what the default build exports (sealed.ts), and the network modes' exports
+        for (const block of [read('src/sealed.ts'), read('src/network.ts')].join('\n').matchAll(/export (?:type )?\{([^}]+)\}/g)) {
             for (const name of block[1]!.split(',')) if (name.trim()) names.push(name.trim());
         }
         expect(names.length).toBeGreaterThan(20);
@@ -136,7 +138,8 @@ describe('docs/API.md lists the public surface', () => {
 
     it('every config option of the schema is one of the option interfaces, and no other', () => {
         const documented = (Object.keys(CONFIG_SCHEMA) as (keyof typeof CONFIG_SCHEMA)[]).filter(name => !('removed' in CONFIG_SCHEMA[name]));
-        const keys = ['SandboxConfigOptions', 'NetworkSandboxOptions', 'SealedSandboxConfig', 'CooperativeSandboxConfig', 'WorkerSandboxConfig', 'StrictSandboxConfig'].flatMap(name => interfaceKeys('src/host.ts', name));
+        const declaredIn = (name: string) => (['SandboxConfigOptions', 'SealedSandboxConfig'].includes(name) ? 'src/host.ts' : 'src/lib/network-types.ts');
+        const keys = ['SandboxConfigOptions', 'NetworkSandboxOptions', 'SealedSandboxConfig', 'CooperativeSandboxConfig', 'WorkerSandboxConfig', 'StrictSandboxConfig'].flatMap(name => interfaceKeys(declaredIn(name), name));
         expect(sorted(documented)).toEqual(sorted(keys));
         expect(sorted(rowKeys(section('## Configuration', true)))).toEqual(sorted(keys));
     });
@@ -175,12 +178,19 @@ describe('docs/API.md lists the public surface', () => {
     });
 
     it('every public method of the element, and no other', () => {
-        const isPrivate = new Set([...read('src/host.ts').matchAll(/^ {4}private (\w+)/gm)].map(match => match[1]!));
-        const callbacks = new Set(['constructor', 'connectedCallback', 'disconnectedCallback', 'adoptedCallback', 'state']);
-        const methods = Object.getOwnPropertyNames(WebSandbox.prototype).filter(name => !isPrivate.has(name) && !callbacks.has(name));
+        // the element's private members, its class's and the network build's (network-host.ts), whose one public method
+        // (`execute`) the element has in that build only, as the page says
+        const privateIn = (file: string) => [...read(file).matchAll(/^ {4}private (\w+)/gm)].map(match => match[1]!);
+        const isPrivate = new Set([...privateIn('src/host.ts'), ...privateIn('src/lib/network-host.ts')]);
+        expect(networkMethodNames().filter(name => !isPrivate.has(name))).toEqual(['execute']);
+        const callbacks = new Set(['constructor', 'connectedCallback', 'disconnectedCallback', 'adoptedCallback']);
+        const members = Object.getOwnPropertyNames(WebSandbox.prototype).filter(name => !isPrivate.has(name) && !callbacks.has(name));
+        // the element's properties are its getters (`state`, `started`), documented in the table of "The element"
+        const isProperty = (name: string) => Object.getOwnPropertyDescriptor(WebSandbox.prototype, name)!.get !== undefined;
+        const methods = members.filter(name => !isProperty(name));
         const documented = [...section('## Methods').matchAll(/^### `(\w+)\(/gm)].map(match => match[1]!);
         expect(sorted(documented)).toEqual(sorted(methods));
-        expect(rowKeys(section('## The element'))).toEqual(['state']);
+        expect(sorted(rowKeys(section('## The element')))).toEqual(sorted(members.filter(isProperty)));
     });
 
     it('every event the element dispatches, and no other', () => {
@@ -339,7 +349,7 @@ describe('Migrating to sealed as the default', () => {
     // A config with no mode is a sealed config, so every refusal of the config schema except the unknown mode is one a
     // no-mode embed can hit (BD7:DOC-2): each needs its row, with the reason's text, so the table cannot omit one.
     it('has a row for every refusal a config with no mode can hit', () => {
-        const reasons = (Object.keys(TERMINATION_REASONS) as ReasonId[]).filter(id => TERMINATION_REASONS[id].decidedBy === 'config' && id !== 'unknownMode');
+        const reasons = (Object.keys(TERMINATION_REASONS) as ReasonId[]).filter(id => TERMINATION_REASONS[id].decidedBy === 'start' && id !== 'unknownMode' && id !== 'configRefused');
         expect(reasons.length).toBeGreaterThan(0);
         const rows = section.split('\n').filter(line => line.startsWith('| no `mode`'));
         for (const id of reasons) {

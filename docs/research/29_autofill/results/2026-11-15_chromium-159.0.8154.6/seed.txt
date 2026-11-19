@@ -1,0 +1,5 @@
+seed.run {"version":"159.0.8154.6","dir":"/tmp/claude-0/-home-user-web-sandbox/420067a7-000e-5c1b-adbe-64bc23c60332/scratchpad/r29/chromium-profile","date":"2026-11-15T13:10:21.822Z"}
+seed.logins [{"origin_url":"http://127.0.0.1:18929/","signon_realm":"http://127.0.0.1:18929/","username_value":"r29-user@example.test","encrypted_bytes":35},{"origin_url":"https://127.0.0.1:18943/","signon_realm":"https://127.0.0.1:18943/","username_value":"r29-user@example.test","encrypted_bytes":35}]
+seed.addresses [{"guid":"689c23ba-44bb-491f-abb7-2714ce2f479d","record_type":0,"tokens":38}]
+seed.address_tokens [{"type":3,"value":"Rtwonine"},{"type":5,"value":"Leakcheck"},{"type":7,"value":"Rtwonine Leakcheck"},{"type":9,"value":"r29-address@example.test"},{"type":14,"value":"4155550129"},{"type":33,"value":"Probeville"},{"type":34,"value":"CA"},{"type":35,"value":"94029"},{"type":36,"value":"US"},{"type":60,"value":"R29 Probe Org"},{"type":77,"value":"29 Autofill Lane"},{"type":109,"value":"Leakcheck"}]
+seed.cards [{"name_on_card":"Rtwonine Cardholder","expiration_month":12,"expiration_year":2031,"encrypted_bytes":35}]

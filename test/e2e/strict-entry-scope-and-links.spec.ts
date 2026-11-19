@@ -1,7 +1,10 @@
-import { test, expect, type SandboxDriver, type MountConfig } from './fixture';
-import { clickInSandbox, inView, waitInView } from './strict-view';
+import { test, expect, type SandboxDriver, type MountConfig, buildOfMode } from './fixture';
+import { clickInSandbox, inView, inViewWithGesture, waitInView } from './strict-view';
 import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import { VIEW_MODES, type ViewMode } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode and files (each label below is cited as AR:<label>):
@@ -34,6 +37,7 @@ async function render(sandbox: SandboxDriver, browserName: string, html: string,
 }
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe('C1: the view renders no blob: content but registered files', () => {
         test("the worker's own source URL is revoked once the worker has run its script: the view can no longer fetch it, and referenced from <style> text and a CSS-escaped style attribute it is dropped (keepsUrl: no URL the view did not mint) and applies no rule", async ({ sandbox, page, browserName }) => {
             // the entry carries a CSS rule inside a JS comment: lenient CSS parsing of the worker source would apply it
@@ -91,9 +95,9 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
                     again: await fetch(sandboxFiles.url('data.png')).then((response) => response.arrayBuffer()).then(b => b.byteLength, (e) => 'refused: ' + e.name),
                 };
             `);
-            // sealed mode's connect-src has no blob: (no network, not even its own files'): the request gate refuses a fetch of
-            // a file's URL, and the worker reads its files with sandboxFiles.read() and text(), which make no request
-            const fetched = mode === 'sealed' ? { viaUrl: 'refused: TypeError', again: 'refused: TypeError' } : { viaUrl: 'héllo', again: 5 };
+            // sealed mode has no network, not even for its own files': its worker has no fetch (a ReferenceError), and reads its
+            // files with sandboxFiles.read() and text(), which make no request
+            const fetched = mode === 'sealed' ? { viaUrl: 'refused: ReferenceError', again: 'refused: ReferenceError' } : { viaUrl: 'héllo', again: 5 };
             expect(r).toEqual({ entryRan: true, text: 'héllo', read: [0, 1, 2, 250, 255], blob: 'abc', ...fetched });
             await sandbox.run('throw new Error("after-revoke-sync")');
             expect(await sandbox.waitForLog('after-revoke-sync')).toContain('after-revoke-sync');
@@ -193,6 +197,9 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
         test("the view, read from outside: every link's href is the constant, the guest's URL is nowhere in the document; the link matches :link and :any-link, is focusable and has the role link; a drag carries only the constant", async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount(inMode(mode))).toBe('ready');
             await render(sandbox, browserName, LINKS);
+            // Chromium 159 ignores a frame's focus() without a user's gesture, so the link takes it with one
+            // ledger: focus-and-clipboard
+            if (browserName === 'chromium') await inViewWithGesture(page, "document.getElementById('l').focus()");
             const r = await inView<any>(page, browserName, `(() => {
                 const a = document.getElementById('l');
                 const s = document.getElementById('s');

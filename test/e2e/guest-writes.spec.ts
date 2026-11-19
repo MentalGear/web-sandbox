@@ -1,5 +1,5 @@
 import { deflateSync } from 'node:zlib';
-import { test, expect, type MountConfig, type SandboxDriver, SEALED_HAS_NO_EXECUTE } from './fixture';
+import { test, expect, type MountConfig, type SandboxDriver, SEALED_HAS_NO_EXECUTE, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { waitInView, inView } from './strict-view';
 import { MAX_FILES, MAX_TOTAL_BYTES } from '@src/lib/files';
@@ -8,12 +8,15 @@ import type { SandboxConfig, SandboxConfigOptions } from '@src/host';
 import type { StrictSandboxOrigins } from '@src/lib/csp/origins';
 import { VIEW_MODES } from './view-modes';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Guest writes (backlog C5, src/lib/guest-writes.ts, ADR-004 amendment "guest writes"), in cooperative, worker and
  * strict mode. Each test names the guarantee it proves:
  *   1. off (the default), a write is refused by both routes (sandboxFiles and a forged bridge call), and no raw
  *      frame records anything; the store, the overlay and the events stay empty (positive control: on)
- *   2. a write is refused with registerFiles()'s own codes, by both routes, and a refused write changes nothing
+ *   2. a write is refused with the file store's own codes (start()'s for an app's files), by both routes, and a refused write changes nothing
  *   3. the cap is the store's: at the cap a write passes, one byte or one file past it is refused, a removal
  *      frees space; past the rate, FILES_BUSY
  *   4. the guest reads its own acknowledged writes byte-exact, typed by the store; url() never names one
@@ -56,16 +59,19 @@ async function hostView(sandbox: SandboxDriver, selector = 'web-sandbox') {
 }
 const contentOf = (sandbox: SandboxDriver, path: string) => sandbox.page.evaluate((path) => {
     const write = (document.querySelector('web-sandbox') as any).listGuestWrites().find((w: any) => w.path === path);
-    return write?.content ? Array.from(write.content as Uint8Array) : null;
+    return write?.content ? Array.from(write.content.bytes() as Uint8Array) : null;
 }, path);
-const commit = (sandbox: SandboxDriver, paths: unknown, options?: unknown) => sandbox.page.evaluate(({ paths, options }) => {
+// Lists the pending writes and commits the values listed at `paths`, in one task; `ok` is the element's answer.
+const commit = (sandbox: SandboxDriver, paths: string[], options?: unknown) => sandbox.page.evaluate(({ paths, options }) => {
     const el = document.querySelector('web-sandbox') as any;
     const changed: string[][] = [];
     const listener = (e: any) => changed.push(e.detail.paths);
     el.addEventListener('fileschanged', listener);
     try {
-        el.commitGuestWrites(paths, options);
-        return { ok: true, changed };
+        const listed = el.listGuestWrites();
+        const chosen: unknown[] = [];
+        for (const write of listed) if (paths.includes(write.path)) chosen.push(write);
+        return { ok: el.commitGuestWrites(chosen, options), changed };
     } catch (e: any) {
         return { code: e?.code, changed };
     } finally {
@@ -103,6 +109,8 @@ function png(width: number, height: number): Buffer {
 const PNG_3x5 = Array.from(png(3, 5));
 
 for (const mode of MODES) {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe(`${mode} mode`, () => {
         test('1. off: both routes refused with FILES_NOT_ALLOWED and nothing recorded; on, the same calls are recorded (positive control)', async ({ sandbox }) => {
             await sandbox.registerFiles({ 'kept.txt': 'kept' });
@@ -154,7 +162,7 @@ for (const mode of MODES) {
             expect(await hostView(sandbox)).toEqual({ files: [], writes: [{ path: 'real.txt', change: 'write', type: 'text/plain', size: 1 }], events: [['real.txt']] });
         });
 
-        test("2. every refusal carries registerFiles()'s own code, by both routes, and changes nothing on either side", async ({ sandbox }) => {
+        test("2. every refusal carries the file store's own code, by both routes, and changes nothing on either side", async ({ sandbox }) => {
             await sandbox.registerFiles({ 'kept.txt': 'kept' });
             expect(await sandbox.mount(writesOn(mode))).toBe('ready');
             const result = await inGuest(sandbox, `
@@ -183,7 +191,7 @@ for (const mode of MODES) {
 
         test('3. the cap is the store\'s: at the cap a write passes, one byte past it is FILES_QUOTA_EXCEEDED, a removal frees the space; the file count likewise', async ({ sandbox, page }) => {
             const PAD = 1000;
-            await page.evaluate(({ size }) => (document.querySelector('web-sandbox') as any).registerFiles({ 'fill.bin': new Uint8Array(size) }), { size: MAX_TOTAL_BYTES - PAD });
+            expect(await page.evaluate(({ size }) => sandboxCollectFiles({ 'fill.bin': new Uint8Array(size) }), { size: MAX_TOTAL_BYTES - PAD })).toBe('ok');
             expect(await sandbox.mount(writesOn(mode))).toBe('ready');
             const bytes = await inGuest(sandbox, `return {
                 under: await outcome(() => sandboxFiles.write('a.bin', new Uint8Array(${PAD - 1}))),
@@ -208,15 +216,14 @@ for (const mode of MODES) {
             expect(freed).toEqual({ remove: { ok: true, value: null }, big: { ok: true, value: null }, list: ['a.bin', 'b.bin', 'c.bin'] });
             expect((await hostView(sandbox)).files).toEqual(['fill.bin']); // the store itself is untouched
 
-            // the count: the store holds MAX_FILES - 1, the guest may add one file, not two; replacing one is fine
-            await page.evaluate((n) => {
-                const el = document.querySelector('web-sandbox') as any;
-                el.unregisterFiles();
+            // the count, on a second element: the store holds MAX_FILES - 1, the guest may add one file, not two; replacing one is fine
+            await sandbox.forgetFiles();
+            expect(await page.evaluate((n) => {
                 const files: Record<string, string> = {};
                 for (let i = 0; i < n; i++) files[`f/${i}.txt`] = '';
-                el.registerFiles(files);
-            }, MAX_FILES - 1);
-            expect(await sandbox.reset()).toBe('ready');
+                return sandboxCollectFiles(files);
+            }, MAX_FILES - 1)).toBe('ok');
+            expect(await sandbox.mount(writesOn(mode))).toBe('ready');
             expect(await inGuest(sandbox, `return [
                 await outcome(() => sandboxFiles.write('one.txt', '')),
                 await outcome(() => sandboxFiles.write('two.txt', '')),
@@ -255,7 +262,7 @@ for (const mode of MODES) {
                     pending,
                     sandboxFiles.write('note.txt', 'héllo ✓'),
                     sandboxFiles.write('data.json', new Blob(['{"a":1}'], { type: 'text/html' })),
-                    sandboxFiles.write('raw', { content: new Uint16Array([0x4241]), type: 'Text/Plain' }),
+                    sandboxFiles.write('raw', new Uint16Array([0x4241])),
                     sandboxFiles.write('buffer.bin', all.buffer.slice(250)),
                     sandboxFiles.write('view.bin', view),
                 ]);
@@ -271,6 +278,8 @@ for (const mode of MODES) {
                     view: await read('view.bin'),
                     urls: await Promise.all(['bytes.bin', 'note.txt', 'raw'].map((p) => outcome(() => sandboxFiles.url(p)))),
                     copies: (await sandboxFiles.read('bytes.bin')) !== (await sandboxFiles.read('bytes.bin')),
+                    // a write carries a path and bytes, never a type (I8): one that claims a type is refused
+                    claimed: await outcome(() => sandboxFiles.write('claimed.png', { content: 'x', type: 'image/png' })),
                 };`);
             const ALL = Array.from({ length: 256 }, (_, i) => i);
             expect(r.results).toEqual([null, null, null, null, null, null]);
@@ -283,13 +292,14 @@ for (const mode of MODES) {
             expect(r.view).toEqual([16, 17, 18, 19]);
             expect(r.urls).toEqual(new Array(3).fill({ code: 'NOT_FOUND', isError: true, keys: ['code'] }));
             expect(r.copies).toBe(true);
-            // from outside: the host holds the same bytes, typed by the store (the Blob's own type is not used)
+            expect(r.claimed).toEqual({ code: 'INVALID_FILE', isError: true, keys: ['code'] });
+            // from outside: the host holds the same bytes, typed by their paths (the Blob's own type is not used)
             expect((await hostView(sandbox)).writes).toEqual([
                 { path: 'buffer.bin', change: 'write', type: 'application/octet-stream', size: 6 },
                 { path: 'bytes.bin', change: 'write', type: 'application/octet-stream', size: 256 },
                 { path: 'data.json', change: 'write', type: 'application/json', size: 7 },
                 { path: 'note.txt', change: 'write', type: 'text/plain', size: Buffer.byteLength('héllo ✓') },
-                { path: 'raw', change: 'write', type: 'text/plain', size: 2 },
+                { path: 'raw', change: 'write', type: 'application/octet-stream', size: 2 },
                 { path: 'view.bin', change: 'write', type: 'application/octet-stream', size: 4 },
             ]);
             expect(await contentOf(sandbox, 'bytes.bin')).toEqual(ALL);
@@ -336,7 +346,7 @@ for (const mode of MODES) {
             expect(r).toEqual({ list: ['note.txt', 'pic.png'], text: 'kept', png: PNG_3x5.length, url: 'blob:', image: mode === 'cooperative' ? '3x5' : 'no Image here' });
         });
 
-        test('6. a commit of a non-inert type needs { code: true }: JavaScript, HTML, SVG, XML, wasm, unknown and an override; the type is the store\'s, so a renamed file does not pass', async ({ sandbox }) => {
+        test('6. a commit of a non-inert type needs { code: true }: JavaScript, HTML, SVG, XML, wasm, unknown; the type is the path\'s last extension, so a renamed file does not pass', async ({ sandbox }) => {
             expect(await sandbox.mount(writesOn(mode))).toBe('ready');
             await inGuest(sandbox, `
                 await sandboxFiles.write('app.js', 'void 0');
@@ -346,11 +356,11 @@ for (const mode of MODES) {
                 await sandboxFiles.write('mod.wasm', new Uint8Array([0, 97, 115, 109]));
                 await sandboxFiles.write('blob.unknown', 'x');
                 await sandboxFiles.write('noext', 'x');
-                await sandboxFiles.write('fake.png', { content: '<svg xmlns="http://www.w3.org/2000/svg"/>', type: 'image/svg+xml' });
-                await sandboxFiles.write('script.txt', { content: 'void 0', type: 'text/javascript' });
+                await sandboxFiles.write('fake.png.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>');
+                await sandboxFiles.write('script.txt.js', 'void 0');
                 await sandboxFiles.write('ok.txt', 'inert');
                 return true;`);
-            const nonInert = ['app.js', 'page.html', 'icon.svg', 'feed.xml', 'mod.wasm', 'blob.unknown', 'noext', 'fake.png', 'script.txt'];
+            const nonInert = ['app.js', 'page.html', 'icon.svg', 'feed.xml', 'mod.wasm', 'blob.unknown', 'noext', 'fake.png.svg', 'script.txt.js'];
             for (const path of nonInert) {
                 expect(await commit(sandbox, [path]), path).toEqual({ code: 'FILES_NOT_ALLOWED', changed: [] });
                 expect(await commit(sandbox, ['ok.txt', path], { code: 'yes' }), path).toEqual({ code: 'FILES_NOT_ALLOWED', changed: [] });
@@ -361,10 +371,31 @@ for (const mode of MODES) {
             expect(await commit(sandbox, ['ok.txt'])).toEqual({ ok: true, changed: [['ok.txt']] });
             expect(await commit(sandbox, nonInert, { code: true })).toEqual({ ok: true, changed: [[...nonInert].sort()] });
             expect(await hostView(sandbox)).toMatchObject({ files: [...nonInert, 'ok.txt'].sort(), writes: [] });
-            // a path with no pending change is skipped; a list is required, and every entry must be a valid path
+            // a path with no pending change names no value: an empty list commits nothing
             expect(await commit(sandbox, ['nothing.txt'])).toEqual({ ok: true, changed: [] });
-            expect(await commit(sandbox, undefined)).toEqual({ code: 'INVALID_PATH', changed: [] });
-            expect(await commit(sandbox, ['../x'])).toEqual({ code: 'INVALID_PATH', changed: [] });
+        });
+
+        test('6b. a commit takes the listed values, all or none (I4): once the guest wrote one of them again, the listed pair commits nothing and answers false; anything but a listed value is a TypeError', async ({ sandbox }) => {
+            expect(await sandbox.mount(writesOn(mode))).toBe('ready');
+            await inGuest(sandbox, `await sandboxFiles.write('a.txt', 'a'); await sandboxFiles.write('b.txt', 'b'); return true;`);
+            await sandbox.page.evaluate(() => { (window as any).listed = (document.querySelector('web-sandbox') as any).listGuestWrites(); });
+            await inGuest(sandbox, `await sandboxFiles.write('b.txt', 'b, again'); return true;`);
+            const r = await sandbox.page.evaluate(() => {
+                const el = document.querySelector('web-sandbox') as any;
+                const listed = (window as any).listed;
+                const refusal = (run: () => unknown) => {
+                    try { run(); return 'no throw'; } catch (e) { return e instanceof TypeError ? 'TypeError' : String(e); }
+                };
+                // a write's content has methods, so a structured clone is of its data: the value with its content's bytes
+                const cloned = structuredClone({ ...listed[0], content: listed[0].content.bytes() });
+                const refusals = [undefined, ['b.txt'], [{ ...listed[0] }], [cloned]].map(writes => refusal(() => el.commitGuestWrites(writes)));
+                const files = () => el.listFiles().map((f: any) => [f.path, f.size]);
+                const stale = el.commitGuestWrites(listed);
+                const afterStale = files();
+                const current = el.commitGuestWrites(el.listGuestWrites());
+                return { frozen: Object.isFrozen(listed[0]), refusals, stale, afterStale, current, files: files() };
+            });
+            expect(r).toEqual({ frozen: true, refusals: ['TypeError', 'TypeError', 'TypeError', 'TypeError'], stale: false, afterStale: [], current: true, files: [['a.txt', 1], ['b.txt', 8]] });
         });
 
         test('7. a flood is refused with FILES_BUSY past GUEST_WRITES_PER_SECOND, and fileswritten stays bounded: one event per recorded write', async ({ sandbox }) => {
@@ -419,10 +450,12 @@ for (const mode of MODES) {
             expect((await hostView(sandbox)).writes.map((w: any) => w.path)).toEqual(['main.txt']);
         });
     });
+    });
 }
 
 test.describe('the view and the overlay', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('8. C1, as the owner widened it (R4-4): the view renders no blob: content but registered files and raster-image guest writes, decoded only. The worker mints no URL for a written file; the view shows a written PNG from its own URL and never a written SVG; a registered file renders (positive control)', async ({ sandbox, page, browserName }) => {
             await sandbox.registerFiles({ 'registered.png': { base64: Buffer.from(PNG_3x5).toString('base64') } });
             expect(await sandbox.mount(writesOn(mode))).toBe('ready');
@@ -471,9 +504,11 @@ test.describe('9. writing adds no egress', () => {
             expect(recorder.paths('allowed')).toEqual([]);
             expect(recorder.paths('blocked')).toEqual([]);
 
+            // strict mode runs a registered file only as the entry, which is another app's: an element of its own, given
+            // the written file as this one lists it
+            if (mode === 'strict') expect(await sandbox.collectWrites()).toEqual(['page.html', 'run.js', 'style.css']);
             expect(await commit(sandbox, ['run.js'], { code: true })).toEqual({ ok: true, changed: [['run.js']] });
             if (mode === 'strict') {
-                // strict mode runs a registered file only as the entry
                 expect(await sandbox.mount(writesOn(mode, { ...policy, entry: 'run.js' }))).toBe('ready');
             } else {
                 expect(await sandbox.reset()).toBe('ready');

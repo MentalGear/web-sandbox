@@ -1,17 +1,22 @@
-import { test, expect, SEALED_HAS_NO_EXECUTE } from './fixture';
+import { test, expect, SEALED_HAS_NO_EXECUTE, buildOfMode } from './fixture';
 import { VIEW_MODES } from './view-modes';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
- * Per-instance events (backlog B3, ADR-003). 'sandbox-log' is dispatched on the sandbox element and
- * bubbles: a listener on an element hears only that sandbox, a listener on window hears every sandbox
- * with the element as event.target, and SandboxDevTools (which listens on its element) prints its
- * sandbox's logs and no other's.
+ * Per-instance events (backlog B3, ADR-003; design 01, I5). 'sandbox-log' is dispatched on the sandbox element and
+ * does not bubble: a listener on an element hears only that sandbox, a bubbling listener on window hears none, a
+ * capture listener on window hears every sandbox with the element as event.target (the documented limit), and
+ * SandboxDevTools (which listens on its element) prints its sandbox's logs and no other's.
  */
 
 const MODES = ['cooperative', 'worker', ...VIEW_MODES] as const;
 
 for (const mode of MODES) {
-    test(`each sandbox element receives only its own logs; a window listener receives both, targeted at their element (${mode})`, async ({ sandbox, page }) => {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
+    test(`each sandbox element receives only its own logs; a bubbling window listener receives none, a capture one both, targeted at their element (${mode})`, async ({ sandbox, page }) => {
         test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
         expect(await sandbox.mount({ mode })).toBe('ready');
         expect(await sandbox.mountSecond({ mode })).toBe('ready');
@@ -20,14 +25,16 @@ for (const mode of MODES) {
             const first = document.querySelector('web-sandbox') as any;
             const second = document.getElementById('second') as any;
             const text = (e: Event) => ((e as CustomEvent).detail?.args || []).map(String).join(' ');
-            const seen = { first: [] as string[], second: [] as string[], window: [] as { target: string; text: string }[] };
+            const seen = { first: [] as string[], second: [] as string[], window: [] as { target: string; text: string }[], bubbled: [] as string[] };
             (window as any).seen = seen;
             first.addEventListener('sandbox-log', (e: Event) => seen.first.push(text(e)));
             second.addEventListener('sandbox-log', (e: Event) => seen.second.push(text(e)));
+            window.addEventListener('sandbox-log', (e: Event) => seen.bubbled.push(text(e)));
+            document.body.addEventListener('sandbox-log', (e: Event) => seen.bubbled.push(text(e)));
             window.addEventListener('sandbox-log', (e: Event) => {
                 const target = e.target === first ? 'first' : e.target === second ? 'second' : 'other';
                 seen.window.push({ target, text: text(e) });
-            });
+            }, true);
             first.execute('console.log("FROM_FIRST")');
             second.execute('console.log("FROM_SECOND")');
         });
@@ -41,6 +48,8 @@ for (const mode of MODES) {
         expect(seen.window).toContainEqual({ target: 'first', text: 'FROM_FIRST' });
         expect(seen.window).toContainEqual({ target: 'second', text: 'FROM_SECOND' });
         expect(seen.window.filter((entry: { target: string }) => entry.target === 'other')).toEqual([]);
+        expect(seen.bubbled).toEqual([]);
+    });
     });
 }
 

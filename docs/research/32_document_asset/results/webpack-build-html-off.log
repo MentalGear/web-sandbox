@@ -1,0 +1,11 @@
+$ npx webpack -c webpack.htmloff.config.js && cp public/index.html dist/
+asset 6f38c2be02272e38de98.html 1.87 KiB [emitted] [immutable] [from: node_modules/fake-sealed/sealed-document.html] (auxiliary name: main)
+asset main.js 1.69 KiB [emitted] [minimized] (name: main)
+runtime modules 1.44 KiB 3 modules
+orphan modules 1.64 KiB [orphan] 2 modules
+cacheable modules 2.08 KiB (javascript) 1.87 KiB (asset)
+  ./main.js + 2 modules 2.04 KiB [built] [code generated]
+  ./node_modules/fake-sealed/sealed-document.html 1.87 KiB (asset) 42 bytes (javascript) [built] [code generated]
+webpack 5.112.2 compiled successfully in 269 ms
+
+--- server output

@@ -3,6 +3,9 @@ import { useRecorder, wss } from './recorder';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
 import { COOKIE_ENGINE_FACTS, type CookieEngine } from '@src/lib/cookie-facts';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The request gate (src/lib/in-sandbox-script.ts; S74): in every guest realm, fetch(), XMLHttpRequest and WebSocket admit
  * exactly the origins of the guest policy's connect-src, refuse everything else before the browser sees it, the same way

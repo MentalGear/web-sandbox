@@ -1,6 +1,9 @@
 import { test, expect } from './fixture';
 import { useRecorder } from './recorder';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * Exfiltration attempts from the guest. Evidence, per attempt (backlog T5):
  *   - the CSP violation the guest reports on the host (S5): positive evidence of each refusal;

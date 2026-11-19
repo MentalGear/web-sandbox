@@ -22,10 +22,10 @@ loads from a `blob:` URL, under which directive, with which MIME type, and which
 
 ## Decision
 
-1. **Files are part of the environment.** The element keeps a store: `registerFiles(files)` merges,
-   `unregisterFiles(paths?)` removes (all without an argument), `listFiles()` returns `{ path, type, size }`. The store
-   survives `reset()`, `load()`, `setConfig()` and `terminate()`. Every environment build takes one snapshot of it; a
-   frame that is already running never changes. `fileschanged` fires synchronously with `{ paths }`, once per call that
+1. **Files are part of the app.** The element keeps a store, given whole with the app to `start()` (its `files`) and
+   changed afterwards only by a commit of the guest's writes; `listFiles()` returns `{ path, type, size }`. The store
+   survives `reset()`, `terminate()` and removal. Every environment build takes one snapshot of it; a
+   frame that is already running never changes. `fileschanged` fires synchronously with `{ paths }`, once per commit that
    changed something.
 2. **One literal, guest-realm blobs, before any markup.** The snapshot is embedded in the bootstrap as one inline
    literal, `[[path, type, base64, edits?], ...]` (`edits` only for a file whose references are rewritten, below). The
@@ -48,8 +48,8 @@ loads from a `blob:` URL, under which directive, with which MIME type, and which
    nothing falls back and `blob:` for one kind reaches no other ([ADR-007](ADR-007-typed-origins.md)). An embedder cannot
    set a directive to `'none'` to keep a registered type from loading: the files registered are what the embedder chose
    to give the guest, and to keep a file out, it is not registered. `base-uri` is always `'none'` (S9).
-6. **Refusals carry a code.** `registerFiles()` throws `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED`,
-   `unregisterFiles()` throws `INVALID_PATH`; the guest's lookups throw or reject with `NOT_FOUND`, minted in the guest,
+6. **Refusals carry a code.** `start()` throws `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED` for the app's
+   files, and a commit `INVALID_PATH`, `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`; the guest's lookups throw or reject with `NOT_FOUND`, minted in the guest,
    with a message that names nothing but the code. All are plain `Error`s with an own `code` (the shape of
    [ADR-002](ADR-002-host-guest-broker.md)'s refusals). They are not `RpcErrorCode`: no broker is involved. Each batch is
    validated whole against the store it would produce before anything changes.
@@ -193,8 +193,8 @@ Known differences in content:
 Markup with no matched reference is never re-serialised.
 
 **Not supported (fail closed), each left as written**: `<template>` contents; `<iframe>`, `<embed>`, `<object>`,
-`<a href>`, `<form action>`, `<input type="image">` and SVG elements; `rel` values outside the list. `load()` takes
-markup: a registered `index.html` is a file like any other, not the guest's markup.
+`<a href>`, `<form action>`, `<input type="image">` and SVG elements; `rel` values outside the list. The app's `html` is
+the markup: a registered `index.html` is a file like any other, not the guest's markup.
 
 **Alternatives considered.**
 
@@ -231,7 +231,7 @@ any import map is consulted: an import map maps the resolved URL (or a bare spec
 URL (probe, section 3). The guest's base is `about:blank` (S15), and Firefox and WebKit then match a literal `./x.js`
 key; Chromium does not. Only a specifier rewritten to a full URL resolves in all three engines.
 
-1. **Rewrite at registration, on the host, JavaScript only.** When `registerFiles()` stores a file whose type is
+1. **Rewrite at registration, on the host, JavaScript only.** When the store takes a file (`start()`'s files, a commit) whose type is
    JavaScript (`text/javascript`, `application/javascript`, `text/ecmascript`, `application/ecmascript`, from the
    extension or an override), es-module-lexer finds its import specifiers. Each relative one (`./`, `../`, `/`) in a
    static `import`, `export … from`, `export * from`, a side-effect `import '…'`, a source or defer phase import, and in
@@ -285,12 +285,12 @@ key; Chromium does not. Only a specifier rewritten to a full URL resolves in all
 - **An import map cannot rescue a relative specifier in a `blob:` module**: resolution against the `blob:` base fails
   before the map is consulted. The rewrite has to change the source.
 - **Bun's scanner (`Bun.Transpiler.scanImports`) exists only in the Bun runtime.** The rewrite runs in the embedder's
-  browser, at `registerFiles()`.
+  browser, when `start()` stores the files.
 - **A regular expression cannot tell an import from import-like text** in strings, comments, regular expression literals
   and template literals; a JavaScript tokenizer, with the division/regex ambiguity and nested templates, is what
   es-module-lexer is. It is the lexer Vite and Vitest use.
 - **The `/js` build** (`es-module-lexer/js`, the asm.js build) is plain JavaScript: `parse()` is synchronous, there is no
-  `init()` and no WebAssembly, so `registerFiles()` stays synchronous and the host page never needs `'wasm-unsafe-eval'`
+  `init()` and no WebAssembly, so `start()` stays synchronous and the host page never needs `'wasm-unsafe-eval'`
   in its own policy. The default build compiles WebAssembly and must be awaited first.
 - **Bundled, pinned, with its notice.** It is a dev dependency pinned at 1.7.0 and compiled into `dist/index.js` by the
   library build, so consumers install nothing (the packed `package.json` has no `dependencies`). Its MIT licence ships as
@@ -356,7 +356,7 @@ mark where they go, and the guest fills them in. There is no CSS counterpart of 
    bad string and a bad url are left alone. The replacement is always a CSS string `"<blob: URL>"`: a url token's whole
    inside (`url( a.png )` → `url("…")`), or the string token, quotes included. A unit test re-tokenizes every rewrite, and
    2000 random inputs, and finds the same references, each now that string.
-2. **Stylesheets: references at registration, slots per build.** When `registerFiles()` stores a `text/css` file (by
+2. **Stylesheets: references at registration, slots per build.** When the store takes a `text/css` file (by
    extension or override), it keeps every reference that, resolved against the file's own virtual URL
    `https://vfs.invalid/<path>` (the URL parser's rules, as in markup), names a valid path with no query or fragment, as a
    byte range and that path. Whether a file is registered there is decided per build, in `snapshot()`, since the store can
@@ -478,13 +478,15 @@ the host says so.
 - **`guestWrites: true` (only a literal `true`).** Off, `sandboxFiles.write()` and `remove()` still exist and reject
   `FILES_NOT_ALLOWED` without sending; the host's method refuses with the same code. The host's refusal is the guarantee,
   the guest's only saves the round trip.
-- **One store chokepoint.** `FileStore.apply({ put, remove })` is the store's only mutation; `registerFiles()`,
-  `unregisterFiles()` and the commit are wrappers. A write is checked by `CheckedFile.from()`, the same path and entry
-  check, so its type is the one the store will load it as. At write time the quota is `FileStore.check()` of the store with
+- **One store chokepoint.** `FileStore.apply({ put, remove })` is the store's only mutation; `start()`'s reading of the
+  app's files and the commit go through it. A write is checked by `CheckedFile.fromGuest()`: the app's path check, content
+  that is a string or bytes, and the type the extension table (`FILE_TYPES`) has for the path, or
+  `application/octet-stream`. The guest gives no type; a write that carries one is refused `INVALID_FILE` (I8, design 02). At write time the quota is `FileStore.check()` of the store with
   every pending change and this write applied: the count and the registered bytes, which is `apply()`'s first step,
   without lexing. The commit is `apply()` itself, lexing included, against the store as it is then, so it can still be
   refused (`FILES_QUOTA_EXCEEDED`) if the host registered more meanwhile.
-- **An overlay per environment, the host the single source of truth.** `Map<path, CheckedFile | removal>`, created by the
+- **An overlay per environment, the host the single source of truth.** `Map<path, entry>`, each entry a written
+  `CheckedFile` or a removal, new for every recorded request, created by the
   build (null when off). A refused request changes nothing on either side; the guest's map changes only after the answer,
   in call order (a `Blob` is read first; every entry's bytes are copied when `write()` is called). A removal of a path in
   neither the store nor the overlay is answered `none` (the guest mints `NOT_FOUND`) and records nothing, so removal marks
@@ -496,13 +498,17 @@ the host says so.
 - **No URL for anything written, but raster images in the strict view.** `list()`, `read()` and `text()` show the guest's
   acknowledged writes; `url()` of a written path is `NOT_FOUND` in every mode, and no `blob:` URL is minted for one in the
   guest. The one exception is the strict view (below): it shows raster-image writes from URLs it mints itself.
-- **Commit needs an explicit list, and code needs a second opt-in.** `commitGuestWrites(paths, options?)`; there is no
-  commit-all and no discard (`reset()` discards). A write whose type is not on a fixed inert list — the image, font, audio
-  and video types of the extension table without SVG, `text/plain`, `application/json`, `text/css`, exact strings — is
-  refused unless `options.code === true`. JavaScript, HTML, SVG, XML, WebAssembly, unknown types and any type the guest
-  set are code until the embedder says otherwise. The type checked is the `CheckedFile`'s, which is what decides how the
-  file is loaded, never the file name. A written `app.js` committed as `text/plain` is then a text file: the load-kind
-  table keeps it from being the script of `<script src="app.js">`.
+- **Commit needs an explicit list of what the host was handed, and code needs a second opt-in.**
+  `commitGuestWrites(writes, options?)` takes the frozen values `listGuestWrites()` minted, which the element knows by
+  identity (a `WeakMap` from the value to its entry; a copy is a `TypeError`). A value commits only while its entry is its
+  path's current entry, all or none: one stale value commits nothing and the call answers `false`
+  ([design 01, files and commits](design/01-one-element-one-app.md#files-and-commits), I4). There is no commit-all and no
+  discard (`reset()` discards). A write whose type is not on a fixed inert list — the image, font, audio
+  and video types of the extension table without SVG, `text/plain`, `application/json`, `text/css`: the inert rows of
+  `FILE_TYPES` — is refused unless `options.code === true`. JavaScript, HTML, SVG, XML, WebAssembly and unknown extensions
+  are code until the embedder says otherwise. The type checked is the `CheckedFile`'s, which decides how the file is
+  loaded and is the one its name says. A written `app.txt` is a text file: the load-kind table keeps it from being the
+  script of `<script src="app.txt">`.
 - **Refusal code for a non-inert commit: `FILES_NOT_ALLOWED`, reused.** The code says "an opt-in is missing", the same
   meaning as for a write while `guestWrites` is off; the message names the path, its type and the flag. A separate code
   would only add a branch to the host's own call, and the host already knows every pending type from `listGuestWrites()`.
@@ -517,7 +523,7 @@ the host says so.
   listener reset or terminated the sandbox meanwhile. The announcement and the strict view's copy are both derived from one
   diff of the overlay per request (`record()`): the list changed, or what the guest sees changed. A removal mark whose path
   the host unregistered after the mark is forgotten before marks are listed or committed.
-- **Lifecycle: one rule, builds discard and terminations keep.** The next build (`reset()`, `load()`, `setConfig()`) and
+- **Lifecycle: one rule, builds discard and terminations keep.** The next build (`reset()`, an insertion) and
   the element's removal discard the overlay; `terminate()`, the watchdog and `workerExecutionTimeout` (a termination,
   [ADR-003](ADR-003-lifecycle-and-liveness.md)) keep it, closed: listable and committable, accepting nothing more. There
   is no rename or move.
@@ -670,8 +676,8 @@ Costs and limits:
   URLs built at run time do not resolve; guest code uses `sandboxFiles.url()` for those.
 - **Every guest carries the files bootstrap** (`inSandboxFiles`), files or not. That is the price of an API that exists
   regardless of host state.
-- **Changes need a rebuild.** A file registered while the guest runs reaches it at the next `reset()`, `load()` or
-  `setConfig()`.
+- **Changes need a rebuild.** A file committed while the guest runs reaches it at the next build (`reset()`, an
+  insertion).
 - **Chromium cannot start a module worker from a guest `blob:` URL**, under any policy (probe, section 1). Classic workers
   and `importScripts` work everywhere.
 

@@ -1,0 +1,13 @@
+$ npx vite build
+[36mvite v8.3.8 [32mbuilding client environment for production...[36m[39m
+transforming...
+✓ 6 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                            0.16 kB │ gzip: 0.14 kB
+dist/assets/sealed-document-CdaghI9E.html  1.91 kB │ gzip: 0.67 kB
+dist/assets/index-CcCi0nzf.js              1.57 kB │ gzip: 0.84 kB
+
+[32m✓ built in 50ms[39m
+
+--- server output

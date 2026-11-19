@@ -1,4 +1,4 @@
-import { test, expect, ORIGIN } from './fixture';
+import { test, expect, ORIGIN, buildOfMode } from './fixture';
 import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { waitInView, inFrames } from './strict-view';
 import {
@@ -7,6 +7,9 @@ import {
 } from './realistic-host';
 import type { Page } from '@playwright/test';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The library's core flows on a host page that looks like a production application (realistic-host.ts: a strict CSP that
@@ -98,6 +101,7 @@ async function ownRequestControl(host: RealisticHost, name: string, browserName:
 
 test.describe('the view modes: sealed (the default) and strict', () => {
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('the default configuration starts on the production host, renders, runs its worker, and stops cleanly', async ({ sandbox, page, browserName }) => {
             const host = await RealisticHost.open(sandbox, { mode });
             const baseline = await quietBaseline(host);
@@ -277,11 +281,11 @@ test.describe('cooperative mode', () => {
         expect(guest.referrer, covering('referrer', 'the guest document has no referrer')).toBe('');
         expect(String(guest.cookie), covering('documentOrigin', "the guest reads none of the host's cookies (WebKit answers an empty string, the others throw)")).not.toMatch(/hs_|script_visible/);
         expect(String(guest.storage), covering('documentOrigin', "and none of the host's storage")).toMatch(/^ERR SecurityError$/);
-        // location.ancestorOrigins: the host origin, which is not a secret (documented as a cooperative limit; Firefox has none)
+        // location.ancestorOrigins: the host origin, which is not a secret (documented as a cooperative limit; Firefox lists 'null' for it)
         const ancestors: string[] = guest.ancestors;
         expect(ancestors.filter(origin => origin !== 'null' && origin !== ORIGIN), covering('ancestorOrigins', 'the guest sees at most the host origin and the opaque wrapper')).toEqual([]);
         // ledger: ancestor-origins
-        if (browserName === 'firefox') expect(ancestors, covering('ancestorOrigins', 'Firefox has no ancestorOrigins')).toEqual([]);
+        if (browserName === 'firefox') expect(ancestors, covering('ancestorOrigins', "Firefox lists 'null' for the host page: its origin is not shown")).toEqual(['null', 'null']);
         else expect(ancestors, covering('ancestorOrigins', 'the host origin is shown to the guest (documented)')).toEqual(['null', ORIGIN]);
         expect(page.url(), covering('uiSurfaces', "the guest's attempt to navigate the top window did not move the host page")).toContain('/__realistic-host/page?');
         expect(String(guest.topNav), covering('uiSurfaces', 'and threw in the guest')).toMatch(/^ERR /);
@@ -399,6 +403,8 @@ test.describe('cross-origin isolation (COOP same-origin, COEP require-corp): not
     const ISOLATED = TERMINATION_REASONS.environmentIsolated.text;
 
     for (const mode of [...VIEW_MODES, 'cooperative', 'worker'] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode on an isolated host: ends with the isolation reason, builds no frame, runs nothing of the guest`, async ({ sandbox, page, browserName }) => {
             const host = await RealisticHost.open(sandbox, { mode, isolation: true, guestCode: mode === 'worker' ? 'execute' : 'none' });
             expect(await page.evaluate(() => self.crossOriginIsolated), 'the host page is cross-origin isolated').toBe(true);
@@ -411,11 +417,14 @@ test.describe('cross-origin isolation (COOP same-origin, COEP require-corp): not
             expect(await host.frames(), covering('coep', 'no frame was created')).toBe(0);
             await expect(host.guestResult(1500), covering('coep', 'and nothing of the guest ran')).rejects.toThrow();
         });
+        });
     }
 });
 
 test.describe('teardown', () => {
     for (const mode of ['cooperative', ...VIEW_MODES] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode}: removing the element while the host has focus and lifecycle listeners throws nothing at the host, leaves no frame, and the host page answers`, async ({ sandbox, page }) => {
             const host = await RealisticHost.open(sandbox, { mode });
             // positive control: the host's own focus reaches its listeners
@@ -430,15 +439,17 @@ test.describe('teardown', () => {
             expect(host.pageErrors, covering('eventDispatch', 'nor an uncaught exception')).toEqual([]);
             expect(await page.evaluate(() => (window as any).removedElement.shadowRoot.querySelectorAll('iframe').length), covering('eventDispatch', 'the removed element holds no frame')).toBe(0);
             // a new element on the same page builds afterwards: the removal left no state behind
-            const next = await page.evaluate(() => new Promise<string>(resolve => {
+            // (grants of the test's build: a cooperative app without scripts, or on the default build the default, sealed)
+            const next = await page.evaluate((grants) => new Promise<string>(resolve => {
                 const element = document.createElement('web-sandbox') as any;
                 element.addEventListener('ready', () => resolve('ready'), { once: true });
                 element.addEventListener('terminated', () => resolve('terminated'), { once: true });
-                element.setConfig({ mode: 'cooperative' });
+                element.start({}, grants);
                 document.body.appendChild(element);
-            }));
+            }), buildOfMode(mode) === 'network' ? { mode: 'cooperative' } : {});
             expect(next, covering('eventDispatch', 'and a new element builds on the same page')).toBe('ready');
             expect(await host.hostFetch('after'), covering('thread', 'the host page works after the sandbox was removed')).toMatchObject({ status: 200 });
+        });
         });
     }
 });

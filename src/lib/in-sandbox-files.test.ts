@@ -188,7 +188,7 @@ describe('sandboxFiles.write() and remove(): guest writes, the guest side (backl
         });
         const accept = (i: number) => {
             const r = requests[i];
-            answers[i]!.resolve(r.change === 'write' ? { path: r.path, change: 'write', type: 'text/plain', size: r.entry?.content?.length ?? r.entry.length } : { path: r.path, change: 'remove' });
+            answers[i]!.resolve(r.change === 'write' ? { path: r.path, change: 'write', type: 'text/plain', size: r.entry.length } : { path: r.path, change: 'remove' });
         };
         return { requests, answers, writeFiles, accept };
     }
@@ -274,14 +274,24 @@ describe('sandboxFiles.write() and remove(): guest writes, the guest side (backl
         api.write('typed.bin', bytes);
         api.write('buffer.bin', buffer);
         api.write('view.bin', new DataView(new Uint8Array([0, 6, 7, 0]).buffer, 1, 2));
-        api.write('wrapped', { content: new Uint16Array([0x4241]), type: 'text/plain' });
+        api.write('wide.bin', new Uint16Array([0x4241]));
         api.remove('x.txt');
         bytes.fill(0);
         new Uint8Array(buffer).fill(0);
         for (let i = 0; i < 10; i++) await settle();
-        expect(requests.map(r => [r.change, r.path])).toEqual([['write', 'blob.bin'], ['write', 'typed.bin'], ['write', 'buffer.bin'], ['write', 'view.bin'], ['write', 'wrapped'], ['remove', 'x.txt']]);
-        expect(requests.slice(0, 4).map(r => Array.from(r.entry))).toEqual([[9, 9], [1, 2, 3], [4, 5], [6, 7]]);
-        expect([Array.from(requests[4].entry.content), requests[4].entry.type]).toEqual([[0x41, 0x42], 'text/plain']);
+        expect(requests.map(r => [r.change, r.path])).toEqual([['write', 'blob.bin'], ['write', 'typed.bin'], ['write', 'buffer.bin'], ['write', 'view.bin'], ['write', 'wide.bin'], ['remove', 'x.txt']]);
+        expect(requests.slice(0, 5).map(r => Array.from(r.entry))).toEqual([[9, 9], [1, 2, 3], [4, 5], [6, 7], [0x41, 0x42]]);
+    });
+
+    it('a write sends a path and bytes, never a type (I8): a Blob\'s type is not sent, and a { content, type } is sent as null for the host to refuse', async () => {
+        const { requests, writeFiles } = host();
+        const api = installWith([], writeFiles);
+        api.write('a.png', new Blob(['<svg/>'], { type: 'image/svg+xml' }));
+        api.write('b.png', { content: new Uint8Array([1]), type: 'image/png' });
+        api.write('c.txt', { content: 'x', type: 'text/html' });
+        for (let i = 0; i < 10; i++) await settle();
+        expect(requests[0]).toEqual({ change: 'write', path: 'a.png', entry: new TextEncoder().encode('<svg/>') });
+        expect(requests.slice(1)).toEqual([{ change: 'write', path: 'b.png', entry: null }, { change: 'write', path: 'c.txt', entry: null }]);
     });
 
     it('what is not a path or content is sent as null, for the host to refuse; only change, path and entry are sent', async () => {
@@ -293,18 +303,20 @@ describe('sandboxFiles.write() and remove(): guest writes, the guest side (backl
         for (let i = 0; i < 5; i++) await settle();
         expect(requests).toEqual([
             { change: 'write', path: null, entry: null },
-            { change: 'write', path: null, entry: { content: null, type: null } },
+            { change: 'write', path: null, entry: null },
             { change: 'remove', path: null },
         ]);
     });
 
-    it('a throwing getter on a wrapper rejects the write and sends nothing', async () => {
+    it('an object that is not content is never read: a getter on it does not run, and it is sent as null', async () => {
         const { requests, writeFiles } = host();
         const api = installWith([], writeFiles);
-        const entry = { get content() { throw new Error('nope'); }, type: 'text/plain' };
-        await expect(api.write('a.txt', entry).catch((e: any) => e.message)).resolves.toBe('nope');
-        await settle();
-        expect(requests).toEqual([]);
+        let reads = 0;
+        const entry = { get content() { reads++; throw new Error('nope'); }, get type() { reads++; return 'text/plain'; } };
+        void api.write('a.txt', entry);
+        for (let i = 0; i < 5; i++) await settle();
+        expect(reads).toBe(0);
+        expect(requests).toEqual([{ change: 'write', path: 'a.txt', entry: null }]);
     });
 });
 

@@ -1,6 +1,8 @@
 # ADR-008: Sealed mode — the default has no network
 
-**Status**: Accepted · **Date**: 2026-10-24
+**Status**: Accepted · **Date**: 2026-10-24 · Amended by [ADR-009](ADR-009-network-modes-build-flag.md): the package as
+built by default holds sealed mode alone, and strict, cooperative and worker mode are in a build only with its flag on.
+What this record says of strict mode describes that build.
 
 ## Context
 
@@ -25,16 +27,19 @@ only to refuse.
 mode keeps its network and is named with `mode: 'strict'`.
 
 ```js
-sandbox.setConfig({ entry: 'main.js' });                                              // sealed: no network
-sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['https://api.example'] } }); // the network
+sandbox.start({ entry: 'main.js', files });                                                       // sealed: no network
+other.start({ entry: 'main.js', files }, { mode: 'strict', fetchBridge: { allow: ['https://api.example'] } }); // the network
 ```
 
 1. **No network, by construction.** The view's policy comes from its own template, `sealedViewPolicy`, whose input has no
    `origins` key: every fetch directive is `'none'`, or `blob:` for a kind of registered file, and `connect-src` is
    `'none'` always (the worker reads its files with `sandboxFiles.read()`, which makes no request). The build takes a
    path of its own (`_prepareSealedFrame`) that reaches no host-site, host-policy, origin-parsing or bridge code; the
-   request gate's list is empty, so every `fetch`, `XMLHttpRequest` and `WebSocket` is refused and reported, on every
-   engine; there is no bridge frame; `sandboxFetch()` stays defined and rejects with `FETCH_NOT_ALLOWED` in the guest's
+   worker has no `fetch`, `XMLHttpRequest` or `WebSocket` at all (`SEALED_WORKER_GLOBALS` is strict mode's allowlist
+   without `NETWORK_WORKER_GLOBALS`, so `typeof fetch === 'undefined'` on every engine, and calling one is a
+   `ReferenceError`), and no code that could reach the network is in the sealed worker's source: the bootstrap is given no
+   request gate (a module of the network build), because a gate over an empty list is a predicate with nothing to admit,
+   and the construction one rung up is the name's absence; there is no bridge frame; `sandboxFetch()` stays defined and rejects with `FETCH_NOT_ALLOWED` in the guest's
    realm and sends nothing. (The host's reserved `sandbox:fetch` method stays registered, as before any build, and a guest
    can call it with `bridge.call`; with no bridge in a sealed build it refuses `FETCH_NOT_ALLOWED` and makes no request.) The config schema runs no rule of a network option for a sealed config, so it reads nothing of the host page.
    The host page's own policy is not the view's: the view and the worker are `srcdoc` and `blob:` documents, which
@@ -54,7 +59,7 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
    function of it that receives guest content is a row of `HOST_PASSES`, the third side of the class-A table
    (`SEALED_REACH`, `host`). A sealed config with
    `scriptUnsafe: true` is refused whole, with the reason `sealedScriptUnsafe`, as one with a network option is. With
-   the request gate and the allowlist, nothing guest code does in the worker reaches a check of the inherited list: no
+   the allowlist (which has no request maker) and no gate to ask, nothing guest code does in the worker reaches a check of the inherited list: no
    violation, no engine message, no report. What would still raise one there is relayed and stopped by the bootstrap's
    first listener, and the fields of `SecurityPolicyViolationEvent` read blank to guest code. The view runs no guest
    code, and applies the guest's styles through the CSSOM, which no `style-src` checks: its parser is never given a
@@ -96,7 +101,7 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
 ## Consequences
 
 - **What leaves the default's path**: the host-site and host-policy decisions, the cookie and connect fact tables,
-  `origins` parsing, the fetch bridge and its frame, the request gate's allow path, network URLs in the renderer
+  `origins` parsing, the fetch bridge and its frame, the request gate (its code is not in the default build), network URLs in the renderer
   (research 24, §1). Of the 22 rows of the host page's inherited context, 5 do not apply in sealed mode, 2 are reduced and
   15 remain, each failing closed with a reason, closed by construction (`permissionState`; `secureContext`: the worker
   keeps nothing only a secure context has and reads `isSecureContext` as false, on every engine), or costing availability
@@ -105,11 +110,11 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', fetchBridge: { allow: ['ht
 - **What an embedder sees**: an embed with no `mode` and no network option builds sealed mode, the same view, worker and
   API, and a script in its `html` still never runs. One with `origins` or `fetchBridge` and no `mode` is refused with
   the reason above, and a type error in TypeScript; the fix is `mode: 'strict'`
-  ([migration](API.md#migrating-to-sealed-as-the-default)). A guest `fetch()` of its own file's URL is refused in sealed
-  mode (`connect-src` has no `blob:`); `sandboxFiles.read()` reads the file.
+  ([migration](API.md#migrating-to-sealed-as-the-default)). A sealed guest has no `fetch`, `XMLHttpRequest` or `WebSocket`
+  (`typeof fetch === 'undefined'`; feature-detect, do not catch a refusal); `sandboxFiles.read()` reads a file.
 - **What the app gives up**: every request, every string run as code (`eval`, `new Function`, a timer given a string:
   each throws the library's `EvalError`), `import()` and its phases (bundle the modules into the entry), an initial view
-  longer than one render (`htmlTooLong`: render the rest from the entry), and `execute()`. The only code of the host page it can run is the methods the host `expose()`s, so those
+  longer than one render (`htmlTooLong`: render the rest from the entry), and `execute()`. The only code of the host page it can run is the host methods of the grants, so those
   methods are the whole surface an attacker reaches: copy arguments with spread and validate each one. What else reaches
   the host page is the app's data and attacker text: its log lines (`sandbox-log`), the details of `violation` events,
   its guest writes (`fileswritten`) and the auto-resize height. None is a request or runs code, and an embedder that

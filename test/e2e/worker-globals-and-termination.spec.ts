@@ -1,8 +1,11 @@
-import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
+import { test, expect, ORIGIN, type SandboxDriver, buildOfMode } from './fixture';
 import { useRecorder, wss } from './recorder';
-import { STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { SEALED_WORKER_GLOBALS, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { LIBRARY_GUEST_GLOBALS } from '@src/lib/sealed-reach';
 import { isViewMode, VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The worker's globals and the guest's termination (V1 to V3 are cited as VR:V1 to VR:V3), where browser behaviour decides:
@@ -100,8 +103,8 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
     const ABSENT_GLOBALS: Record<string, string[]> = {
         // ledger: worker-global-set
         chromium: ['InternalError', 'onoffline', 'ononline', 'CryptoKey', 'SubtleCrypto', 'Lock', 'LockManager', 'AudioDecoder', 'AudioEncoder', 'VideoDecoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrack', 'ImageTrackList'],
-        firefox: ['SecurityPolicyViolationEvent', 'QuotaExceededError', 'IDBRecord', 'WebGLObject'],
-        webkit: ['Temporal', 'SuppressedError', 'InternalError', 'DisposableStack', 'AsyncDisposableStack', 'onlanguagechange', 'scheduler', 'QuotaExceededError', 'IDBRecord', 'Scheduler', 'TaskController', 'TaskSignal', 'TaskPriorityChangeEvent', 'WebGLObject', 'ImageDecoder', 'ImageTrack', 'ImageTrackList'],
+        firefox: ['SecurityPolicyViolationEvent', 'QuotaExceededError', 'WebGLObject'],
+        webkit: ['InternalError', 'onlanguagechange', 'scheduler', 'Scheduler', 'TaskController', 'TaskSignal', 'TaskPriorityChangeEvent', 'WebGLObject'],
     };
     const ABSENT_NAVIGATOR_MEMBERS: Record<string, string[]> = {
         // ledger: worker-global-set
@@ -110,6 +113,8 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         webkit: ['deviceMemory', 'globalPrivacyControl', 'gpu'],
     };
     for (const mode of ['worker', ...VIEW_MODES] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: the allowlisted globals and navigator members an engine does not have are exactly the ones the ledger states (worker-global-set); nothing outside the allowlist is present`, async ({ sandbox, browserName }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             const seen = await sandbox.inGuest(`
@@ -118,8 +123,8 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
                 return { names: [...names], navigatorMembers: Object.getOwnPropertyNames(Object.getPrototypeOf(navigator)) };
             `);
             const have = new Set<string>(seen.names);
-            // the mode's own lists: strict mode keeps neither importScripts nor a secure-context-only name, on any engine
-            const globals = isViewMode(mode) ? STRICT_WORKER_GLOBALS : WORKER_GLOBALS;
+            // the mode's own lists: strict mode keeps neither importScripts nor a secure-context-only name, on any engine; sealed mode, no network name either
+            const globals = mode === 'sealed' ? SEALED_WORKER_GLOBALS : isViewMode(mode) ? STRICT_WORKER_GLOBALS : WORKER_GLOBALS;
             const navigatorMembers = isViewMode(mode) ? STRICT_WORKER_NAVIGATOR_MEMBERS : WORKER_NAVIGATOR_MEMBERS;
             // ledger: worker-global-set
             const expectedAbsentGlobals = [...ABSENT_GLOBALS[browserName]!, 'SharedArrayBuffer'].filter(name => globals.includes(name)).sort();
@@ -130,10 +135,13 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
             expect(navigatorMembers.filter(name => !seen.navigatorMembers.includes(name)).sort()).toEqual(expectedAbsentMembers);
             expect(WORKER_NAVIGATOR_MEMBERS.filter(name => !navigatorMembers.includes(name) && seen.navigatorMembers.includes(name))).toEqual([]);
         });
+        });
     }
 
     // docs/API.md lists indexedDB among the kept globals and says it stores nothing (BD3:NEW-6): the worker's origin is opaque.
     for (const mode of ['worker', ...VIEW_MODES] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: indexedDB is kept, and open() is denied with a SecurityError on every engine, so the sandbox stores nothing in it`, async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             expect(WORKER_GLOBALS).toContain('indexedDB');
@@ -148,6 +156,7 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
                 });`);
             expect(outcome).toEqual({ kind: 'object', error: 'SecurityError' });
         });
+        });
     }
 
     test('positive control of the evidence: an EventSource the policy allows reaches the allowed listener (cooperative mode, the document)', async ({ sandbox }) => {
@@ -157,14 +166,14 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         expect(recorder.hits.find(hit => hit.path.startsWith('/es-allowed'))?.headers.accept).toBe('text/event-stream');
     });
 
-    test('residual (measured), cooperative mode: a worker the guest creates is a realm of its own; Firefox sends its EventSource and loads its FontFace past the policy, Chromium and WebKit do not', async ({ sandbox, browserName }) => {
+    test('residual (measured), cooperative mode: a worker the guest creates is a realm of its own; no engine sends its EventSource or loads its FontFace past the policy', async ({ sandbox }) => {
         expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         const body = `try { new EventSource('${recorder.blocked}/v1-guest-worker-es') } catch (e) {} try { new FontFace('v1', 'url(${recorder.blocked}/v1-guest-worker-font.woff)').load().catch(() => {}) } catch (e) {} fetch('${recorder.allowed}/v1-guest-worker-control').catch(() => {});`;
         await sandbox.run(`new Worker(URL.createObjectURL(new Blob([${JSON.stringify(body)}], { type: 'text/javascript' })));`);
         await recorder.waitFor('allowed', '/v1-guest-worker-control'); // the guest's worker runs (positive control)
         await sandbox.page.waitForTimeout(1000);
         // ledger: worker-eventsource-fontface
-        expect(recorder.paths('blocked').sort()).toEqual(browserName === 'firefox' ? ['/v1-guest-worker-es', '/v1-guest-worker-font.woff'] : []);
+        expect(recorder.paths('blocked').sort()).toEqual([]);
     });
 });
 
@@ -181,6 +190,8 @@ const BC_GUEST = (label: string, name: string) => `
 
 test.describe('V4: a guest\'s BroadcastChannel reaches only its own opaque origin (cooperative, worker and strict mode)', () => {
     for (const mode of ['cooperative', 'worker', ...VIEW_MODES] as const) {
+        test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test(`${mode} mode: messages cross neither from the host page nor from a second sandbox into the guest, nor from the guest out; each party's own channels hear each other (positive controls)`, async ({ sandbox, page }) => {
             const name = `v4-${mode}-${Date.now()}`;
             expect(await sandbox.mount({ mode })).toBe('ready');
@@ -212,12 +223,14 @@ test.describe('V4: a guest\'s BroadcastChannel reaches only its own opaque origi
             expect((await sandbox.logs()).filter((line) => line.startsWith('BC-RX ')).sort()).toEqual(['BC-RX main from-main-guest', 'BC-RX second from-second-guest']);
             expect(await page.evaluate(() => (window as any).bcHostRx)).toEqual(['from-host']);
         });
+        });
     }
 });
 
 // ---- V2: a strict entry's synchronous console lines -------------------------------------------------------------
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('V2: an entry\'s synchronous console lines arrive as sandbox-log, in order, before its asynchronous ones (before: only the asynchronous ones did)', async ({ sandbox }) => {
         await sandbox.registerFiles({ 'main.js': `console.log('V2 sync 1'); console.info('V2 sync 2'); console.warn('V2 sync 3'); setTimeout(() => console.log('V2 async'), 0);` });
         expect(await sandbox.mount({ mode, entry: 'main.js' })).toBe('ready');
@@ -302,6 +315,7 @@ test.describe('V3: the user\'s modifier clicks and Enter on a guest link (cooper
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('every rendered link is inert (about:blank#): no action opens a tab or reaches the guest\'s URL, on any engine', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             await sandbox.run(`sandboxView.render(${JSON.stringify(LINKS(recorder.blocked))})`);
@@ -380,9 +394,9 @@ test('PD7: the playground ignores a RESET_COMPLETE posted by the guest (it reloa
     await page.goto(`${ORIGIN}/playground/index.html`);
     await page.waitForFunction(() => !!(window as any).SandboxControl);
     const ready = await page.evaluate(() => new Promise<string>((resolve) => {
-        const el = (window as any).SandboxControl.sandboxElement;
+        // a fresh direct sandbox, started by the playground (its 'ready' comes after the call returns)
+        const el = (window as any).SandboxControl.start({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, html: '<p>pd7</p>' });
         el.addEventListener('ready', () => resolve('ready'), { once: true });
-        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, html: '<p>pd7</p>' });
         setTimeout(() => resolve('timeout'), 8000);
     }));
     expect(ready).toBe('ready');

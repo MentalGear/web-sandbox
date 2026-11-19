@@ -8,8 +8,10 @@
 //   - the element, which the specs configure.
 // A script of the page, not the harness's: it has no inline script and no inline style, so the strict policy of the
 // fixture runs it. The element's size is set through the CSSOM, which no style-src governs.
-import { defineWebSandbox } from '@src/host';
-import { viewScriptHash } from '@src/index';
+import { buildSettled, insertInert, loadLibrary } from './library';
+
+// the build the test asked for (library.ts): the default build, or the one with the network modes
+const { defineWebSandbox, viewScriptHash } = await loadLibrary();
 
 const w = window as any;
 const params = new URLSearchParams(location.search);
@@ -86,22 +88,28 @@ if (params.get('sw') !== '0' && 'serviceWorker' in navigator && appPolicy) {
 defineWebSandbox();
 w.sandboxLogs = [];
 w.sandboxEvents = [];
-window.addEventListener('sandbox-log', (event: any) => { w.sandboxLogs.push((event.detail?.args || []).map(String).join(' ')); });
+// the events that carry guest data do not bubble (design 01, I5): heard in the capture phase
+window.addEventListener('sandbox-log', (event: any) => { w.sandboxLogs.push((event.detail?.args || []).map(String).join(' ')); }, true);
 w.sandboxViolations = [];
-window.addEventListener('violation', (event: any) => { w.sandboxViolations.push({ sandbox: event.target.id || 'main', ...event.detail }); });
+window.addEventListener('violation', (event: any) => { w.sandboxViolations.push({ sandbox: event.target.id || 'main', ...event.detail }); }, true);
 w.sandboxFetches = [];
-window.addEventListener('fetch', (event: any) => { w.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail }); });
+window.addEventListener('fetch', (event: any) => { w.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail }); }, true);
 w.sandboxWrites = [];
-// Inserted with a cooperative config without allow-scripts, which runs no script of the library's: the build on insertion
-// has nothing a host policy could refuse, and a spec's own setConfig() is the first build that matters.
-const element = document.createElement('web-sandbox') as HTMLElement & { setConfig(config: object): void };
-element.setConfig({ mode: 'cooperative' });
-document.body.appendChild(element);
-element.style.display = 'block';
-element.style.width = '400px';
-element.style.height = '300px';
-for (const type of ['ready', 'terminated']) {
-    element.addEventListener(type, (event: any) => w.sandboxEvents.push({ type, reason: event.detail?.reason ?? null }));
-}
+// Each element the page shows is sized and heard the same way: this one, and each fresh one a spec starts in its place
+// (the fixture's startFresh() calls the hook before it inserts it).
+w.sandboxAdopt = (element: HTMLElement) => {
+    element.style.display = 'block';
+    element.style.width = '400px';
+    element.style.height = '300px';
+    for (const type of ['ready', 'terminated']) {
+        element.addEventListener(type, (event: any) => w.sandboxEvents.push({ type, reason: event.detail?.reason ?? null }));
+    }
+};
+// Inserted so that the build on insertion has nothing a host policy could refuse, and a spec's own start() is the
+// first build that matters (library.ts, insertInert: each build's way).
+const element = document.createElement('web-sandbox') as HTMLElement & { start(app: object, grants?: object): void };
+insertInert(element);
+w.sandboxAdopt(element);
 w.viewScriptHash = viewScriptHash;
+await buildSettled(element); // a spec's own build is the next one
 w.harnessReady = true;

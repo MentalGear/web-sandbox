@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { cssLoadBound, inSandboxView, INERT_HREF, isStyleProperty, RENDER_ATTRIBUTES, RENDER_CROSSORIGIN_ELEMENTS, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_OPTIONS, viewBudget, viewInputOutbox, type RenderContext, type RenderSwitches, type ViewOptions } from '@src/lib/in-sandbox-view';
+import { cssLoadBound, inSandboxView, INERT_HREF, isStyleProperty, RENDER_ATTRIBUTES, RENDER_CROSSORIGIN_ELEMENTS, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_OPTIONS, viewBudget, viewControlNames, viewInputOutbox, type RenderContext, type RenderSwitches, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { styleMarkup } from '@src/lib/style-markup';
 import { cssReferences, keepsUrl, keptCss, withKeptReferences } from '@src/lib/css-references';
@@ -422,7 +422,7 @@ describe('the view: what an operation puts into a <style>, and a load that fails
             return add.call(this, type, listener, options);
         } as typeof window.addEventListener;
         try {
-            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()});`)();
+            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withKeptReferences.toString()}, ${keepsUrl.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()}, ${styleMarkup.toString()}, ${viewControlNames.toString()});`)();
         } finally {
             window.addEventListener = add;
         }

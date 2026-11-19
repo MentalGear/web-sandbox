@@ -1,0 +1,48 @@
+{
+  "id": "vite-dev-noprebundle",
+  "app": "vite",
+  "variant": null,
+  "build": null,
+  "serve": {
+    "cmd": "npx vite --config vite.noprebundle.config.js --host 127.0.0.1 --port $PORT --strictPort"
+  },
+  "buildExitCode": null,
+  "expectedSha256": "8ac4bf7ea2a3f5c217e4f9c03ba249bbacb831dc9c4a239a2af274869554a14f",
+  "url": "http://127.0.0.1:5172/node_modules/fake-sealed/sealed-document.html",
+  "isURLInstance": true,
+  "valueType": "[object URL]",
+  "asString": "http://127.0.0.1:5172/node_modules/fake-sealed/sealed-document.html",
+  "rawHref": "http://127.0.0.1:5172/node_modules/fake-sealed/sealed-document.html",
+  "rawOrigin": "http://127.0.0.1:5172",
+  "appOrigin": "http://127.0.0.1:5172",
+  "scriptOrigin": "http://127.0.0.1:5172",
+  "documentOrigin": "http://127.0.0.1:5172",
+  "status": 200,
+  "contentType": "text/html",
+  "length": 1966,
+  "sha256": "a438cb3f3dfc3f002ca655622dd2f4d982a717ec060b53f8ae9250072f01b05b",
+  "iframe": {
+    "status": 200,
+    "contentType": "text/html",
+    "sha256": "a438cb3f3dfc3f002ca655622dd2f4d982a717ec060b53f8ae9250072f01b05b",
+    "bytesEqual": false
+  },
+  "engine": "chromium 159.0.8154.6",
+  "sameOrigin": true,
+  "is200Html": true,
+  "bytesEqual": false,
+  "fileName": "sealed-document.html",
+  "console": [
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "error: Applying inline style violates the following Content Security Policy directive 'default-src 'none''. Either the 'unsafe-inline' keyword, a hash ('sha256-XkenByKsXTgsp1sB8zaz1en11bw/1JHNCxZJmVnrsIM='), or a nonce ('nonce-...') is required to enable inline execution. Note also that 'style-src' was not explicitly set, so 'default-src' is used as a fallback. The action has been blocked.",
+    "error: Executing inline script violates the following Content Security Policy directive 'script-src 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=''. Either the 'unsafe-inline' keyword, a hash ('sha256-FzGRmXVa1n31Lrsg3i/S1CDsp/2WGN+LBSNOJ6zgqFw='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "outputFiles": [],
+  "documentFilesInOutput": [],
+  "versions": {
+    "bun": "1.4.4",
+    "node": "v22.23.4",
+    "vite": "8.3.8"
+  }
+}

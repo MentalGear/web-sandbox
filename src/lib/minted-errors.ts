@@ -1,7 +1,7 @@
 /**
  * The errors the library makes in the host's realm, and what a guest receives for each (BD6:LIM-1, BD7:CHL-2; class P,
  * what crosses is what the API shows). A host method that lets a library error propagate (`await el.call(…)`,
- * `el.registerFiles(…)`, a relay of another element's refusal, with no catch) hands that error to the host's broker as
+ * `el.commitGuestWrites(…)`, a relay of another element's refusal, with no catch) hands that error to the host's broker as
  * its failure. The broker never reads such an error for the guest's text: it asks {@link crossingText}, which answers the
  * text chosen when the error was made, from a fixed table and the error's code, never from its message:
  *   - an error with a code (mintError): the code, `: ` and that code's one text in CROSSING_TEXTS;

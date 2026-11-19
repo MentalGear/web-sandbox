@@ -1,6 +1,9 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { fromPreset } from './presets';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * workerExecutionTimeout (BL:B8; ADR-003): each execute() gets its own deadline, at which
@@ -26,6 +29,8 @@ async function watch(page: import('@playwright/test').Page) {
 
 for (const mode of ['worker', ...VIEW_MODES] as const) {
     test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
+    test.describe(`${mode} mode`, () => {
         test('code still running at the deadline terminates the sandbox: the host line, then terminated with the reason; reset() recovers', async ({ sandbox, page }) => {
             expect(await sandbox.mount({ ...preset.rules, mode })).toBe('ready');
             await watch(page);
@@ -50,5 +55,6 @@ for (const mode of ['worker', ...VIEW_MODES] as const) {
             expect(await sandbox.inGuest('return globalThis.kept')).toBe(42);
             expect((await sandbox.logs()).filter(line => line.includes('Execution Timeout'))).toEqual([]);
         });
+    });
     });
 }

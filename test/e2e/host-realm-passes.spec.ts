@@ -13,8 +13,8 @@ import { inView, waitInView } from './strict-view';
  *
  * On the realistic host, with a policy that has `'report-sample'` and a keyed report endpoint, markup that holds every
  * style maker of sealed-host-policy.spec.ts and an absolute `<base>` with a secret in its query goes to a sealed sandbox
- * at its default configuration through every way `html` reaches a build: setConfig({ html }), load(), reset() and the
- * insertion of an element configured before. On every engine: the endpoint receives no report, the host page's listener
+ * at its default configuration through every way `html` reaches a build: start({ html }) on an element in the document,
+ * reset(), and the insertion of an element started before. On every engine: the endpoint receives no report, the host page's listener
  * hears no violation, and the view shows the markup with its styles. A positive control shows the endpoint receives the
  * host page's own violation, so a report would have arrived.
  */
@@ -24,7 +24,7 @@ const tag = () => randomUUID().replaceAll('-', '').slice(0, 16);
 test.describe("a strict or sealed build's markup reaches no parser of the host page's realm", () => {
     test.describe.configure({ timeout: 120000 });
 
-    test('style makers and an absolute <base> through setConfig({ html }), load(), reset() and insertion: no report, no violation on the host page', async ({ sandbox, browserName }) => {
+    test('style makers and an absolute <base> through start({ html }) before and after insertion, and reset(): no report, no violation on the host page', async ({ sandbox, browserName }) => {
         const secrets = { nonce: `HN${tag()}`, key: `RK${tag()}` };
         const host = await RealisticHost.open(sandbox, { mode: 'sealed', directives: withPolicySecrets(secrets) });
         const { page } = host;
@@ -34,17 +34,22 @@ test.describe("a strict or sealed build's markup reaches no parser of the host p
         const html = `<base href="https://base.example/app/?token=${baseSecret}">${STYLE_MAKERS.map(maker => maker.markup).join('')}<p id="h-done">done</p>`;
         await host.hits(true);
 
-        // setConfig({ html }): the default mode, sealed
-        expect((await host.configure({ html })).at(-1), 'setConfig({ html }) builds').toEqual({ type: 'ready', reason: null });
+        // start({ html }) before the insertion (host.configure(): a fresh element): the default mode, sealed
+        expect((await host.configure({ html })).at(-1), 'start({ html }) builds').toEqual({ type: 'ready', reason: null });
         await waitInView(page, browserName, "!!document.getElementById('h-done')", 15000);
-        // load(), and reset()
-        expect(await page.evaluate((markup) => whenSettled(s => s.load(markup)), `${html}<i>load</i>`)).toBe('ready');
+        // start({ html }) on an element already in the document, and reset()
+        expect(await page.evaluate((markup) => {
+            const element = document.createElement('web-sandbox') as any;
+            (window as any).sandboxAdopt(element);
+            document.querySelector('web-sandbox')!.replaceWith(element);
+            return whenSettled(s => s.start({ html: markup }));
+        }, `${html}<i>in the document</i>`)).toBe('ready');
         expect(await page.evaluate(() => whenSettled(s => s.reset()))).toBe('ready');
-        // an element configured before its insertion builds on insertion
+        // an element started before its insertion builds on insertion
         const inserted = await page.evaluate((markup) => new Promise<string>((resolve) => {
-            const element = document.createElement('web-sandbox') as HTMLElement & { setConfig(config: object): void };
+            const element = document.createElement('web-sandbox') as HTMLElement & { start(app: object): void };
             element.id = 'inserted';
-            element.setConfig({ html: markup });
+            element.start({ html: markup });
             element.addEventListener('ready', () => resolve('ready'));
             element.addEventListener('terminated', (event: any) => resolve(`terminated: ${event.detail?.reason}`));
             document.body.appendChild(element);

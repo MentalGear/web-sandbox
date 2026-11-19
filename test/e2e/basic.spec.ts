@@ -1,5 +1,8 @@
 import { test, expect } from './fixture';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 test('executes code and relays console output to the host', async ({ sandbox }) => {
     expect(await sandbox.mount()).toBe('ready');
 
@@ -20,8 +23,8 @@ test('renders loaded guest markup and runs its inline scripts', async ({ sandbox
 
 test('queues execute() calls made before the sandbox is ready', async ({ sandbox, page }) => {
     await page.evaluate(() => {
-        const s = document.querySelector('web-sandbox') as any;
-        s.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
+        const s = document.querySelector('web-sandbox') as any; // the harness's element, in the document, with no app yet
+        s.start({}, { mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
         s.execute('console.log("queued ran")');
     });
 

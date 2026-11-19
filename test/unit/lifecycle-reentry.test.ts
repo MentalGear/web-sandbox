@@ -1,6 +1,8 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineWebSandbox, LOAD_TIMEOUT_MS } from '@src/host';
 import { checkIn } from './check-in';
+import { startWith } from './start-app';
 
 /**
  * LM-2 (class L; S65): embedder code that runs inside the element's own build. A page that patched console.warn runs
@@ -61,7 +63,7 @@ describe('LM-2: a build re-entered from inside the build leaves one build, the n
         vi.useFakeTimers();
         const heard = terminations(el);
         onNextSrcdoc(() => el.reset());
-        el.setConfig(COOPERATIVE);
+        startWith(el, COOPERATIVE);
         expect(el.state).toBe('loading');
         const { port1 } = new MessageChannel();
         checkIn(el, port1); // the guest's check-in: ready, and the build's deadline stops
@@ -92,7 +94,7 @@ describe('LM-2: a build re-entered from inside the build leaves one build, the n
             return append(node);
         });
         onNextSrcdoc(() => el.reset());
-        el.setConfig(COOPERATIVE);
+        startWith(el, COOPERATIVE);
         expect(listening.size).toBe(1);
         const frames = [...el.shadowRoot.querySelectorAll('iframe')];
         expect(frames).toHaveLength(1);
@@ -109,14 +111,14 @@ describe('LM-2: a build re-entered from inside the build leaves one build, the n
             el.reset();
             throw new Error('the policy failed after the reset');
         });
-        el.setConfig(COOPERATIVE);
+        startWith(el, COOPERATIVE);
         await new Promise(resolve => setTimeout(resolve, 0)); // a build's 'terminated' comes in a task
         expect([el.state, heard, el.shadowRoot.querySelectorAll('iframe').length]).toEqual(['loading', [], 1]);
     });
 
     it('a warning hook that resets during a termination: the reset stands, with its frame, and nothing more of the termination runs', () => {
         const el = mount();
-        el.setConfig(COOPERATIVE);
+        startWith(el, COOPERATIVE);
         const heard = terminations(el);
         let resets = 0;
         vi.spyOn(console, 'warn').mockImplementation((message: unknown) => {

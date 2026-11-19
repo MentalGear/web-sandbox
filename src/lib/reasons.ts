@@ -1,7 +1,8 @@
 /**
- * The texts the element gives (S76): every `terminated` reason, and every line it dispatches as `sandbox-log` itself,
- * declared once, with what causes it and where it is decided. host.ts, the lifecycle reducer (lifecycle.ts) and the
- * config schema take their texts from here; docs/API.md's reasons table and its host lines are this registry, which
+ * The texts the element gives (S76): every `terminated` reason, the refusals start() throws for options it cannot take
+ * as a whole, and every line it dispatches as `sandbox-log` itself, declared once, with what causes it and where it is
+ * decided. host.ts, the lifecycle reducer (lifecycle.ts), start()'s reading (app-start.ts) and the config schema take
+ * their texts from here; docs/API.md's reasons tables and its host lines are this registry, which
  * test/unit/api-docs.test.ts keeps equal.
  *
  * A text with `…` varies there (an error's name, a note of the library's, a reason): `reasonText()` and `hostLine()` put
@@ -14,12 +15,17 @@
 import { VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_MAX_LENGTH } from './in-sandbox-view';
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
+import { NETWORK_MODES_FLAG } from './build-flag';
+import { MAX_LINK_LENGTH } from './links';
 
 export interface ReasonRow {
     /** The reason, with `…` where it varies. */
     readonly text: string;
-    /** Where it is decided: the element (host.ts), the lifecycle reducer (lifecycle.ts), or the config schema. */
-    readonly decidedBy: 'host' | 'lifecycle' | 'config';
+    /**
+     * Where it is decided: the element (host.ts) or the lifecycle reducer (lifecycle.ts), as a `terminated` reason; or
+     * start(), as the message of the TypeError it throws, which is never a termination.
+     */
+    readonly decidedBy: 'host' | 'lifecycle' | 'start';
 }
 
 // The repeated-overrun rule in words (in-sandbox-view.ts, viewBudget; S72, class P).
@@ -34,7 +40,7 @@ export const TERMINATION_REASONS = {
     startupBlocked: { text: `the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (${HOST_PAGE_POLICY})`, decidedBy: 'lifecycle' },
     // The host page's policies bind the library's frames, which inherit them as srcdoc documents (CSP3 copies the policy
     // list; Trusted Types; COEP; R1:R3-1): each reason of a refusal names the policy, so the embedder knows what to allow.
-    workerRefused: { text: `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; ${HOST_PAGE_POLICY})`, decidedBy: 'host' },
+    workerRefused: { text: `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src, or a Cross-Origin-Embedder-Policy the engine applies to it; ${HOST_PAGE_POLICY})`, decidedBy: 'host' },
     trustedTypes: { text: `the host page's Trusted Types policy does not allow the policy name '${TRUSTED_TYPES_POLICY}' (trusted-types; ${HOST_PAGE_POLICY})`, decidedBy: 'host' },
     // The environment check (environment-check.ts, S74): a bootstrap found its document different from the one the library
     // built, stayed inert, and said so; one reason for each row of its table (ENVIRONMENT_CHECKS).
@@ -46,11 +52,14 @@ export const TERMINATION_REASONS = {
     entryImport: { text: 'the guest entry calls import() or a phase of it (import.source()), which loads nothing in strict and sealed mode: bundle its modules into the entry', decidedBy: 'host' },
     viewLost: { text: 'the sandbox view stopped responding', decidedBy: 'host' },
     viewOverrun: { text: `the view spent more than ${OVERRUN_MS} ms on one operation twice within ${OVERRUN_MINUTES} minutes`, decidedBy: 'host' },
-    unknownMode: { text: 'unknown mode: not strict, sealed, cooperative or worker…', decidedBy: 'config' },
-    sealedNetwork: { text: "origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'`", decidedBy: 'config' },
-    sealedScriptUnsafe: { text: "scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`", decidedBy: 'config' },
-    htmlTooLong: { text: `html is longer than ${VIEW_RENDER_MAX_LENGTH} characters, the most the view renders at once: render the rest from the entry`, decidedBy: 'config' },
-    configRefused: { text: 'the configuration could not be used (…)', decidedBy: 'host' },
+    unknownMode: { text: 'unknown mode: not strict, sealed, cooperative or worker…', decidedBy: 'start' },
+    networkModesOff: { text: `strict, cooperative and worker mode, origins and fetchBridge are the network modes, which this build of the package does not have: build it with ${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on} (${NETWORK_MODES_FLAG.command})`, decidedBy: 'start' },
+    sealedNetwork: { text: "origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'`", decidedBy: 'start' },
+    sealedScriptUnsafe: { text: `scriptUnsafe runs strings as code, which sealed mode (the default) does not: set \`mode: 'strict'\`, in a build with the network modes (${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on})`, decidedBy: 'start' },
+    htmlTooLong: { text: `html is longer than ${VIEW_RENDER_MAX_LENGTH} characters, the most the view renders at once: render the rest from the entry`, decidedBy: 'start' },
+    // `links` (links.ts): the rule a list breaks, in the library's words (LINK_RULES), never the URL
+    linksRefused: { text: 'links is refused: …', decidedBy: 'start' },
+    configRefused: { text: 'the configuration could not be used (…)', decidedBy: 'start' },
     buildFailed: { text: 'the environment could not be built (…)', decidedBy: 'host' },
     executionTimeout: { text: 'the executed code ran longer than workerExecutionTimeout', decidedBy: 'host' },
     secondLoad: { text: 'the sandbox frame loaded a second time', decidedBy: 'lifecycle' },
@@ -78,11 +87,13 @@ export const reasonCauses = () => ({
     entryImport: "Strict and sealed mode: the entry's text holds `import` followed by `(` or `.` (after any whitespace and comments), in code, a string or a comment: an `import()`, or a phase of one (`import.source()`, `import.defer()`); a static import and `import.meta` do not compile in the worker's classic script. The worker's policy admits no module script, so an import could load nothing, and the host page's policy, which the worker inherits, would report the URL it named to the page's report endpoint; the build refuses the entry instead, and nothing of the guest's runs. Bundle the modules into the entry, and keep `import(` and `import.` out of its strings and comments.",
     viewLost: 'Strict and sealed mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on).',
     viewOverrun: `Strict and sealed mode: an operation of the view (a render, \`text()\` or \`set()\` applied, with its layout and the rendering update that showed it) took longer than ${OVERRUN_MS} ms, measured as the view's time budget measures it, and another one had, at most ${OVERRUN_MINUTES} minutes before it. The first such operation only logs a \`warn\` line (see [\`sandbox-log\`](#sandbox-log--sandboxlog)); see [\`sandboxView\`](#sandboxview-strict-mode).`,
-    unknownMode: "`mode` is not `strict`, `sealed`, `cooperative` or `worker`. For `'iframe'` the reason ends ` ('iframe' was renamed 'cooperative')`; otherwise nothing follows.",
-    sealedNetwork: "`mode` is `'sealed'` or left out (sealed mode is the default), and the config names `origins` or `fetchBridge` (with any value but `undefined`). Nothing of the config is applied, as for one that could not be used; the sandbox stays terminated until a usable config is set.",
-    sealedScriptUnsafe: "`mode` is `'sealed'` or left out, and `scriptUnsafe` is `true`. A string run as code is checked against the host page's policy, which the guest's worker inherits, and a refusal reports the page's policy text to the guest and the string to the page's report endpoint; sealed mode runs none. Nothing of the config is applied, as for `sealedNetwork`.",
-    htmlTooLong: `Strict and sealed mode: \`html\`, given to \`setConfig()\` or \`load()\`, is longer than \`VIEW_RENDER_MAX_LENGTH\` (${VIEW_RENDER_MAX_LENGTH}) characters, the most one render takes (the initial view is one). It is refused before anything reads it: nothing of the config is applied, as for \`sealedNetwork\`, and \`load()\` keeps the html the element had. Render the rest from the entry, in renders of that size.`,
-    configRefused: "`setConfig()` got something that is not an object or cannot be cloned (the error's name follows, as in `(DataCloneError)`), an `origins` that is not an object (`(TypeError: origins is not an object)`), or a kind of it that is not a list (`(TypeError: origins.connect is not a list)`, naming the kind).",
+    unknownMode: `\`mode\` is not \`strict\`, \`sealed\`, \`cooperative\` or \`worker\`. For \`'iframe'\` the reason goes on \` ('iframe' was renamed 'cooperative')\`, and in a build without the network modes ([Builds](#builds)) it ends \`; this build has sealed mode alone (${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on} builds the others)\`; otherwise nothing follows.`,
+    networkModesOff: `The package was built without the network modes (the default: [Builds](#builds)), and the grants name \`mode: 'strict'\`, \`'cooperative'\` or \`'worker'\`, or \`origins\` or \`fetchBridge\` (with any value but \`undefined\`). Such a build has sealed mode alone; build the package with \`${NETWORK_MODES_FLAG.env}=${NETWORK_MODES_FLAG.on}\` for the others.`,
+    sealedNetwork: "In a build with the network modes: `mode` is `'sealed'` or left out (sealed mode is the default), and the grants name `origins` or `fetchBridge` (with any value but `undefined`).",
+    sealedScriptUnsafe: "`mode` is `'sealed'` or left out, and `scriptUnsafe` is `true`. A string run as code is checked against the host page's policy, which the guest's worker inherits, and a refusal reports the page's policy text to the guest and the string to the page's report endpoint; sealed mode runs none, and strict mode, which runs them, is one of the network modes ([Builds](#builds)).",
+    htmlTooLong: `Strict and sealed mode: the app's \`html\` is longer than \`VIEW_RENDER_MAX_LENGTH\` (${VIEW_RENDER_MAX_LENGTH}) characters, the most one render takes (the initial view is one). It is refused before anything reads it. Render the rest from the entry, in renders of that size.`,
+    linksRefused: `The grant \`links\` breaks one of its rules, which the reason names after the colon: a list, of at most \`MAX_LINKS\` entries, each a string of at most ${MAX_LINK_LENGTH} characters that parses as a URL, has the scheme \`https:\`, has no user name or password and is equal to its own serialisation (\`new URL(entry).href\`), no two equal. Nothing of the list is kept.`,
+    configRefused: "An option's rule failed on its value with an error that is not one of start()'s own refusals (each of which says the option and what it takes); the error's name follows, as in `(RangeError)`.",
     buildFailed: 'Building the frame failed.',
     executionTimeout: "The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline.",
     secondLoad: "Something navigated or reloaded the library's frame (also before its first load, once the guest had checked in).",

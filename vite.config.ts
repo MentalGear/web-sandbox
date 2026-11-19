@@ -3,17 +3,30 @@ import { realpathSync } from 'fs';
 import { join } from 'path';
 import { realisticHostMiddleware, REALISTIC_HOST_PATH } from './test/e2e/realistic-host-server';
 
-// The e2e server (playwright.config.ts sets WEB_SANDBOX_E2E): no HMR websocket. Through it the dev server
-// reloads every connected page whenever a file in its module graph is written (src/**, dist/index.js once
-// package.spec.ts has loaded it, a tsconfig), whenever its dependency optimiser re-runs, and whenever the
-// socket drops (the client polls and calls location.reload()). In a test that reload is the host page
-// navigating mid-test: "Execution context was destroyed" from whatever page.evaluate was pending
-// (reproduced: `bun run build:lib` during strict-render-flood.spec.ts's 3 s flood). Without the socket the
-// client only logs that it could not connect, and nothing ever reloads a page under test.
+// The e2e server (playwright.config.ts sets WEB_SANDBOX_E2E): no HMR websocket, and no page with the dev client that
+// would open one. Through the socket the dev server reloads every connected page whenever a file in its module graph
+// is written (src/**, dist/index.js once package.spec.ts has loaded it, a tsconfig), whenever its dependency
+// optimiser re-runs, and whenever the socket drops (the client polls and calls location.reload()). In a test that
+// reload is the host page navigating mid-test: "Execution context was destroyed" from whatever page.evaluate was
+// pending (reproduced: `bun run build:lib` during strict-render-flood.spec.ts's 3 s flood). A client left in the page
+// would try the absent socket and report the failure to the page's console, in each engine's own words and at a
+// time of its own, into whichever test listens then: so the page has none (withoutDevClient), and a spec that
+// asserts a clean console has nothing of the dev server's to leave out (test/unit/e2e-server-pages.test.ts).
 const e2e = !!process.env.WEB_SANDBOX_E2E;
 // The e2e server's port (test/e2e/server.ts, which playwright.config.ts passes on): 4444 in CI, a port of the
 // checkout's own locally. `bun run dev` keeps 4444.
 const e2ePort = e2e ? Number(process.env.WEB_SANDBOX_E2E_PORT) || 4444 : 4444;
+
+// The tag Vite adds to every HTML file it serves, which loads its dev client.
+const DEV_CLIENT_TAG = '<script type="module" src="/@vite/client"></script>';
+
+// An HTML file as the e2e server serves it: without the dev client's tag. A file Vite served without exactly one such
+// tag is refused, so a Vite that adds its client another way stops the run instead of putting the client back.
+function withoutDevClient(html: string): string {
+  const parts = html.split(DEV_CLIENT_TAG);
+  if (parts.length !== 2) throw new Error(`the e2e server expected the dev client's tag once in the page, and found it ${parts.length - 1} times`);
+  return parts.join('');
+}
 
 export default defineConfig({
   root: '.',
@@ -41,6 +54,10 @@ export default defineConfig({
   },
   plugins: [{
     name: 'dev-server',
+    transformIndexHtml: {
+      order: 'post',
+      handler: (html) => (e2e ? withoutDevClient(html) : html),
+    },
     configureServer(server) {
       // What playwright.config.ts polls (test/e2e/server.ts, backlog T8): `/__e2e-root?root=<checkout>` answers 200 only
       // on an e2e server (started without HMR, so a `bun run dev` with HMR is never reused) that serves that very

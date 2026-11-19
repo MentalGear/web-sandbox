@@ -1,7 +1,10 @@
-import { test, expect } from './fixture';
+import { test, expect, buildOfMode } from './fixture';
 import { inView, waitInView } from './strict-view';
 import { lag, oneApplyStall, startLag } from './host-share';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * Strict mode's render flow control (ADR-005, amendment A4; research 15 P7). Firefox and WebKit run the
@@ -13,7 +16,7 @@ import { VIEW_MODES } from './view-modes';
  *   2. under a sustained flood of maximal renders (256 Ki characters, as fast as the flow control allows)
  *      the host's largest stall is one apply, and the worker still answers calls: bounded by one apply as it costs
  *      in the same run (test/e2e/host-share.ts, oneApplyStall).
- * Measured (this machine, Playwright 1.58 builds), host lag max / call round trip max under a 3 s flood:
+ * Measured as an example (this machine, Playwright 1.58 builds), host lag max / call round trip max under a 3 s flood:
  *   Chromium ≤ 10 ms / ≤ 15 ms when it ran the view out of process; Firefox 50–95 ms / 70–150 ms;
  *   WebKit 110–470 ms / 130–390 ms. Chromium may also keep the view in the host page's process (BR:ST2:
  *   no iframe target, both frames local): then 45–130 ms / 65–180 ms alone (the same with the allowlist renderer
@@ -29,6 +32,7 @@ import { VIEW_MODES } from './view-modes';
 const COUNT_APPLIES = `(() => { globalThis.__applies = 0; new MutationObserver((records) => { globalThis.__applies += records.length; }).observe(document.body, { childList: true }); return true; })()`;
 
 for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test('10 000 synchronous render() calls reach the view as exactly two applies, the first and the last', async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ mode })).toBe('ready');
         expect(await inView(page, browserName, COUNT_APPLIES)).toBe(true);

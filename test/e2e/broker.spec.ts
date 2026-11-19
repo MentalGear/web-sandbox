@@ -1,19 +1,23 @@
-import { test, expect, type CallOutcome, SEALED_HAS_NO_EXECUTE } from './fixture';
+import { test, expect, type CallOutcome, SEALED_HAS_NO_EXECUTE, buildOfMode } from './fixture';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * β — the bidirectional RPC broker (backlog B1), exercised across BOTH real realms (iframe and
  * worker). Tests and comments describe the GUARANTEE each case proves, never an attack recipe.
  *
  * Guest methods are registered by running `bridge.expose(...)` inside the sandbox (via execute,
- * which needs scriptUnsafe); host methods are registered from the harness page with el.expose().
+ * which needs scriptUnsafe); host methods are given to start() with the grants (exposeHost() before mount()). A frame is
+ * recreated by reset(), which keeps the element's app.
  * The one case proving the call path needs no eval (scriptUnsafe:false) lives at the bottom.
  */
 
 const MODES = ['cooperative', 'worker', ...VIEW_MODES] as const;
 
 // The host's own refusal texts (src/host.ts). A guest can produce the very same text; the code tells them apart.
-const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.';
+const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset() to start it again.';
 const RESET_TEXT = '[Sandbox] call() rejected: the sandbox was reset or terminated.';
 
 // Refusal tests assert the exact code (backlog B7), never only that a call rejected or a message substring.
@@ -36,6 +40,8 @@ const TERMINATE_BY_SECOND_LOAD = () => new Promise<string>(resolve => {
 });
 
 for (const mode of MODES) {
+    test.describe(`${mode} mode`, () => {
+    test.use({ build: buildOfMode(mode) });
     test.describe(`broker correctness (${mode}): a call resolves with its own handler result`, () => {
         test('host calls a guest method and receives its return value', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
@@ -224,10 +230,11 @@ for (const mode of MODES) {
     test.describe(`broker lifecycle (${mode}): calls never hang`, () => {
         test('a call queued before the port is ready still resolves', async ({ sandbox, page }) => {
             test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
-            void sandbox; // the fixture loads the harness; this case drives setConfig() directly, not mount()
+            void sandbox; // the fixture loads the harness; this case starts a fresh element itself, not through mount()
             const result = await page.evaluate(async (mode) => {
-                const s = document.querySelector('web-sandbox') as any;
-                s.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true, mode });
+                const s = document.createElement('web-sandbox') as any;
+                s.start({}, { capabilities: ['allow-scripts'], scriptUnsafe: true, mode });
+                document.querySelector('web-sandbox')!.replaceWith(s);
                 // Issued BEFORE the port exists: expose (queued execute) and call (queued RPC) must survive the wait.
                 s.execute(`bridge.expose('add', (a, b) => a + b)`);
                 const pending = s.call('add', 2, 3);
@@ -244,7 +251,7 @@ for (const mode of MODES) {
                 const p = el.call('hang').then(
                     () => ({ status: 'resolved' }),
                     (e: any) => ({ status: 'rejected', isError: e instanceof Error, message: e.message, code: e.code, keys: Object.keys(e) }));
-                el.load('<p>reinit</p>'); // re-init tears the environment down: the in-flight call must reject
+                el.reset(); // re-init tears the environment down: the in-flight call must reject
                 return p;
             });
             expect(outcome).toEqual(localRefusal('TERMINATED', RESET_TEXT));
@@ -280,7 +287,7 @@ for (const mode of MODES) {
             await sandbox.run(`bridge.call('hostId', 'a').then(v => console.log('H1 ' + v))`);
             expect(await sandbox.waitForLog('H1 host:a')).toContain('host:a');
 
-            expect(await sandbox.load('<p>reinit</p>')).toBe('ready'); // new frame, new guest broker
+            expect(await sandbox.reset()).toBe('ready'); // new frame, new guest broker
 
             // Host method persisted on the element.
             await sandbox.run(`bridge.call('hostId', 'b').then(v => console.log('H2 ' + v))`);
@@ -333,14 +340,15 @@ for (const mode of MODES) {
 
         test('a non-transferable call queued before ready does not block ready, and a valid call queued after it resolves', async ({ sandbox, page }) => {
             test.skip(mode === 'sealed', SEALED_HAS_NO_EXECUTE); // it calls execute() itself
-            void sandbox; // the fixture loads the harness; this case drives setConfig() directly, not mount()
+            void sandbox; // the fixture loads the harness; this case starts a fresh element itself, not through mount()
             const outcome = await page.evaluate(async (mode) => {
-                const s = document.querySelector('web-sandbox') as any;
+                const s = document.createElement('web-sandbox') as any;
                 const ready = new Promise<string>(resolve => {
                     s.addEventListener('ready', () => resolve('ready'), { once: true });
                     setTimeout(() => resolve('no ready event'), 5000);
                 });
-                s.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true, mode });
+                s.start({}, { capabilities: ['allow-scripts'], scriptUnsafe: true, mode });
+                document.querySelector('web-sandbox')!.replaceWith(s);
                 // All three are issued before the port exists.
                 s.execute(`bridge.expose('add', (a, b) => { globalThis.__addRuns = (globalThis.__addRuns || 0) + 1; return a + b; })`);
                 s.execute(`bridge.expose('addRuns', () => globalThis.__addRuns || 0)`);
@@ -359,7 +367,7 @@ for (const mode of MODES) {
             // The host handler re-initializes the sandbox, then returns a value structured clone cannot carry.
             // Its answer goes back on the port the request arrived on, which the re-init closed, so it is dropped
             // there — it is never queued for the next frame, so there is nothing to skip at flush time either.
-            await sandbox.exposeHost('reloadThenGiveFn', `() => { document.querySelector('web-sandbox').load('<p>next frame</p>'); return () => 1; }`);
+            await sandbox.exposeHost('reloadThenGiveFn', `() => { document.querySelector('web-sandbox').reset(); return () => 1; }`);
             expect(await sandbox.mount({ mode })).toBe('ready');
             const outcome = await page.evaluate(() => new Promise<string>(resolve => {
                 const s = document.querySelector('web-sandbox') as any;
@@ -395,7 +403,7 @@ for (const mode of MODES) {
             await sandbox.run(`bridge.call('stale')`); // the previous frame's first call: id 1
             await page.waitForFunction(() => (window as any).__staleAsked === true);
 
-            expect(await sandbox.load('<p>next frame</p>')).toBe('ready');
+            expect(await sandbox.reset()).toBe('ready');
             await sandbox.run(`bridge.call('whoami').then(v => console.log('NEXT_FRAME_GOT ' + v))`); // the next frame's first call: id 1
             expect(await sandbox.waitForLog('NEXT_FRAME_GOT')).toBe('NEXT_FRAME_GOT fresh answer for the next frame');
         });
@@ -403,10 +411,10 @@ for (const mode of MODES) {
         test('a host answer produced after a re-init is never delivered to the next frame (no port yet)', async ({ sandbox }) => {
             await sandbox.exposeHost('whoami', `() => 'fresh answer for the next frame'`);
             // Re-initializes, queues the next frame's first call, then answers while no port exists at all
-            // (between the teardown and the next setupChannel).
+            // (between the teardown and the next _setupChannel).
             await sandbox.exposeHost('reloadThenAnswer', `() => {
                 const el = document.querySelector('web-sandbox');
-                el.load('<p>next frame</p>');
+                el.reset();
                 el.execute("bridge.call('whoami').then(v => console.log('NEXT_FRAME_GOT ' + v))");
                 return 'STALE answer meant for the previous frame';
             }`);
@@ -414,6 +422,7 @@ for (const mode of MODES) {
             await sandbox.run(`bridge.call('reloadThenAnswer')`); // the previous frame's first call: id 1
             expect(await sandbox.waitForLog('NEXT_FRAME_GOT', 8000)).toBe('NEXT_FRAME_GOT fresh answer for the next frame');
         });
+    });
     });
 }
 

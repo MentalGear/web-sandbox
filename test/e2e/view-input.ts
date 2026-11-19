@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { expect, type SandboxDriver } from './fixture';
 import { waitInView } from './strict-view';
 import type { ViewMode } from './view-modes';
+import { asLabelled } from './guest-value';
 
 /**
  * Helpers of the strict view input specs (research 23): a sandbox of strict or sealed mode (VIEW_MODES) whose worker
@@ -27,7 +28,7 @@ export async function mountInput(mode: ViewMode, sandbox: SandboxDriver, browser
 export type Kept = { label: string; detail: any };
 
 /** What the handlers kept since the last take. */
-export const take = (sandbox: SandboxDriver) => sandbox.call<Kept[]>('take');
+export const take = async (sandbox: SandboxDriver): Promise<Kept[]> => asLabelled(await sandbox.call('take'));
 
 /** Everything the handlers keep until they stop: taken until a take comes back empty. */
 export async function drain(sandbox: SandboxDriver, pause = 200): Promise<Kept[]> {

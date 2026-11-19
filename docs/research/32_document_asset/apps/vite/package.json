@@ -1,0 +1,7 @@
+{
+  "name": "app-vite",
+  "private": true,
+  "type": "module",
+  "dependencies": { "fake-sealed": "file:../fake-sealed-1.0.0.tgz" },
+  "devDependencies": { "vite": "8.3.8" }
+}

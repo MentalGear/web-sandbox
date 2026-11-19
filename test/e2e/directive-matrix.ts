@@ -125,7 +125,7 @@ export const DIRECTIVE_CASES = {
     'report-uri': [{ value: '/nowhere', row: 'trustedTypesRequirement', outcome: works() }],
     'require-trusted-types-for': [{ value: "'script'", row: 'trustedTypesRequirement', outcome: works(), note: "the base already enforces it; the library's writes go through its policy" }],
     'trusted-types': [
-        { value: "'none'", row: 'trustedTypesRequirement', outcome: ends('trustedTypes'), note: "Firefox has no Trusted Types: the library applies the page's directive from hostContentSecurityPolicy (test/e2e/trusted-types-uniform.spec.ts: without it Firefox builds)" },
+        { value: "'none'", row: 'trustedTypesRequirement', outcome: ends('trustedTypes'), note: "every engine has Trusted Types and applies the page's directive; a browser without them would take it from hostContentSecurityPolicy (test/e2e/trusted-types-uniform.spec.ts)" },
         { value: 'other', row: 'trustedTypesRequirement', outcome: ends('trustedTypes') },
         { value: 'web-sandbox', row: 'trustedTypesDefault', outcome: works(), note: "the library's policy named alone: the host's own default policy is not created" },
     ],
@@ -134,7 +134,7 @@ export const DIRECTIVE_CASES = {
 /** Headers of the page that reach the sandbox besides the policy list. */
 export const HEADER_CASES = [
     // ledger: coep-require-corp
-    { header: 'cross-origin-embedder-policy', value: 'require-corp', row: 'coep', outcome: works(), engines: { webkit: ends('workerRefused') }, note: "WebKit refuses the view's blob: worker under require-corp" },
+    { header: 'cross-origin-embedder-policy', value: 'require-corp', row: 'coep', outcome: works(), note: "strict mode runs on every engine: the view's blob: worker is not refused" },
     { header: 'cross-origin-embedder-policy', value: 'credentialless', row: 'coep', outcome: works(), note: 'alone it does not make the page cross-origin isolated' },
     { header: 'cross-origin-opener-policy', value: 'same-origin', row: 'coep', outcome: works(), note: 'alone it does not make the page cross-origin isolated' },
     // COOP and COEP together can make the host page cross-origin isolated, which is not supported on any engine

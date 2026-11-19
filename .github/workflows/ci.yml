@@ -10,24 +10,30 @@ permissions:
 
 jobs:
   unit:
-    # a fixed image, not ubuntu-latest: Playwright supports a release of Ubuntu only from a version on, and a moving image
-    # turned every e2e job red on 2026-11-06 (ubuntu-latest became 26.04, which Playwright 1.58.1 does not install on)
-    runs-on: ubuntu-24.04
+    # a fixed image, not ubuntu-latest: Playwright installs its browsers only on the releases of Ubuntu it supports (26.04
+    # from 1.64, so the pinned 1.65.1 does), and a moving image would turn every e2e job red the day it moves to a release
+    # the pinned Playwright does not support
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      # Both builds of the package (ADR-009) in one run: a test file's build is its imports. A file that tests a network
+      # mode imports the network build's entry; every other file's element is the default build's (sealed mode alone),
+      # and test/unit/default-build.test.ts holds that build to its modules, in the module graph and in the bundle.
       - run: bun run test:unit
       - run: bun run build
-      # the public API against its reviewed report, etc/web-sandbox.api.md, and the checked-in doc model etc/web-sandbox.api.json against the build (bun run api:update accepts a change)
+      # each build's public API against its reviewed report (etc/web-sandbox.api.md, the default build; etc/web-sandbox.network.api.md,
+      # the build with the network modes), and the checked-in doc models against the builds (bun run api:update accepts a change)
       - run: bun run api:check
-      # the generated regions and the markers of the handwritten sections against the code; the API reference is read from the checked-in doc model, so this needs no build (bun run docs:gen, docs:gen --accept)
+      # the generated regions and the markers of the handwritten sections against the code; the API reference is read from the checked-in doc models, so this needs no build (bun run docs:gen, docs:gen --accept)
       - run: bun run docs:check
+      # packs, installs and type-checks each build: the network build, then the default one (the package as published)
       - run: ./scripts/smoke-package.sh
 
   e2e:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # a run takes about 25 minutes; a stuck one ends here instead of at GitHub's 6 hours, with its log
     timeout-minutes: 50
     strategy:
@@ -39,6 +45,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps ${{ matrix.browser }}
+      # Both builds in one run, each test once (ADR-009): a test names its build (test.use({ build }); the default is the
+      # default build), the server serves both entries and both bundles (dist/, dist-network/), and a page refuses a
+      # config that is the other build's to test, so no spec passes against the wrong build.
       - run: bunx playwright test --project=${{ matrix.browser }}
       # the strict-mode design probes (research 15) that ADR-005 rests on; skipped under the root config above
       - run: bun run test:probes --project=${{ matrix.browser }}

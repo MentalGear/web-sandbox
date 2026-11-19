@@ -1,6 +1,9 @@
 import type { BrowserContext, Page, Request as PlaywrightRequest } from '@playwright/test';
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
+
 /**
  * The host page's site in each engine (S74, class A; src/lib/host-site.ts): every mode drops an `origins` entry on the
  * host page's site, decided from `self.origin` of the element's realm and the origins of the pages above it (the
@@ -50,15 +53,15 @@ test.describe("an origin on the host page's site is dropped in every mode, with 
 // The element's realm in each variant: a module script that defines the element there and hands the page a mount().
 const MOUNTER = (library: string) => `
 import { defineWebSandbox } from ${JSON.stringify(library)};
+
 defineWebSandbox();
 const realm = { selfOrigin: self.origin, locationOrigin: location.origin, href: location.href };
-top.__mount = (config, code) => new Promise((resolve) => {
+top.__mount = ({ html, entry, ...grants }, code) => new Promise((resolve) => {
     const el = document.createElement('web-sandbox');
     el.style.cssText = 'display:block;width:300px;height:120px';
-    el.registerFiles({ 'main.js': 'void 0' });
     el.addEventListener('ready', () => { el.execute(code); resolve({ state: 'ready', realm }); }, { once: true });
     el.addEventListener('terminated', (e) => resolve({ state: 'terminated ' + e.detail.reason, realm }), { once: true });
-    el.setConfig(config);
+    el.start({ html, entry, files: { 'main.js': 'void 0' } }, grants);
     document.body.append(el);
 });
 top.__ready = true;
@@ -78,7 +81,7 @@ const COOKIE_GATE = `<script>
 </script>`;
 
 function hostPage(variant: 'cookie-gate' | 'srcdoc' | 'blank-dom'): string {
-    const library = `${APP}/src/host.ts`;
+    const library = `${APP}/src/network.ts`; // the build with the network modes (ADR-009): these pages mount them
     const module = (text: string) => `<script type="module">${text}</script>`;
     if (variant === 'cookie-gate') return `<!doctype html><meta charset="utf-8"><title>host</title>${COOKIE_GATE}<body>${module(MOUNTER(library))}</body>`;
     if (variant === 'srcdoc') {

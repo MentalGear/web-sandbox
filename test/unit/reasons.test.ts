@@ -1,3 +1,4 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -34,17 +35,22 @@ const echoes = (reason: string, value: string) => {
 
 const task = () => new Promise(resolve => setTimeout(resolve, 0));
 
-async function terminationOf(config: unknown, files?: Record<string, string>): Promise<string[]> {
+/** What start() does with `app` and `grants` on an element in the document: what it throws, and the reasons of the terminations after it. */
+async function outcomeOf(app: unknown, grants?: unknown): Promise<{ thrown: any; reasons: string[] }> {
     const { defineWebSandbox } = await import('@src/host');
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     const reasons: string[] = [];
     el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
-    if (files) el.registerFiles(files);
-    el.setConfig(config);
+    let thrown: any = null;
+    try {
+        el.start(app, grants);
+    } catch (error) {
+        thrown = error;
+    }
     for (let i = 0; i < 5; i++) await task();
-    return reasons;
+    return { thrown, reasons };
 }
 
 afterEach(() => {
@@ -57,19 +63,23 @@ const MODE_REASON = reasonText('unknownMode', fixedDetail(''));
 
 describe('BD5:DOC-2: a reason never carries a value of the configuration', () => {
     for (const mode of ['strict', 'sealed', undefined] as const) {
-        it.each(HOSTILE.map(value => [JSON.stringify(value.slice(0, 40)), value] as const))(`an entry that is not a registered JavaScript file (mode ${mode ?? 'left out'}): %s`, async (_, value) => {
+        it.each(HOSTILE.map(value => [JSON.stringify(value.slice(0, 40)), value] as const))(`an entry that is not a JavaScript file given (mode ${mode ?? 'left out'}): %s`, async (_, value) => {
             vi.spyOn(console, 'warn').mockImplementation(() => {});
-            const reasons = await terminationOf({ ...(mode ? { mode } : {}), entry: value }, { 'main.js': 'void 0', 'notes.txt': 'x' });
-            expect(reasons).toEqual([ENTRY_REASON]);
-            for (const reason of reasons) expect(echoes(reason, value), reason).toBe(false);
+            const { thrown, reasons } = await outcomeOf({ entry: value, files: { 'main.js': 'void 0', 'notes.txt': 'x' } }, mode ? { mode } : undefined);
+            expect(thrown).toBeInstanceOf(TypeError);
+            expect(thrown.message).toBe(`[Sandbox] start(): "entry" names no file of the app's files.`);
+            expect(reasons).toEqual([]);
+            expect(echoes(thrown.message, value), thrown.message).toBe(false);
         });
     }
 
     it.each(HOSTILE.map(value => [JSON.stringify(value.slice(0, 40)), value] as const))('an unknown mode: %s', async (_, value) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const reasons = await terminationOf({ mode: value });
-        expect(reasons).toEqual([MODE_REASON]);
-        for (const reason of reasons) expect(echoes(reason, value), reason).toBe(false);
+        const { thrown, reasons } = await outcomeOf({}, { mode: value });
+        expect(thrown).toBeInstanceOf(TypeError);
+        expect(thrown.message).toBe(`[Sandbox] start(): ${MODE_REASON}.`);
+        expect(reasons).toEqual([]);
+        expect(echoes(thrown.message, value), thrown.message).toBe(false);
         expect(unknownModeReason(value)).toBe(MODE_REASON);
     });
 
@@ -78,12 +88,14 @@ describe('BD5:DOC-2: a reason never carries a value of the configuration', () =>
         for (const value of [...HOSTILE, 'constructor', '__proto__', 'Iframe']) expect(renamedModeNote(value)).toBe('');
     });
 
-    it.each(HOSTILE.map(value => [JSON.stringify(value.slice(0, 40)), value] as const))('a config whose getter throws an error named %s: the reason says (Error)', async (_, value) => {
+    it.each(HOSTILE.map(value => [JSON.stringify(value.slice(0, 40)), value] as const))('an app whose getter throws an error named %s: start() lets the embedder\'s own error through, and no reason is made of it', async (_, value) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const config = { mode: 'strict', get entry() { const error = new Error(MARKUP); error.name = value; throw error; } };
-        const reasons = await terminationOf(config);
-        expect(reasons).toEqual([reasonText('configRefused', fixedDetail('Error'))]);
-        for (const reason of reasons) expect(echoes(reason, value) || echoes(reason, MARKUP), reason).toBe(false);
+        const errors: Error[] = [];
+        const app = { get entry() { const error = new Error(MARKUP); error.name = value; errors.push(error); throw error; } };
+        const { thrown, reasons } = await outcomeOf(app, { mode: 'strict' });
+        expect(errors).toHaveLength(1);
+        expect(thrown).toBe(errors[0]);
+        expect(reasons).toEqual([]);
     });
 
     it('every producer of a detail, given hostile input, gives none of it back', () => {
@@ -101,7 +113,7 @@ describe('BD5:DOC-2: a reason never carries a value of the configuration', () =>
 
     it('every templated reason, filled by each producer from hostile input, holds none of it', () => {
         const templated = (Object.keys(TERMINATION_REASONS) as ReasonId[]).filter(id => TERMINATION_REASONS[id].text.includes('…'));
-        expect(templated.sort()).toEqual(['buildFailed', 'configRefused', 'unknownMode']);
+        expect(templated.sort()).toEqual(['buildFailed', 'configRefused', 'linksRefused', 'unknownMode']);
         for (const id of templated) {
             for (const value of HOSTILE) {
                 const details = [errorName({ name: value }), renamedModeNote(value), refusalDetail({ option: value })];

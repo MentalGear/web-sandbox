@@ -1,8 +1,11 @@
 import { deflateSync } from 'node:zlib';
-import { test, expect, type MountConfig, type SandboxDriver } from './fixture';
+import { test, expect, type MountConfig, type SandboxDriver, buildOfMode } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { VIEW_MODES } from './view-modes';
+
+// The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
+test.use({ build: 'network' });
 
 /**
  * The owner's decisions on the open findings R1:R2-2, R1:R4-4 and R1:R4-5, where
@@ -62,9 +65,10 @@ test.describe('R2-2: in cooperative mode a form submits only with unsafeCapabili
         return { flags: await flagsOf(sandbox), submitted: (await sandbox.logs()).includes('R22 submit v') };
     };
 
-    test("capabilities: ['allow-forms'] is dropped: no frame has the flag, and no submission starts (WebKit still dispatches the submit event, a platform behaviour: research 15, P4)", async ({ sandbox, browserName }) => {
+    test("capabilities: ['allow-forms'] is refused by start(); without it no frame has the flag, and no submission starts (WebKit still dispatches the submit event, a platform behaviour: research 15, P4)", async ({ sandbox, browserName }) => {
+        await expect(fires(sandbox, { capabilities: ['allow-scripts', 'allow-forms' as any] })).rejects.toThrow('[Sandbox] start(): "allow-forms" is not allowed in "capabilities".');
         // ledger: form-submit-event
-        expect(await fires(sandbox, { capabilities: ['allow-scripts', 'allow-forms' as any] })).toEqual({ flags: ['allow-scripts', 'allow-scripts'], submitted: browserName === 'webkit' });
+        expect(await fires(sandbox, { capabilities: ['allow-scripts'] })).toEqual({ flags: ['allow-scripts', 'allow-scripts'], submitted: browserName === 'webkit' });
     });
 
     test("unsafeCapabilities: ['allow-forms'] grants it on both frames and the submission starts on every engine (the positive control)", async ({ sandbox }) => {
@@ -79,6 +83,7 @@ test.describe('R4-4: the strict view shows the raster images the guest writes, f
     const image = (id: string) => `(() => { const i = document.getElementById('${id}'); return i && (i.complete || !/^blob:/.test(i.getAttribute('src'))) ? { size: i.naturalWidth + 'x' + i.naturalHeight, src: i.getAttribute('src') } : null; })()`;
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('a chart the guest draws on an OffscreenCanvas and writes as PNG shows in an <img> named by its path, without a rebuild; the worker gets no URL for it', async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount({ ...WRITES, mode })).toBe('ready');
             const url = await sandbox.inGuest(`
@@ -133,9 +138,9 @@ test.describe('R4-4: the strict view shows the raster images the guest writes, f
             await sandboxFiles.write('w/a.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9"><image href="${recorder.allowed}/from-svg.svg" width="9" height="9"/><script>fetch("${recorder.allowed}/svg-script")</script></svg>');
             await sandboxFiles.write('w/b.html', '<img src="${recorder.allowed}/from-html.svg"><script>fetch("${recorder.allowed}/html-script")</script>');
             await sandboxFiles.write('w/c.js', 'fetch("${recorder.allowed}/from-js")');
-            await sandboxFiles.write('w/d.png', { content: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><image href="${recorder.allowed}/from-override.svg"/></svg>'), type: 'image/svg+xml' });
+            await sandboxFiles.write('w/d.png.svg', '<svg xmlns="http://www.w3.org/2000/svg"><image href="${recorder.allowed}/from-renamed.svg"/></svg>');
             await sandboxFiles.write('w/ok.png', new Uint8Array(${JSON.stringify(png(3, 5))}));
-            sandboxView.render('<img id="a" src="w/a.svg"><img id="b" src="w/b.html"><img id="c" src="w/c.js"><img id="d" src="w/d.png">'
+            sandboxView.render('<img id="a" src="w/a.svg"><img id="b" src="w/b.html"><img id="c" src="w/c.js"><img id="d" src="w/d.png.svg">'
                 + '<link rel="icon" href="w/a.svg"><link rel="stylesheet" href="w/b.html"><video id="v" src="w/a.svg"></video><img id="ok" src="w/ok.png"><img id="control" src="${recorder.allowed}/control.svg">');
             return true;`);
         expect((await waitInView<{ size: string }>(page, browserName, image('ok'), 8000)).size).toBe('3x5');
@@ -175,6 +180,7 @@ test.describe('R4-5: sandboxView.text() and sandboxView.set()', () => {
     });
 
     for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test.use({ build: buildOfMode(mode) });
         test('set(): the values of an input, a textarea and a select, the checked state of a checkbox, read from outside; the guest\'s TypeError for an unknown key', async ({ sandbox, page, browserName }) => {
             expect(await sandbox.mount({ ...STRICT, mode })).toBe('ready');
             await render(sandbox, '<input id="name"><textarea id="notes"></textarea><select id="size"><option value="s">s</option><option value="l">l</option></select><input id="ok" type="checkbox">', 'r1');

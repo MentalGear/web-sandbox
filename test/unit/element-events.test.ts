@@ -1,11 +1,15 @@
+import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineWebSandbox } from '@src/host';
+import { elementSource } from './element-source';
 import { ELEMENT_EVENTS, elementEvent, freezeDeep } from '@src/lib/element-events';
 import { LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { createSizeOf } from '@src/lib/structured-size';
+import { commitAt } from './guest-commit';
+import { startWith } from './start-app';
 
 /**
  * The element's events (class D/L, R5:L-3): one table, one constructor that freezes every detail deeply,
@@ -31,6 +35,34 @@ afterEach(() => {
     document.body.replaceChildren();
 });
 
+describe('an event that carries guest data does not bubble (design 01, I5)', () => {
+    it('every event of the table says whether it carries guest data; none that does bubbles, in either build', () => {
+        for (const [type, row] of Object.entries(ELEMENT_EVENTS)) {
+            expect(typeof row.guestData, type).toBe('boolean');
+            if (row.guestData) expect(row.bubbles, `${type} carries guest data`).toBe(false);
+        }
+        // the three that design 01 lists, and the commit's paths
+        const guestData = Object.entries(ELEMENT_EVENTS).filter(([, row]) => row.guestData).map(([type]) => type);
+        expect(guestData.sort()).toEqual(['fetch', 'fileschanged', 'fileswritten', 'sandbox-log', 'violation']);
+        // `fetch` (the URL the guest asked for) is the network build's only
+        expect(ELEMENT_EVENTS.fetch.builds).toBe('network');
+    });
+
+    it('what holds and what does not: a listener on the element and a capture listener on an ancestor receive each one; a bubbling listener on an ancestor receives none', () => {
+        const el = document.createElement('web-sandbox');
+        document.body.appendChild(el);
+        for (const [type, row] of Object.entries(ELEMENT_EVENTS) as [keyof typeof ELEMENT_EVENTS, (typeof ELEMENT_EVENTS)[keyof typeof ELEMENT_EVENTS]][]) {
+            if (!row.guestData) continue;
+            const heard: string[] = [];
+            const on = (where: string) => () => heard.push(where);
+            const listeners: [EventTarget, string, boolean][] = [[el, 'element', false], [document.body, 'body, bubbling', false], [window, 'window, bubbling', false], [window, 'window, capture', true]];
+            for (const [target, where, capture] of listeners) target.addEventListener(type, on(where), capture);
+            el.dispatchEvent(elementEvent(type, { paths: ['x'] }));
+            expect(heard.sort(), type).toEqual(['element', 'window, capture']);
+        }
+    });
+});
+
 describe('one constructor for every event the element dispatches', () => {
     it('the source: no `new CustomEvent` in src/ outside src/lib/element-events.ts, and every dispatch in host.ts takes an elementEvent()', () => {
         const offenders: string[] = [];
@@ -46,7 +78,7 @@ describe('one constructor for every event the element dispatches', () => {
     });
 
     it('every type of the table is dispatched by host.ts, and host.ts dispatches no other', () => {
-        const host = readFileSync(path.join(ROOT, 'src/host.ts'), 'utf8');
+        const host = elementSource(); // the class, and the network modes' methods, which dispatch `fetch`
         const dispatched = new Set([...host.matchAll(/elementEvent\('([\w-]+)'/g)].map(match => match[1]!));
         expect([...dispatched].sort()).toEqual(Object.keys(ELEMENT_EVENTS).sort());
     });
@@ -64,7 +96,7 @@ describe('one constructor for every event the element dispatches', () => {
         expect([detail, detail.list, shared, shared.deep, shared.deep[1], map, [...map.keys()][0], [...map.values()][0], ([...map.values()][0] as any).value, detail.set, [...detail.set][0], cyclic].every(frozen)).toBe(true);
         bytes[0] = 9;
         expect(bytes[0]).toBe(9);
-        expect(event.bubbles).toBe(true);
+        expect(event.bubbles).toBe(false);
         expect(elementEvent('terminated', { reason: 'r' }).bubbles).toBe(false);
         expect(elementEvent('ready').detail).toBeNull();
     });
@@ -151,12 +183,12 @@ describe('the details the element dispatches are frozen, every one', () => {
         };
         for (const type of Object.keys(ELEMENT_EVENTS)) el.addEventListener(type, (e: CustomEvent) => { heard[type] = deeplyFrozen(e.detail); });
         document.body.appendChild(el);
-        el.registerFiles({ 'a.txt': 'a' });
-        el.setConfig({ mode: 'strict', guestWrites: true });
+        startWith(el, { mode: 'strict', guestWrites: true }, { files: { 'a.txt': 'a' } });
         el._step({ t: 'viewReady', gen: el._lc.gen, height: null, stillStyleRefused: false }); // the view's check-in: 'ready'
         el._dispatchLog({ level: 'log', args: [{ a: [{ b: 1 }] }] }, 'guest');
         el._dispatchViolation({ type: 'VIOLATION', directive: 'img-src', blockedURI: 'https://x.example/' }, 'view');
         await el._handleGuestWrite(el._guestWrites, { change: 'write', path: 'w.txt', entry: 'w' });
+        commitAt(el, ['w.txt']); // the files change: 'fileschanged'
         el._dispatchFetch({ method: 'GET', url: 'https://x.example/', outcome: 'refused', bytes: 0, durationMs: 0 });
         el.terminate();
         expect(heard).toEqual({ 'ready': true, 'terminated': true, 'sandbox-log': true, 'violation': true, 'fetch': true, 'fileschanged': true, 'fileswritten': true });

@@ -40,7 +40,7 @@ export interface ConnectEngineFacts {
     readonly measured: string;
 }
 
-const RESEARCH = '2026-10-23, Playwright 1.58.1';
+const RESEARCH = '2026-11-14, Playwright 1.65.1';
 const SPEC = 'test/e2e/connect-uniform.spec.ts';
 
 export const CONNECT_ENGINE_FACTS = {
@@ -50,7 +50,7 @@ export const CONNECT_ENGINE_FACTS = {
         bareHostAdmitted: 'yes, not with a port',
         upgradedSchemeWithPort: false,
         wssSourceAdmitsHttps: false,
-        measured: `${RESEARCH}, Chromium 145: ${SPEC} (every source of the grammar table against fetch and WebSocket requests of a guest, the page's policy left to the browser)`,
+        measured: `${RESEARCH}, Chromium 159: ${SPEC} (every source of the grammar table against fetch and WebSocket requests of a guest, the page's policy left to the browser)`,
     },
     firefox: {
         name: 'Firefox',
@@ -58,15 +58,15 @@ export const CONNECT_ENGINE_FACTS = {
         bareHostAdmitted: 'yes',
         upgradedSchemeWithPort: true,
         wssSourceAdmitsHttps: false,
-        measured: `${RESEARCH}, Firefox 146: as Chromium`,
+        measured: `${RESEARCH}, Firefox 159: as Chromium`,
     },
     webkit: {
         name: 'WebKit',
-        selfAdmitsOtherOrigins: true,
+        selfAdmitsOtherOrigins: false,
         bareHostAdmitted: 'no',
         upgradedSchemeWithPort: true,
         wssSourceAdmitsHttps: true,
-        measured: `${RESEARCH}, WebKit 26: as Chromium`,
+        measured: `${RESEARCH}, WebKit 27.2: as Chromium`,
     },
 } as const satisfies Record<ConnectEngine, ConnectEngineFacts>;
 
@@ -82,6 +82,12 @@ export function nameList(names: readonly string[]): string {
     return names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
+/** Which engines let a `'self'` source admit other origins: those named, or none of the engines measured. */
+const selfPhrase = (): string => {
+    const engines = enginesWhere('selfAdmitsOtherOrigins');
+    return engines.length === 0 ? 'in no engine measured (an engine may)' : `in ${nameList(engines)} only`;
+};
+
 /** The sentence the README states: what the engines would do without the library's own rules. */
 export const connectSentence = (): string =>
-    `Without the library's own rules the engines disagree: a \`'self'\` source of the host page's \`connect-src\` admits origins it does not name in ${nameList(enginesWhere('selfAdmitsOtherOrigins'))} only, a \`wss://host\` source also admits \`https://host\` requests in ${nameList(enginesWhere('wssSourceAdmitsHttps'))} only, and a host written without a scheme is read differently by each. The library applies the page's policy and these two rules itself, so \`origins.connect\` and \`fetchBridge.allow\` mean the same everywhere.`;
+    `Without the library's own rules the engines disagree: a \`'self'\` source of the host page's \`connect-src\` admits origins it does not name ${selfPhrase()}, a \`wss://host\` source also admits \`https://host\` requests in ${nameList(enginesWhere('wssSourceAdmitsHttps'))} only, and a host written without a scheme is read differently by each. The library applies the page's policy and these two rules itself, so \`origins.connect\` and \`fetchBridge.allow\` mean the same everywhere.`;

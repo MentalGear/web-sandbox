@@ -42,24 +42,13 @@ import type { RpcLibraryCode } from './rpc';
 import { mintError } from './minted-errors';
 import { ownField, type Complete, type Holds } from './utils';
 import { parseOrigin, type Origin, type OriginRules } from './origin';
-import { shown } from './csp/origins';
+import { shown } from './csp/origin-kinds';
 import { setLongTimeout } from './long-timer';
 import { BRIDGE_REQUEST_OPTIONS } from './in-bridge-frame';
+import { FETCH_METHOD, fetchRefusal, type FetchErrorCode, type FetchRefusal } from './fetch-method';
 
-/** The method name the bridge is exposed under: reserved, so no exposed method can collide with it. */
-export const FETCH_METHOD = 'sandbox:fetch';
-
-/**
- * Why `sandboxFetch()` rejected: the rejection's `code`, and the `code` of a {@link FetchRecord}. Minted only by the host.
- * - `FETCH_NOT_ALLOWED`: refused before any request, because of the URL, the origin, the method, a header or the body.
- * - `FETCH_BUSY`: refused before any request, because `maxConcurrent` requests are already in flight. Retryable.
- * - `FETCH_REDIRECT`: the response was a redirect, which is never followed.
- * - `FETCH_TOO_LARGE`: the request body or the response body exceeds `maxBytes`.
- * - `FETCH_TIMEOUT`: no whole response within `timeoutMs`. Retryable.
- * - `FETCH_FAILED`: the request failed (network error, CORS), the bridge's frame could not start, or the sandbox was
- *   torn down. Retryable.
- */
-export type FetchErrorCode = Extract<RpcLibraryCode, `FETCH_${string}`>;
+// The reserved method, its refusal and its codes are every build's (fetch-method.ts): sealed mode's reserved method refuses with them.
+export { FETCH_METHOD, fetchRefusal, type FetchErrorCode, type FetchRefusal };
 
 const FETCH_CODES = ['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED'] as const satisfies readonly FetchErrorCode[];
 type FetchErrorCodesComplete = Holds<Complete<FetchErrorCode, typeof FETCH_CODES>>;
@@ -148,13 +137,6 @@ export interface FetchPolicy {
 }
 
 /**
- * A refusal minted by the bridge: an Error with a library code. `reason`, when set, is the host's own account of a
- * refusal whose guest text says less; it goes to the record, never to the guest (the broker sends only the message
- * and the code).
- */
-export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string; unsent?: true };
-
-/**
  * The `detail` of a `fetch` event: one request through the bridge, reported once when it settled. A union keyed by
  * `outcome`; each member has exactly the fields its outcome has, and the fields it lacks are typed `never`, so reading
  * one is allowed and gives `undefined`.
@@ -169,7 +151,7 @@ export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string; unse
  *   `FETCH_TOO_LARGE` for a response body, `FETCH_TIMEOUT` or `FETCH_FAILED`). `status` is present once a response's
  *   status was read (not for a redirect, which is refused first). It is not proof that a request left the page: the browser's `fetch` also rejects some requests before
  *   sending them (the host page's own `connect-src`, mixed content, local-network blocking).
- * - `'aborted'`: the environment was torn down (by `reset()`, `load()`, `setConfig()`, `terminate()` or removal) before
+ * - `'aborted'`: the environment was torn down (by `reset()`, `terminate()` or removal) before
  *   the record was made, whatever the request had settled on. `code` is `FETCH_FAILED`; `status` and `bytes` are as
  *   measured.
  *
@@ -235,13 +217,6 @@ export const MAX_HEADER_VALUE = 8192;
 export const MAX_URL = 8192;
 const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
 
-/**
- * An Error with a library code, the only kind of refusal this module produces, made by the library's factory: the guest
- * receives its code and a fixed text, never `message` (BD7:CHL-2); the record's `reason` and the host's console have it.
- */
-export function fetchRefusal(code: FetchErrorCode, message: string): FetchRefusal {
-    return mintError(code, `[sandboxFetch] ${code}: ${message}`);
-}
 
 const boundedInteger = (value: unknown, fallback: number, max: number): number => {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) return fallback;
