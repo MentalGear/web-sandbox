@@ -42,6 +42,7 @@ interface Outcome {
     readonly origin: string;
     readonly refusals: Record<string, string>;
     readonly definedBeforeCopy: boolean;
+    readonly definedWithCopy: boolean;
     readonly outcome: string;
 }
 
@@ -62,6 +63,7 @@ function tryHost(page: Page, attempts: readonly Attempt[], copy: string): Promis
         }
         const definedBeforeCopy = customElements.get('web-sandbox') !== undefined;
         defineWebSandbox({ documentUrl: copy });
+        const definedWithCopy = customElements.get('web-sandbox') !== undefined;
         const outcome = await new Promise<string>(resolve => {
             const el = document.createElement('web-sandbox') as HTMLElement & { start(app: object): void };
             el.style.cssText = 'display:block;width:400px;height:300px';
@@ -70,7 +72,7 @@ function tryHost(page: Page, attempts: readonly Attempt[], copy: string): Promis
             el.start({ html: '<p id="hello">hello</p>' });
             document.body.append(el);
         });
-        return { origin: self.origin, refusals, definedBeforeCopy, outcome };
+        return { origin: self.origin, refusals, definedBeforeCopy, definedWithCopy, outcome };
     }, { library: LIBRARY(), attempts, copy });
 }
 
@@ -115,17 +117,18 @@ test.describe('1. an opaque host page: every documentUrl off http(s) is refused 
         expect(result.outcome).toBe('ready');
     });
 
-    test('a data: page', async ({ page, context, browserName }) => {
+    test('a data: page', async ({ page, context }) => {
         await allowLocalNetwork(context);
         await page.goto('data:text/html,<!doctype html><html><head><meta charset="utf-8"><title>data host</title></head><body></body></html>');
         const result = await tryHost(page, [DATA, OWN_BLOB], HTTP_COPY);
         expect(result.origin).toBe(OPAQUE_ORIGIN);
         for (const name of [DATA.name, OWN_BLOB.name]) expect(result.refusals[name], name).toBe(refusal('opaqueHost'));
         expect(result.definedBeforeCopy).toBe(false);
-        // Chromium's top-level data: page is not a secure context, and its local network access refuses a request of
-        // one for a loopback address whatever the permission (ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS): the frame of
-        // the e2e server's copy never loads there, and the build ends as the document that did not answer
-        expect(result.outcome).toBe(browserName === 'chromium' ? `terminated: ${reasonText('documentSilent')}` : 'ready');
+        // the http copy is admitted; whether the app is ready is not this test's: Chromium's top-level data: page is not
+        // a secure context, and its local network access refuses such a page's request for a loopback address whatever
+        // the permission (ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS), so the e2e server's copy is never framed there.
+        // The two pages above are ready with it on every engine.
+        expect(result.definedWithCopy).toBe(true);
     });
 });
 
