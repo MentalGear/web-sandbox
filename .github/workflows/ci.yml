@@ -40,9 +40,8 @@ jobs:
       fail-fast: false
       matrix:
         browser: [chromium, firefox, webkit]
-        # The suite's two groups (test/e2e/groups.ts; backlog T10), each on a machine of its own: the specs that measure
-        # the host page, on half of the cores and beside nothing else, with the probes, which measure it too; and the rest,
-        # on all of the cores.
+        # The suite's two groups (test/e2e/groups.ts; backlog T10), each on a machine of its own and about half of the
+        # suite's time: the specs that measure the host page, with the probes, which measure it too; and the rest.
         group: [rest, measuring]
     env:
       WEB_SANDBOX_E2E_GROUP: ${{ matrix.group }}

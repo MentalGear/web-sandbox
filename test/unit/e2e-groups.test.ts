@@ -64,10 +64,10 @@ describe('the two groups divide the suite', () => {
         expect(matchedBy(measuring.match, `/elsewhere${file}`)).toBe(false);
     });
 
-    it('the rest runs on all of the cores; the measuring group and the whole suite on Playwright\'s default, half of them', () => {
-        expect(rest.workers).toBe('100%');
-        expect(measuring.workers).toBeUndefined();
-        expect(groupSelection(null, MEASURING)).toEqual({ match: SPEC_GLOBS, ignore: [], workers: undefined });
+    it('the whole suite leaves nothing out, and no selection sets the workers: every run is on Playwright\'s default, half of the cores', () => {
+        expect(groupSelection(null, MEASURING)).toEqual({ match: SPEC_GLOBS, ignore: [] });
+        for (const selection of [measuring, rest]) expect(Object.keys(selection).sort()).toEqual(['ignore', 'match']);
+        expect(readFileSync(path.join(ROOT, 'playwright.config.ts'), 'utf8')).not.toMatch(/^\s*workers:/m);
     });
 });
 
@@ -80,11 +80,10 @@ describe(`the selection, ${E2E_GROUP_VARIABLE}`, () => {
         expect(() => selectedGroup('Rest')).toThrow(E2E_GROUP_VARIABLE);
     });
 
-    it('playwright.config.ts takes its match, its ignore and its workers from the selection', () => {
+    it('playwright.config.ts takes its match and its ignore from the selection', () => {
         const config = readFileSync(path.join(ROOT, 'playwright.config.ts'), 'utf8');
         expect(config).toContain('groupSelection(selectedGroup(process.env[E2E_GROUP_VARIABLE]), measuringSpecs(E2E_ROOT))');
         expect(config).toContain('testMatch: [...selection.match]');
         expect(config).toContain('...selection.ignore]');
-        expect(config).toContain('workers: selection.workers');
     });
 });

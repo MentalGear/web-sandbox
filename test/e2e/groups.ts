@@ -3,14 +3,16 @@ import { join } from 'node:path';
 
 /**
  * The e2e suite's two groups (backlog T10), for a run that takes one of them: playwright.config.ts reads the selection.
+ * They divide the suite into two parts of about equal time, so that CI runs each on a machine of its own.
  *
  * - `measuring`: the specs that measure what the host page has left (ticks, a busy share, a stall). They are the specs
  *   that import the one meter, host-share.ts (test/unit/host-share.test.ts fails a spec that measures with one of its
- *   own, T9), so the group is derived from that import and never listed. The machine's load is one of their inputs
- *   (S81): they run on the workers the whole suite has always run on, half of the machine's cores.
- * - `rest`: every other spec. None reads the host page's clock against a bound, so they run on all of the cores.
+ *   own, T9), so the group is derived from that import and never listed.
+ * - `rest`: every other spec.
  *
- * With no group named, a run is the whole suite on half of the cores, in one go.
+ * Both run on Playwright's default, half of the machine's cores, as the whole suite does: specs of the rest assert on
+ * times and on the order of tasks too (S81), so more workers on one machine is not theirs by construction.
+ * With no group named, a run is the whole suite, in one go.
  */
 export const E2E_GROUP_VARIABLE = 'WEB_SANDBOX_E2E_GROUP';
 
@@ -71,14 +73,12 @@ export function measuringSpecs(root: string): string[] {
 const escapeRegExp = (text: string) => text.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
 const exactly = (path: string) => new RegExp(`^${escapeRegExp(path)}$`);
 
-/** What a run of `group` (or of the whole suite, null) matches, leaves out and runs on. */
+/** What a run of `group` (or of the whole suite, null) matches and leaves out. */
 export interface GroupSelection {
     /** Playwright's `testMatch`. */
     readonly match: readonly (string | RegExp)[];
     /** What Playwright's `testIgnore` gains. */
     readonly ignore: readonly RegExp[];
-    /** Playwright's `workers`; undefined is its default, half of the machine's cores. */
-    readonly workers: string | undefined;
 }
 
 /**
@@ -86,8 +86,8 @@ export interface GroupSelection {
  * `measuring` matches is exactly what `rest` leaves out.
  */
 export function groupSelection(group: E2eGroup | null, measuring: readonly string[]): GroupSelection {
-    if (group === null) return { match: SPEC_GLOBS, ignore: [], workers: undefined };
+    if (group === null) return { match: SPEC_GLOBS, ignore: [] };
     const paths = measuring.map(exactly);
-    if (group === 'measuring') return { match: paths, ignore: [], workers: undefined };
-    return { match: SPEC_GLOBS, ignore: paths, workers: '100%' };
+    if (group === 'measuring') return { match: paths, ignore: [] };
+    return { match: SPEC_GLOBS, ignore: paths };
 }

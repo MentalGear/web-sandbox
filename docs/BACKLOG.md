@@ -550,6 +550,11 @@ on the same commit was green; each is measured against the load, not against the
 - `test/unit/view-css-loads.test.ts:308`: the scaling helper reached ratio 37.2 against a bound of 24.
 - `test/unit/lifecycle-transitions.test.ts:61`: its 5 s timeout.
 
+With the rest of the e2e suite on four workers in CI ([T10](#t10), 2026-11-20), one more of this kind:
+- `test/e2e/links.spec.ts`, "the cost": `full < none * 1.5` on Chromium, where the two times are each the best of three
+  rounds but measured one after the other, so a change of the load between them is in the ratio. A measure that
+  alternates the two, as `scalingRatio` does for the unit tests, would not have it.
+
 **Fix, by construction** (candidates). (a) Positive controls wait until N deliveries arrive, with a timeout, plus a scan
 (beside T9's) for count-in-window controls. (b) The local CI mirror and the e2e fixture record the load at the start and
 refuse or annotate a run above a threshold. (c) The exhaustive exploration in `lifecycle-transitions` gets a
@@ -836,13 +841,24 @@ its log): 3,145 tests took 128 minutes of worker time. The 15 specs that measure
 Half of all tests take under a second and are 12% of the time together, so the cost of loading a page is not where
 the time is.
 
+**Built: the suite runs as two groups, each on a machine of its own in CI.** The specs that import
+`test/e2e/host-share.ts` are the measuring group, derived from that import and never listed (`test/e2e/groups.ts`;
+`test/unit/e2e-groups.test.ts`): 15 spec files and 199 tests an engine, against 99 files and 1,114 tests in the rest,
+and about half of the suite's time each. `WEB_SANDBOX_E2E_GROUP` names the group a run takes; a run that names none is
+the whole suite. CI has a job per group and engine, with the probes in the measuring group's, each job's result keyed
+by its inputs as above. Both groups run on Playwright's default, half of the machine's cores.
+
+**Measured, and what it ruled out** (2026-11-20). The rest on all four cores took 22.1 minutes for three engines
+on the local machine and passed (2,796 tests), and 6 to 8 minutes an engine in CI, where two of its first jobs failed,
+each on a test whose assertion depends on the machine's load: one that held the host page's thread and expected a due
+timer to run before a frame's load (`guest-realm-hardening.spec.ts`, CB3; now it holds `loading` itself), and one that
+bounds the ratio of two times measured one after the other (`links.spec.ts`, the cost). So specs outside the measuring
+group assert on times and on the order of tasks too, and running them on more workers is not sound until
+[S81](#s81)'s scan can say which do; 14 specs outside the group read a clock.
+
 **Fix, by construction**, what is left, in this order, each measured before and after on three engines:
-1. **The specs that measure the host page are a group of their own**, derived from their import of
-   `test/e2e/host-share.ts`, never from a list. In CI each engine has two jobs: the measuring group alone on its
-   machine with one worker, which is the quiet machine those specs need ([S81](#s81)), and the rest on all of the
-   runner's workers. Locally the rest runs on as many workers as the machine has, and the measuring group runs for a
-   change to what it measures; CI always runs both. To confirm first: that the rest holds on four workers (S81 lists
-   specs outside the group that count in a fixed window).
+1. **The rest on all of the cores**, once S81's scan holds every spec that asserts on a time or on the order of two
+   tasks to a measure that does not depend on the load, or moves it to the measuring group.
 2. **The tests load the built bundle.** The server already builds `dist/` and `dist-network/` when it starts
    (`package.spec.ts` mounts from them). Every harness page takes its build's bundle, so a run tests the code as it was
    built at its start whatever is edited meanwhile, and the tests run what the package ships. This is for that
@@ -858,8 +874,6 @@ the time is.
 must. For that case the time is the machine's cores and CI's three engines side by side (CONTRIBUTING.md, "Which
 gates, when").
 
-**Order.** After step 3.2 of [the design's build order](design/05-build-order.md), which rewrites the harness pages
-and the server this touches.
 
 ## Parity Reference
 

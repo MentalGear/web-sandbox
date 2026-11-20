@@ -51,8 +51,15 @@ A run always tests its own checkout (backlog T8), so several checkouts and workt
 bun run test:e2e                                   # every spec, all three engines
 bunx playwright test test/e2e/basic.spec.ts --project=firefox
 WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
+WEB_SANDBOX_E2E_GROUP=measuring bun run test:e2e   # one of the suite's two groups: measuring, or rest
 ```
 
+- **Two groups.** The specs that import `test/e2e/host-share.ts` are the measuring group, and every other spec is the
+  rest (`test/e2e/groups.ts`, which derives the group from the import; [T10](docs/BACKLOG.md#t10)). They are about half
+  of the suite's time each, and CI runs each on a machine of its own, per engine, with the probes beside the measuring
+  group. `WEB_SANDBOX_E2E_GROUP` names the group a run takes, and any other value stops the run; with none, a run is the
+  whole suite. Every run is on Playwright's default number of workers, half of the cores: a spec that passes only on a
+  quiet machine is a finding ([S81](docs/BACKLOG.md#s81)), and more workers is not the way to find it in CI.
 - **The port.** CI serves on 4444. Locally the port is derived from the checkout's absolute path, in 20000–29999
   (`test/e2e/server.ts`; `bun -e 'import("./test/e2e/server.ts").then(m => console.log(m.E2E_ORIGIN))'` prints it), and
   `WEB_SANDBOX_E2E_PORT` overrides it. Specs never name a port: they use `ORIGIN` and `HARNESS` from
@@ -105,7 +112,7 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
 - **Which gates, when.** Before a change is merged into the working branch: `bun run typecheck`, the unit suite,
   `bun run api:check`, `bun run docs:check`, the package smoke test when the package's files changed, and on three
   engines the specs the change touches. CI runs the whole e2e suite and the probes on every push to a pull request, its
-  three engines side by side, and is the gate of the whole suite; a browser job whose inputs (every file but the
+  three engines and the suite's two groups side by side, and is the gate of the whole suite; a browser job whose inputs (every file but the
   Markdown ones) have already passed on its engine is not run again ([T10](docs/BACKLOG.md#t10)). Run the whole suite locally too for a change that moves
   many specs at once (the view's document, the harness pages, the fixture). The lifecycle model runs at 400 sequences or
   more when the lifecycle, the frames it reads or the guest's writes change; CI runs it at 40.
