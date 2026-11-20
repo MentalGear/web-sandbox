@@ -76,9 +76,10 @@ the page frames it.
   request, and what it answers is what is checked (a page of its own ended the build with the reason for other bytes).
   Its cost is one request and one SHA-256 of the file per page, before the first frame, bounded by `LOAD_TIMEOUT_MS`
   (a check that has not answered by then ends the build as the document that did not answer). Measured 2026-11-20 on a
-  shared 4-core machine, loopback, from insertion to `ready` (medians of 12): Chromium 159 41 ms for a page's first
-  build (cold or warm cache) and 35 ms for a later one, which makes no check; Firefox 159 74 and 77 ms against 67 ms;
-  WebKit 27.2 90 and 82 ms against 38 ms. With a cacheable file, Chromium's frame took the check's response from the
+  4-core machine, loopback, from insertion to `ready` (medians of 12, two runs, the second on an idle machine), a page's
+  first build with a cold and a warm cache against a later build, which makes no check: Chromium 159 41 and 42 ms against
+  35 ms, then 36 and 33 against 28; Firefox 159 74 and 77 against 67, then 56 and 50 against 45; WebKit 27.2 90 and 82
+  against 38, then 46 and 48 against 26. With a cacheable file, Chromium's frame took the check's response from the
   cache (one request reached the server); Firefox and WebKit requested the file again for the frame (two).
 - **In the build with the network modes** it may be left out (`defineWebSandbox({})`): strict, cooperative and worker
   mode keep documents of their own, and `start()` of a sealed app on such an element throws.
