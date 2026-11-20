@@ -35,7 +35,7 @@ import { readStart, type StartValues } from "./lib/app-start";
 import { documentAddress, readDocumentUrl, registeredDocumentUrl, storeRegistration } from "./lib/document-url";
 import { canCheckDocument, checkDocument, keptDocumentCheck } from "./lib/document-check";
 import { sealedDocumentDigest } from "./lib/document-digest";
-import { gatesOf, gateViolations, workerGates, type GateMode } from "./lib/startup-gates";
+import { gatesOf, gateViolations, takeGateViolations, workerGates, type GateMode } from "./lib/startup-gates";
 import { announcementFinding, verdictFinding } from "./lib/startup-verdicts";
 import type { Holds } from "./lib/utils";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
@@ -2046,9 +2046,11 @@ export class WebSandbox extends ElementBase {
         const workerGateNames = gatesOf('worker', sealed ? 'sealed' : 'strict');
         const prelude = `(function (g) {${STRICT_DIRECTIVE}`
             + `(${assertEntryScoped.toString()})(g);`
-            // the start-up gates (startup-gates.ts): the canaries that need the worker's own names before the allowlist,
-            // the rest after it; then the verdicts go to the view, and a failed gate stops the script there
-            + `var gates = (${workerGates.toString()})(g, ${toInlineScriptLiteral(workerGateNames)}, ${toInlineScriptLiteral(gateViolations(workerGateNames))}, ${toInlineScriptLiteral(workerGlobalsFor(sealed ? SEALED_WORKER_GLOBALS : STRICT_WORKER_GLOBALS, scriptUnsafe))});`
+            // the start-up gates (startup-gates.ts): the listener that takes their canaries' violations, then the canaries
+            // that need the worker's own names before the allowlist, the rest after it; then the verdicts go to the view,
+            // and a failed gate stops the script there
+            + `(${takeGateViolations.toString()})(g, ${toInlineScriptLiteral(workerGateNames)}, ${toInlineScriptLiteral(gateViolations(workerGateNames))});`
+            + `var gates = (${workerGates.toString()})(g, ${toInlineScriptLiteral(workerGateNames)}, ${toInlineScriptLiteral(workerGlobalsFor(sealed ? SEALED_WORKER_GLOBALS : STRICT_WORKER_GLOBALS, scriptUnsafe))});`
             + workerGlobalsStatement('g', scriptUnsafe, sealed)
             + 'gates();'
             + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()}${network ? `, undefined, ${network.requestGateSource}` : ''});`

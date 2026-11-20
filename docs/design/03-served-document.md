@@ -576,7 +576,9 @@ The gates are defence in depth after the construction, never in place of it: the
 setting that dissolves the policy", for the cases a canary can provoke.
 
 **As built (step 3.5).** One registry, `STARTUP_GATES` (`src/lib/startup-gates.ts`), rendered here; the view's canaries
-(a table in `inSandboxView`) and the worker's (`workerGates`, two tables around the allowlist) are keyed by its names, the
+(a table in `inSandboxView`) and the worker's (`workerGates`, two tables around the allowlist) are keyed by its names; the
+worker's listener for its canaries' violations (`takeGateViolations`) is the one part that outlives the start of guest
+code, and is under the capture scan (class G); the
 bootstrap and the worker's source are given the names each mode runs (`gatesOf`), and the host reads the verdicts by them
 (`startup-verdicts.ts`); `test/unit/startup-gates.test.ts` holds the tables to the registry, and
 `test/e2e/startup-gates.spec.ts` runs each gate under its mutant on three engines.

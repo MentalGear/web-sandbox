@@ -189,51 +189,49 @@ export function gateViolations(among: readonly GateName[] = Object.keys(STARTUP_
 }
 
 /**
- * The worker's gates (stringified into the worker's prelude: host.ts, _getStrictWorkerSource), in two calls around the
- * globals allowlist. This call, before the allowlist and before anything else of the worker's source, runs the canaries
- * that need the worker's own names; the function it answers, called once the allowlist has run, runs the gates that
- * check what the allowlist left, posts every verdict to the view (`WORKER_VERDICTS`, the worker's first message, before
- * any guest code exists), and throws where a gate failed, so nothing after it in the worker's script runs: not the rest
- * of the prelude, not the entry. That throw is cancelled in the worker, so the view hears no entry error, only the
- * verdicts.
+ * The violations the worker's canaries raise, one per gate that raises one (`raises`), taken ahead of the bootstrap's own
+ * reports' listener, which the worker's source installs later, so none is reported as the guest's (stringified into the
+ * worker's prelude, before the gates: host.ts, _getStrictWorkerSource). The events come in tasks, after the worker's
+ * script, the entry included, has run: so the listener outlives the start of guest code, and reads each event through
+ * what the list at its top captured (class G). It takes trusted events only (`isTrusted` is an own, unforgeable property
+ * of every event), so an event the guest dispatches is never read; the canary's is queued before any of the guest's, and
+ * this listener is the first on the global. It leaves once it took them all.
  */
-export function workerGates(g: any, names: readonly string[], raises: Readonly<Record<string, string>>, allowed: readonly string[]): () => void {
+export function takeGateViolations(g: any, names: readonly string[], raises: Readonly<Record<string, string>>): void {
     const apply = Reflect.apply;
     const O = ({}).constructor as ObjectConstructor;
-    const post = g.postMessage;
+    const descriptorOf = O.getOwnPropertyDescriptor;
+    const prototypeOf = O.getPrototypeOf;
+    const has = O.prototype.hasOwnProperty;
     const listen = g.addEventListener;
     const unlisten = g.removeEventListener;
-    const objectPrototype = O.prototype;
-    const descriptorOf = O.getOwnPropertyDescriptor;
-    const has = objectPrototype.hasOwnProperty;
-    const prototypeOf = O.getPrototypeOf;
-    // The getter of a violation's directive, captured now where the worker names the event's class. Firefox's worker
-    // fires the event without naming the class: there it is read from the first event's own prototype, which no guest
-    // code can have reached before (the canary's event is queued before any of the guest's, and this listener is the
-    // first on the global), and the listener leaves after its one event.
-    const violationClass = g.SecurityPolicyViolationEvent;
-    let directiveOf: (() => unknown) | null = violationClass ? descriptorOf(violationClass.prototype, 'effectiveDirective')!.get! : null;
     const stopImmediate = g.Event.prototype.stopImmediatePropagation;
     const startsWith = String.prototype.startsWith;
+    // The getter of a violation's directive, captured now where the worker names the event's class. Firefox's worker
+    // fires the event without naming the class: there it is read from the first trusted event's own prototype, which no
+    // guest code can have reached before.
+    const violationClass = g.SecurityPolicyViolationEvent;
+    let directiveOf: (() => unknown) | null = violationClass ? descriptorOf(violationClass.prototype, 'effectiveDirective')!.get! : null;
     const count = names.length;
-    const verdicts: Record<string, boolean> = {};
-    // The violations the canaries raise, one per gate that raises one (`raises`): taken here, ahead of the bootstrap's
-    // own reports' listener, which the worker's source installs later, so none is reported as the guest's. The events
-    // come in tasks, after the worker's script, the entry included, has run: so this listener reads them through
-    // getters captured now, and removes itself once it took them all.
+    const CAPTURE_POINT = count;
     const expected: string[] = [];
     let wanted = 0;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < CAPTURE_POINT; i++) {
         const name = names[i]!;
         if (apply(has, raises, [name])) expected[wanted++] = raises[name]!;
     }
+    if (wanted === 0) return;
     let left = wanted;
     const take = (event: Event) => {
+        if (event.isTrusted !== true) return;
         if (directiveOf === null) {
             const found = descriptorOf(prototypeOf(event), 'effectiveDirective');
-            directiveOf = found && found.get ? found.get : () => '';
+            const getter = found ? found.get : undefined;
+            if (!getter) return;
+            directiveOf = getter;
         }
-        const directive = String(apply(directiveOf, event, []));
+        const directive = apply(directiveOf, event, []);
+        if (typeof directive !== 'string') return;
         for (let i = 0; i < wanted; i++) {
             const want = expected[i]!;
             if (want === '' || !apply(startsWith, directive, [want])) continue;
@@ -244,7 +242,29 @@ export function workerGates(g: any, names: readonly string[], raises: Readonly<R
             return;
         }
     };
-    if (left > 0) apply(listen, g, ['securitypolicyviolation', take, true]);
+    apply(listen, g, ['securitypolicyviolation', take, true]);
+}
+
+/**
+ * The worker's gates (stringified into the worker's prelude: host.ts, _getStrictWorkerSource), in two calls around the
+ * globals allowlist. This call, before the allowlist and before anything else of the worker's source but the listener
+ * for its canaries' violations ({@link takeGateViolations}), runs the canaries that need the worker's own names; the
+ * function it answers, called once the allowlist has run, runs the gates that check what the allowlist left, posts every
+ * verdict to the view (`WORKER_VERDICTS`, the worker's first message, before any guest code exists), and throws where a
+ * gate failed, so nothing after it in the worker's script runs: not the rest of the prelude, not the entry. That throw
+ * is cancelled in the worker, so the view hears no entry error, only the verdicts.
+ */
+export function workerGates(g: any, names: readonly string[], allowed: readonly string[]): () => void {
+    const apply = Reflect.apply;
+    const O = ({}).constructor as ObjectConstructor;
+    const post = g.postMessage;
+    const listen = g.addEventListener;
+    const objectPrototype = O.prototype;
+    const descriptorOf = O.getOwnPropertyDescriptor;
+    const has = objectPrototype.hasOwnProperty;
+    const prototypeOf = O.getPrototypeOf;
+    const count = names.length;
+    const verdicts: Record<string, boolean> = {};
     // A non-configurable primitive (a WebIDL constant) is what the allowlist leaves too: it cannot be deleted, and makes
     // no request (worker-globals.ts, keepOnlyWorkerGlobals).
     const isConstant = (descriptor: PropertyDescriptor | undefined) => {

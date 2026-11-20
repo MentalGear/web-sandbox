@@ -139,6 +139,7 @@ export const STRINGIFIED = {
     viewInputOutbox: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     viewControlNames: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     isStyleProperty: { module: 'src/lib/in-sandbox-view.ts', realms: ['view', 'strict-worker'], capture: 'it names no global and calls only the function it is given (the strict prelude gives it a captured charCodeAt)', readOnce: 'its arguments are a string and a list of the library\'s, never an object of the guest\'s', typeofRead: true },
+    takeGateViolations: { module: 'src/lib/startup-gates.ts', realms: ['strict-worker'], capture: true, readOnce: true, typeofRead: true },
     workerGates: { module: 'src/lib/startup-gates.ts', realms: ['strict-worker'], capture: 'it and the function it answers run to their end before any guest code (the second right after the globals allowlist), and the one listener it leaves, on a failed gate, is in a worker whose script stopped there, so no guest code ever runs beside it', readOnce: true, typeofRead: true },
     checkSandboxEnvironment: { module: 'src/lib/environment-check.ts', realms: ['cooperative', 'worker-frame', 'view', 'bridge-frame'], capture: RUNS_FIRST, readOnce: true, typeofRead: true },
     inBridgeFrame: { module: 'src/lib/in-bridge-frame.ts', realms: ['bridge-frame'], capture: NO_GUEST, readOnce: true, typeofRead: true },

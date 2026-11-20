@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GATE_CANARIES, gatesOf, gateViolations, STARTUP_GATES, workerGates, type GateName, type GateRow } from '@src/lib/startup-gates';
+import { GATE_CANARIES, gatesOf, gateViolations, STARTUP_GATES, takeGateViolations, workerGates, type GateName, type GateRow } from '@src/lib/startup-gates';
 import { announcementFinding, verdictFinding } from '@src/lib/startup-verdicts';
 import { inSandboxView, VIEW_OPTIONS, viewBootstrapText } from '@src/lib/in-sandbox-view';
 import { reasonText, TERMINATION_REASONS } from '@src/lib/reasons';
@@ -93,6 +93,7 @@ function fakeWorker(held: boolean) {
     const posted: unknown[] = [];
     const listeners: [string, (event: any) => void][] = [];
     class Violation {
+        readonly isTrusted = true;
         constructor(readonly directive: string) {}
         get effectiveDirective() { return this.directive; }
     }
@@ -121,7 +122,7 @@ describe("the worker's gates (workerGates), run as the prelude runs them", () =>
 
     it('held: every verdict true, posted as the first message, and nothing thrown', () => {
         const worker = fakeWorker(true);
-        const finish = workerGates(worker.g, names, raises, KEPT);
+        const finish = workerGates(worker.g, names, KEPT);
         expect(worker.posted).toEqual([]); // nothing before the allowlist
         worker.allowlist(null);
         finish();
@@ -130,7 +131,7 @@ describe("the worker's gates (workerGates), run as the prelude runs them", () =>
 
     it('a name the allowlist left (fetch): the verdict is false, posted first, then the script stops, its error cancelled in the worker', () => {
         const worker = fakeWorker(true);
-        const finish = workerGates(worker.g, names, raises, KEPT);
+        const finish = workerGates(worker.g, names, KEPT);
         worker.allowlist('fetch');
         expect(finish).toThrow(/a start-up gate of the worker failed/);
         expect((worker.posted[0] as any).verdicts.allowlist).toBe(false);
@@ -142,7 +143,7 @@ describe("the worker's gates (workerGates), run as the prelude runs them", () =>
 
     it("a worker that is not sandboxed: every canary that needs the worker's names fails", () => {
         const worker = fakeWorker(false);
-        const finish = workerGates(worker.g, names, raises, KEPT);
+        const finish = workerGates(worker.g, names, KEPT);
         worker.allowlist(null);
         expect(finish).toThrow();
         expect((worker.posted[0] as any).verdicts).toEqual({ opaque: false, stringCode: false, storage: false, allowlist: true });
@@ -150,7 +151,7 @@ describe("the worker's gates (workerGates), run as the prelude runs them", () =>
 
     it("the violation its canary raises is taken, once, ahead of the bootstrap's listener; another passes on; the listener leaves once it took it", () => {
         const worker = fakeWorker(true);
-        workerGates(worker.g, names, raises, KEPT);
+        takeGateViolations(worker.g, names, raises);
         const [type, take] = worker.listeners.find(([kind]) => kind === 'securitypolicyviolation')!;
         expect(type).toBe('securitypolicyviolation');
         const other = new worker.Violation('connect-src') as any;
@@ -160,6 +161,29 @@ describe("the worker's gates (workerGates), run as the prelude runs them", () =>
         take(script);
         expect(script.stopped).toBe(true);
         expect(worker.listeners.some(([kind]) => kind === 'securitypolicyviolation')).toBe(false);
+    });
+
+    // Firefox's worker does not name the event's class, so the directive's getter is found on the first event read: one
+    // the guest dispatched first must not be that event.
+    it.each([['names', true], ['does not name', false]])("an event the guest dispatched is not read, where the worker %s the event's class: it is not taken, its getter is not run or kept, and the canary's own event still is", (_label, named) => {
+        const worker = fakeWorker(true);
+        if (!named) delete worker.g.SecurityPolicyViolationEvent;
+        takeGateViolations(worker.g, names, raises);
+        const take = worker.listeners.find(([kind]) => kind === 'securitypolicyviolation')![1];
+        const read = vi.fn(() => 'script-src');
+        const forged: any = Object.create({ get effectiveDirective() { return read(); } }, { isTrusted: { value: false } });
+        take(forged);
+        const script = new worker.Violation('script-src') as any;
+        take(script);
+        expect(read).not.toHaveBeenCalled();
+        expect(forged.stopped).toBeUndefined();
+        expect(script.stopped).toBe(true);
+    });
+
+    it("a mode whose worker's gates raise nothing installs no listener", () => {
+        const worker = fakeWorker(true);
+        takeGateViolations(worker.g, gatesOf('worker', 'strict'), gateViolations(gatesOf('worker', 'strict')));
+        expect(worker.listeners).toEqual([]);
     });
 });
 
