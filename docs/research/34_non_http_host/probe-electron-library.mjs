@@ -93,13 +93,14 @@ const GUARD = async ({ url }) => {
         const frame = document.createElement('iframe');
         if (sandbox !== null) frame.setAttribute('sandbox', sandbox);
         frame.src = url;
-        const loaded = new Promise((resolve) => frame.addEventListener('load', resolve, { once: true }));
+        // a file stopped by its guard (`window.stop()`) may never fire `load`: the read waits for it or for 3 s
+        const loaded = new Promise((resolve) => { frame.addEventListener('load', () => resolve('load'), { once: true }); setTimeout(() => resolve('no load event in 3 s'), 3000); });
         document.body.append(frame);
-        await loaded;
+        const load = await loaded;
         await new Promise((resolve) => setTimeout(resolve, 300));
         let readable;
         try { readable = frame.contentDocument ? 'the host page reads the file\'s document' : 'not readable'; } catch { readable = 'not readable'; }
-        out[name] = { frames: frame.contentWindow.length, readable };
+        out[name] = { load, frames: frame.contentWindow.length, readable };
         frame.remove();
     }
     return out;

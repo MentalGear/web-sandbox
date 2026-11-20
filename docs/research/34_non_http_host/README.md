@@ -281,6 +281,25 @@ Facts for the owner's choice between accepting the limit and keeping a `srcdoc` 
 
 <!-- list -->
 
+## The library on Electron (design 05, step 3.10)
+
+**Measured** 2026-11-20 on the same 4-core VM, Electron 45.4.1 (Chromium 156.0.8078.100) under Xvfb, with the default
+build at step 3.10 ([`probe-electron-library.mjs`](probe-electron-library.mjs); raw output
+[`results/2026-11-20_pw-1.65.1/electron-library.txt`](results/2026-11-20_pw-1.65.1/electron-library.txt)): the real
+`defineWebSandbox()` and sealed mode, in the window of [`electron/main.cjs`](electron/main.cjs), with the package's
+`sealed-document.html` beside the host page on its own scheme.
+
+| Host page | `self.origin` | Refused (another origin off `http(s)`: the other scheme's file, a `data:` URL, a `blob:` URL of its own) | `documentUrl: 'sealed-document.html'` | The check of the file (a copy with one byte more) | The guard (I14): the file's frames once loaded, framed without `sandbox` / with `allow-same-origin` / as the element frames it |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `file:` | `file://` | all three, by the rule of the origin | defined; the app `ready` and its call answered (161 ms) | read: ended with the reason for other bytes, nothing framed | 0 / 0 / 1 (no `load` event where the guard stopped the file) |
+| `app://bundle` (standard, secure, `supportFetchAPI`) | `app://bundle` | all three | defined; `ready`, call answered (131 ms) | read: the reason for other bytes | 0 / 0 / 1 |
+| `http` (baseline) | `http://localhost:…` | all three | defined; `ready`, call answered | read: the reason for other bytes | 0 / 0 / 1 |
+
+So on Electron's `file:` and on an app's standard, secure scheme the rule admits the file beside the page, the library
+runs an app there, the check of the file reads it, and the guard stops a file framed without the sandbox or with
+`allow-same-origin` before its view exists, as on `http`. The start-up gates' canaries logged their refusals to the
+console as on `http`. Not run: Electron with other settings, and any other app shell (above).
+
 ## How to run
 
 From the repository root, with `PLAYWRIGHT_BROWSERS_PATH` set to the browsers Playwright 1.65.1 installed:
@@ -290,6 +309,7 @@ bun run build:lib                                        # dist/, today's defaul
 bun docs/research/34_non_http_host/build-site.mjs        # site/ (not checked in): the host page, F, the extensions
 (cd docs/research/34_non_http_host/electron && bun install && node node_modules/electron/install.js)  # Electron, for its probe
 WEB_SANDBOX_LOCK=/path/to/lock bun docs/research/34_non_http_host/run.mjs      # every run, each under flock(1)
+xvfb-run -a bun docs/research/34_non_http_host/probe-electron-library.mjs      # the library on Electron (step 3.10; run.mjs's electron-library)
 bun docs/research/34_non_http_host/run.mjs file-webkit extension-chromium      # some runs
 bun docs/research/34_non_http_host/summarize.mjs docs/research/34_non_http_host/results/<set>/<run>.txt
 ```
