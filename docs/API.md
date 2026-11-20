@@ -614,8 +614,11 @@ sandbox.start({ html, entry: 'main.js', files }, { links: ['https://docs.example
   every other `href` is inert, as it is without `links`.
 - **The click is the request.** On the user's click on a marked link, or on anything inside it but a form control, a
   label or a summary, the view sends your page the link's index in the list, and the element calls
-  `window.open(url, '_blank', 'noopener,noreferrer')` with your own copy of that URL, in the task of that message, so
-  the browser's popup blocker allows it for the click. Enter on a focused link is such a click; a middle click
+  `window.open(url, '_blank', 'noopener,noreferrer')` with your own copy of that URL, in the task of that message where
+  your page already reads the click's activation as its own (`navigator.userActivation`), so the browser's popup blocker
+  allows it for the click. The view is another process on Chromium, and its message can arrive before the browser has
+  told your page of the click: the element then waits until the page reads the activation, at most 500 ms
+  (`LINK_ACTIVATION_WAIT_MS`), and asks then. Enter on a focused link is such a click; a middle click
   (`auxclick`), a script's `click()` and a dispatched event are not. The app's worker has nothing to call: no method of
   the guest's opens a link. The view still cancels the click, so the view itself navigates nowhere.
 - **One request a user action.** While a key is held, no click is a request: the first press of Enter on a focused
@@ -2259,6 +2262,7 @@ input](#sandboxview-strict-mode) describes them, and [research 23](research/23_v
 | URLs of `links` | 32 | `MAX_LINKS` |
 | Characters of a URL of `links` | 2048 | — |
 | Tabs one element opens for `links` in any one-second window | 2 | `LINK_TABS_PER_SECOND` |
+| Longest wait for the user's activation to reach the host page before a listed link's tab is asked for (ms) | 500 | — |
 | Strict: characters per `sandboxView.render()`, `text()` or `set()` value, and of `html` (the initial view) | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
 | Strict: elements in the view | 50000 | — |

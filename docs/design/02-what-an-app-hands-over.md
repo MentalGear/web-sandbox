@@ -80,8 +80,12 @@ link carries.
 the tab in every run after a click in the view, across the ports and the worker, and in the library as it is today with
 the request as a call from the worker; one tab per click; no tab without a click. With this design's shape and a held
 Enter ([REVIEW-3.md](REVIEW-3.md), finding 1): Firefox opened a tab for each auto-repeat, and Chromium one; with the
-held-key flag, one on both (`test/e2e/links-popup-blocker.spec.ts`). **Not measured:** Safari and any WebKit with a
-popup blocker (Playwright's WebKit has none); touch activation.
+held-key flag, one on both (`test/e2e/links-popup-blocker.spec.ts`). On a loaded machine Chromium blocked the tab of 5 of
+224 clicks, with `window.open` called for the listed URL: the view's message reached the host page before the browser
+had told it of the click, in another process. The element now asks for the tab once the page reads the activation
+(`openWhenActivated`, at most `LINK_ACTIVATION_WAIT_MS`), and the same test passed 300 of 300 under the same load
+(2026-11-20). **Not measured:** Safari and any WebKit with a popup blocker (Playwright's WebKit has none); touch
+activation.
 
 **What it leaves.**
 

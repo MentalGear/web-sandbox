@@ -15,7 +15,7 @@ import { LOAD_KINDS } from "./lib/load-kinds";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
 import { crossingText, mintError, mintUncodedError } from "./lib/minted-errors";
 import { createBroker, type BudgetRefusal } from "./lib/rpc";
-import { createLinkTabLimiter, LINK_WINDOW_FEATURES, listedLink } from "./lib/links";
+import { createLinkTabLimiter, LINK_WINDOW_FEATURES, listedLink, openWhenActivated, type ActivationView } from "./lib/links";
 import { createSizeOf } from "./lib/structured-size";
 import { keepOnlyWorkerGlobals, removeSecureContextOnly, SEALED_WORKER_GLOBALS, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from "./lib/worker-globals";
 import { dynamicImportAt } from "./lib/entry-imports";
@@ -613,6 +613,13 @@ function firstFrameOf(iframe: HTMLIFrameElement): Window | null {
     } catch {
         return null;
     }
+}
+
+// The page's own view of its user activation, where the engine has one (links.ts, openWhenActivated).
+function pageActivation(): ActivationView | undefined {
+    const activation: unknown = (navigator as { userActivation?: unknown }).userActivation;
+    if (typeof activation !== 'object' || activation === null) return undefined;
+    return activation as ActivationView;
 }
 
 // A worker's uncaught error as a guest line, prefixed once: Chromium's ErrorEvent message already starts with
@@ -1394,7 +1401,7 @@ export class WebSandbox extends ElementBase {
             return;
         }
         if (data?.type === 'VIEW_LINK') {
-            this._openListedLink(data.index);
+            this._openListedLink(viewPort, data.index);
             return;
         }
         if (data?.type === 'VIEW_INITIAL') {
@@ -1489,16 +1496,25 @@ export class WebSandbox extends ElementBase {
      * The view's request for a listed link (VIEW_LINK; design 02, I6): the user's trusted click on a link the view marked.
      * Only the view posts on its port, and only the current environment's port reaches here (_onViewMessage). The index
      * is checked against this element's own list (listedLink: an integer within it, else nothing opens), and the URL
-     * opened is that list's string, in the task of this message, so the browser's popup blocker still sees the click: no
-     * text of the guest's is part of it. `noopener` and `noreferrer` give the tab no handle on this page and no referrer;
+     * opened is that list's string: no text of the guest's is part of it. The tab is asked for in the task of this
+     * message where the page reads the click's activation as its own already, and else once it does (openWhenActivated:
+     * the view is another process on Chromium, and its request can arrive before the browser has told this page of the
+     * click), so the browser's popup blocker sees the click. `noopener` and `noreferrer` give the tab no handle on this page and no referrer;
      * `window.open` then answers null whether or not the browser opened the tab. At most LINK_TABS_PER_SECOND open in any
      * one-second window, whatever the browser allows (docs/design/REVIEW-3.md, finding 1): a request past it opens nothing
      * and is not queued.
      */
-    private _openListedLink(index: unknown) {
+    private _openListedLink(viewPort: MessagePort, index: unknown) {
         const url = listedLink(this._config.links, index);
         if (url === null) return;
         if (!this._linkTabs.admit()) return;
+        openWhenActivated(pageActivation(), () => this._openTab(viewPort, url));
+    }
+
+    // The tab of a listed link, for the view that asked while it is still the element's: a request that waited for the
+    // page's activation (links.ts, LINK_ACTIVATION_WAIT_MS) opens nothing once its environment is gone.
+    private _openTab(viewPort: MessagePort, url: string) {
+        if (viewPort !== this._viewPort) return;
         window.open(url, '_blank', LINK_WINDOW_FEATURES);
     }
 

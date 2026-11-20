@@ -33,6 +33,7 @@ function numericConstants(): Array<{ file: string; name: string; typed: boolean 
 
 /** Numeric constants that are not limits of the library, with why. A constant not here and not a row fails the test below. */
 const INTERNAL: Readonly<Record<string, string>> = {
+    'src/lib/links.ts:LINK_ACTIVATION_POLL_MS': "how often the wait for the page's activation reads it again, inside the bound LINK_ACTIVATION_WAIT_MS, which is the row",
     'src/lib/network-config.ts:FETCH_REQUEST_OVERHEAD': 'a term of the config invariant that the call budget holds the largest message of the bridge path (network-config.ts)',
     'src/lib/network-config.ts:FETCH_RESULT_OVERHEAD': 'a term of the same invariant: what a fetch result adds to its body (the head is capped by MAX_RESPONSE_HEAD)',
     'src/lib/config-schema.ts:WRITE_OVERHEAD': 'a term of the config invariant that the call budget holds a guest write of the whole file quota (config-schema.ts)',
