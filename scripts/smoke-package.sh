@@ -161,10 +161,14 @@ TS
     else
         cp "$served" "$work/sealed-document.html"
     fi
-    # The check of the file (design 03) compares a served file with the digest the bundle carries: the installed bundle
-    # holds the SHA-256 of the installed file, in base64, and so does a consumer's bundle of it.
+    # The check of the file (design 03) compares a served file with the digest the bundle carries: the digest the file
+    # states of itself, its version, which is the SHA-256 of the file without it (src/lib/document-digest.ts); the
+    # installed bundle holds it, in base64, and so does a consumer's bundle of it.
     local digest
-    digest="$(openssl dgst -sha256 -binary "$served" | base64 -w0)"
+    digest="$(bun -e "import { statedDigest } from '$root/src/lib/document-digest.ts'; const stated = statedDigest(await Bun.file(process.argv[1]).text()); if (stated === null) process.exit(1); process.stdout.write(stated);" "$served")" || {
+        echo "package smoke test failed ($build build): sealed-document.html does not state a digest that holds" >&2
+        exit 1
+    }
     for bundle in "$(dirname "$served")/index.js" out/consumer.js; do
         if ! grep -qF "\"$digest\"" "$bundle"; then
             echo "package smoke test failed ($build build): $bundle does not hold the digest of sealed-document.html ($digest)" >&2
