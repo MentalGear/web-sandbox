@@ -33,6 +33,7 @@ import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, Trusted
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, NO_HOST_PAGE, STRICT_VIEW_FLAGS, unknownModeReason, type AppOptionName, type CallBudget, type EmbedderOptionName, type StoredConfig } from "./lib/config-schema";
 import { readStart, type StartValues } from "./lib/app-start";
 import { documentAddress, readDocumentUrl, registeredDocumentUrl, storeRegistration } from "./lib/document-url";
+import { canCheckDocument, checkDocument, keptDocumentCheck } from "./lib/document-check";
 import type { Holds } from "./lib/utils";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
@@ -1722,8 +1723,30 @@ export class WebSandbox extends ElementBase {
         if (!buildsHere(this)) return NOT_HERE;
         const strict = hasStrictView(this._config.mode);
         const served = this._viewIsServed();
+        // the check of the served file (document-check.ts): an answer the registration kept is not asked again, and a
+        // finding it kept refuses the build before anything is framed; with none, the build waits for the check where the
+        // realm can make the request
+        const documentUrl = registeredDocumentUrl();
+        const kept = served && documentUrl !== null ? keptDocumentCheck(documentUrl) : undefined;
+        const checksFile = served && documentUrl !== null && kept === undefined && canCheckDocument();
+        const blocked = this._buildRefusal() ?? kept?.finding ?? null;
         // a bootstrap runs, and announces its port, exactly where the inline script can run (_getMarkupPlan's test, BR:CB1)
-        return { buildsHere: true, blocked: this._buildRefusal(), strict, served, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
+        return { buildsHere: true, blocked, strict, served, checksFile, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
+    }
+
+    // The executor's `checkFile` effect (design 03, "The check of the file"): the registration's request for documentUrl,
+    // shared with every build that waits for it at once (document-check.ts). Its answer is this build's `fileChecked`,
+    // stamped with the build's generation, so the answer of a build that is gone (removed, reset, terminated meanwhile)
+    // is dropped by the reducer; the registration keeps it all the same. A library with no digest to compare with ends the
+    // build with the error's name.
+    private _checkFile() {
+        const gen = this._lc.gen;
+        const documentUrl = registeredDocumentUrl();
+        if (documentUrl === null) throw mintUncodedError(Error, 'a sealed build checked a file without documentUrl'); // _buildContext decides
+        checkDocument(documentUrl).then(
+            (check) => step(this, { t: 'fileChecked', gen, finding: check.answered ? check.finding : null }),
+            (error) => step(this, { t: 'fileChecked', gen, finding: buildFailureReason(error, 'build') }),
+        );
     }
 
     // Sealed mode's view is the served file (design 03); strict mode's is the srcdoc document network-host.ts builds.
@@ -2090,6 +2113,7 @@ const LIFECYCLE = WebSandbox.prototype as unknown as {
     _buildContext(): BuildContext;
     _prepareBuild(): PreparedBuild;
     _attachBuild(prepared: PreparedBuild): void;
+    _checkFile(): void;
     _startLoadDeadline(): void;
     _teardown(): void;
     _discardGuestWrites(): void;
@@ -2114,7 +2138,7 @@ interface LifecycleFields {
 }
 
 // The context of a build where the element may not build (buildsHere): it stops instead, and asks nothing else.
-const NOT_HERE: BuildContext = Object.freeze({ buildsHere: false, blocked: null, strict: false, served: false, announces: false });
+const NOT_HERE: BuildContext = Object.freeze({ buildsHere: false, blocked: null, strict: false, served: false, checksFile: false, announces: false });
 
 /**
  * The lifecycle executor's one entry (S65; src/lib/lifecycle.ts, `step`): reduce `input` against the element's
@@ -2161,6 +2185,7 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
         discardWrites: () => Reflect.apply(LIFECYCLE._discardGuestWrites, element, []),
         build: () => Reflect.apply(LIFECYCLE._prepareBuild, element, []),
         attach: (prepared) => Reflect.apply(LIFECYCLE._attachBuild, element, [prepared as PreparedBuild]),
+        checkFile: () => Reflect.apply(LIFECYCLE._checkFile, element, []),
         startLoadDeadline: () => Reflect.apply(LIFECYCLE._startLoadDeadline, element, []),
         failureReason: buildFailureReason,
         warn: (text) => console.warn(text),

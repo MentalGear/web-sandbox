@@ -38,12 +38,13 @@ const WINDOW_A = Object.freeze({ window: 'A' });
 const WINDOW_B = Object.freeze({ window: 'B' });
 const REASON = 'R';
 const CONTEXTS: readonly BuildContext[] = [
-    { buildsHere: false, blocked: null, strict: false, served: false, announces: false },
-    { buildsHere: true, blocked: REASON, strict: false, served: false, announces: false },
-    { buildsHere: true, blocked: null, strict: true, served: false, announces: false },
-    { buildsHere: true, blocked: null, strict: true, served: true, announces: false },
-    { buildsHere: true, blocked: null, strict: false, served: false, announces: true },
-    { buildsHere: true, blocked: null, strict: false, served: false, announces: false },
+    { buildsHere: false, blocked: null, strict: false, served: false, checksFile: false, announces: false },
+    { buildsHere: true, blocked: REASON, strict: false, served: false, checksFile: false, announces: false },
+    { buildsHere: true, blocked: null, strict: true, served: false, checksFile: false, announces: false },
+    { buildsHere: true, blocked: null, strict: true, served: true, checksFile: false, announces: false },
+    { buildsHere: true, blocked: null, strict: true, served: true, checksFile: true, announces: false },
+    { buildsHere: true, blocked: null, strict: false, served: false, checksFile: false, announces: true },
+    { buildsHere: true, blocked: null, strict: false, served: false, checksFile: false, announces: false },
 ];
 
 /** The values a field of the declared type takes in the exploration. One reason for every string: the no-repeat rule compares them. */
@@ -85,7 +86,7 @@ function stateKey(state: LcState): string {
         state.pending === null ? null : [state.pending.reason, state.pending.gen === state.gen],
         state.dispatching,
         state.within,
-        build === null ? null : [build.strict, build.announces, build.frameLoaded, build.accepted, windowName(build.announcer)],
+        build === null ? null : [build.strict, build.served, build.fileCheck, build.announces, build.frameLoaded, build.accepted, windowName(build.announcer)],
     ]);
 }
 

@@ -1,8 +1,14 @@
 import { builtinEnvironments, type Environment } from 'vitest/environments';
 
 /**
- * vitest's jsdom environment, with two changes to its teardown. A unit test that runs a bootstrap runs it on jsdom's
- * global, and the bootstrap stays as it would in a sandbox document:
+ * vitest's jsdom environment, with no network, and with two changes to its teardown.
+ *
+ * No network: jsdom has no `fetch`, and the one vitest leaves on the global is Node's, which reaches the machine's own
+ * network (the element's check of sealed mode's served file requests `documentUrl`, src/lib/document-check.ts, and the
+ * jsdom page's origin is `http://localhost:3000`, whatever answers there). So the global has none, as a document without
+ * the API, and a test that needs one installs its own; it is put back at the teardown.
+ *
+ * A unit test that runs a bootstrap runs it on jsdom's global, and the bootstrap stays as it would in a sandbox document:
  *
  * - its request gate pins `fetch`, `XMLHttpRequest` and `WebSocket` there as not configurable (src/lib/in-sandbox-script.ts).
  *   jsdom's teardown deletes every global it added, which throws for a pinned one; here a delete of a property that
@@ -18,7 +24,9 @@ export default <Environment>{
     name: 'jsdom-sandbox',
     viteEnvironment: 'client',
     async setup(global, options) {
+        const nodeFetch = Object.getOwnPropertyDescriptor(global, 'fetch');
         const { teardown } = await builtinEnvironments.jsdom.setup(global, options);
+        Reflect.deleteProperty(global, 'fetch');
         const clearTimers = trackTimers(global);
         const pinned = (key: PropertyKey) => Object.getOwnPropertyDescriptor(global, key)?.configurable === false;
         const view = new Proxy({}, {
@@ -27,9 +35,10 @@ export default <Environment>{
             deleteProperty: (_, key) => pinned(key) || Reflect.deleteProperty(global, key),
         });
         return {
-            teardown: () => {
+            teardown: async () => {
                 clearTimers();
-                return teardown(view);
+                await teardown(view);
+                if (nodeFetch && Object.getOwnPropertyDescriptor(global, 'fetch') === undefined) Object.defineProperty(global, 'fetch', nodeFetch);
             },
         };
     },

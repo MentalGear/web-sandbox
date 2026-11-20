@@ -208,6 +208,7 @@ class RecordingHost implements LifecycleHost {
         return prepared;
     }
     attach(prepared: unknown) { this.log.push(`attach ${JSON.stringify(prepared)}`); }
+    checkFile() { this.log.push('checkFile'); }
     failureReason(_error: unknown, phase: string) { return `failed (${phase})`; }
     startLoadDeadline() { this.log.push('startLoadDeadline'); }
     stopLoadDeadline() { this.log.push('stopLoadDeadline'); }
@@ -705,7 +706,7 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
         // module, through the element's `_step`
         const stepped = new Set([...elementSource().matchAll(/(?:\bstep\((?:this|element), |this\._step\()\{ t: '(\w+)'/g)].map(match => match[1]!));
         // `start`: start(), which binds the app it validated whole, then builds from it as reset() does
-        expect([...stepped].sort()).toEqual(['announced', 'build', 'connect', 'disconnect', 'frameLoad', 'loadDeadline', 'start', 'terminate', 'viewAnnounced', 'viewReady']);
+        expect([...stepped].sort()).toEqual(['announced', 'build', 'connect', 'disconnect', 'fileChecked', 'frameLoad', 'loadDeadline', 'start', 'terminate', 'viewAnnounced', 'viewReady']);
         // removed, each a second path or a second store of the lifecycle (PRs B to D)
         expect(host).not.toMatch(/_endEnvironment|private initialize\(|function stop\(|_buildInputs|_configRefusal|_isCurrentConfig|_enterState|_enterReady|_finishBuild|_completeBuild|_frameLoaded|_expectAnnouncement|_guestWindow|notYet/);
         // the class itself never calls its `_step` (the network modes' methods' entry, and the tests': the platform's inputs by hand)

@@ -39,6 +39,8 @@ export const BUILD_MODULES = {
     'src/lib/connect-facts.ts': 'data',
     'src/lib/cookie-facts.ts': 'network',
     'src/lib/css-references.ts': 'sealed',
+    'src/lib/document-check.ts': 'sealed',
+    'src/lib/document-digest.ts': 'sealed',
     'src/lib/document-url.ts': 'sealed',
     'src/lib/egress.ts': 'sealed',
     'src/lib/element-events.ts': 'sealed',
