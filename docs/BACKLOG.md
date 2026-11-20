@@ -826,7 +826,8 @@ network options, as the measurement says.
 ### <a id="t10"></a>T10 · A run reruns every spec for every change, from files served live — ⏳ **open** (P2 · M)
 
 *The owner's go-ahead, 2026-11-19.* The whole e2e suite takes about 1.2 hours on four cores with one engine after the
-other, and about 30 minutes in CI with the three side by side; a commit that changes only docs runs all of it again.
+other, and took about 30 minutes in CI with the three side by side, where a commit that changed only docs ran all of
+it again.
 
 **The root.** A run does not know what it depends on. Each test's page loads the library module by module from the dev
 server (`test/e2e/library.ts`: `src/index.ts` or `src/network.ts`), in a new browser context, so the files on disk
@@ -846,7 +847,11 @@ the time is.
 
 **Built: an engine's suite runs in three shards in CI, each on a machine of its own**
 (`.github/workflows/ci.yml`, Playwright's `--shard`), with the workers and the mix of specs a machine has always had,
-and the probes beside the first shard. Each shard's result is keyed by its inputs as above.
+and the probes beside the first shard. Each shard's result is keyed by its inputs as above. A push waits about 15
+minutes for its browsers where it waited about 29 (2026-11-20, GitHub's runners: the shards' jobs took 7, 8 and 12
+minutes on Chromium, 7, 10 and 15 on Firefox, 7, 8 and 14 on WebKit, about 90 minutes of machine time against about
+80). The third shard is the longest on every engine: Playwright divides the files by their number of tests, and the
+specs that take longest are late in their order.
 
 **Measured, and what it ruled out** (2026-11-20, GitHub's runners unless said).
 - *The specs that measure the host page as a group of their own, the rest beside it.* On two workers the measuring

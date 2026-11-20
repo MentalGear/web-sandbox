@@ -211,6 +211,10 @@ with `allow-same-origin` on F's frame, the guard's `window.stop()` kept the host
   ready, ends the build (`secondAnnouncement`); a reloaded view ends it at once this way, before the
   liveness budget could. A served frame that loads a document with no frame ends at once with "the document did not answer",
   as does a deadline with no announcement.
+- The view's size at its check-in is judged only in strict mode, where the element wrote the wrapper and the host
+  page's `style-src` can refuse its style. The served view speaks first, so it can check in before its frame's size has
+  reached it (Firefox, in the directive matrix: 150 px at the check-in, and the frame filled a moment later); F's sizing
+  sheet is admitted by F's own policy, so that size says nothing of a refused style (`test/unit/view-size-check.test.ts`).
 - A second load of F ends the build with `secondLoad` on Chromium and WebKit; on Firefox the reloaded view's second
   announcement arrives first and ends it with `secondAnnouncement`.
 - In the build with the network modes, an element registered without `documentUrl` runs the network modes only, and
