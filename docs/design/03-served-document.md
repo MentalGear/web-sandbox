@@ -282,15 +282,15 @@ with `allow-same-origin` on F's frame, the guard's `window.stop()` kept the host
   (the spec's positive control, and the same spec fails with the element's frame moved to the light DOM). A closed root
   would add nothing against the host page's own scripts, which reach the element's fields ([01](01-one-element-one-app.md#what-leaves-the-element)).
 - The view speaks first in strict mode too: the two views run one bootstrap function, so both announce themselves
-  (`VIEW_ANNOUNCE`, its type alone; 3.4 adds the version and the verdicts) and the host page answers only the first frame
+  (`VIEW_ANNOUNCE`, with the version and the verdicts since 3.4) and the host page answers only the first frame
   of the element's frame (the reducer's `viewAnnounced`). A view that announces itself twice, or once its build is
   ready, ends the build (`secondAnnouncement`); a reloaded view ends it at once this way, before the
   liveness budget could. A served frame that loads a document with no frame ends at once with "the document did not answer",
   as does a deadline with no announcement.
-- The view's size at its check-in is judged only in strict mode, where the element wrote the wrapper and the host
-  page's `style-src` can refuse its style. The served view speaks first, so it can check in before its frame's size has
-  reached it (Firefox, in the directive matrix: 150 px at the check-in, and the frame filled a moment later); F's sizing
-  sheet is admitted by F's own policy, so that size says nothing of a refused style (`test/unit/view-size-check.test.ts`).
+- The wrapper-style warning is given only in strict mode, where the element wrote the wrapper and the host page's
+  `style-src` can refuse its style; F's sizing sheet is admitted by F's own policy. The view can check in before its
+  frame's size has reached it (Firefox, in the directive matrix: 150 px at the check-in, and the frame filled a moment
+  later), so the warning rests on the view's own finding of the refusal, not on its size (step 3.4, below).
 - A second load of F ends the build with `secondLoad` on Chromium and WebKit; on Firefox the reloaded view's second
   announcement arrives first and ends it with `secondAnnouncement`.
 - In the build with the network modes, an element registered without `documentUrl` runs the network modes only, and
@@ -467,6 +467,56 @@ So the view holds nothing of the guest's before its own gates have answered, no 
 have, and no data of the embedder's is sent before both. A file of another version receives no port and nothing of the
 guest's. A hostile document at `documentUrl` can announce whatever it likes; that is the trust of
 [the file's host](#who-is-trusted-with-the-app), which no order of messages changes.
+
+**As built (step 3.4).** `src/lib/startup-verdicts.ts` reads the announcement and the worker's verdicts; the reducer's
+`viewAnnounced` (with its `finding`), `viewReady` and `workerVerdicts` act on them (`src/lib/lifecycle.ts`); the gates'
+registry is `STARTUP_GATES` (`src/lib/startup-gates.ts`, filled by step 3.5); the specs are `test/e2e/startup-order.spec.ts`
+(three engines), `test/unit/lifecycle-reducer.test.ts` ("the start-up order") and the model runs with a start-up finding
+(`test/unit/lifecycle-transitions.test.ts`, `test/model/reducer-runner.ts`, `startup`). What the text above left open:
+
+- **The version is the file's digest: one value.** The view cannot hold the digest of the file that holds it, and the
+  check of the file must compare every byte, so the file states its digest of itself: the generator lays the file out
+  with the version empty, takes that text's SHA-256, and writes it into one attribute of C's root element
+  (`VERSION_ATTRIBUTE`, `data-web-sandbox-version`), outside every text the policy admits by hash, so the policy is the
+  same whatever the attribute says (`renderSealedDocument`). The check of the file holds a file to it by removing the
+  digest's one occurrence and hashing the rest (`holdsDigest`, `src/lib/document-digest.ts`), and the view announces the
+  attribute as its version. So the library carries one constant, given to every loader as row 3.3's digest is
+  (`scripts/served-document.ts` reads it from the generated file, `statedDigest`), and there are no two values that must
+  agree. Rejected: a version written into the bootstrap (it changes the script's hash, so the file could not hold the
+  digest of itself, and the library would carry a second constant), and the package's `version` (one value per release,
+  which a file generated from other sources of the same release shares).
+- **What "another version" means where the check could not read the bytes.** A view whose document states another
+  digest, or none, is another version's file: the host page posts it nothing and ends the build with `documentVersion`.
+  It is a check of what a copy states about itself, nothing more: a copy rewritten by a tool keeps the version it was
+  generated with, which is why a meta mutant still reaches the gates (3.5), and why the check of the file, where it can
+  read, is what refuses such a copy (`documentChanged`). Where the check read the file and passed, the version always
+  matches.
+- **Strict mode's view states no version.** Its document is the `srcdoc` this very element writes in the same step, so it
+  is of this version by construction; the host compares the version for the served file only, and both views read
+  their verdicts by the same registry, per mode.
+- **The host reads the announcement in the handler that tested its source**: `_onViewAnnouncement` computes the finding
+  (the version, then each of the view's gates of the build's mode, the first that is not exactly `true` naming its
+  reason) and steps `viewAnnounced{source, finding}`; with a finding the reducer ends the build and posts nothing, with
+  none it posts INIT_VIEW to that window in the same step. A forged announcement can only end its own build.
+- **How the worker's verdicts travel, and when.** The logic port reaches the worker in INIT_WORKER, which a worker
+  handles only after its whole script, the entry included, has run, so no verdict can travel on that port before the
+  entry. The worker's prelude instead posts its verdicts on its own global, as its first message, before any code of the
+  guest's exists; the view takes the first message of its worker only (it stops listening after it, so nothing the guest
+  posts later is heard), copies the registry's names as booleans, and hands them on on the view port after its check-in
+  (`WORKER_VERDICTS`, `FRAMES`). A failed gate posts its verdicts and then throws, cancelled in the worker, so nothing
+  after it in the worker's script runs and the view hears no entry error.
+- **`'ready'` and the waiting calls.** The reducer's build has `checkedIn` and `workerHeld`; the build is `ready`, and
+  the `flush` effect runs, only once both are true, in either order. A failed worker verdict ends the build while it is
+  `loading`, so no call and no `execute()` is ever posted to that worker, and the guest's entry never ran there. An entry
+  that does not parse sends no verdicts, so its build ends with "the guest entry failed to start" while `loading`, where
+  it was `ready` for a moment before.
+- **The wrapper-style warning.** The view's size at its check-in can precede the host page's layout of the frame (row
+  3.2), so the size is no evidence of anything. The warning's one cause, a host page's `style-src` that refuses the
+  wrapper's style, is found by the view itself: the policies it inherits are the wrapper's, its own policy admits any
+  inline style, so a `<style>` of the wrapper's very text applies in the view exactly where the wrapper's applied
+  (`wrapperStyleInForce`); VIEW_READY says `wrapperStyleRefused`, and the element warns only then. A check-in at
+  150 px whose view found no refusal warns nothing (`test/e2e/view-size-warning.spec.ts` makes the check-in precede the
+  frame's size; `test/unit/view-size-check.test.ts`).
 
 **Measured** (research 31, Q1 and Q7, a fixture of this order with a library worker): it works on all three engines. The
 right file announced itself and received the app in 100 of 100 starts per engine, half of them with the host page's

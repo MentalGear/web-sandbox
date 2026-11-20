@@ -14,7 +14,7 @@ import { execFileSync, execFile } from 'node:child_process';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { documentDigest } from '../src/lib/document-digest';
+import { statedDigest } from '../src/lib/document-digest';
 
 /** The identifier src/lib/document-digest.ts declares, which every loader replaces with the digest's string literal. */
 export const DOCUMENT_DIGEST_DEFINE = '__WEB_SANDBOX_DOCUMENT_DIGEST__';
@@ -25,13 +25,19 @@ const SCRIPT = join(ROOT, 'scripts', 'served-document.ts');
 // the bootstrap is a few hundred kilobytes of text: room for it on stdout
 const MAX_BUFFER = 64 * 1024 * 1024;
 
-/** The served file and its digest. */
+/** The served file and its digest, which the file states as its version. */
 export interface ServedDocument {
     readonly text: string;
     readonly digest: string;
 }
 
-const withDigest = (text: string): ServedDocument => ({ text, digest: documentDigest(new TextEncoder().encode(text)) });
+// The digest the file states of itself, which is its version (src/lib/document-digest.ts): a generation whose file states
+// none, or one that does not hold, gives no loader a digest.
+function withDigest(text: string): ServedDocument {
+    const digest = statedDigest(text);
+    if (digest === null) throw new Error('scripts/served-document.ts: the generated file does not state its own digest');
+    return { text, digest };
+}
 
 /** The file as the build writes it, from the sources on disk now, and its digest. */
 export function servedDocument(): ServedDocument {

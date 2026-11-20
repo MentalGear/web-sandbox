@@ -23,7 +23,7 @@
  *   request that was not answered (a network failure, a refusal by the page's own policy, another origin that does not
  *   allow the read) is no answer: the next build asks again.
  */
-import { documentDigest, sealedDocumentDigest } from './document-digest';
+import { holdsDigest, sealedDocumentDigest } from './document-digest';
 import { reasonText, type ReasonId } from './reasons';
 
 /** A function with the platform's fetch's signature. */
@@ -115,13 +115,14 @@ export function headerFinding(header: (name: string) => string | null): string |
 
 /**
  * The finding of an answer, or null when it is the library's file with no refused header. In order: the status and the
- * type (the file is missing), the bytes against `digest` (another file), then the headers: a fallback page that carries
+ * type (the file is missing), the bytes against `digest`, the version the file states and every other byte of it
+ * (another file: document-digest.ts, holdsDigest), then the headers: a fallback page that carries
  * the site's policy is named as another page, the cause to fix first.
  */
 export async function documentFinding(answer: DocumentAnswer, digest: string): Promise<string | null> {
     if (answer.status < 200 || answer.status > 299) return reasonText('documentMissing');
     if (!isHtmlType(answer.header('content-type'))) return reasonText('documentNotHtml');
-    if (documentDigest(await answer.bytes()) !== digest) return reasonText('documentChanged');
+    if (!holdsDigest(await answer.bytes(), digest)) return reasonText('documentChanged');
     return headerFinding(answer.header);
 }
 

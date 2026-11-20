@@ -6,7 +6,8 @@ import { BRIDGE_FRAME_OPTIONS, inBridgeFrame } from '@src/lib/in-bridge-frame';
  * (src/lib/lifecycle.ts: `announced`, `viewReady`, `frameLoad`), so this steps the input the platform would give the
  * standing build, through the element's private `_step`, and the reducer decides the rest as it does in a browser:
  * - strict mode: the view's check-in (`viewReady`), with `port` as the guest's logic port (the element would have made
- *   it at the wrapper's load, `_setupStrictChannels`, and handed the other end to the view);
+ *   it at the wrapper's load, `_setupStrictChannels`, and handed the other end to the view), then its worker's verdicts
+ *   (`workerVerdicts`, all held), which the view hands on after its check-in (design 03, "The start-up order");
  * - a guest whose bootstrap announces its port (cooperative mode with allow-scripts, worker mode): its announcement
  *   (`announced`), carrying `port`;
  * - a guest with no bootstrap: the wrapper's load (`frameLoad`); there is no port then, and `port` is not used.
@@ -18,7 +19,8 @@ export function checkIn(el: any, port: unknown): void {
     const gen = el._lc.gen;
     if (build?.strict) {
         el._setupChannel(port);
-        el._step({ t: 'viewReady', gen, height: null, stillStyleRefused: false });
+        el._step({ t: 'viewReady', gen, height: null, stillStyleRefused: false, wrapperStyleRefused: false });
+        el._step({ t: 'workerVerdicts', gen, finding: null });
         return;
     }
     if (build?.announces) {

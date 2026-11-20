@@ -49,4 +49,38 @@ w.startSandbox = () => new Promise(resolve => {
     inserted = performance.now();
     document.body.append(el);
 });
+// The start-up order's spec (test/e2e/startup-order.spec.ts). This page's own listener hears every announcement of a
+// window that is not the view (the element's listener ignores those; the view's own it takes and stops, though on
+// Chromium a listener of the page's added before it hears that one too), and every
+// `__spy` report of a window of the file's or of this page's (served-file-server.ts, `spy`) says what that window was
+// posted. `from` names the window a message came from, as this page can tell it.
+const elementFrame = () => document.querySelector('web-sandbox')?.shadowRoot?.querySelector('iframe')?.contentWindow ?? null;
+const whoIs = (source: MessageEventSource | null): string => {
+    if (source === null) return 'none';
+    if (source === elementFrame()) return 'file';
+    // a cross-origin window throws for an index it has no frame at (the file not loaded yet)
+    try {
+        if (elementFrame() !== null && source === (elementFrame() as Window)[0]) return 'view';
+    } catch {
+        // no view yet
+    }
+    if (source === w.sibling?.contentWindow) return 'sibling';
+    if (source === window.parent && window.parent !== window) return 'framing page';
+    return 'other';
+};
+w.heard = [] as { type: unknown; from: string; where?: unknown; got?: unknown; ports?: unknown }[];
+addEventListener('message', (event) => {
+    const data = event.data;
+    if (!data || (data.type !== 'VIEW_ANNOUNCE' && data.type !== '__spy')) return;
+    w.heard.push({ type: data.type, from: whoIs(event.source), where: data.where, got: data.got, ports: data.ports });
+});
+/** A frame of this page that announces itself as the view would, with `announcement`, and reports what it is posted. */
+w.siblingAnnounce = (announcement: object) => {
+    const frame = document.createElement('iframe');
+    const script = `addEventListener('message', function (e) { parent.postMessage({ type: '__spy', where: 'sibling', got: e.data && e.data.type, ports: e.ports.length }, '*'); }); parent.postMessage(${JSON.stringify(announcement)}, '*');`;
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.srcdoc = `<script>${script}</script>`;
+    w.sibling = frame;
+    document.body.append(frame);
+};
 w.harnessReady = true;

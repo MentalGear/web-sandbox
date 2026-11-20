@@ -174,8 +174,8 @@ The package has two builds, chosen by one build flag that is off by default
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 53 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 71 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 55 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 73 modules of `src/` |
 <!-- generated:end -->
 
 - **The default build is sealed mode alone.** It is what `bun run build:lib` writes and what the package is as
@@ -1168,6 +1168,7 @@ type FetchRecord = {
 | `the file at documentUrl is served with an X-Frame-Options header: serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the file is served with `X-Frame-Options`, whatever its value. Nothing was framed. |
 | `the file at documentUrl is served with a Content-Security-Policy header, which the view would run under beside its own policy: serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the file is served with `Content-Security-Policy`, whatever its text: the view and its worker would run under it beside the file's own `<meta>` policy. Nothing was framed. |
 | `the file at documentUrl is served with a Content-Security-Policy-Report-Only header, which would report the view's loads to its endpoint: serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the file is served with `Content-Security-Policy-Report-Only`, whatever its text: the view's loads would be reported to its endpoint. Nothing was framed. |
+| `the file at documentUrl is another version's sealed-document.html: its view states another version than this library's, so it was given nothing. Serve the file of the package this page loads, at a URL that changes with the version (see docs/API.md#registering-the-element)` | Sealed mode: the view of the file at `documentUrl` announced itself with a version other than this library's (the digest of the file it was generated as, which the file states of itself), or with none. It received no port and nothing of the app. The check of the file names such a file `documentChanged` where it can read its bytes; this reason is what is left where it could not: another origin that does not allow the read, or a server that answers the frame otherwise than the check. |
 <!-- generated:end -->
 
 Branch on `state` and the event, not on these texts. A reason names the problem, never a value: it is a fixed text
@@ -1199,11 +1200,11 @@ message names the option and what it takes. For the options it refuses as a whol
 
 ## Lifecycle
 
-<!-- describes: lifecycle:states, lifecycle:transitions, api:SandboxState sig:204e11e9a4b8 -->
+<!-- describes: lifecycle:states, lifecycle:transitions, api:SandboxState sig:204e249ba4b8 -->
 | State | Meaning |
 | :--- | :--- |
 | `idle` | No app yet (`start()` not called), or not in the document (constructed, or removed): no frame. An element with no app stays `idle` whatever is done to it. |
-| `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, for the frame to load; in strict and sealed mode, for the view to announce itself and then check in); in sealed mode a page's first build first waits for the check of the served file, and builds no frame until it answers ([Registering the element](#registering-the-element)); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
+| `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, for the frame to load; in strict and sealed mode, for the view to announce itself and then check in, and for its worker's start-up gates to hold); in sealed mode a page's first build first waits for the check of the served file, and builds no frame until it answers ([Registering the element](#registering-the-element)); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
 | `ready` | The guest can be reached; `ready` was dispatched. In cooperative mode the guest document may still be loading. |
 | `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`, the view's longest operation), an integrity check or a failed build; `terminated` was dispatched. |
 
@@ -1224,8 +1225,11 @@ and resets the per-environment caps (log rate, violations). Listeners run synchr
 
 `ready` means the guest's startup script checked in: the bootstrap, the first script of the guest document (cooperative
 mode), announced its port; in worker mode the worker's frame announced it once its worker runs; in strict and sealed
-mode the view's bootstrap announced itself to the host page, which posted it its ports (only to the window that is the
-first frame of the element's frame), and then posted its check-in on the port only it holds. It does not wait for the guest's images or its own scripts, so `LOAD_TIMEOUT_MS`
+mode the view's bootstrap announced itself to the host page with the version its document states and its start-up
+gates' verdicts, the host page posted it its ports (only to the window that is the first frame of the element's frame,
+and only when the version is this library's and every gate held), the view posted its check-in on the port only it
+holds, and the guest's worker reported that its own gates held, before the entry ran (design 03,
+[the start-up order](design/03-served-document.md#the-start-up-order)). It does not wait for the guest's images or its own scripts, so `LOAD_TIMEOUT_MS`
 bounds only that check-in; a page with slow images, or one that never finishes its document, is `ready`. A frame
 that loaded but whose startup script never checked in was refused by the host page's policy, and the reason says so. In
 sealed mode a view that never announced itself, or a frame of `documentUrl` that holds no frame, ends with "the document
@@ -2587,7 +2591,8 @@ sandboxes, never widens them. What your page's policy must allow:
   ends the build with the startup reason above. A bridge frame that fails to start alone (its script refused while the
   sandbox runs) leaves the sandbox running and fails the bridge closed: every `sandboxFetch()` rejects with `FETCH_FAILED`,
   each `fetch` record is `refused` with a `reason` that names the hash, and the element warns once. A refused wrapper style leaves the frame 150 px
-  high, and the element warns with the hash to allow; so does a refused animation stylesheet (`allowAnimations` `false`, the default),
+  high, and the element warns with the hash to allow, once the view found the refusal itself (it tries the wrapper's
+  text under the policies it inherits; the view's size at its check-in, which can precede the frame's layout, decides nothing); so does a refused animation stylesheet (`allowAnimations` `false`, the default),
   whose view then shows no guest stylesheet.
 - **Cooperative and worker mode need `'unsafe-inline'` in your page's `script-src`**, and that has a price. Their
   bootstrap is inline and its hash changes with every build, so no hash or nonce can name it. Next to a hash or a nonce a

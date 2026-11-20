@@ -34,6 +34,10 @@
  *   with a finding, or no answer. An answer is kept for the run, as the registration keeps it, and told to the model
  *   (`fileAnswered`); every build that waited gets it as its `fileChecked`, those that are gone included, which the
  *   reducer must drop.
+ * - every strict build's start-up (design 03, "The start-up order"): the view announces itself, gets its ports, checks
+ *   in, and then hands on its worker's verdicts, each after a few ms of fake time. With `startup`, every one of them
+ *   gives a finding, at the view's announcement (another version, a failed gate of the view's) or at the worker's
+ *   verdicts (a failed gate of the worker's), which the model expects to end the build (`startupFinding`).
  *
  * Listener plans run as nested steps inside the dispatch, as in test/model/runner.ts. What cannot agree without a real
  * guest is filtered out (the S65 plan): every other call, and execute(), with the guest's logs and fetches and the
@@ -108,7 +112,12 @@ export interface ReducerRunOptions {
     silentGuests?: number;
     /** The strict view is sealed mode's served file, whose check answers this way (see the module's comment). */
     servedFile?: ServedFileAnswer;
+    /** Where every strict build's start-up gives a finding (see the module's comment); none by default. */
+    startup?: 'view' | 'worker';
 }
+
+/** The finding the runner's start-up gives (`startup`): the reducer and the model compare it as a text. */
+export const STARTUP_FINDING = 'a start-up finding of the runner';
 
 /** How the fake server answers the check of the served file: the library's file, one with a finding, or nothing readable. */
 export type ServedFileAnswer = 'library' | 'finding' | 'unanswered';
@@ -372,7 +381,7 @@ export class FakeElement implements LifecycleHost {
         }
         if (ctx.strict && !frame.silent) {
             this.schedule(this.rng.int(1, 20), () => {
-                this.step({ t: 'viewAnnounced', gen: frame.gen, source: frame.guest });
+                this.step({ t: 'viewAnnounced', gen: frame.gen, source: frame.guest, finding: this.options.startup === 'view' ? STARTUP_FINDING : null });
             });
         }
     }
@@ -411,7 +420,12 @@ export class FakeElement implements LifecycleHost {
         const frame = this.frame!;
         this.log.push('sendInitView');
         if (frame.silent) return;
-        this.schedule(this.rng.int(1, 10), () => this.step({ t: 'viewReady', gen: frame.gen, height: 120, stillStyleRefused: false }));
+        // the check-in, then (on the same port, in that order) the worker's verdicts
+        const verdictsAfter = this.rng.int(1, 10);
+        this.schedule(this.rng.int(1, 10), () => {
+            this.step({ t: 'viewReady', gen: frame.gen, height: 120, stillStyleRefused: false, wrapperStyleRefused: false });
+            this.schedule(verdictsAfter, () => this.step({ t: 'workerVerdicts', gen: frame.gen, finding: this.options.startup === 'worker' ? STARTUP_FINDING : null }));
+        });
     }
 
     openChannel() { this.log.push('openChannel'); }
@@ -594,6 +608,7 @@ export function runReducerSequence(sequence: Sequence, options: ReducerRunOption
         model.servedFile = { finding: options.servedFile === 'finding' ? FILE_FINDING : null };
         el.onFileAnswer = (kept) => guard(() => model.fileAnswered(kept));
     }
+    if (options.startup !== undefined) model.startupFinding = STARTUP_FINDING;
     const trace: string[] = [];
     let failure: string | null = null;
     let failedAt = -1;

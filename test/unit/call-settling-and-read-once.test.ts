@@ -91,7 +91,10 @@ function playBuild(el: any, mode: 'cooperative' | 'worker' | 'strict') {
             el._setupStrictChannels({ postMessage() {} });
             port = el._port;
         },
-        ready: () => el._onViewMessage(el._viewPort, { type: 'VIEW_READY', width: 300, height: 150 }),
+        ready: () => {
+            el._onViewMessage(el._viewPort, { type: 'VIEW_READY', width: 300, height: 150 });
+            el._onViewMessage(el._viewPort, { type: 'WORKER_VERDICTS', verdicts: {} }); // design 03, the start-up order: after the check-in
+        },
     };
 }
 

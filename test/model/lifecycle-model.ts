@@ -27,6 +27,10 @@
  *   for the check and is never `ready` before it answered; an answer is the registration's (`fileAnswered`), so a finding
  *   ends the builds that waited for it (from a task) and refuses every later one up front, under the no-repeat rule;
  *   terminate(), reset() and removal during the wait act as on any `loading` build.
+ * - the start-up order (design 03, "The start-up order"), where the runner gives every strict build's start-up a finding
+ *   (`startupFinding`: the view's announcement states another version, or a gate of the view's or the worker's failed):
+ *   such a build is never `ready`, and ends with that finding while `loading`; terminate(), reset() and removal before
+ *   it act as on any `loading` build.
  */
 
 export type Mode = 'strict' | 'cooperative' | 'worker';
@@ -303,6 +307,8 @@ export class LifecycleModel {
     servedFile: ServedFile | null = null;
     fileAnswers = 0;
     fileKept = false;
+    // The finding every strict build's start-up gives in this run (the runner's `startup`), or null where it holds.
+    startupFinding: string | null = null;
 
     constructor(mode: Mode) {
         this.mode = mode;
@@ -664,6 +670,7 @@ export class LifecycleModel {
                 if (this.state !== 'loading' || !this.env || this.env.ready) this.fail(`ready while the model is ${this.state}${this.env?.ready ? ' (already ready)' : ''}`);
                 if (ev.state !== 'ready') this.fail(`state is ${ev.state} at ready`);
                 if (this.env.checking && this.fileAnswers === this.env.answersAtStart) this.fail('ready before the check of the served file answered');
+                if (this.startupFinding !== null && this.env.mode === 'strict') this.fail(`ready though the start-up gave a finding: ${this.startupFinding}`);
                 this.env.ready = true;
                 this.state = 'ready';
                 this.coverage.add(`event:ready|${this.mode}`);
@@ -736,6 +743,10 @@ export class LifecycleModel {
         if (reason === WATCHDOG_REASON) return env.watchdog > 0 && env.busy;
         if (reason === EXECUTION_TIMEOUT_REASON) return env.execTimeout > 0 && env.execBusy;
         if (reason === ENTRY_FAILED_REASON) return env.entryBad;
+        if (this.startupFinding !== null && reason === this.startupFinding && env.mode === 'strict') {
+            if (this.state === 'loading') this.coverage.add('event:terminated-startup');
+            return this.state === 'loading';
+        }
         if (LOAD_TIMEOUT_REASONS.includes(reason)) return this.state === 'loading' && now - env.startedAt >= LOAD_TIMEOUT_MS - 100;
         if (this.servedFile !== null && env.mode === 'strict') return this.servedAllowed(reason, env, now);
         return false;

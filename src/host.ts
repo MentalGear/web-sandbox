@@ -34,6 +34,9 @@ import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, NO_H
 import { readStart, type StartValues } from "./lib/app-start";
 import { documentAddress, readDocumentUrl, registeredDocumentUrl, storeRegistration } from "./lib/document-url";
 import { canCheckDocument, checkDocument, keptDocumentCheck } from "./lib/document-check";
+import { sealedDocumentDigest } from "./lib/document-digest";
+import { gatesOf, workerGates, type GateMode } from "./lib/startup-gates";
+import { announcementFinding, verdictFinding } from "./lib/startup-verdicts";
 import type { Holds } from "./lib/utils";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
@@ -1309,13 +1312,35 @@ export class WebSandbox extends ElementBase {
 
     // The view's announcement (VIEW_ANNOUNCE), taken only when it is trusted and comes from the first frame of the
     // element's frame as that frame is now: a frame of the host page, the file's own document, a second frame inside the
-    // file and a page that frames the host page are none of them, and are not heard. Its ports are the reducer's answer.
+    // file and a page that frames the host page are none of them, and are not heard. Read in this handler, once the source
+    // is the view's: the version it states and its gates' verdicts (startup-verdicts.ts), by the element's own registries;
+    // the reducer then posts the ports, in this step, to that window, or ends the build with the finding and posts nothing.
     private _onViewAnnouncement(iframe: HTMLIFrameElement, event: MessageEvent, gen: Generation) {
-        if (event.data.type !== VIEW_ANNOUNCEMENT_TYPE || !event.isTrusted) return;
+        const data = event.data;
+        if (data.type !== VIEW_ANNOUNCEMENT_TYPE || !event.isTrusted) return;
         const source = event.source;
         if (source === null || source !== firstFrameOf(iframe)) return;
         event.stopImmediatePropagation(); // the announcement is the element's: no other listener on this window sees it
-        step(this, { t: 'viewAnnounced', gen, source });
+        step(this, { t: 'viewAnnounced', gen, source, finding: this._announcementFinding(data) });
+    }
+
+    // What the view's announcement says against this element's registries: the version, for the served file (the digest
+    // this library was built with: a library loaded without one cannot compare, and ends the build with its error's
+    // name), then the verdicts of the gates of this build's mode.
+    private _announcementFinding(data: { version?: unknown; verdicts?: unknown }): string | null {
+        if (!this._viewIsServed()) return announcementFinding(data, 'strict', null);
+        let expected: string;
+        try {
+            expected = sealedDocumentDigest();
+        } catch (error) {
+            return buildFailureReason(error, 'complete');
+        }
+        return announcementFinding(data, 'sealed', expected);
+    }
+
+    // The mode whose start-up gates this build runs (startup-gates.ts): sealed mode's served file, or strict mode's view.
+    private _gateMode(): GateMode {
+        return this._viewIsServed() ? 'sealed' : 'strict';
     }
 
     // One frame from the guest's port: the guest document's bootstrap's, or (worker and strict mode) the worker's.
@@ -1397,7 +1422,14 @@ export class WebSandbox extends ElementBase {
         if (data?.type === 'VIEW_READY') {
             // The view's check-in, the first frame on the port only its bootstrap holds (R1:R3-1): the strict build is ready,
             // if it is still loading (the reducer's `viewReady`), and what the view measured is checked then (`checkView`).
-            step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true });
+            step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true, wrapperStyleRefused: data.wrapperStyleRefused === true });
+            return;
+        }
+        if (data?.type === 'WORKER_VERDICTS') {
+            // The worker's verdicts, which the view hands on from the worker's first message (startup-gates.ts,
+            // workerGates): the build is ready only once they held, and a failed gate ends it, before anything that
+            // waited for `ready` is sent (the reducer's `workerVerdicts`).
+            step(this, { t: 'workerVerdicts', gen, finding: verdictFinding(data.verdicts, 'worker', this._gateMode()) });
             return;
         }
         if (data?.type === 'VIEW_LINK') {
@@ -1518,8 +1550,9 @@ export class WebSandbox extends ElementBase {
         window.open(url, '_blank', LINK_WINDOW_FEATURES);
     }
 
-    // The view's height against the frame's (R1:R3-1): a view 150 px high in a taller frame means the host page's style-src
-    // refused the wrapper's style (frame-documents.ts, WRAPPER_STYLE), which nothing on this side can see. Once per element.
+    // The warning that the host page's style-src refused the wrapper's style (frame-documents.ts, WRAPPER_STYLE), which
+    // nothing on this side can see (R1:R3-1), with the view's height and the frame's: asked only once the view found the
+    // refusal (`_checkView`), and said where it shows, a view 150 px high in a taller frame. Once per element.
     private _checkViewSize(height: unknown) {
         const frame = this._iframe?.clientHeight ?? 0;
         if (this._warnedWrapperStyle || typeof height !== 'number' || height > 150 || frame <= height + 1) return;
@@ -1988,7 +2021,8 @@ export class WebSandbox extends ElementBase {
         this._exposeFetch(bridge);
     }
 
-    // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
+    // The worker's source in strict mode: the scope check, the worker's start-up gates around the globals allowlist (their
+    // verdicts are the worker's first message, and a failed gate stops the script before anything below), the comms script (bridge, logs, violations, execute,
     // the fetch bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
     // ports), the code-from-string refusal unless scriptUnsafe (code-from-strings.ts), then the guest's entry in a
     // function scope of its own, then the line that marks the entry as having
@@ -2011,7 +2045,11 @@ export class WebSandbox extends ElementBase {
         const options = { maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
         const prelude = `(function (g) {${STRICT_DIRECTIVE}`
             + `(${assertEntryScoped.toString()})(g);`
+            // the start-up gates (startup-gates.ts): the canaries that need the worker's own names before the allowlist,
+            // the rest after it; then the verdicts go to the view, and a failed gate stops the script there
+            + `var gates = (${workerGates.toString()})(g, ${toInlineScriptLiteral(gatesOf('worker', sealed ? 'sealed' : 'strict'))});`
             + workerGlobalsStatement('g', scriptUnsafe, sealed)
+            + 'gates();'
             + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()}${network ? `, undefined, ${network.requestGateSource}` : ''});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}, ${this._config.guestWrites === true ? 'comms.writeFiles' : 'null'}, ${toInlineScriptLiteral(VIEW_FILE_TYPES)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)}, ${isStyleProperty.toString()});`
@@ -2102,12 +2140,15 @@ export class WebSandbox extends ElementBase {
         if (this._viewPort) this._startViewWatchdog(this._viewPort);
     }
 
-    // `checkView`: what the view reports at its check-in (R1:R3-1). Its size is judged only where the view is in the
-    // wrapper the element wrote, whose style the host page's style-src can refuse. The served file sizes its view by a
-    // sheet its own policy admits (sealed-document.ts, SEALED_DOCUMENT_STYLE), and its frame's size reaches the view when
-    // the engine has laid the host page out, which the view's check-in can precede: 150 px there says nothing.
-    private _checkView(height: unknown, stillStyleRefused: boolean) {
-        if (!this._viewIsServed()) this._checkViewSize(height);
+    // `checkView`: what the view reports at its check-in (R1:R3-1). The wrapper-style warning has one cause, the host
+    // page's style-src refusing the wrapper's style, and the view finds that cause itself: the policies it inherits are the
+    // wrapper's, and it tries the wrapper's very text (in-sandbox-view.ts, wrapperStyleInForce). Its size is no evidence:
+    // the frame's size reaches the view when the engine has laid the host page out, which the view's check-in can precede
+    // (150 px, then the frame filled a moment later), so a size read then would warn of a refusal there was not. Only where
+    // the view is in the wrapper the element wrote: the served file sizes its view by a sheet its own policy admits
+    // (sealed-document.ts, SEALED_DOCUMENT_STYLE).
+    private _checkView(height: unknown, stillStyleRefused: boolean, wrapperStyleRefused: boolean) {
+        if (wrapperStyleRefused && !this._viewIsServed()) this._checkViewSize(height);
         if (stillStyleRefused) this._warnStillStyleRefused();
     }
 
@@ -2137,7 +2178,7 @@ const LIFECYCLE = WebSandbox.prototype as unknown as {
     _dispatchGuestLog(frame: unknown): void;
     _stopLoadDeadline(): void;
     _setupStrictChannels(target: Window): void;
-    _checkView(height: unknown, stillStyleRefused: boolean): void;
+    _checkView(height: unknown, stillStyleRefused: boolean, wrapperStyleRefused: boolean): void;
     _flush(): void;
     _startWatchdogs(): void;
     _startAutoResize(): void;
@@ -2232,7 +2273,7 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
             if (setupChannel) Reflect.apply(setupChannel, element, [port as MessagePort | null]);
         },
         closePort: (port) => (port as MessagePort | null)?.close(),
-        checkView: (height, stillStyleRefused) => Reflect.apply(LIFECYCLE._checkView, element, [height, stillStyleRefused]),
+        checkView: (height, stillStyleRefused, wrapperStyleRefused) => Reflect.apply(LIFECYCLE._checkView, element, [height, stillStyleRefused, wrapperStyleRefused]),
         flush: () => Reflect.apply(LIFECYCLE._flush, element, []),
         startWatchdogs: () => Reflect.apply(LIFECYCLE._startWatchdogs, element, []),
         startAutoResize: () => Reflect.apply(LIFECYCLE._startAutoResize, element, []),

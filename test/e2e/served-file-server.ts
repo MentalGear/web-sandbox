@@ -15,20 +15,31 @@
  *                          `devClient`, `minified`, `noGuard`, `noSandbox`, `otherVersion` (a file generated, as the
  *                          library generates it, from another bootstrap), `checkGetsFile` and `frameGetsFile` (one
  *                          answer to the check's request, Sec-Fetch-Dest `empty`, and the other page to the frame's);
- *                          `h` adds a response header, `cors` allows any origin to read it, `cache` makes it cacheable
+ *                          `h` adds a response header, `cors` allows any origin to read it, `cache` makes it cacheable;
+ *                          for the start-up order's spec (test/e2e/startup-order.spec.ts): `fAnnounces` (the file's own
+ *                          document announces itself to the host page), `secondFrame` (a second frame inside the file,
+ *                          after the view, announces itself), `fallbackFrame` (an app's page with a frame that says
+ *                          nothing); `spy=1` gives the view a listener, ahead of its bootstrap's, that tells the host page
+ *                          what it was posted (`__spy`), and every window these variants add reports the same; `hold=key`
+ *                          answers the frame's navigation only once `release?key=` was asked. A file changed this way states the library's
+ *                          version still, as a tool that rewrote the file would leave it
  *   GET /S/hits            what reached the file's path: each request's variant, Sec-Fetch-Dest and the headers that
  *                          carry the page's or the user's state (Cookie, Authorization, Referer)
+ *   GET /S/release?key=…   answers the requests held with `hold=key`
  */
 import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderSealedDocument } from '../../src/lib/sealed-document';
+import { statedDigest } from '../../src/lib/document-digest';
+import { gatesOf } from '../../src/lib/startup-gates';
+import { scriptHashSource } from '../../src/lib/csp/script-hash';
 
 export const SERVED_FILE_PATH = '/__served-file';
 
 /** The ways the file is served wrong, and right. */
-export const FILE_VARIANTS = ['library', 'missing', 'plain', 'fallback', 'devClient', 'minified', 'noGuard', 'noSandbox', 'otherVersion', 'checkGetsFile', 'frameGetsFile'] as const;
+export const FILE_VARIANTS = ['library', 'missing', 'plain', 'fallback', 'devClient', 'minified', 'noGuard', 'noSandbox', 'otherVersion', 'checkGetsFile', 'frameGetsFile', 'fAnnounces', 'secondFrame', 'fallbackFrame'] as const;
 export type FileVariant = (typeof FILE_VARIANTS)[number];
 
 export interface FileHit {
@@ -58,10 +69,48 @@ function bootstrapOf(file: string): string {
     return /<script>([\s\S]*)<\/script>/.exec(view)![1]!;
 }
 
-/** The file's text as `variant` serves it to a request whose Sec-Fetch-Dest is `dest`. */
-function fileText(variant: FileVariant, dest: string | null): string {
-    const file = readFileSync(join(ROOT, 'dist', 'sealed-document.html'), 'utf8');
+// The version a generated file states (VERSION_ATTRIBUTE): the file's own digest.
+const versionOf = (file: string): string => statedDigest(file)!;
+
+/** The file for another bootstrap, generated as the library generates it, stating `version` in place of its own. */
+function withBootstrap(bootstrap: string, version: string): string {
+    const generated = renderSealedDocument(bootstrap);
+    return generated.replace(versionOf(generated), version);
+}
+
+/**
+ * The spy (`spy=1`): a script that reports to the host page whatever its window is posted, as `__spy` with where it runs,
+ * the message's type and how many ports came with it. In the view it is a capture listener ahead of the bootstrap's own,
+ * which stops INIT_VIEW once it took it.
+ */
+const spy = (where: string, target: string) => `addEventListener('message', function (e) { ${target}.postMessage({ type: '__spy', where: '${where}', got: e.data && e.data.type, ports: e.ports.length }, '*'); }, true);`;
+
+/** An announcement as the view makes it, with the version the library states and every gate of the view's held. */
+function announcement(version: string): string {
+    const verdicts: Record<string, boolean> = {};
+    for (const name of gatesOf('view', 'sealed')) verdicts[name] = true;
+    return JSON.stringify({ type: 'VIEW_ANNOUNCE', version, verdicts });
+}
+
+/** F with one more script admitted by its policy: `script` at the end of F's head, or as a frame's document after C. */
+function withScriptInFile(file: string, script: string, where: 'head' | 'frame'): string {
+    const admitted = file.replace("script-src '", `script-src ${scriptHashSource(script)} '`);
+    if (where === 'head') return admitted.replace('</head>', `<script>${script}</script></head>`);
+    const srcdoc = `<script>${script}</script>`.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    return admitted.replace('</iframe>', `</iframe><iframe srcdoc="${srcdoc}"></iframe>`);
+}
+
+/** An app's own page with a frame of its own, at index 0, that says nothing and reports whatever it is posted. */
+const fallbackWithFrame = () => `<!DOCTYPE html><html><head><meta charset="utf-8"><title>The app</title></head><body><iframe srcdoc="${`<script>${spy('fallbackFrame', 'parent.parent')}</script>`.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')}"></iframe></body></html>\n`;
+
+/** The file's text as `variant` serves it to a request whose Sec-Fetch-Dest is `dest`; `spied`, with the spy in its view. */
+function fileText(variant: FileVariant, dest: string | null, spied = false): string {
+    const built = readFileSync(join(ROOT, 'dist', 'sealed-document.html'), 'utf8');
+    const file = spied ? withBootstrap(spy('view', 'parent.parent') + bootstrapOf(built), versionOf(built)) : built;
     switch (variant) {
+        case 'fAnnounces': return withScriptInFile(file, `parent.postMessage(${announcement(versionOf(built))}, '*');${spy('file', 'parent')}`, 'head');
+        case 'secondFrame': return withScriptInFile(file, `parent.parent.postMessage(${announcement(versionOf(built))}, '*');${spy('secondFrame', 'parent.parent')}`, 'frame');
+        case 'fallbackFrame': return fallbackWithFrame();
         case 'devClient': return file.replace('<head>', '<head><script type="module" src="/@vite/client"></script>');
         // what an HTML minifier does to it: the doctype lower-cased, the last newline gone
         case 'minified': return file.replace('<!DOCTYPE html>', '<!doctype html>').trimEnd();
@@ -69,6 +118,7 @@ function fileText(variant: FileVariant, dest: string | null): string {
         case 'noSandbox': return file.replace(/<iframe sandbox="[^"]*"/, '<iframe');
         // another version's file: the generator's output for another bootstrap, its policy admitting that one
         case 'otherVersion': return renderSealedDocument(bootstrapOf(file).replace("'use strict';", "'use strict'; "));
+        // (the spy stays in the other version's view: it states its own version)
         case 'fallback': return FALLBACK_PAGE;
         case 'checkGetsFile': return dest === 'empty' ? file : FALLBACK_PAGE;
         case 'frameGetsFile': return dest === 'empty' ? FALLBACK_PAGE : file;
@@ -81,8 +131,18 @@ const header = (req: IncomingMessage, name: string): string | null => {
     return value === undefined ? null : String(value);
 };
 
-function serveFile(req: IncomingMessage, res: ServerResponse, session: string, query: URLSearchParams) {
+// The requests held until their key is released (`hold`), per key.
+const held = new Map<string, (() => void)[]>();
+const release = (key: string) => {
+    for (const answer of held.get(key) ?? []) answer();
+    held.delete(key);
+};
+
+async function serveFile(req: IncomingMessage, res: ServerResponse, session: string, query: URLSearchParams) {
     const variant = (query.get('variant') ?? 'library') as FileVariant;
+    // only the frame's navigation is held: the check's own request (Sec-Fetch-Dest `empty`) is answered at once
+    const hold = header(req, 'sec-fetch-dest') === 'empty' ? null : query.get('hold');
+    if (hold !== null) await new Promise<void>(resolve => held.set(hold, [...(held.get(hold) ?? []), resolve]));
     const dest = header(req, 'sec-fetch-dest');
     hitsOf(session).push({ variant, dest, mode: header(req, 'sec-fetch-mode'), cookie: header(req, 'cookie'), authorization: header(req, 'authorization'), referer: header(req, 'referer'), accept: header(req, 'accept') });
     res.setHeader('cache-control', query.get('cache') ? 'max-age=3600' : 'no-store');
@@ -100,7 +160,7 @@ function serveFile(req: IncomingMessage, res: ServerResponse, session: string, q
         return;
     }
     res.setHeader('content-type', variant === 'plain' ? 'text/plain' : 'text/html');
-    res.end(fileText(variant, dest));
+    res.end(fileText(variant, dest, query.get('spy') === '1'));
 }
 
 // The Service Worker of /S/: it answers the file's requests that ask for it with a page of its own.
@@ -138,7 +198,13 @@ export function servedFileMiddleware() {
             return;
         }
         if (route === 'file/sealed-document.html') {
-            serveFile(req, res, session, url.searchParams);
+            void serveFile(req, res, session, url.searchParams);
+            return;
+        }
+        if (route === 'release') {
+            release(url.searchParams.get('key') ?? '');
+            res.setHeader('cache-control', 'no-store');
+            res.end('released');
             return;
         }
         if (route === 'hits') {

@@ -124,7 +124,7 @@ describe("the reducer's properties on fuzzed inputs", () => {
         if (state.dispatching.length > 0) inputs.push({ t: 'dispatchEnded' });
         for (const ctx of contexts) inputs.push({ t: 'connect', ctx }, { t: 'build', ctx });
         for (const gen of gens) {
-            inputs.push({ t: 'buildTerminationDue', gen }, { t: 'loadDeadline', gen }, { t: 'viewReady', gen, height: 100, stillStyleRefused: false });
+            inputs.push({ t: 'buildTerminationDue', gen }, { t: 'loadDeadline', gen }, { t: 'viewReady', gen, height: 100, stillStyleRefused: false, wrapperStyleRefused: false });
             inputs.push({ t: 'built', gen, prepared: {} }, { t: 'buildFailed', gen, reason: 'x' });
             inputs.push({ t: 'terminate', reason: 'self', gen }, { t: 'terminate', reason: 'self', gen, notices: [{ level: 'error', text: 'line', source: 'host' }] });
             for (const guest of [null, ANNOUNCER, OTHER]) for (const stillOurs of [true, false]) inputs.push({ t: 'frameLoad', gen, stillOurs, guest });
@@ -258,7 +258,7 @@ describe('design 01: an element with no app builds nothing, and is never termina
     });
     it('no input of a build is admitted before start(): each comes from an environment that exists only once one is built', () => {
         const gen = INITIAL_LIFECYCLE.gen;
-        const ofABuild: LcInput[] = [{ t: 'built', gen, prepared: {} }, { t: 'buildFailed', gen, reason: 'x' }, { t: 'loadDeadline', gen }, { t: 'frameLoad', gen, stillOurs: true, guest: OTHER }, { t: 'announced', gen, valid: true, refusal: null, port: {}, source: ANNOUNCER }, { t: 'viewReady', gen, height: 1, stillStyleRefused: false }];
+        const ofABuild: LcInput[] = [{ t: 'built', gen, prepared: {} }, { t: 'buildFailed', gen, reason: 'x' }, { t: 'loadDeadline', gen }, { t: 'frameLoad', gen, stillOurs: true, guest: OTHER }, { t: 'announced', gen, valid: true, refusal: null, port: {}, source: ANNOUNCER }, { t: 'viewReady', gen, height: 1, stillStyleRefused: false, wrapperStyleRefused: false }];
         for (const input of ofABuild) expect(admits(INITIAL_LIFECYCLE, input), input.t).toBe(false);
         // and start() is admitted once: an element that has its app takes no second
         expect(admits(INITIAL_LIFECYCLE, { t: 'start' })).toBe(true);
@@ -348,11 +348,15 @@ describe('class L, finding by finding', () => {
                 const load = reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: ANNOUNCER });
                 expect(load.effects).toEqual([]);
                 host.lc = load.state;
-                const announced = reduce(host.lc, { t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER });
+                const announced = reduce(host.lc, { t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER, finding: null });
                 expect(announced.effects).toEqual([{ k: 'sendInitView', target: ANNOUNCER }]);
                 host.lc = announced.state;
-                const ready = reduce(host.lc, { t: 'viewReady', gen: host.lc.gen, height: 100, stillStyleRefused: false });
-                expect(ready.effects.map(effect => effect.k)).toEqual(['checkView', 'stopLoadDeadline', 'flush', 'startWatchdogs', 'startAutoResize', 'dispatch']);
+                // the check-in alone flushes nothing (design 03, the start-up order, step 5): the worker's verdicts are still to come
+                const checkedIn = reduce(host.lc, { t: 'viewReady', gen: host.lc.gen, height: 100, stillStyleRefused: false, wrapperStyleRefused: false });
+                expect(checkedIn.effects.map(effect => effect.k)).toEqual(['checkView']);
+                host.lc = checkedIn.state;
+                const ready = reduce(host.lc, { t: 'workerVerdicts', gen: host.lc.gen, finding: null });
+                expect(ready.effects.map(effect => effect.k)).toEqual(['stopLoadDeadline', 'flush', 'startWatchdogs', 'startAutoResize', 'dispatch']);
             }
         });
 
@@ -360,13 +364,13 @@ describe('class L, finding by finding', () => {
             for (const ctx of [STRICT, SERVED]) {
                 const host = new RecordingHost();
                 host.step({ t: 'connect', ctx });
-                const announced = reduce(host.lc, { t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER });
+                const announced = reduce(host.lc, { t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER, finding: null });
                 expect(announced.effects).toEqual([{ k: 'sendInitView', target: ANNOUNCER }]);
                 expect(reduce(announced.state, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: ANNOUNCER }).effects).toEqual([]);
                 const replaced = reduce(announced.state, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
                 expect(replaced.effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: reasonText('secondLoad') });
                 // a second announcement is a view that reloaded or rewrote its document
-                const again = reduce(announced.state, { t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER });
+                const again = reduce(announced.state, { t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER, finding: null });
                 expect(again.effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: reasonText('secondAnnouncement') });
             }
         });
@@ -387,7 +391,7 @@ describe('class L, finding by finding', () => {
             expect(after(SERVED, gen => [{ t: 'frameLoad', gen, stillOurs: true, guest: null }])).toEqual([reasonText('documentSilent')]);
             expect(after(SERVED, gen => [{ t: 'frameLoad', gen, stillOurs: true, guest: ANNOUNCER }, { t: 'loadDeadline', gen }])).toEqual([reasonText('documentSilent')]);
             expect(after(SERVED, gen => [{ t: 'loadDeadline', gen }])).toEqual([reasonText('documentSilent')]);
-            expect(after(SERVED, gen => [{ t: 'viewAnnounced', gen, source: ANNOUNCER }, { t: 'loadDeadline', gen }])).toEqual([reasonText('loadTimeout')]);
+            expect(after(SERVED, gen => [{ t: 'viewAnnounced', gen, source: ANNOUNCER, finding: null }, { t: 'loadDeadline', gen }])).toEqual([reasonText('loadTimeout')]);
             expect(after(STRICT, gen => [{ t: 'frameLoad', gen, stillOurs: true, guest: null }])).toEqual([reasonText('frameMissing')]);
             expect(after(STRICT, gen => [{ t: 'frameLoad', gen, stillOurs: true, guest: ANNOUNCER }, { t: 'loadDeadline', gen }])).toEqual([reasonText('startupBlocked')]);
         });
@@ -469,7 +473,7 @@ describe("the reducer describes today's host.ts", () => {
         host.step({ t: 'connect', ctx: STRICT });
         const load = reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
         expect(load.guarded).toBe(true);
-        expect(reduce(load.state, { t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false }).guarded).toBe(true);
+        expect(reduce(load.state, { t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false, wrapperStyleRefused: false }).guarded).toBe(true);
         const cooperative = new RecordingHost();
         cooperative.step({ t: 'connect', ctx: COOPERATIVE });
         expect(reduce(cooperative.lc, { t: 'announced', gen: cooperative.lc.gen, valid: true, refusal: null, port: {}, source: ANNOUNCER }).guarded).toBe(true);
@@ -485,7 +489,7 @@ describe("the reducer describes today's host.ts", () => {
             host.step({ t: 'build', ctx: STRICT });
             throw new Error('the hook threw');
         };
-        host.step({ t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false });
+        host.step({ t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false, wrapperStyleRefused: false });
         expect(host.lc.state).toBe('loading');
         expect(host.events).toEqual([]);
         expect(host.log.filter(line => line === 'flush')).toEqual([]);
@@ -571,9 +575,79 @@ describe("the reducer describes today's host.ts", () => {
         const host = new RecordingHost();
         host.step({ t: 'connect', ctx: STRICT });
         host.step({ t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
-        host.step({ t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false });
-        expect(reduce(host.lc, { t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false }).effects).toEqual([]);
+        host.step({ t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false, wrapperStyleRefused: false });
+        // a second check-in, still loading (the worker's verdicts not yet in), changes nothing
+        expect(reduce(host.lc, { t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false, wrapperStyleRefused: false }).effects).toEqual([]);
+        host.step({ t: 'workerVerdicts', gen: host.lc.gen, finding: null });
+        expect(reduce(host.lc, { t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false, wrapperStyleRefused: false }).effects).toEqual([]);
         expect(host.events).toEqual(['ready']);
+    });
+
+    describe("the start-up order (design 03): the view's announcement and its worker's verdicts", () => {
+        const loadingAt = (ctx: BuildContext) => {
+            const host = new RecordingHost();
+            host.step({ t: 'connect', ctx });
+            return host;
+        };
+        const announce = (host: RecordingHost, finding: string | null) => host.step({ t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER, finding });
+        const checkIn = (host: RecordingHost) => host.step({ t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false, wrapperStyleRefused: false });
+        const verdicts = (host: RecordingHost, finding: string | null) => host.step({ t: 'workerVerdicts', gen: host.lc.gen, finding });
+        const FINDING = reasonText('documentVersion');
+
+        it('an announcement with a finding ends the build with it, and sends the view nothing: no port, no app', () => {
+            for (const ctx of [STRICT, SERVED]) {
+                const host = loadingAt(ctx);
+                const output = reduce(host.lc, { t: 'viewAnnounced', gen: host.lc.gen, source: ANNOUNCER, finding: FINDING });
+                expect(output.effects.map(effect => effect.k)).not.toContain('sendInitView');
+                expect(output.effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: FINDING });
+                expect(output.state.state).toBe('terminated');
+            }
+        });
+
+        it("the worker's verdicts: ready only once they held and the view checked in, in either order; a failed gate ends the build before any flush; a repeat changes nothing", () => {
+            for (const order of ['check-in first', 'verdicts first'] as const) {
+                const host = loadingAt(SERVED);
+                announce(host, null);
+                if (order === 'check-in first') checkIn(host);
+                else verdicts(host, null);
+                expect([host.lc.state, host.events]).toEqual(['loading', []]);
+                if (order === 'check-in first') verdicts(host, null);
+                else checkIn(host);
+                expect([host.lc.state, host.events]).toEqual(['ready', ['ready']]);
+                expect(reduce(host.lc, { t: 'workerVerdicts', gen: host.lc.gen, finding: null }).effects).toEqual([]);
+                expect(reduce(host.lc, { t: 'workerVerdicts', gen: host.lc.gen, finding: FINDING }).effects).toEqual([]);
+            }
+            const failed = loadingAt(SERVED);
+            announce(failed, null);
+            checkIn(failed);
+            const output = reduce(failed.lc, { t: 'workerVerdicts', gen: failed.lc.gen, finding: FINDING });
+            expect(output.effects.map(effect => effect.k)).not.toContain('flush');
+            expect(output.effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: FINDING });
+        });
+
+        it('terminate(), reset() and removal at each new step: before the announcement, after it, after the check-in; what comes after from the old build is dropped', () => {
+            const steps: ((host: RecordingHost) => void)[] = [() => {}, host => announce(host, null), host => { announce(host, null); checkIn(host); }];
+            const actions: [string, (host: RecordingHost) => void, string][] = [
+                ['terminate()', host => host.step({ t: 'terminate', reason: 'stop' }), 'terminated'],
+                ['reset()', host => host.step({ t: 'build', ctx: SERVED }), 'loading'],
+                ['removal', host => host.step({ t: 'disconnect' }), 'idle'],
+            ];
+            for (const [index, reach] of steps.entries()) {
+                for (const [name, act, state] of actions) {
+                    const host = loadingAt(SERVED);
+                    const old = host.lc.gen;
+                    reach(host);
+                    act(host);
+                    expect(host.lc.state, `${name} at step ${index}`).toBe(state);
+                    const events = host.events.length;
+                    // the old build's announcement, check-in and verdicts are stale: no effect at all
+                    for (const input of [{ t: 'viewAnnounced', gen: old, source: ANNOUNCER, finding: null }, { t: 'viewReady', gen: old, height: 1, stillStyleRefused: false, wrapperStyleRefused: false }, { t: 'workerVerdicts', gen: old, finding: null }, { t: 'workerVerdicts', gen: old, finding: FINDING }] as LcInput[]) {
+                        expect(reduce(host.lc, input).effects, `${name} at step ${index}: ${input.t}`).toEqual([]);
+                    }
+                    expect(host.events.length).toBe(events);
+                }
+            }
+        });
     });
 
     it("the load deadline: before the wrapper's load the frame did not load; after it, a scripted frame's startup script did not run", () => {
@@ -706,7 +780,7 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
         // module, through the element's `_step`
         const stepped = new Set([...elementSource().matchAll(/(?:\bstep\((?:this|element), |this\._step\()\{ t: '(\w+)'/g)].map(match => match[1]!));
         // `start`: start(), which binds the app it validated whole, then builds from it as reset() does
-        expect([...stepped].sort()).toEqual(['announced', 'build', 'connect', 'disconnect', 'fileChecked', 'frameLoad', 'loadDeadline', 'start', 'terminate', 'viewAnnounced', 'viewReady']);
+        expect([...stepped].sort()).toEqual(['announced', 'build', 'connect', 'disconnect', 'fileChecked', 'frameLoad', 'loadDeadline', 'start', 'terminate', 'viewAnnounced', 'viewReady', 'workerVerdicts']);
         // removed, each a second path or a second store of the lifecycle (PRs B to D)
         expect(host).not.toMatch(/_endEnvironment|private initialize\(|function stop\(|_buildInputs|_configRefusal|_isCurrentConfig|_enterState|_enterReady|_finishBuild|_completeBuild|_frameLoaded|_expectAnnouncement|_guestWindow|notYet/);
         // the class itself never calls its `_step` (the network modes' methods' entry, and the tests': the platform's inputs by hand)

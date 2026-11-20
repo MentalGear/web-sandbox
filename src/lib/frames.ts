@@ -89,9 +89,19 @@ export const FRAMES = {
         fields: NONE,
     },
     VIEW_ANNOUNCE: {
-        purpose: "The view speaks first (design 03, \"The start-up order\"): it announces itself to its parent's parent before it has a port, and the host page posts INIT_VIEW only to the window that announced itself from the first frame of the element's frame. It holds nothing of the view's.",
+        purpose: "The view speaks first (design 03, \"The start-up order\"): once its start-up gates have answered it announces itself to its parent's parent before it has a port, and the host page posts INIT_VIEW only to the window that announced itself from the first frame of the element's frame, and only when the version and the verdicts are its own (startup-verdicts.ts). It holds nothing else, and nothing in it is a secret.",
         routes: [{ channel: 'announcement', from: ['view'], to: ['host'] }],
-        fields: NONE,
+        fields: {
+            version: { bound: 'constant', how: "the digest the view's document states (VERSION_ATTRIBUTE, document-digest.ts), or null where it states none (strict mode's srcdoc view); compared whole with the library's own" },
+            verdicts: { bound: 'not a string', how: "one boolean per start-up gate of the view's (startup-gates.ts), keyed by the registry's names; the host reads only the names its registry gives, each as exactly true" },
+        },
+    },
+    WORKER_VERDICTS: {
+        purpose: "The verdicts of the worker's start-up gates (startup-gates.ts, workerGates): the worker's first message, posted by its prelude before any code of the guest's exists, which the view hands on to the host after its check-in. The build is `ready` only once they held.",
+        routes: [{ channel: 'worker', from: ['strict-worker'], to: ['view'] }, { channel: 'view-port', from: ['view'], to: ['host'] }],
+        fields: {
+            verdicts: { bound: 'not a string', how: "one boolean per start-up gate of the worker's, keyed by the registry's names: the view copies only the registry's names, each as exactly true, and the host reads only those of its build's mode" },
+        },
     },
     INIT_VIEW: {
         purpose: "The host hands the view the logic and view ports, at the view's announcement, with what the build shows: posted to the window that announced itself, which is the first frame of the element's frame.",
@@ -183,12 +193,13 @@ export const FRAMES = {
 
     // ---- the view port
     VIEW_READY: {
-        purpose: "The view's check-in, its first frame: the strict build is ready.",
+        purpose: "The view's check-in, its first frame: the build is ready once its worker's verdicts have held too.",
         routes: [{ channel: 'view-port', from: ['view'], to: ['host'] }],
         fields: {
-            width: { bound: 'not a string', how: "the view's own window" },
-            height: { bound: 'not a string', how: "the view's own window" },
-            stillStyleRefused: { bound: 'not a string', how: "true when the host page's style-src refused the still stylesheet" },
+            width: { bound: 'not a string', how: "the view's own window, as it reads it at the check-in" },
+            height: { bound: 'not a string', how: "the view's own window, as it reads it at the check-in: the warning's figure, never its evidence" },
+            stillStyleRefused: { bound: 'not a string', how: "true when the host page's style-src refused the still stylesheet, else absent" },
+            wrapperStyleRefused: { bound: 'not a string', how: "true when the policies the view inherits refuse the wrapper's sizing sheet (wrapperStyleInForce), else absent" },
         },
     },
     VIEW_INITIAL: {

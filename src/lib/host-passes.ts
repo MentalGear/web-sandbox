@@ -169,7 +169,7 @@ export const HOST_PASSES = {
         takes: ['html', 'entry', 'files'], modes: VIEW_MODES, rule: 'pure',
         units: [
             'src/host.ts#this._prepareBuild', 'src/host.ts#this._prepareSealedFrame', 'src/lib/network-host.ts#this._prepareNetworkBuild', 'src/lib/network-host.ts#this._prepareStrictFrame', 'src/host.ts#this._prepareViewFrame', 'src/host.ts#this._viewInit',
-            'src/host.ts#this._getStrictWorkerSource', 'src/lib/frame-documents.ts#toInlineScriptLiteral', 'src/lib/in-sandbox-view.ts#buildViewDocument',
+            'src/host.ts#this._getStrictWorkerSource', 'src/lib/startup-gates.ts#gatesOf', 'src/lib/frame-documents.ts#toInlineScriptLiteral', 'src/lib/in-sandbox-view.ts#buildViewDocument',
             'src/lib/frame-documents.ts#buildWrapperDocument', 'src/lib/frame-documents.ts#escapeAttribute',
             'src/host.ts#workerGlobalsStatement', 'src/host.ts#workerGlobalsCall', 'src/lib/worker-globals.ts#workerGlobalsFor',
         ],
@@ -243,9 +243,9 @@ export const HOST_PASSES = {
         cost: 'linear in the report, whose strings VIOLATION_MAX_STRING caps',
     },
     viewFrames: {
-        does: "the view's frames: its check-in's numbers, the notes of what it dropped of the initial view (three constants, which decide the element's warning), the guest's error texts, cut again (viewErrorLine), and a link's request: its index, an integer within the element's own `links`, opens that list's URL (listedLink), never a string of the view's",
+        does: "the view's frames: its check-in's numbers, its worker's verdicts (one boolean per name of the start-up gates' registry, read by the registry's names only: verdictFinding), the notes of what it dropped of the initial view (three constants, which decide the element's warning), the guest's error texts, cut again (viewErrorLine), and a link's request: its index, an integer within the element's own `links`, opens that list's URL (listedLink), never a string of the view's",
         takes: ['viewFrames'], modes: VIEW_MODES, rule: 'pure',
-        units: ['src/host.ts#this._onViewMessage', 'src/host.ts#this._warnAboutStrictHtml', 'src/host.ts#dropsScript', 'src/host.ts#viewErrorLine', 'src/host.ts#uncaughtLine', 'src/host.ts#this._openListedLink', 'src/host.ts#this._openTab', 'src/lib/links.ts#openWhenActivated', 'src/lib/links.ts#listedLink'],
+        units: ['src/host.ts#this._onViewMessage', 'src/lib/startup-verdicts.ts#verdictFinding', 'src/lib/startup-verdicts.ts#hasOwn', 'src/host.ts#this._warnAboutStrictHtml', 'src/host.ts#dropsScript', 'src/host.ts#viewErrorLine', 'src/host.ts#uncaughtLine', 'src/host.ts#this._openListedLink', 'src/host.ts#this._openTab', 'src/lib/links.ts#openWhenActivated', 'src/lib/links.ts#listedLink'],
         cost: "constant, or linear in a text the view cut to guestText.maxLength",
     },
     fetchBridge: {
@@ -259,9 +259,9 @@ export const HOST_PASSES = {
         cost: 'linear in the request and the response, which `fetchBridge.maxBytes` caps',
     },
     announcement: {
-        does: "the guest frame's announcement: a port, taken once from the guest frame's own window, or a bootstrap's refusal, whose name is looked up in the library's table (ENVIRONMENT_REFUSALS) and whose reason, a text of the library's, ends the build; and the view's announcement, a constant type, taken only from the first frame of the element's frame (firstFrameOf), whose answer is the reducer's",
+        does: "the guest frame's announcement: a port, taken once from the guest frame's own window, or a bootstrap's refusal, whose name is looked up in the library's table (ENVIRONMENT_REFUSALS) and whose reason, a text of the library's, ends the build; and the view's announcement, a constant type, taken only from the first frame of the element's frame (firstFrameOf), whose version is compared whole with the library's digest and whose verdicts are read by the registry's names (announcementFinding), and whose answer is the reducer's",
         takes: ['announcement'], modes: ALL, rule: 'pure',
-        units: ['src/host.ts#this._listenForAnnouncement', 'src/host.ts#this._onViewAnnouncement', 'src/host.ts#firstFrameOf', 'src/lib/network-host.ts#this._onAnnouncement', 'src/host.ts#this._step', 'src/host.ts#this._refusedByHostPage', 'src/host.ts#hostNotice', 'src/lib/reasons.ts#hostLine', 'src/lib/reasons.ts#fill'],
+        units: ['src/host.ts#this._listenForAnnouncement', 'src/host.ts#this._onViewAnnouncement', 'src/host.ts#this._announcementFinding', 'src/lib/startup-verdicts.ts#announcementFinding', 'src/host.ts#firstFrameOf', 'src/lib/network-host.ts#this._onAnnouncement', 'src/host.ts#this._step', 'src/host.ts#this._refusedByHostPage', 'src/host.ts#hostNotice', 'src/lib/reasons.ts#hostLine', 'src/lib/reasons.ts#fill'],
         cost: 'constant: a lookup of one name',
     },
     carried: {

@@ -271,7 +271,8 @@ describe('the view bootstrap', () => {
     });
 
     it('is inert without INIT_VIEW: no worker, no render, nothing posted but its one announcement to parent.parent; only one INIT_VIEW from parent.parent with two ports is accepted, once; a second run of the text does nothing', async () => {
-        // jsdom: parent.parent === window. The view speaks first (design 03): one VIEW_ANNOUNCE, with nothing in it
+        // jsdom: parent.parent === window. The view speaks first (design 03): one VIEW_ANNOUNCE, with nothing in it but the
+        // version its document states (none here: jsdom's document is no served file) and its gates' verdicts, booleans
         const announced = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
         const constructed: { source: string; posted: unknown[] }[] = [];
         (globalThis as any).Worker = class {
@@ -283,7 +284,10 @@ describe('the view bootstrap', () => {
         runBootstrap(text);
         runBootstrap(text); // a copy that runs again in the same document returns at once
         expect((globalThis as any).__sandboxViewRuns).toBe(2);
-        expect(announced.mock.calls).toEqual([[{ type: VIEW_ANNOUNCEMENT_TYPE }, '*']]);
+        expect(announced.mock.calls).toHaveLength(1);
+        const [message, target] = announced.mock.calls[0]! as [{ type: string; version: unknown; verdicts: Record<string, unknown> }, string];
+        expect([Object.keys(message), message.type, message.version, target]).toEqual([['type', 'version', 'verdicts'], VIEW_ANNOUNCEMENT_TYPE, null, '*']);
+        for (const verdict of Object.values(message.verdicts)) expect(typeof verdict).toBe('boolean');
         announced.mockRestore();
 
         const send = (init: MessageEventInit) => window.dispatchEvent(new MessageEvent('message', init));

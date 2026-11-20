@@ -54,6 +54,6 @@ export function viewPolicyOf(el: HTMLElement): string {
 export function announceView(el: any): { posted: { data: any; ports: MessagePort[] }[] } {
     const record = { posted: [] as { data: any; ports: MessagePort[] }[] };
     const view = { postMessage: (data: unknown, _origin: string, ports: MessagePort[] = []) => record.posted.push({ data, ports }) };
-    el._step({ t: 'viewAnnounced', gen: el._lc.gen, source: view });
+    el._step({ t: 'viewAnnounced', gen: el._lc.gen, source: view, finding: null }); // the version and the verdicts its own (startup-verdicts.ts)
     return record;
 }

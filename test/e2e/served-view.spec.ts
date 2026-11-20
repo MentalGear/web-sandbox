@@ -5,6 +5,8 @@ import { E2E_PORT } from './server';
 import { clickInSandbox, inFrames, inView, waitInView } from './strict-view';
 import { reasonText } from '@src/lib/reasons';
 import { SEALED_VIEW_FLAGS } from '@src/lib/sealed-document';
+import { statedDigest } from '@src/lib/document-digest';
+import { servedFileBytes } from './served-file';
 
 /**
  * Sealed mode's view is the served file (design 03; step 3.2 of design 05), on every engine:
@@ -153,8 +155,12 @@ test.describe('1. the twelve ways of opening the shipped file (I11, I14)', () =>
                 expect(result.view.origin).toBe('null');
                 expect([result.view.url, result.view.base, result.view.scripts]).toEqual(['about:srcdoc', 'about:blank', 1]);
                 for (const [name, outcome] of Object.entries(result.view.tries)) expect(outcome, name).not.toBe('reached');
-                // its one message goes to whatever page framed the file: the announcement, with nothing in it
-                expect(result.heard).toEqual([JSON.stringify({ type: 'VIEW_ANNOUNCE' })]);
+                // its one message goes to whatever page framed the file: the announcement, with nothing in it but the
+                // version the file states and its gates' verdicts, booleans (design 03, the start-up order)
+                expect(result.heard).toHaveLength(1);
+                const announcement = JSON.parse(result.heard[0]!) as { type: string; version: string; verdicts: Record<string, unknown> };
+                expect([Object.keys(announcement), announcement.type, announcement.version]).toEqual([['type', 'version', 'verdicts'], 'VIEW_ANNOUNCE', statedDigest(servedFileBytes().toString('utf8'))]);
+                for (const verdict of Object.values(announcement.verdicts)) expect(typeof verdict).toBe('boolean');
                 return;
             }
             // the guard stopped F: no view was built, and F ran nothing but the guard, whatever origin it holds

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NETWORK_MODES_FLAG } from '@src/lib/build-flag';
 import { VIEW_STILL_STYLE } from '@src/lib/in-sandbox-view';
+import { VERSION_ATTRIBUTE } from '@src/lib/document-digest';
 import { HASHED_TEXTS, POLICY_DIRECTIVES, type PolicyDirectiveRow, renderSealedDocument, SEALED_DOCUMENT_FILE, SEALED_DOCUMENT_GUARD, SEALED_DOCUMENT_STYLE, SEALED_VIEW_FLAGS, sealedDocument, sealedDocumentPolicy, sealedViewBootstrap } from '@src/lib/sealed-document';
 
 /**
@@ -74,7 +75,11 @@ function scanViolations(html: string): string[] {
     if (cScripts.length !== 1) found.push(`C has ${cScripts.length} scripts`);
     for (const element of elementsOf(c)) {
         if (!C_ELEMENTS.includes(element.localName)) found.push(`C holds a <${element.localName}>`);
-        for (const name of element.getAttributeNames()) found.push(`C's <${element.localName}> has an attribute, ${name}`);
+        for (const name of element.getAttributeNames()) {
+            // the one attribute C has: the version its root element states, a digest (document-digest.ts)
+            if (element.localName === 'html' && name === VERSION_ATTRIBUTE && /^[A-Za-z0-9+/]{43}=$/.test(element.getAttribute(name)!)) continue;
+            found.push(`C's <${element.localName}> has an attribute, ${name}`);
+        }
     }
     return found;
 }

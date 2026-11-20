@@ -80,6 +80,9 @@ export const TERMINATION_REASONS = {
     documentFrameOptions: { text: `the file at documentUrl is served with an X-Frame-Options header: serve it without one (${REGISTRATION})`, decidedBy: 'host' },
     documentCsp: { text: `the file at documentUrl is served with a Content-Security-Policy header, which the view would run under beside its own policy: serve it without one (${REGISTRATION})`, decidedBy: 'host' },
     documentCspReportOnly: { text: `the file at documentUrl is served with a Content-Security-Policy-Report-Only header, which would report the view's loads to its endpoint: serve it without one (${REGISTRATION})`, decidedBy: 'host' },
+    // The view's announcement (startup-verdicts.ts; design 03, "A file of another version"): the version the served view
+    // states is not this library's, where the check of the file could not read the bytes
+    documentVersion: { text: `the file at documentUrl is another version's ${SEALED_DOCUMENT_FILE}: its view states another version than this library's, so it was given nothing. Serve the file of the package this page loads, at a URL that changes with the version (${REGISTRATION})`, decidedBy: 'host' },
     noDocumentUrl: { text: `sealed mode's view is the served ${SEALED_DOCUMENT_FILE}, and this element was registered without documentUrl: pass it to defineWebSandbox() (${REGISTRATION})`, decidedBy: 'start' },
     // defineWebSandbox(): the definition, read before anything is defined or stored
     definitionRefused: { text: 'defineWebSandbox() takes one object, { tagName, documentUrl }, whose tagName is a string when given', decidedBy: 'define' },
@@ -128,6 +131,7 @@ export const reasonCauses = () => ({
     documentFrameOptions: 'Sealed mode, the check of the file: the file is served with `X-Frame-Options`, whatever its value. Nothing was framed.',
     documentCsp: 'Sealed mode, the check of the file: the file is served with `Content-Security-Policy`, whatever its text: the view and its worker would run under it beside the file\'s own `<meta>` policy. Nothing was framed.',
     documentCspReportOnly: "Sealed mode, the check of the file: the file is served with `Content-Security-Policy-Report-Only`, whatever its text: the view's loads would be reported to its endpoint. Nothing was framed.",
+    documentVersion: "Sealed mode: the view of the file at `documentUrl` announced itself with a version other than this library's (the digest of the file it was generated as, which the file states of itself), or with none. It received no port and nothing of the app. The check of the file names such a file `documentChanged` where it can read its bytes; this reason is what is left where it could not: another origin that does not allow the read, or a server that answers the frame otherwise than the check.",
     noDocumentUrl: "In a build with the network modes: `mode` is `'sealed'` or left out, and the element was registered without `documentUrl`. Sealed mode has no view but the served file; strict, cooperative and worker mode need none.",
     definitionRefused: '`defineWebSandbox()` was given something other than an object, or a `tagName` that is not a string.',
     documentUrlMissing: 'In the default build, `defineWebSandbox()` was given no `documentUrl`: sealed mode, the only mode of that build, has no view without it.',
@@ -169,6 +173,9 @@ export const HOST_LINE_OCCASIONS = {
 
 type Varying<Texts extends Record<string, { readonly text: string }>> = { [K in keyof Texts]: Texts[K]['text'] extends `${string}…${string}` ? K : never }[keyof Texts];
 type Templated = Varying<typeof TERMINATION_REASONS>;
+
+/** A reason whose text does not vary: `reasonText()` takes it alone. */
+export type FixedReasonId = Exclude<ReasonId, Templated>;
 
 declare const LIBRARY_DETAIL: unique symbol;
 /**
@@ -219,7 +226,7 @@ export function errorName(error: unknown): LibraryDetail {
 }
 
 /** The reason `id` gives; one whose text varies takes the detail, a LibraryDetail, that goes in place of its `…`. */
-export function reasonText(id: Exclude<ReasonId, Templated>): string;
+export function reasonText(id: FixedReasonId): string;
 export function reasonText(id: Templated, detail: LibraryDetail): string;
 export function reasonText(id: ReasonId, detail?: LibraryDetail): string {
     return fill(TERMINATION_REASONS[id].text, detail);

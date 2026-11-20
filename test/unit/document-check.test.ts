@@ -36,7 +36,7 @@ const server = vi.hoisted(() => {
 const { defineWebSandbox } = await import('@src/host');
 const { servedDocument } = await import('../../scripts/served-document');
 const check = await import('@src/lib/document-check');
-const { sealedDocumentDigest, documentDigest } = await import('@src/lib/document-digest');
+const { sealedDocumentDigest, documentDigest, holdsDigest } = await import('@src/lib/document-digest');
 const { reasonText } = await import('@src/lib/reasons');
 const { registeredDocumentUrl } = await import('@src/lib/document-url');
 
@@ -93,7 +93,12 @@ const frameOf = (el: any): HTMLIFrameElement | null => el.shadowRoot.querySelect
 describe('the digest: one generation for every loader', () => {
     it("the digest vitest's loader gave the library is the one of the file the build writes (scripts/served-document.ts)", () => {
         expect(sealedDocumentDigest()).toBe(FILE.digest);
-        expect(documentDigest(new TextEncoder().encode(FILE.text))).toBe(FILE.digest);
+        // the digest is the one the file states of itself, its version: the SHA-256 of the file without it (design 03)
+        const bytes = new TextEncoder().encode(FILE.text);
+        expect(holdsDigest(bytes, FILE.digest)).toBe(true);
+        const at = FILE.text.indexOf(FILE.digest);
+        expect(FILE.text.indexOf(FILE.digest, at + 1)).toBe(-1);
+        expect(documentDigest(new TextEncoder().encode(FILE.text.slice(0, at) + FILE.text.slice(at + FILE.digest.length)))).toBe(FILE.digest);
     });
 
     it('the bundle carries the digest and none of the file: no module of the default build imports the generator', () => {

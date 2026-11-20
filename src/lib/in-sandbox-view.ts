@@ -2,7 +2,7 @@ import { inSandboxFiles } from './in-sandbox-files';
 import { networkModes } from './network-modes';
 import { checkSandboxEnvironment, ENVIRONMENT_EXPECTED } from './environment-check';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
-import { escapeAttribute } from './frame-documents';
+import { escapeAttribute, WRAPPER_STYLE } from './frame-documents';
 import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './references';
 import { admits, LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
@@ -14,6 +14,8 @@ import { cssReferences, keepsUrl, withKeptReferences } from './css-references';
 import { styleMarkup, type StyleMarkup } from './style-markup';
 import { GUEST_IMAGE_TYPES } from './guest-bytes';
 import type { FrameType } from './frames';
+import { VERSION_ATTRIBUTE } from './document-digest';
+import { gateNames, type GateName } from './startup-gates';
 
 /**
  * Strict mode's view and worker prelude (ADR-005).
@@ -1826,6 +1828,15 @@ export interface ViewOptions {
     values: { readonly [Kind in keyof typeof VIEW_VALUE_KINDS]: readonly string[] };
     /** VIEW_LINK_CLICK_STOPS: the elements a click inside a marked link is for instead of the link. */
     linkStops: readonly string[];
+    /** WRAPPER_STYLE (frame-documents.ts): the wrapper's sizing sheet, whose text the view tries under the policies it inherits. */
+    wrapperStyle: string;
+    /** VERSION_ATTRIBUTE (document-digest.ts): the attribute of the view document's root element that states its version. */
+    versionAttribute: string;
+    /**
+     * The start-up gates (startup-gates.ts, STARTUP_GATES): the view's own per mode, and every gate of the worker's, whose
+     * verdicts the view hands on.
+     */
+    gates: { view: { sealed: readonly GateName[]; strict: readonly GateName[] }; worker: readonly GateName[] };
 }
 
 /**
@@ -1838,9 +1849,12 @@ export interface ViewOptions {
  * message is ignored. A copy of this text that ever ran a second time in the same document would return
  * at once (the run counter), and a copy elsewhere would never receive INIT_VIEW (research 15, P1).
  *
- * It speaks first (design 03, "The start-up order"): once its listener is in place it posts one message to its
- * parent's parent, VIEW_ANNOUNCE, which holds nothing of the view's; the host page posts INIT_VIEW only to the window
- * that announced itself from the first frame of the element's frame (host.ts, _listenForAnnouncement).
+ * It speaks first (design 03, "The start-up order"): once its listener is in place it runs its start-up gates
+ * (startup-gates.ts) and posts one message to its parent's parent, VIEW_ANNOUNCE: the version its document states
+ * (VERSION_ATTRIBUTE, null in strict mode's srcdoc view, which states none) and each gate's verdict, nothing else. The
+ * host page reads them in the handler that tests the source, and posts INIT_VIEW, in that step, only to the window that
+ * announced itself from the first frame of the element's frame, and only when they are its own (host.ts,
+ * _onViewAnnouncement; startup-verdicts.ts).
  */
 export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, scanCss: typeof cssReferences, keepCss: typeof withKeptReferences, keepsUrlRule: typeof keepsUrl, options: ViewOptions, makeOutbox: typeof viewInputOutbox, styleProperty: typeof isStyleProperty, encodeStyles: typeof styleMarkup, controlNames: typeof viewControlNames) {
     const g = globalThis as any;
@@ -2876,13 +2890,19 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const headOf = getter(Document.prototype, 'head');
     const firstChildOf = getter(Node.prototype, 'firstChild');
     const styleOfElement = getter(HTMLElement.prototype, 'style');
+    // The one place the view makes a <style>: a text of the library's own (the still stylesheet, or the wrapper's sizing
+    // sheet it tries), never one of the guest's.
+    const librarySheet = (text: typeof options.stillStyle | typeof options.wrapperStyle): HTMLStyleElement => {
+        const sheet = call(D.createElement, document, ['style']);
+        call(Object.getOwnPropertyDescriptor(Node.prototype, 'textContent')!.set!, sheet, [text]);
+        return sheet as HTMLStyleElement;
+    };
     const stillStyleInForce = (): boolean => {
         const head = call(headOf, document, []);
         if (!head) return false;
-        const sheet = call(D.createElement, document, ['style']);
-        call(Object.getOwnPropertyDescriptor(Node.prototype, 'textContent')!.set!, sheet, [options.stillStyle]);
+        const sheet = librarySheet(options.stillStyle);
         call(Node.prototype.insertBefore, head, [sheet, call(firstChildOf, head, [])]);
-        stillLayer = stillLayerOf(sheet as HTMLStyleElement);
+        stillLayer = stillLayerOf(sheet);
         stillPending = [];
         const names = options.still.pseudoElements;
         for (let i = 0; stillLayer && i < names.length; i++) {
@@ -2897,6 +2917,25 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const held = computed.getPropertyValue('transition-duration') === '0s' && computed.getPropertyValue('animation-name') === 'none';
         call(Node.prototype.removeChild, head, [probe]);
         return held;
+    };
+
+    // Whether the policies this document inherits admit the wrapper's sizing sheet (frame-documents.ts, WRAPPER_STYLE;
+    // R1:R3-1): the wrapper is the document they come from, and this document's own policy admits any inline style, so a
+    // <style> of the very same text applies here exactly where the wrapper's applied there. Tried once, at the check-in,
+    // before anything is rendered: it takes the default margin off the body, and is removed at once. A body that has no
+    // default margin to take tells nothing, and is not a refusal. Not the view's size: that reaches this document when the
+    // engine has laid the host page out, which the check-in can precede.
+    const wrapperStyleInForce = (): boolean => {
+        const head = call(headOf, document, []);
+        const body = call(bodyOf, document, []);
+        if (!head || !body) return true;
+        const marginOf = () => getComputedStyle(body).getPropertyValue('margin-top');
+        if (marginOf() === '0px') return true;
+        const sheet = librarySheet(options.wrapperStyle);
+        call(Node.prototype.appendChild, head, [sheet]);
+        const applied = marginOf() === '0px';
+        call(Node.prototype.removeChild, head, [sheet]);
+        return applied;
     };
 
     // The distinct URLs this view has loaded or holds (R5:M-4; VIEW_MAX_DISTINCT_URLS), without their
@@ -3742,6 +3781,21 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (body) observer.observe(body);
     };
 
+    // The verdicts the view hands on from its worker's first message (WORKER_VERDICTS): for each of `names`, true only
+    // where the worker said exactly true.
+    const verdictsOf = (data: any, names: readonly string[]): Record<string, boolean> => {
+        const has = Object.prototype.hasOwnProperty;
+        const frame = data !== null && typeof data === 'object' && data.type === 'WORKER_VERDICTS' ? data : null;
+        const said = frame === null ? null : frame.verdicts;
+        const given = said !== null && typeof said === 'object' ? said : {};
+        const out: Record<string, boolean> = {};
+        for (let i = 0; i < names.length; i++) {
+            const name = names[i]!;
+            out[name] = has.call(given, name) && given[name] === true;
+        }
+        return out;
+    };
+
     addEventListener('message', (event: MessageEvent) => {
         if (initialised || event.source !== parent.parent) return;
         const data = event.data;
@@ -3782,9 +3836,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         viewLinks = linksOf(data.links);
         const stillRefused = !switches.animations && !stillStyleInForce();
         if (stillRefused) switches.stylesheets = false;
-        viewPort.postMessage(stillRefused
-            ? { type: 'VIEW_READY', width: g.innerWidth, height: g.innerHeight, stillStyleRefused: true }
-            : { type: 'VIEW_READY', width: g.innerWidth, height: g.innerHeight });
+        const wrapperRefused = !wrapperStyleInForce();
+        viewPort.postMessage({ type: 'VIEW_READY', width: g.innerWidth, height: g.innerHeight, stillStyleRefused: stillRefused || undefined, wrapperStyleRefused: wrapperRefused || undefined });
         for (let i = 0; i < outbox.length; i++) viewPort.postMessage(outbox[i]);
         outbox.length = 0;
 
@@ -3992,6 +4045,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             toHostGuestText('GUEST_UNCAUGHT', message);
             countUncaught(message.length);
         };
+        // The worker's verdicts (startup-gates.ts, workerGates): its first message, which its prelude posts before any
+        // code of the guest's exists, so it is the library's. Every later message of the worker's global could be the
+        // guest's, and is not this view's to hear. Handed on to the host as booleans by the registry's names, nothing else.
+        worker!.onmessage = (message: MessageEvent) => {
+            worker!.onmessage = null;
+            viewPort!.postMessage({ type: 'WORKER_VERDICTS', verdicts: verdictsOf(message.data, options.gates.worker) });
+        };
         worker!.postMessage({ type: 'INIT_WORKER' }, [logicPort, channel.port2]);
 
         observeBody();
@@ -4019,9 +4079,38 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (data.autoResize === true) startAutoResize();
     }, true);
 
-    // The announcement (VIEW_ANNOUNCEMENT_TYPE): the host page answers it with INIT_VIEW, posted to this window only if it
-    // is the first frame of the element's frame. No rendered markup exists yet, so `parent` is the browser's.
-    parent.parent.postMessage({ type: 'VIEW_ANNOUNCE' }, '*');
+    // The announcement (VIEW_ANNOUNCEMENT_TYPE), once the gates have answered: the version this document states and the
+    // verdicts. The host page answers it with INIT_VIEW, posted to this window only if it is the first frame of the
+    // element's frame and only if the version and the verdicts are its own. No rendered markup exists before then, so
+    // `parent` and the root element are the browser's. A document that states a version is the served file (sealed
+    // mode); strict mode's srcdoc view states none, and runs strict mode's gates.
+    const version = call(E.getAttribute, call(rootOf, document, []), [options.versionAttribute]);
+    const gates = version === null ? options.gates.view.strict : options.gates.view.sealed;
+    // The view's start-up gates (startup-gates.ts, STARTUP_GATES): one canary per gate of the registry's, keyed by its
+    // name; the registry gives the names this mode runs (options.gates). A name with no canary here is a failed gate, so
+    // this table and the registry are one list (test/unit/startup-gates.test.ts). A canary answers whether the browser
+    // refused what it provoked, at once or once its load has answered; the announcement waits for every answer.
+    const canaries: Record<string, () => boolean | Promise<boolean>> = {};
+    const verdicts: Record<string, boolean> = {};
+    const answers: Promise<void>[] = [];
+    for (let i = 0; i < gates.length; i++) {
+        const name = gates[i]!;
+        const canary = Object.prototype.hasOwnProperty.call(canaries, name) ? canaries[name]! : null;
+        let answer: boolean | Promise<boolean> = false;
+        try {
+            if (canary !== null) answer = canary();
+        } catch {
+            answer = false;
+        }
+        if (typeof answer === 'boolean') {
+            verdicts[name] = answer;
+            continue;
+        }
+        answers.push(answer.then((held) => { verdicts[name] = held === true; }, () => { verdicts[name] = false; }));
+    }
+    const announce = () => parent.parent.postMessage({ type: 'VIEW_ANNOUNCE', version, verdicts }, '*');
+    if (answers.length === 0) announce();
+    else Promise.all(answers).then(announce);
 }
 
 /**
@@ -4609,6 +4698,9 @@ export const VIEW_OPTIONS: ViewOptions = {
     namePrefixDigits: VIEW_NAME_PREFIX_DIGITS,
     values: VIEW_VALUE_KINDS,
     linkStops: VIEW_LINK_CLICK_STOPS,
+    wrapperStyle: WRAPPER_STYLE,
+    versionAttribute: VERSION_ATTRIBUTE,
+    gates: { view: gateNames('view'), worker: [...new Set([...gateNames('worker').sealed, ...gateNames('worker').strict])] },
 };
 
 // The bootstrap's text and its hash, with the bridge frame's part they were built for (the network modes', or none).

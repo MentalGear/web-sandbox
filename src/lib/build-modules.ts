@@ -91,6 +91,8 @@ export const BUILD_MODULES = {
     'src/lib/sealed-document.ts': 'data',
     'src/lib/sealed-reach.ts': 'data',
     'src/lib/srcset.ts': 'network',
+    'src/lib/startup-gates.ts': 'sealed',
+    'src/lib/startup-verdicts.ts': 'sealed',
     'src/lib/structured-size.ts': 'sealed',
     'src/lib/style-markup.ts': 'sealed',
     'src/lib/trusted-types.ts': 'sealed',

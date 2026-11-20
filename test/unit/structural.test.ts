@@ -135,6 +135,8 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     // worker-bootstrap.ts, workerBootstrap: worker mode's frame
     ['SANDBOX_PORT', 'refused', 'refused'],
     ['INIT_PORT', 'type', "'INIT_PORT'"],
+    // startup-gates.ts, workerGates: the strict worker's first message, to the view (its verdicts)
+    ['WORKER_VERDICTS', 'verdicts', 'verdicts'],
     // in-bridge-frame.ts, inBridgeFrame: the fetch bridge's frame, to the host page (bridge port)
     ['BRIDGE_READY', 'type', "'BRIDGE_READY'"],
     ['BRIDGE_HEAD', 'type', "'BRIDGE_HEAD'"],
@@ -174,10 +176,15 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIEW_WRITTEN', 'id', 'm.id'],
     ['TRUSTED_TYPES_REFUSED', 'type', "'TRUSTED_TYPES_REFUSED'"],
     ['VIEW_ANNOUNCE', 'type', "'VIEW_ANNOUNCE'"],
+    ['VIEW_ANNOUNCE', 'version', 'version'],
+    ['VIEW_ANNOUNCE', 'verdicts', 'verdicts'],
+    ['WORKER_VERDICTS', 'type', "'WORKER_VERDICTS'"],
+    ['WORKER_VERDICTS', 'verdicts', 'verdictsOf(message.data, options.gates.worker)'],
     ['VIEW_READY', 'type', "'VIEW_READY'"],
     ['VIEW_READY', 'width', 'g.innerWidth'],
     ['VIEW_READY', 'height', 'g.innerHeight'],
-    ['VIEW_READY', 'stillStyleRefused', 'true'],
+    ['VIEW_READY', 'stillStyleRefused', 'stillRefused || undefined'],
+    ['VIEW_READY', 'wrapperStyleRefused', 'wrapperRefused || undefined'],
     ['VIEW_INITIAL', 'type', "'VIEW_INITIAL'"],
     ['VIEW_INITIAL', 'dropped', 'renderDropped'],
     ['GUEST_TEXT_DROPPED', 'type', "'GUEST_TEXT_DROPPED'"],

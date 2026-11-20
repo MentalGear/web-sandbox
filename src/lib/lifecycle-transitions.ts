@@ -86,7 +86,7 @@ function stateKey(state: LcState): string {
         state.pending === null ? null : [state.pending.reason, state.pending.gen === state.gen],
         state.dispatching,
         state.within,
-        build === null ? null : [build.strict, build.served, build.fileCheck, build.announces, build.frameLoaded, build.accepted, windowName(build.announcer)],
+        build === null ? null : [build.strict, build.served, build.fileCheck, build.announces, build.frameLoaded, build.accepted, build.checkedIn, build.workerHeld, windowName(build.announcer)],
     ]);
 }
 

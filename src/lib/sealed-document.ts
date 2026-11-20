@@ -17,6 +17,7 @@
 import { SAFE_CAPABILITIES } from '../csp-directives';
 import { STRICT_VIEW_FLAGS } from './config-schema';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
+import { documentDigest, VERSION_ATTRIBUTE } from './document-digest';
 import { FRAME_REFERRER_POLICY, SEALED_DOCUMENT_FILE, WRAPPER_BASE, WRAPPER_STYLE } from './frame-documents';
 import { VIEW_OPTIONS, VIEW_STILL_STYLE, STRICT_DIRECTIVE, viewBootstrapSource } from './in-sandbox-view';
 
@@ -136,27 +137,41 @@ function escapeFileAttribute(text: string): string {
     return text.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
-/** C's document: the bootstrap and an empty body. Its policy, base URL and referrer policy are F's, which it inherits. */
-function viewDocument(bootstrap: string): string {
-    return `<!DOCTYPE html><html><head><script>${bootstrap}</script></head><body></body></html>`;
+/**
+ * C's document: the version it states (VERSION_ATTRIBUTE, on its root element, which the bootstrap reads and announces),
+ * the bootstrap and an empty body. Its policy, base URL and referrer policy are F's, which it inherits.
+ */
+function viewDocument(bootstrap: string, version: string): string {
+    return `<!DOCTYPE html><html ${VERSION_ATTRIBUTE}="${version}"><head><script>${bootstrap}</script></head><body></body></html>`;
 }
 
 /**
- * The file for a view that runs `bootstrap`. Only `sealedDocument()` gives it a bootstrap, and the tests, to show that
- * another text gives other bytes. In F's head, in order: the charset (a served file has no other source of it), the
- * inert base URL C inherits (WRAPPER_BASE, before the policy, whose `base-uri` is `'none'`), the policy, the referrer
- * policy C inherits, the guard, and the sizing sheet (SEALED_DOCUMENT_STYLE, by its hash). Then C, which the sheet makes
- * fill F; its presentational attributes give it the width and no border where a sheet would not apply.
+ * The file for a view that runs `bootstrap`, stating its own version (design 03, "A file of another version";
+ * document-digest.ts): the file is laid out with the version empty, and the digest of that text is the version written
+ * into it. Only `sealedDocument()` gives it a bootstrap, and the tests, to show that another text gives other bytes and
+ * states another version.
  */
 export function renderSealedDocument(bootstrap: string): string {
     assertHashableScript(bootstrap);
+    const version = documentDigest(new TextEncoder().encode(layOut(bootstrap, '')));
+    return layOut(bootstrap, version);
+}
+
+/**
+ * The file's text for `bootstrap` and the `version` its view states. In F's head, in order: the charset (a served file
+ * has no other source of it), the inert base URL C inherits (WRAPPER_BASE, before the policy, whose `base-uri` is
+ * `'none'`), the policy, the referrer policy C inherits, the guard, and the sizing sheet (SEALED_DOCUMENT_STYLE, by its
+ * hash). Then C, which the sheet makes fill F; its presentational attributes give it the width and no border where a
+ * sheet would not apply. The version is outside every hashed text, so the policy is the same whatever it states.
+ */
+function layOut(bootstrap: string, version: string): string {
     const head = '<meta charset="utf-8">'
         + `<base href="${WRAPPER_BASE}">`
         + `<meta http-equiv="Content-Security-Policy" content="${escapeFileAttribute(policyText(bootstrap))}">`
         + `<meta name="referrer" content="${FRAME_REFERRER_POLICY}">`
         + `<script>${SEALED_DOCUMENT_GUARD}</script>`
         + `<style>${SEALED_DOCUMENT_STYLE}</style>`;
-    const view = `<iframe sandbox="${SEALED_VIEW_FLAGS.join(' ')}" referrerpolicy="${FRAME_REFERRER_POLICY}" width="100%" height="100%" frameborder="0" srcdoc="${escapeFileAttribute(viewDocument(bootstrap))}"></iframe>`;
+    const view = `<iframe sandbox="${SEALED_VIEW_FLAGS.join(' ')}" referrerpolicy="${FRAME_REFERRER_POLICY}" width="100%" height="100%" frameborder="0" srcdoc="${escapeFileAttribute(viewDocument(bootstrap, version))}"></iframe>`;
     return `<!DOCTYPE html><html><head>${head}</head><body marginwidth="0" marginheight="0">${view}</body></html>\n`;
 }
 
