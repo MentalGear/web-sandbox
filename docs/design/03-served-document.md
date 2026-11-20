@@ -128,7 +128,7 @@ page's Service Worker never answers the sandboxed frame's own navigation, on all
 
 ```
 host page
-└─ <web-sandbox>, closed shadow root
+└─ <web-sandbox>, shadow root
    └─ <iframe src=documentUrl sandbox="allow-scripts allow-forms …">                     F, the served file
       └─ <iframe sandbox="allow-scripts allow-forms allow-orientation-lock" srcdoc="…">  C, the view, in F's static markup
          └─ Worker(blob:)                                                                the guest's logic, started by C
@@ -149,10 +149,10 @@ host page
   page answers only the window that is the first frame of the element's own frame
   ([the start-up order](#the-start-up-order), steps 2 and 3). C accepts messages only from its parent's parent, as
   today's view does. The ports go from the host page to C, and C hands one to the worker. F handles no message.
-- **The frame of F is in the element's closed shadow root, and that is load-bearing.** A frame in a shadow tree is not
+- **The frame of F is in the element's shadow root, and that is load-bearing.** A frame in a shadow tree is not
   in the page's `window.frames`, so a site that frames the host page cannot reach F's frame and navigate it to a document
   of its own, which would then answer the handshake and receive the app. Measured on all three engines (review 2,
-  finding 8; research 31, Q5, in this design's start-up order): with the frame in a closed shadow root the framing page
+  finding 8; research 31, Q5, in this design's start-up order): with the frame in a shadow root, open or closed, the framing page
   saw no frame, before F's first load and after it; with the same frame in the light DOM
   it replaced F before its load, received the app and its files, called a host method and received the user's state.
   Today's view rests on the same property. The handshake authenticates nothing, so this is what keeps other sites out
@@ -200,7 +200,7 @@ with `allow-same-origin` on F's frame, the guard's `window.stop()` kept the host
 
 - C fills F by F's one stylesheet, the wrapper's sizing rule (`SEALED_DOCUMENT_STYLE`), admitted by its hash (`POLICY_DIRECTIVES`,
   `style-src`); C fills F and auto-resize sizes the element through it on all three engines (`test/e2e/served-view.spec.ts`).
-- The element's shadow root is open, as it was. What keeps a page that frames the host page from F's frame is that the
+- The element's shadow root is open. What keeps a page that frames the host page from F's frame is that the
   frame is in a shadow tree, which `window.frames` does not list, open or closed: measured on all three engines, the
   framing page read the host page's `length` as 0 and found no window at index 0, and a frame in the light DOM was found
   (the spec's positive control, and the same spec fails with the element's frame moved to the light DOM). A closed root
@@ -419,7 +419,7 @@ document; it never gave `undefined` (research 31, Q7, the same on all three engi
 - **The last accepting row is the trust of [the file's host](#who-is-trusted-with-the-app)**: a document that answers
   `documentUrl` and speaks the view's protocol is that host's doing. The check of the file refuses it where it can
   read the answer (the body is not the library's file). Against a page that frames the host page, what keeps its
-  document out of index 0 is the closed shadow root ([the shape](#the-shape)): with the frame in the light DOM, that
+  document out of index 0 is the shadow root ([the shape](#the-shape)): with the frame in the light DOM, that
   page's document announced itself and received the app, in this order as in the other (Q7).
 - So a document that is not the library's view and does not claim to be receives no port: impossible to reach, for
   every window that is not at index 0 of the element's frame; a documented limit for one that is.
