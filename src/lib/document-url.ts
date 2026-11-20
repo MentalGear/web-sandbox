@@ -7,8 +7,8 @@
  *   injection can add without any script, would otherwise point every element of the page at another host (review 2,
  *   finding 1). The URL is resolved and checked before anything is stored, and what is stored is its serialisation.
  * - **One rule** (`documentUrlRefusal`): the schemes of DOCUMENT_URL_SCHEMES, no user name or password, no fragment; a
- *   query and any path are the embedder's. It is the one place the rule could be widened (the owner's open decision 3,
- *   design README, "Waits for the owner").
+ *   query and any path are the embedder's. It admits `http:` and `https:` only; it is the one place where design 05's
+ *   row 3.10 (the owner's decision 3: a URL of the host page's own origin where that origin is not opaque) will widen it.
  * - **One registration.** The element class is registered under one name, so there is one value per page: the
  *   registered URL, or none (the build with the network modes registers without one, and refuses sealed mode then).
  */
@@ -29,7 +29,7 @@ export const DOCUMENT_URL_RULES = {
 
 export type DocumentUrlRule = keyof typeof DOCUMENT_URL_RULES;
 
-/** Which rule a resolved URL breaks, or null: the one rule of a `documentUrl` (design README, decision 3, widens it here). */
+/** Which rule a resolved URL breaks, or null: the one rule of a `documentUrl` (design 05's row 3.10 will widen it here). */
 export function documentUrlRefusal(url: URL): DocumentUrlRule | null {
     if (!(DOCUMENT_URL_SCHEMES as readonly string[]).includes(url.protocol)) return 'scheme';
     if (url.username !== '' || url.password !== '') return 'credentials';
