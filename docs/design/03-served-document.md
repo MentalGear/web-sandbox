@@ -83,6 +83,9 @@ defineWebSandbox(options: { tagName?: string; documentUrl: string | URL }): type
     `http(s)` copy, since the file runs there only as a sandbox page with a narrowed policy, where the guest's realms
     read every file of the extension under the `<meta>` (research 34). So the rule refuses the browsers' extension
     schemes by name (`chrome-extension:`, `moz-extension:`, `safari-web-extension:`), with a reason of their own.
+    That is a list of names, not a construction: the page reads nothing that tells an extension's page from an app
+    shell's, so an extension scheme a browser adds needs a row in `EXTENSION_SCHEMES`. `documentUrl` is the embedder's
+    own value, so the list keeps an embedder from a wrong deployment and is no boundary against the guest.
   - **Each refusal names what to do.** An opaque host page (a browser's `file:` page, a sandboxed frame, a `data:` page)
     and an extension's page are refused with the rule that names an `http(s)` copy of the file; a URL off `http(s)` of
     another origin than the page's (a `blob:` or `data:` URL, another scheme, another host) with the rule of the origin.

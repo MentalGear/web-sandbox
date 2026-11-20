@@ -98,6 +98,15 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
   never a silent partial state; a new directive is added to `CSP_DIRECTIVES` and must be classified (cases, or excluded
   with a reason), and `test/unit/realistic-host-coverage.test.ts` fails for an `INHERITED_CONTEXT` row that neither the
   realistic-host spec nor the matrix covers.
+- **The served file under test.** A spec that asks what a changed `sealed-document.html`, or a header on its response,
+  does to sealed mode serves it from `test/e2e/served-file-server.ts`, which the e2e server mounts at `/__served-file`:
+  the file as a deployment gets it wrong (`FILE_VARIANTS`), a directive of its `<meta>` changed, a header added, and a
+  record of every request for it. The comment at the top of that file lists each parameter. A sealed start prints the
+  refusals of its start-up gates' and its policy check's canaries to the browser's console (docs/API.md, "Registering
+  the element"): a spec that holds a start to a quiet console takes those lines out with `withoutStartupCanaries`
+  (`test/e2e/startup-canaries.ts`), and no others. A spec that asks whether something reached the network records what
+  the browser routes (`context.route`), not Playwright's `request` events: Chromium reports a load its policy refused as a
+  request.
 - **Discovery.** Specs are found under the checkout's own `test/e2e/` and `docs/research/`; anything under the
   checkout's own `.claude/` (nested worktrees, scratch copies) is ignored, by a pattern anchored at the checkout's root,
   so a checkout that itself lives under another one's `.claude/worktrees/` still finds its specs.

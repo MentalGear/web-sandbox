@@ -3,7 +3,7 @@
 **Status: a design, partly built.** The code as it is: [API.md](../API.md), [THREAT-MODEL.md](../THREAT-MODEL.md),
 [ARCHITECTURE.md](../../ARCHITECTURE.md). What is built is named as such where it appears: the view's value model for
 form controls ([04](04-forms-and-autofill.md)), and of step 1 the rows [05](05-build-order.md) marks built
-(`start(app, grants)`, one app per element) and of step 2 the rows it marks built, and of step 3 the rows 3.1 to 3.6.
+(`start(app, grants)`, one app per element) and of step 2 the rows it marks built, and of step 3 the rows 3.1 to 3.6 and 3.10.
 
 **Decided by the owner.** Sealed mode alone is the default build (D9, [ADR-009](../ADR-009-network-modes-build-flag.md)).
 Sealed mode's document becomes a static file the embedder serves, with its policy in a `<meta>` tag and no `srcdoc`

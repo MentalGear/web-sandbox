@@ -1,6 +1,6 @@
 # 05 · The order of the work
 
-**Status: steps 1 and 2 are built, and of step 3 the rows 3.1 to 3.6 (each row says so); the rest is a plan.** Each step ends with the repository's gates passing on both builds and three engines
+**Status: steps 1 and 2 are built, and of step 3 the rows 3.1 to 3.6 and 3.10 (each row says so); the rest is a plan.** Each step ends with the repository's gates passing on both builds and three engines
 (CONTRIBUTING.md), and each brings the structural test of its invariant ([the folder's index](README.md)). The plan is
 the one after [review 1](REVIEW-1.md), the owner's [decisions on it](README.md#decided-after-review-1) and
 [review 2](REVIEW-2.md).
