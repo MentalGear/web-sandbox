@@ -30,7 +30,7 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S87](#s87) | ⏳ open (P3 · S) · low | A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time (S74 board BD5:LIM-3; availability only) |
 | [S89](#s89) | ⏳ open (P3 · S) · low | A resizable `ArrayBuffer`'s maximum is reserved by the browser before any receiver measures it (review 3 of the design, finding 5; availability only) |
 | [S90](#s90) | ⏳ open (P3 · M) · to measure | On Chromium a page's policy does not govern requests to an installed extension's web-accessible resources (research 34) |
-| [T10](#t10) | ⏳ open (P2 · M) | A run reruns every spec for every change, from files served live. Built: CI keys the suite's result by its inputs, so a docs-only commit runs no browser. Left, in order: the specs that measure the host page (half the suite's time) as a group of their own, tests load the built bundle, a key per spec (owner, 2026-11-19) |
+| [T10](#t10) | ⏳ open (P2 · M) | A run reruns every spec for every change, from files served live. Built: CI keys the suite's result by its inputs, so a docs-only commit runs no browser, and each engine's suite runs in three shards on machines of their own. Left, in order: no two specs that measure the host page (half the suite's time) side by side, more workers on a machine once S81's scans exist, tests load the built bundle, a key per spec (owner, 2026-11-19) |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
 
 Done items, review rounds and the capability snapshot are in [the archive](archive/backlog/BACKLOG-done.md).
@@ -558,6 +558,12 @@ had the same shape. Both now run `scalingRatio` (`test/unit/scaling.ts`) inside 
 timed alternately, each keeping its fastest, sampled while the ratio is over the bound. `test/unit/host-share.test.ts`
 fails a spec that bounds one time it measured by another.
 
+**A probe of the same class, not fixed.** Strict-mode design probe P7 (`bun run test:probes`, research 15) failed once
+in CI on Chromium (2026-11-20): it measured 5,137 ms against its 5,000 ms bound, on the machine that ran the first
+shard beside it, and passed in the next run. The probe loads no source of the library,
+so the time it measured is the machine's. It bounds one wall-clock time by a constant, which neither T9's scan nor the
+scan for scaled ceilings (above) sees.
+
 **Fix, by construction** (candidates). (a) Positive controls wait until N deliveries arrive, with a timeout, plus a scan
 (beside T9's) for count-in-window controls. (b) The local CI mirror and the e2e fixture record the load at the start and
 refuse or annotate a run above a threshold. (c) The exhaustive exploration in `lifecycle-transitions` gets a
@@ -576,7 +582,7 @@ next occurrence says whether the view was hidden, empty or ended.
 (`SCALING_TIMEOUT_MS`, `test/unit/scaling.ts`), and `test/unit/host-share.test.ts` fails one under the runner's default
 limit or a number of its own: `view-autofill`'s linear submit timed out at load 8 with no ratio judged, and passes alone
 in 2.4 s. Runs of several checkouts go one at a time behind a lock (CONTRIBUTING.md, "One e2e run at a time on a
-machine"), and [T10](#t10)'s first step gives the specs that measure the host page a group of their own.
+machine"), and [T10](#t10)'s first step keeps two specs that measure the host page from running side by side.
 
 The same day, `test/e2e/strict-renderer.spec.ts` on WebKit 27.2, strict mode ("every URL the view mints is of a type that
 is not a document"), failed once among six specs run together, and its error was not kept. Not reproduced: 6 runs alone
@@ -850,7 +856,8 @@ the time is.
 and the probes beside the first shard. Each shard's result is keyed by its inputs as above. A push waits 15 to 30
 minutes for its browsers where it waited about 29 (2026-11-20, GitHub's runners, two runs: the shards' jobs took 5 to
 8, 8 and 12 minutes on Chromium, 7, 10 to 14 and 15 to 18 on Firefox, 6 to 7, 8 and 14 to 30 on WebKit; 90 to 115
-minutes of machine time against about 80). The third shard is the longest on every engine, and on WebKit it is as
+minutes of machine time against about 80). Two later runs the same day took 15 minutes each from the push to the last
+browser job, with the third shard at 12 to 13 minutes on Chromium and 15 on Firefox and WebKit. The third shard is the longest on every engine, and on WebKit it is as
 long as the whole suite was in one of the two runs: Playwright divides the files by their number of tests, the specs
 that measure the host page are late in their order and so share that shard's two workers, and on one machine they slow
 each other (below).
