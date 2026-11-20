@@ -32,7 +32,7 @@ import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, NO_HOST_PAGE, STRICT_VIEW_FLAGS, unknownModeReason, type AppOptionName, type CallBudget, type EmbedderOptionName, type StoredConfig } from "./lib/config-schema";
 import { readStart, type StartValues } from "./lib/app-start";
-import { documentAddress, readDocumentUrl, registeredDocumentUrl, storeRegistration } from "./lib/document-url";
+import { hostPage, readDocumentUrl, registeredDocumentUrl, storeRegistration } from "./lib/document-url";
 import { canCheckDocument, checkDocument, keptDocumentCheck } from "./lib/document-check";
 import { sealedDocumentDigest } from "./lib/document-digest";
 import { gatesOf, gateViolations, takeGateViolations, workerGates, type GateMode } from "./lib/startup-gates";
@@ -2410,9 +2410,12 @@ export interface SealedSandboxDefinition {
      *
      * @remarks
      * A relative URL is resolved against the document's own URL (`document.URL`), never against its base URL, so a
-     * `<base>` element in the page does not move it. It must be `http:` or `https:` and carry no user name, password or
-     * fragment; a query and any path are yours, so a URL that changes with the library's version keeps an old copy out of
-     * a cache. Whoever answers it receives every app's files and the reach of its host methods: serve it from the origin
+     * `<base>` element in the page does not move it. It must be `http:` or `https:`, or else of the host page's own origin
+     * (its scheme, host and port) where that origin, as the page reads it (`self.origin`), is neither opaque nor a browser
+     * extension's: an Electron app's `file:` page or an app shell's own standard scheme can serve the file beside the
+     * page, and a browser's `file:` page, a sandboxed frame, a `data:` page or an extension's page names an `http(s)` copy
+     * of it (design 05, row 3.10). It carries no user name, password or fragment; a query and any path are yours, so a URL
+     * that changes with the library's version keeps an old copy out of a cache. Whoever answers it receives every app's files and the reach of its host methods: serve it from the origin
      * that serves the library (docs/API.md#registering-the-element). The host page's own policy must admit it in
      * `frame-src`.
      */
@@ -2460,7 +2463,7 @@ function readDefinition(definition: unknown): { tagName: string; documentUrl: st
     const url = given.documentUrl;
     if (tagName !== undefined && typeof tagName !== 'string') throw definitionRefusal(reasonText('definitionRefused'));
     if (url === undefined && networkModes() === null) throw definitionRefusal(reasonText('documentUrlMissing'));
-    return { tagName: tagName ?? 'web-sandbox', documentUrl: url === undefined ? null : readDocumentUrl(url, documentAddress()) };
+    return { tagName: tagName ?? 'web-sandbox', documentUrl: url === undefined ? null : readDocumentUrl(url, hostPage()) };
 }
 
 const definitionRefusal = (message: string) => mintUncodedError(TypeError, `[Sandbox] defineWebSandbox(): ${message}.`);

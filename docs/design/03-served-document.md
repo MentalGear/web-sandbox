@@ -46,7 +46,8 @@ defineWebSandbox(options: { tagName?: string; documentUrl: string | URL }): type
   It is a constant because the view cannot compute a digest everywhere: under a host page that is not a secure context
   (`http:` on a name that is not loopback), `crypto.subtle` was undefined in the view on all three engines (research 31,
   Q1b).
-- **Schemes.** `documentUrl` is on `http:` or `https:`, and there is no `srcdoc` fallback (D8). A host page that is
+- **Schemes.** `documentUrl` is on `http:` or `https:`, or of the host page's own origin where that origin is neither
+  opaque nor an extension's (as built, below), and there is no `srcdoc` fallback (D8). A host page that is
   not on `http(s)` itself (a `file:` page, a browser extension's own page, an app shell on a scheme of its own) names
   an `http(s)` copy of the file: with one, the design ran from every such host page tried, a `file:` page on all three
   engines, a Chromium extension's page and Electron ([research 34](../research/34_non_http_host/README.md), measured). With the file beside the host page instead:
@@ -64,6 +65,38 @@ defineWebSandbox(options: { tagName?: string; documentUrl: string | URL }): type
   The owner's decision: no `srcdoc` path, and `documentUrl` may also be a URL of the host page's own origin where that
   origin is not opaque, which admits Electron and no browser's `file:` page
   ([index](README.md#decided-after-review-2-and-the-first-two-steps), 3; built as [05](05-build-order.md)'s 3.10).
+
+  **As built (step 3.10).** One rule, `documentUrlRefusal` (`src/lib/document-url.ts`), in the function that reads
+  `documentUrl` before anything is defined or stored: `http:` or `https:` on any host page; or else the URL's scheme,
+  host and port are the host page's own origin as the page reads it (`self.origin`), and that origin is neither `"null"`
+  nor a browser extension's (`EXTENSION_SCHEMES`); no user name or password, and no fragment. The page's address and
+  origin are read once, together (`hostPage()`: `document.URL` and `self.origin`). What the text above left open:
+
+  - **"Own origin" is the page's reading, never the URL parser's.** The parser's `origin` of a `file:` URL is `"null"`
+    in some engines (so it equals an opaque page's) and `"file://"` in others, that of a `blob:` URL is its creator's
+    (so it equals an `http(s)` page's), and that of an app shell's scheme is `"null"` wherever the engine does not know
+    the scheme as standard. So the URL's side is built from its own scheme and host (`scheme://host[:port]`), which
+    never reads `"null"` and never another scheme's origin, and is compared with `self.origin`, which the browser
+    computes from the document's real origin: a browser's `file:` page reads `"null"` (refused, the guard cannot hold
+    there), Electron's reads `"file://"` and an app shell's `"app://bundle"` (admitted, the guard measured to hold).
+  - **An extension's page is not opaque**, so "own origin, not opaque" alone would admit it; decision 3 sends it to an
+    `http(s)` copy, since the file runs there only as a sandbox page with a narrowed policy, where the guest's realms
+    read every file of the extension under the `<meta>` (research 34). So the rule refuses the browsers' extension
+    schemes by name (`chrome-extension:`, `moz-extension:`, `safari-web-extension:`), with a reason of their own.
+  - **Each refusal names what to do.** An opaque host page (a browser's `file:` page, a sandboxed frame, a `data:` page)
+    and an extension's page are refused with the rule that names an `http(s)` copy of the file; a URL off `http(s)` of
+    another origin than the page's (a `blob:` or `data:` URL, another scheme, another host) with the rule of the origin.
+  - **The check of the file** is unchanged: on a scheme whose requests the page's `fetch` cannot make (a browser's
+    `file:` page on Chromium and WebKit, research 34), the request fails and there is no check; on Electron's `file:`
+    and its `app:` (registered with `supportFetchAPI`) the page reads the file, and the check is the one of an
+    `http(s)` URL.
+
+  The specs: `test/unit/document-url.test.ts` (the rule over every scheme against every kind of host page origin),
+  `test/unit/document-check-own-scheme.test.ts` (the check on an app shell's scheme, refused and answered),
+  `test/e2e/document-url-host.spec.ts` (three engines: a browser's `file:` page with the file beside it, a page a
+  `sandbox` policy makes opaque and a `data:` page, each refused and each ready with an `http` copy; an `http` page's
+  `file:` and own `blob:` URL refused), and research 34's Electron probe against the library
+  ([`probe-electron-library.mjs`](../research/34_non_http_host/probe-electron-library.mjs)).
 
 "No backend, no server config" becomes "one static file, no response headers that set a policy on it"
 ([below](#the-policies-in-force)).

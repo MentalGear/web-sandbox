@@ -159,7 +159,7 @@ export const reasonCauses = () => ({
     noDocumentUrl: "In a build with the network modes: `mode` is `'sealed'` or left out, and the element was registered without `documentUrl`. Sealed mode has no view but the served file; strict, cooperative and worker mode need none.",
     definitionRefused: '`defineWebSandbox()` was given something other than an object, or a `tagName` that is not a string.',
     documentUrlMissing: 'In the default build, `defineWebSandbox()` was given no `documentUrl`: sealed mode, the only mode of that build, has no view without it.',
-    documentUrlRefused: "`documentUrl` breaks one of its rules, which the message names after the colon: a string or a `URL`, resolved against the document's own URL (`document.URL`, never a `<base>`), with the scheme `http:` or `https:`, no user name or password, and no fragment. A query and any path are the embedder's.",
+    documentUrlRefused: "`documentUrl` breaks one of its rules, which the message names after the colon: a string or a `URL`, resolved against the document's own URL (`document.URL`, never a `<base>`); on `http:` or `https:`, or else of the host page's own origin (its scheme, host and port) where that origin, as the page reads it (`self.origin`), is neither opaque nor a browser extension's: a browser's `file:` page, a sandboxed frame, a `data:` page and an extension's page name an `http(s)` copy of the file; no user name or password, and no fragment. A query and any path are the embedder's.",
     documentUrlChanged: 'The tag is already defined by this element with another `documentUrl` (or without one). A second definition with the same one does nothing.',
 }) as const satisfies Record<ReasonId, string>;
 

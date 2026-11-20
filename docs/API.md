@@ -41,9 +41,16 @@ the page frames it.
 
 - **Where it is resolved.** A relative `documentUrl` is resolved against the document's own URL (`document.URL`), never
   its base URL: a `<base>` in the page, which injected markup can add without any script, does not move it.
-- **What it may be.** `http:` or `https:`, with no user name, password or fragment; a query and any path are yours (a URL
-  that changes with the library's version keeps an old copy out of a cache). Anything else throws a `TypeError` that names
-  the rule.
+- **What it may be.** `http:` or `https:`, on any host page; or else a URL of the host page's own origin (its scheme,
+  host and port) where that origin, as the page reads it (`self.origin`), is neither opaque nor a browser extension's:
+  an Electron app's `file:` page or an app shell's own standard scheme (such as Electron's `app://bundle` registered as
+  `standard` and `secure`) can serve the file beside the page. A browser's `file:` page (its origin reads `"null"`,
+  where the file's guard cannot tell whether its frame is sandboxed), a sandboxed frame, a `data:` page and an
+  extension's page name an `http(s)` copy of the file instead (sent with `Access-Control-Allow-Origin` for the check of
+  the file to read it). No user name, password or fragment; a query and any path are yours (a URL that changes with the
+  library's version keeps an old copy out of a cache). Anything else throws a `TypeError` that names the rule. On a
+  scheme whose requests the page's `fetch` cannot make (a browser refuses some for a `file:` page), there is no check of
+  the file, as for another origin without CORS.
 - **Once.** A second definition of the same tag with the same `documentUrl` does nothing, and with another one throws.
 - **Who is trusted with it.** Whoever answers `documentUrl` receives every app's files, its ports and, through them, the
   reach of its host methods: the host that serves it is trusted as the host of the library's own script is. On the origin
