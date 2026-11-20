@@ -46,17 +46,21 @@ export interface ScalingResult {
     message: string;
 }
 
-function sample<R>(size: ScalingSize<R>): number {
-    const { run, verify } = size();
-    const started = performance.now();
-    const result = run();
-    const elapsed = performance.now() - started;
-    verify?.(result);
-    return elapsed;
-}
-
-/** Times `small` and `large` alternately until the ratio of their fastest times is under `bound` (see the file comment). */
+/**
+ * Times `small` and `large` alternately until the ratio of their fastest times is under `bound` (see the file comment).
+ * Self-contained: an e2e spec that compares two costs inside a page runs it there from its text,
+ * `(${scalingRatio.toString()})`, with the two works as its sizes (test/unit/host-share.test.ts fails a spec that bounds
+ * one time it measured by another).
+ */
 export function scalingRatio<S, L>(small: ScalingSize<S>, large: ScalingSize<L>, { bound, minRounds = 3, maxRounds = 25 }: ScalingOptions): ScalingResult {
+    const sample = <R>(size: ScalingSize<R>): number => {
+        const { run, verify } = size();
+        const started = performance.now();
+        const result = run();
+        const elapsed = performance.now() - started;
+        verify?.(result);
+        return elapsed;
+    };
     let smallMs = Infinity, largeMs = Infinity, rounds = 0;
     while (rounds < maxRounds) {
         smallMs = Math.min(smallMs, sample(small));

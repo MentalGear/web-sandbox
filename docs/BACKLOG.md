@@ -550,10 +550,13 @@ on the same commit was green; each is measured against the load, not against the
 - `test/unit/view-css-loads.test.ts:308`: the scaling helper reached ratio 37.2 against a bound of 24.
 - `test/unit/lifecycle-transitions.test.ts:61`: its 5 s timeout.
 
-With the rest of the e2e suite on four workers in CI ([T10](#t10), 2026-11-20), one more of this kind:
-- `test/e2e/links.spec.ts`, "the cost": `full < none * 1.5` on Chromium, where the two times are each the best of three
-  rounds but measured one after the other, so a change of the load between them is in the ratio. A measure that
-  alternates the two, as `scalingRatio` does for the unit tests, would not have it.
+**Closed by construction, of this class: a ceiling on one measured time given as another, scaled.**
+`test/e2e/links.spec.ts`, "the cost", bounded `full < none * 1.5` with each time the best of three rounds, but one
+measured after the other; it failed in CI on Chromium and on WebKit ([T10](#t10), 2026-11-20), once with the first time
+at 16 ms where it is 28 ms otherwise. `test/e2e/strict-view-budget.spec.ts` (S73's count against the parse and clean)
+had the same shape. Both now run `scalingRatio` (`test/unit/scaling.ts`) inside the view, from its text: the two works
+timed alternately, each keeping its fastest, sampled while the ratio is over the bound. `test/unit/host-share.test.ts`
+fails a spec that bounds one time it measured by another.
 
 **Fix, by construction** (candidates). (a) Positive controls wait until N deliveries arrive, with a timeout, plus a scan
 (beside T9's) for count-in-window controls. (b) The local CI mirror and the e2e fixture record the load at the start and
@@ -852,9 +855,10 @@ by its inputs as above. Both groups run on Playwright's default, half of the mac
 on the local machine and passed (2,796 tests), and 6 to 8 minutes an engine in CI, where two of its first jobs failed,
 each on a test whose assertion depends on the machine's load: one that held the host page's thread and expected a due
 timer to run before a frame's load (`guest-realm-hardening.spec.ts`, CB3; now it holds `loading` itself), and one that
-bounds the ratio of two times measured one after the other (`links.spec.ts`, the cost). So specs outside the measuring
+bounded the ratio of two times measured one after the other (`links.spec.ts`, the cost, which failed on two workers
+too; now it is measured by `scalingRatio`, [S81](#s81)). So specs outside the measuring
 group assert on times and on the order of tasks too, and running them on more workers is not sound until
-[S81](#s81)'s scan can say which do; 14 specs outside the group read a clock.
+S81's scans can say which do; 14 specs outside the group read a clock.
 
 **Fix, by construction**, what is left, in this order, each measured before and after on three engines:
 1. **The rest on all of the cores**, once S81's scan holds every spec that asserts on a time or on the order of two

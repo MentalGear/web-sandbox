@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handTimedScaling, meterHits, scalingWithoutItsTimeout, wallClockBounds } from './host-share-scan';
+import { handTimedScaling, meterHits, scaledCeilings, scalingWithoutItsTimeout, wallClockBounds } from './host-share-scan';
 import { keptCss } from '@src/lib/css-references';
 
 /**
@@ -182,5 +182,19 @@ describe('T9: every host-tick measure goes through test/e2e/host-share.ts', () =
         expect(handTimedScaling(`expect(made.size / listed.size).toBeGreaterThan(0.6);\nexpect(busy / elapsed).toBeCloseTo(0.2, 2);`)).toEqual([]);
         expect(handTimedScaling(`const result = scalingRatio(size(1000), size(8000), { bound: 24 });\nexpect(result.ratio, result.message).toBeLessThan(24);`)).toEqual([]);
         expect(handTimedScaling(`// fastest = Math.min(fastest, performance.now() - started); expect(large / small).toBeLessThan(24)`)).toEqual([]);
+    });
+
+    it('no e2e spec bounds one time it measured by another, scaled: the two it replaced are caught, a constant\'s share and the measure\'s result are not', () => {
+        const specs = [...sources('test/e2e'), ...sources('docs/research')].filter(file => /\.spec\.ts$/.test(file));
+        expect(specs.length).toBeGreaterThan(0);
+        expect(specs.flatMap(file => scaledCeilings(read(file)).map(hit => `${file}:${hit.line} ${hit.pattern}: ${hit.text}`))).toEqual([]);
+        // verbatim (links.spec.ts and strict-view-budget.spec.ts)
+        expect(scaledCeilings(`expect(cost.full).toBeLessThan(cost.none * 1.5);`)).toHaveLength(1);
+        expect(scaledCeilings(`for (const cost of measured) expect(cost.count).toBeLessThan(cost.clean / 2);`)).toHaveLength(1);
+        expect(scaledCeilings(`expect(loaded).toBeLessThanOrEqual(idle * 3);`)).toHaveLength(1);
+        // not: a share of a constant, the measure's result against its bound, a comment
+        expect(scaledCeilings(`expect(short.cost).toBeLessThan(VIEW_MAX_OPERATION_MS / 2);`)).toEqual([]);
+        expect(scaledCeilings(`expect(cost.marking.ratio, cost.marking.message).toBeLessThan(MARKING_BOUND);`)).toEqual([]);
+        expect(scaledCeilings(`// expect(cost.full).toBeLessThan(cost.none * 1.5);`)).toEqual([]);
     });
 });

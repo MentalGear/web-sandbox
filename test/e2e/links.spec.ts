@@ -6,6 +6,7 @@ import { VIEW_MODES } from './view-modes';
 import { INERT_HREF, RENDER_RULES, sanitizeRender, VIEW_LINK_CLICK_STOPS, VIEW_MAX_DEPTH, VIEW_RENDER_MAX_LENGTH } from '@src/lib/in-sandbox-view';
 import { MAX_LINKS } from '@src/lib/links';
 import { fromPreset } from './presets';
+import { scalingRatio } from '../unit/scaling';
 
 /**
  * `links` on every engine (design 02, "links: the user's click on a listed link opens it"; I6): the user's real click on
@@ -209,13 +210,16 @@ test.describe('sealed mode: nothing else opens a tab', () => {
 // with MAX_LINKS URLs; the walk from an element VIEW_MAX_DEPTH deep, through the getters the view captures; and the
 // held-key listeners (docs/design/REVIEW-3.md, finding 1): a trusted keydown's and keyup's flag, and its read by the click.
 test.describe('sealed mode: the cost', () => {
+    // a render with every listed URL to compare takes under this many times the same render with none
+    const MARKING_BOUND = 1.5;
     test('marking adds little to a render\'s parse and clean, and the click\'s walk is bounded by the depth', async ({ sandbox, page, browserName }) => {
         test.setTimeout(60000);
         expect(await sandbox.mount({ mode: 'sealed', html: '<div id="a"></div>' })).toBe('ready');
         await waitInView(page, browserName, `!!document.getElementById('a')`);
-        type Cost = { anchors: number; length: number; none: number; full: number; marked: number; walk: number; depth: number; keys: number; sent: number; without: number; withListeners: number };
+        type Cost = { anchors: number; length: number; none: number; full: number; marking: { ratio: number; message: string }; marked: number; walk: number; depth: number; keys: number; sent: number; without: number; withListeners: number };
         await inView(page, browserName, `(window.__links = null, setTimeout(() => {
             const sanitize = (${sanitizeRender.toString()});
+            const ratioOfFastest = (${scalingRatio.toString()});
             const rules = ${JSON.stringify(RENDER_RULES)};
             const listed = [];
             for (let i = 0; i < ${MAX_LINKS}; i++) listed.push('https://docs.example.com/guide/' + String(100000 + i) + '-y');
@@ -230,7 +234,8 @@ test.describe('sealed mode: the cost', () => {
                 sanitize(template.content, () => null, () => false, (css) => css, rules, switches, { elements: 50000, depth: 256, urls: 1000 }, context);
                 return context.marked.length;
             };
-            // the best of 3 rounds of 10 runs, after 5 to warm up (Firefox's clock moves in whole milliseconds)
+            // a time for the log and for a bound that is a number: the best of 3 rounds of 10 runs, after 5 to warm up
+            // (Firefox's clock moves in whole milliseconds)
             const timed = (run) => {
                 for (let i = 0; i < 5; i++) run();
                 let best = Infinity;
@@ -282,7 +287,11 @@ test.describe('sealed mode: the cost', () => {
             removeEventListener('keydown', onKeydown, true);
             removeEventListener('keyup', onKeyup, true);
             removeEventListener('click', onClick, true);
-            window.__links = { anchors, length: html.length, none: timed(() => cleaned([])), full: timed(() => cleaned(listed)), marked: cleaned(listed), walk: walked, depth, keys, sent, without, withListeners };
+            // the two renders against each other: timed alternately, 10 runs a sample, each keeping its fastest (scalingRatio)
+            for (let i = 0; i < 5; i++) { cleaned([]); cleaned(listed); }
+            const tenOf = (links) => () => ({ run: () => { for (let i = 0; i < 10; i++) cleaned(links); } });
+            const marking = ratioOfFastest(tenOf([]), tenOf(listed), { bound: ${MARKING_BOUND} });
+            window.__links = { anchors, length: html.length, none: marking.smallMs / 10, full: marking.largeMs / 10, marking: { ratio: marking.ratio, message: marking.message }, marked: cleaned(listed), walk: walked, depth, keys, sent, without, withListeners };
         }, 0), true)`);
         const cost = await waitInView<Cost>(page, browserName, `window.__links`, 50000);
         console.log(`MEASURED ${browserName} links: a ${cost.length}-character render of ${cost.anchors} links, parsed and cleaned: ${cost.none.toFixed(2)} ms with no list, ${cost.full.toFixed(2)} ms with ${MAX_LINKS} listed URLs, all missed (+${Math.round(((cost.full - cost.none) / cost.none) * 100)}%); the click's walk from ${cost.depth} deep: ${(cost.walk * 1000).toFixed(1)} µs; the held-key listeners: ${(cost.keys * 1e6).toFixed(1)} ns a keydown, its click and its keyup, and their dispatch ${(cost.without * 1000).toFixed(2)} µs without them, ${(cost.withListeners * 1000).toFixed(2)} µs with them; best of 3 rounds of 10`);
@@ -290,7 +299,7 @@ test.describe('sealed mode: the cost', () => {
         expect(cost.marked).toBe(0);
         expect(cost.depth).toBe(VIEW_MAX_DEPTH);
         // the spec's own bounds (no documented share: the marking runs in the flush, which the view's time budget charges)
-        expect(cost.full).toBeLessThan(cost.none * 1.5);
+        expect(cost.marking.ratio, cost.marking.message).toBeLessThan(MARKING_BOUND);
         expect(cost.walk).toBeLessThan(1);
         expect(cost.sent).toBe(0); // a click during a repeat is no request
         expect(cost.keys).toBeLessThan(0.01);
