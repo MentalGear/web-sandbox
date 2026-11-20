@@ -43,6 +43,12 @@ export const WRAPPER_CSP = "frame-src 'none'";
 export const WRAPPER_BASE = 'about:blank';
 
 /**
+ * The name of sealed mode's served file (sealed-document.ts generates it): in each build's output directory, in the
+ * package's `exports`, and in the reasons that tell an embedder to serve it (reasons.ts).
+ */
+export const SEALED_DOCUMENT_FILE = 'sealed-document.html';
+
+/**
  * The referrer policy of both frames (backlog S15). Set as the iframe attribute, it decides what the
  * guest's document.referrer is: WebKit otherwise reports the host page's origin there, or its full URL
  * when the host page's own policy allows that. Set as the wrapper's <meta name="referrer">, it is the

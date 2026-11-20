@@ -17,11 +17,10 @@
 import { SAFE_CAPABILITIES } from '../csp-directives';
 import { STRICT_VIEW_FLAGS } from './config-schema';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
-import { FRAME_REFERRER_POLICY, WRAPPER_BASE, WRAPPER_STYLE } from './frame-documents';
+import { FRAME_REFERRER_POLICY, SEALED_DOCUMENT_FILE, WRAPPER_BASE, WRAPPER_STYLE } from './frame-documents';
 import { VIEW_OPTIONS, VIEW_STILL_STYLE, STRICT_DIRECTIVE, viewBootstrapSource } from './in-sandbox-view';
 
-/** The file's name, in each build's output directory and in the package's `exports`. */
-export const SEALED_DOCUMENT_FILE = 'sealed-document.html';
+export { SEALED_DOCUMENT_FILE };
 
 /**
  * F's one script (design 03, "the guard"): a document that is not opaque, or that is the top-level document, stops

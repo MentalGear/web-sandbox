@@ -17,6 +17,7 @@ import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
 import { NETWORK_MODES_FLAG } from './build-flag';
 import { MAX_LINK_LENGTH } from './links';
+import { SEALED_DOCUMENT_FILE } from './frame-documents';
 
 export interface ReasonRow {
     /** The reason, with `…` where it varies. */
@@ -33,9 +34,6 @@ const OVERRUN_MS = VIEW_MAX_OPERATION_MS;
 const OVERRUN_MINUTES = VIEW_OVERRUN_WINDOW_MS / 60000;
 const HOST_PAGE_POLICY = 'see docs/API.md#host-page-policy';
 const REGISTRATION = 'see docs/API.md#registering-the-element';
-// The served file's name (sealed-document.ts, SEALED_DOCUMENT_FILE, in a registry no build imports;
-// test/unit/document-url.test.ts keeps the two equal).
-const SEALED_DOCUMENT = 'sealed-document.html';
 
 export const TERMINATION_REASONS = {
     host: { text: 'terminated by the host', decidedBy: 'host' },
@@ -73,10 +71,10 @@ export const TERMINATION_REASONS = {
     uncaughtBudget: { text: 'the guest raised more uncaught errors or unhandled rejections in one second than their budget allows', decidedBy: 'host' },
     // Sealed mode's view is the served file (design 03): the frame of documentUrl, whose view speaks first
     documentSilent: { text: `the document at documentUrl did not answer: the file is missing, the server answers its path with another page, a header on it refuses the framing or the view's script, or the host page's frame-src does not admit it (${REGISTRATION})`, decidedBy: 'lifecycle' },
-    noDocumentUrl: { text: `sealed mode's view is the served ${SEALED_DOCUMENT}, and this element was registered without documentUrl: pass it to defineWebSandbox() (${REGISTRATION})`, decidedBy: 'start' },
+    noDocumentUrl: { text: `sealed mode's view is the served ${SEALED_DOCUMENT_FILE}, and this element was registered without documentUrl: pass it to defineWebSandbox() (${REGISTRATION})`, decidedBy: 'start' },
     // defineWebSandbox(): the definition, read before anything is defined or stored
     definitionRefused: { text: 'defineWebSandbox() takes one object, { tagName, documentUrl }, whose tagName is a string when given', decidedBy: 'define' },
-    documentUrlMissing: { text: `documentUrl is required: the URL where the page serves ${SEALED_DOCUMENT}, the view of sealed mode (${REGISTRATION})`, decidedBy: 'define' },
+    documentUrlMissing: { text: `documentUrl is required: the URL where the page serves ${SEALED_DOCUMENT_FILE}, the view of sealed mode (${REGISTRATION})`, decidedBy: 'define' },
     documentUrlRefused: { text: 'documentUrl is refused: …', decidedBy: 'define' },
     documentUrlChanged: { text: 'the element is already defined with another documentUrl', decidedBy: 'define' },
 } as const satisfies Record<string, ReasonRow>;
