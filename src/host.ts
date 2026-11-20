@@ -1721,10 +1721,14 @@ export class WebSandbox extends ElementBase {
     private _buildContext(): BuildContext {
         if (!buildsHere(this)) return NOT_HERE;
         const strict = hasStrictView(this._config.mode);
-        // sealed mode's view is the served file (design 03); strict mode's is the srcdoc document network-host.ts builds
-        const served = this._config.mode === 'sealed';
+        const served = this._viewIsServed();
         // a bootstrap runs, and announces its port, exactly where the inline script can run (_getMarkupPlan's test, BR:CB1)
         return { buildsHere: true, blocked: this._buildRefusal(), strict, served, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
+    }
+
+    // Sealed mode's view is the served file (design 03); strict mode's is the srcdoc document network-host.ts builds.
+    private _viewIsServed(): boolean {
+        return this._config.mode === 'sealed';
     }
 
     // `loading` is bounded (BR:CB3): a build that has not completed within LOAD_TIMEOUT_MS of host ticks ends with a
@@ -2059,9 +2063,12 @@ export class WebSandbox extends ElementBase {
         if (this._viewPort) this._startViewWatchdog(this._viewPort);
     }
 
-    // `checkView`: what the strict view reports at its check-in (R1:R3-1).
+    // `checkView`: what the view reports at its check-in (R1:R3-1). Its size is judged only where the view is in the
+    // wrapper the element wrote, whose style the host page's style-src can refuse. The served file sizes its view by a
+    // sheet its own policy admits (sealed-document.ts, SEALED_DOCUMENT_STYLE), and its frame's size reaches the view when
+    // the engine has laid the host page out, which the view's check-in can precede: 150 px there says nothing.
     private _checkView(height: unknown, stillStyleRefused: boolean) {
-        this._checkViewSize(height);
+        if (!this._viewIsServed()) this._checkViewSize(height);
         if (stillStyleRefused) this._warnStillStyleRefused();
     }
 
