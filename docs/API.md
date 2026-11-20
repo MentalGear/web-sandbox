@@ -115,9 +115,12 @@ the page frames it.
   refuses the view's script stops the view before it runs (`the document … did not answer`). No canary reaches the
   network, and the element dispatches no `violation` for one. What such an endpoint receives before the build ends are
   the canaries' own reports, library strings only, with no referrer; the check does not see a header that names
-  `canary.invalid` itself, any `form-action`, or `script-src-attr` alone, and under those no load of the guest's exists to
-  report. The browser logs each refusal to its developer console: a sealed start shows, besides the gates' lines,
-  one or two per refused canary (`script`, `style`, `image`, `font`, `media`, `connect`, `frame`, `object` and `base`,
+  `canary.invalid` itself, any `form-action`, or `object-src` or `script-src-attr` alone, and under those no load of the
+  guest's exists to report. The check makes no `<object>`: one is loaded only while it is rendered, so a sandbox in a
+  part of your page that is not shown (`display: none`) would never see it refused, and the check waits only for loads
+  that start wherever the sandbox is. The browser logs each refusal to its developer console: a sealed start shows,
+  besides the gates' lines,
+  one or two per refused canary (`script`, `style`, `image`, `font`, `media`, `connect`, `frame` and `base`,
   each to a `*.canary.invalid` host, and a `data:` worker), all naming the file's own policy, and on Firefox one for
   the check's own font, which its font sanitizer rejects. Its cost is once per
   build, bounded by `LOAD_TIMEOUT_MS`, with no time limit of its own. Measured 2026-11-20 on a shared 4-core

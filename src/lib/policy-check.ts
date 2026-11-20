@@ -97,7 +97,13 @@ export const POLICY_ATTRIBUTE = 'data-web-sandbox-policy';
 /** The view's loads a policy can refuse: what each canary does, the view's table keyed by these names (in-sandbox-view.ts). */
 export const ADMITTED_LOADS = ['style', 'image', 'font', 'media', 'worker'] as const;
 export type AdmittedLoad = (typeof ADMITTED_LOADS)[number];
-export const REFUSED_LOADS = ['script', 'style', 'image', 'font', 'media', 'connect', 'frame', 'object', 'base', 'dataWorker'] as const;
+/**
+ * The refused loads the check makes and waits for. Each is one the platform starts when it is issued, whatever the
+ * embedder's page renders: the check answers only once each has raised its violation, so a load that starts only while
+ * its element is being rendered (an `<object>` or `<embed>`, by HTML's rule) is not among them. A sandbox in a part of
+ * the page that is not rendered (`display: none`) would wait for it for ever (test/e2e/policy-check.spec.ts, part 4b).
+ */
+export const REFUSED_LOADS = ['script', 'style', 'image', 'font', 'media', 'connect', 'frame', 'base', 'dataWorker'] as const;
 export type RefusedLoad = (typeof REFUSED_LOADS)[number];
 
 export interface PolicyCanaryRow {
@@ -156,8 +162,9 @@ export const POLICY_CANARIES = {
         unseen: "a header that names the canaries' own host, on Chromium and Firefox: the renderer removes every nested browsing context (RENDER_REMOVED_ELEMENTS)",
     },
     'object-src': {
-        admitted: null, refused: 'object', why: "`'none'` admits nothing to load",
-        unseen: "a header that names the canaries' own host, on Chromium and Firefox: the renderer removes every object and embed (RENDER_REMOVED_ELEMENTS)",
+        admitted: null, refused: null,
+        why: "HTML loads an `<object>` or `<embed>` only while it is being rendered, which the embedder's layout decides: in a sandbox that is not rendered (`display: none`) Chromium makes no load and raises no violation, so a check that waited for one would never answer there, and one that did not wait would see such a header only by the order of two tasks",
+        unseen: "an `object-src` header alone (a header's `default-src` is seen through the other canaries): the renderer removes every object and embed (RENDER_REMOVED_ELEMENTS), so no load of the guest's exists for it to report",
     },
     'base-uri': { admitted: null, refused: 'base', why: "`'none'` admits no `<base>`; the `base` gate's `<base>` is refused too" },
     'form-action': {

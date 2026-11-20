@@ -441,15 +441,17 @@ came before the `<meta>`'s or with it, never after (research 31, Q8: 100 starts 
 that answers when its expected events are in had seen the header in every start. That is an observed order, not a
 guaranteed one, which is why the listener stays after the verdict.
 
-**What is left unseen, and what closes it.** Under two kinds of header the check passes and a guest's load, if the view
+**What is left unseen, and what closes it.** Under three kinds of header the check passes and a guest's load, if the view
 ever made it, would be reported on Chromium and Firefox (the full URL under `font-src`, `media-src` and `form-action`,
 the origin under `frame-src` and `object-src`):
 
 - a header that names the canaries' reserved host. An honest deployment has no reason to write one, and the host that
   serves the file is [trusted with the app](#who-is-trusted-with-the-app) already;
-- any `form-action` header, which a site-wide policy often has.
+- any `form-action` header, which a site-wide policy often has;
+- a header with `object-src` alone: the check makes no object ([as built](#policy-check-as-built): an object is loaded
+  only while it is rendered, so its violation is not one the check can wait for).
 
-Where [the check of the file](#the-check-of-the-file) can read the answer, it names both before the file is framed.
+Where [the check of the file](#the-check-of-the-file) can read the answer, it names each before the file is framed.
 Where it cannot, each is closed by a rule of the renderer, which is why I18 is two checks and not one:
 
 | Directive | The rule that keeps the load from existing |
@@ -461,7 +463,7 @@ Where it cannot, each is closed by a rule of the renderer, which is why I18 is t
 Step 3.6 brings the test of those rules: a guest font, media, frame, object and form under each of the five headers,
 enforced and report-only, and no report that carries guest text.
 
-**As built (step 3.6).** `src/lib/policy-check.ts` holds the file's policy (POLICY_DIRECTIVES, which the generator reads),
+<a id="policy-check-as-built"></a>**As built (step 3.6).** `src/lib/policy-check.ts` holds the file's policy (POLICY_DIRECTIVES, which the generator reads),
 the canaries derived from it (POLICY_CANARIES, rendered below) and what the check finds (POLICY_FINDINGS); the view runs
 the check (`inSandboxView`: its violation listener and `runPolicyCheck`), the host reads it (`policyFinding`,
 startup-verdicts.ts), and a finding ends the build with `viewCsp` or `viewCspReportOnly`; the INHERITED_CONTEXT row
@@ -508,6 +510,15 @@ response. What the text above left open:
 - **No clock.** The check answers once each refused load has raised the file's own violation, every admitted load has
   settled and the canary worker has answered, or at once on a finding; the elements, URLs and workers it made go then.
   The only time limit is the load deadline.
+- **Only loads the platform starts when they are issued** (`REFUSED_LOADS`). The check waits for each refused load's
+  violation, so a load whose start the embedder's page governs cannot be one of them. HTML loads an `<object>` or
+  `<embed>` only while it is being rendered: in a sandbox whose parent has `display: none` (a tab of the page that is
+  not shown, as the playground's second sandbox is) Chromium makes no load and raises no violation, so a check with an
+  object canary never answers there, and the build ends at the load deadline as `documentSilent` (measured 2026-11-20;
+  Firefox and WebKit raise it there, and under `visibility: hidden` and in a parent of no size all three do).
+  A canary made and not waited for would be seen by the order of two tasks, so there is none: `object-src` has no
+  canary, the renderer's rule stands behind it as it does behind `form-action`, and
+  `test/e2e/policy-check.spec.ts` (part 4b) starts a sandbox in each of the three kinds of parent on three engines.
 - **What the engines did that the text above did not say.** Under an enforced header the file's own `<base>`, which
   precedes its `<meta>`, is refused too, so a header with `base-uri` (the `<meta>`'s exact text among them) ends the build
   with `environmentBase` before the check; a `trusted-types` list that does not name `web-sandbox` is seen once the view
@@ -521,7 +532,7 @@ response. What the text above left open:
   an outcome that is not the check's); with no late VIEW_POLICY, both of part 3; with the URL rule keeping network URLs,
   the four font and media cases of part 2, each with a report that carried the guest's URL.
 
-<!-- describes: policy-canaries, policy-findings sig:7893720b -->
+<!-- describes: policy-canaries, policy-findings sig:0349720b -->
 <!-- generated:begin policy-canaries -->
 | Directive | The `<meta>`'s sources | Admitted canary | Refused canary | Why one is missing | What the check does not see, and what stands behind it |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -535,7 +546,7 @@ response. What the text above left open:
 | `connect-src` | `'none'` | none | `connect`: `http://connect-http.canary.invalid/web-sandbox-canary` and `https://connect-https.canary.invalid/web-sandbox-canary` | `'none'` admits nothing to load |  |
 | `worker-src` | `blob:` | `worker`: from a `blob:` URL of the view's own | `dataWorker`: a `data:` worker | the refused canary is a `data:` worker: a worker of a network URL fails before the policy is asked, with no request (research 31, Q6) |  |
 | `frame-src` | `'none'` | none | `frame`: `http://frame-http.canary.invalid/web-sandbox-canary` and `https://frame-https.canary.invalid/web-sandbox-canary` | `'none'` admits nothing to load | a header that names the canaries' own host, on Chromium and Firefox: the renderer removes every nested browsing context (RENDER_REMOVED_ELEMENTS) |
-| `object-src` | `'none'` | none | `object`: `http://object-http.canary.invalid/web-sandbox-canary` and `https://object-https.canary.invalid/web-sandbox-canary` | `'none'` admits nothing to load | a header that names the canaries' own host, on Chromium and Firefox: the renderer removes every object and embed (RENDER_REMOVED_ELEMENTS) |
+| `object-src` | `'none'` | none | none | HTML loads an `<object>` or `<embed>` only while it is being rendered, which the embedder's layout decides: in a sandbox that is not rendered (`display: none`) Chromium makes no load and raises no violation, so a check that waited for one would never answer there, and one that did not wait would see such a header only by the order of two tasks | an `object-src` header alone (a header's `default-src` is seen through the other canaries): the renderer removes every object and embed (RENDER_REMOVED_ELEMENTS), so no load of the guest's exists for it to report |
 | `base-uri` | `'none'` | none | `base`: `http://base-http.canary.invalid/web-sandbox-canary` and `https://base-https.canary.invalid/web-sandbox-canary` | `'none'` admits no `<base>`; the `base` gate's `<base>` is refused too |  |
 | `form-action` | `'none'` | none | none | a refused form replaced the view with an error page on Chromium (research 31, Q6), so the check submits no form on any engine | any `form-action` header: the renderer drops `action`, `formaction`, `method` and `target`, and the view cancels every `submit` in the capture phase, so no form of the guest's navigates |
 | `manifest-src` | `'none'` | none | none | no engine fetches a manifest a framed document links, so there is no load to refuse, and none of a guest's to report |  |
@@ -551,7 +562,9 @@ response. What the text above left open:
 **Not measured:** a form canary aimed at a frame of the view's own, which might leave the view standing on Chromium; a
 header with both scheme sources (`font-src http: https: blob:`), which admits both canaries as `*` does; a header that
 refuses only the canary whose event arrives last; the check on an `https:` host page, where the `http:` twins are
-mixed content (the check waits for one scheme per load, so it answers there by construction, but no engine was run so).
+mixed content (the check waits for one scheme per load, so it answers there by construction, but no engine was run so);
+a sandbox started while its page is hidden (a tab in the background), where an engine may put off a load the check
+waits for: two tries to hide a page of a headed browser under `xvfb` left it `visible`, so none was run.
 
 What "serve it unchanged" excludes, for the docs: a `Content-Security-Policy` or
 `Content-Security-Policy-Report-Only` header on the file, `X-Frame-Options` or a `frame-ancestors` that refuses the host
@@ -840,7 +853,7 @@ own name; `viewScriptHash()` there is strict mode's.
 - The file as it will ship: research 28's spike ran the library's per-build wrapper as a served file, and research 31
   a fixture of this design with no bundle of the library's: its guest loads reached the browser directly, not through
   the renderer, the cut of CSS URLs or the view's `submit` handling.
-- The policy check on an `https:` host page, and a form canary that
+- The policy check on an `https:` host page and in a page that is hidden (a tab in the background), and a form canary that
   leaves the view standing on Chromium.
 - The worker's gates in a worker made from the app's source (its half of the check is the view's canary worker:
   [above](#what-the-policy-check-provokes)).

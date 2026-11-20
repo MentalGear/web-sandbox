@@ -60,8 +60,9 @@ describe("POLICY_CANARIES against the <meta>'s text: every directive is classifi
         }
     });
 
-    it("the directives with no refused canary, and why: research 31's three (manifest-src, form-action, default-src), and script-src-attr", () => {
-        expect(ROWS.filter(([, row]) => row.refused === null).map(([directive]) => directive)).toEqual(['default-src', 'script-src-attr', 'form-action', 'manifest-src']);
+    it("the directives with no refused canary, and why: research 31's three (manifest-src, form-action, default-src), script-src-attr, and object-src, whose load starts only while it is rendered", () => {
+        expect(ROWS.filter(([, row]) => row.refused === null).map(([directive]) => directive)).toEqual(['default-src', 'script-src-attr', 'object-src', 'form-action', 'manifest-src']);
+        expect(POLICY_CANARIES['object-src'].why).toMatch(/being rendered/);
         expect(POLICY_CANARIES['form-action'].why).toMatch(/Chromium/);
         expect(POLICY_CANARIES['worker-src'].refused).toBe('dataWorker');
     });

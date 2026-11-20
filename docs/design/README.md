@@ -195,7 +195,7 @@ Stated once here; each file repeats what concerns it.
 - The served file as it will ship: one static file per library version, with the library's real bootstrap. Research
   28's spike served the library's per-build wrapper; research 31 built this design's shape and start-up as a fixture,
   with no bundle of the library's.
-- The policy check on an `https:` host page
+- The policy check on an `https:` host page, and in a page that is hidden (a tab in the background)
   ([03](03-served-document.md#what-the-policy-check-provokes)).
 - `links` as designed: the click as the request, in the served file. Research 30 measured a call from the worker, in
   today's view.

@@ -125,7 +125,7 @@ export const DIRECTIVE_CASES = {
     'img-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],
     'manifest-src': [{ value: "'none'", row: 'cspFetch', outcome: works(), onFile: { ...FILE_WORKS, why: 'no engine fetches a manifest a framed document links' } }],
     'media-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],
-    'object-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],
+    'object-src': [{ value: "'none'", row: 'cspFetch', outcome: works(), onFile: { ...FILE_WORKS, why: "the check makes no object, which is loaded only while it is rendered (POLICY_CANARIES); the renderer removes every object and embed of the guest's" } }],
     'prefetch-src': [{ value: "'none'", row: 'cspFetch', outcome: works(), onFile: { ...FILE_WORKS, why: 'no engine of the suite applies it' } }],
     'script-src': [{ value: "'self'", row: 'cspScript', outcome: ends('startupBlocked'), sealed: SERVED, note: "the view bootstrap's hash is missing; sealed mode's view runs under the file's policy", onFile: FILE_UNRUN }],
     'script-src-elem': [{ value: "'self'", row: 'cspScript', outcome: ends('startupBlocked'), sealed: SERVED, note: "script elements are the bootstrap's kind", onFile: FILE_UNRUN }],

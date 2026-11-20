@@ -25,7 +25,8 @@ import { CANARY_DOMAIN, canaryUrl } from '@src/lib/policy-check';
  *     value the check cannot see: no report carries guest text.
  *  3. A violation of another policy after the build is ready ends it, whenever it comes.
  *  4. The library's file is never refused, over many starts per engine with the machine loaded, and none of the
- *     canaries' violations is reported as the guest's; the check's cost, from insertion to `ready`.
+ *     canaries' violations is reported as the guest's; the check's cost, from insertion to `ready`. Nor is it refused
+ *     in a part of the page that is not shown (4b), where a load that starts only while it is rendered never comes.
  *  5. No canary reaches the network.
  */
 
@@ -128,7 +129,6 @@ const HEADERS: readonly HeaderCase[] = [
     { value: "worker-src 'self'", kinds: BOTH, note: 'the canary worker' },
     { value: 'worker-src blob:', kinds: BOTH, note: 'the data: worker' },
     { value: "frame-src 'none'", kinds: BOTH },
-    { value: "object-src 'none'", kinds: BOTH },
     { value: "base-uri 'none'", kinds: [REPORT_ONLY] },
     { value: "base-uri 'none'", kinds: [ENFORCED], outcome: { outcome: 'terminated', reason: 'environmentBase' }, note: "it refuses the file's own <base>, so the view's base URL is not about:blank, which its environment check refuses first" },
     { value: 'font-src https: blob:', kinds: BOTH, note: 'the http: canary' },
@@ -193,15 +193,18 @@ const renderedButtons = async (page: Page): Promise<number> => {
 
 /**
  * The five directives the renderer's rules close (design 03, the table under "What is left unseen"), each at a value
- * the check's canaries pass: one that names the canaries' reserved host, and every `form-action`. WebKit refused the
- * canaries under the first kind (research 31, Q6), so its check sees those and ends the build.
+ * the check's canaries pass: one that names the canaries' reserved host, every `form-action`, and every `object-src`
+ * (the check makes no object: policy-check.ts, POLICY_CANARIES). WebKit refused the canaries under the first kind
+ * (research 31, Q6), so its check sees those and ends the build.
  */
 const UNSEEN = [
     // ledger: policy-canary-host
     { value: `font-src *.${CANARY_DOMAIN} blob:`, seenOn: ['webkit'] },
     { value: `media-src *.${CANARY_DOMAIN} blob:`, seenOn: ['webkit'] }, // ledger: policy-canary-host
     { value: `frame-src *.${CANARY_DOMAIN}`, seenOn: ['webkit'] }, // ledger: policy-canary-host
-    { value: `object-src *.${CANARY_DOMAIN}`, seenOn: ['webkit'] }, // ledger: policy-canary-host
+    // no object canary: an object is loaded only while it is rendered (policy-check.ts, POLICY_CANARIES)
+    { value: `object-src *.${CANARY_DOMAIN}`, seenOn: [] },
+    { value: "object-src 'none'", seenOn: [] },
     { value: "form-action 'none'", seenOn: [] },
 ] as const;
 
@@ -318,6 +321,25 @@ test.describe('4. the library\'s file is never refused, on a loaded machine, and
         }
         console.log(`MEASURED ${browserName} policy check, insertion to ready, median of 24 alternating (ms): with the check ${median(times.checked).toFixed(1)}, with a check that provokes nothing ${median(times.unchecked).toFixed(1)}`);
     });
+});
+
+// A sandbox in a part of the page that is not shown renders nothing, and a load that starts only while its element is
+// rendered never comes there: the check waits for none (policy-check.ts, REFUSED_LOADS).
+const NOT_SHOWN = {
+    'display: none': 'display:none',
+    'visibility: hidden': 'visibility:hidden',
+    'no size': 'width:0;height:0;overflow:hidden',
+} as const;
+
+test.describe('4b. a sandbox in a part of the page that is not shown is ready as one that is shown', () => {
+    for (const [name, style] of Object.entries(NOT_SHOWN)) {
+        test(`its parent has ${name}`, async ({ page }) => {
+            const server = session();
+            await open(page, server.page(server.file()));
+            const result = await page.evaluate(async (style) => (window as any).startSandbox(undefined, style), style);
+            expect({ outcome: result.outcome, reason: result.reason }).toEqual({ outcome: 'ready', reason: null });
+        });
+    }
 });
 
 // ---- 5 -----------------------------------------------------------------------------------------------------------------

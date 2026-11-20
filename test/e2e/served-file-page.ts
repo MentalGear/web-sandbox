@@ -73,10 +73,10 @@ w.startWithCall = () => new Promise(resolve => {
 });
 
 /**
- * Starts `app` (a sealed app, by default one that renders a paragraph) on a new element; resolves with its first
+ * Starts `app` (a sealed app, by default one that renders a paragraph) on a new element, in a parent of its own; resolves with its first
  * lifecycle event and the time from insertion to it. A later termination of the same element is kept in `lastEnd`.
  */
-w.startSandbox = (app: object = { html: '<p id="hello">hello</p>' }) => new Promise(resolve => {
+w.startSandbox = (app: object = { html: '<p id="hello">hello</p>' }, container = '') => new Promise(resolve => {
     const el = document.createElement('web-sandbox') as HTMLElement & { start(app: object): void };
     el.style.cssText = 'display:block;width:400px;height:300px';
     let inserted = 0;
@@ -84,9 +84,13 @@ w.startSandbox = (app: object = { html: '<p id="hello">hello</p>' }) => new Prom
     w.lastEnd = null;
     el.addEventListener('ready', () => settle('ready', null), { once: true });
     el.addEventListener('terminated', (event: any) => { w.lastEnd = event.detail.reason; settle('terminated', event.detail.reason); }, { once: true });
+    // `container`: the style of the element's parent, for a sandbox in a part of the page that is not shown
+    const box = document.createElement('div');
+    box.style.cssText = container;
     el.start(app);
     inserted = performance.now();
-    document.body.append(el);
+    box.append(el);
+    document.body.append(box);
 });
 // The start-up order's spec (test/e2e/startup-order.spec.ts). This page's own listener hears every announcement of a
 // window that is not the view (the element's listener ignores those; the view's own it takes and stops, though on

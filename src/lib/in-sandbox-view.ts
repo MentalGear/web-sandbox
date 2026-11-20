@@ -4454,7 +4454,6 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 connectCanary(url).then(ignore, ignore);
             },
             frame: (url) => element('iframe', { width: '0', height: '0', src: url }, body),
-            object: (url) => element('object', { width: '0', height: '0', data: url }, body),
             base: (url) => {
                 const base = element('base', { href: url }, head);
                 const parentNode = call(parentOf, base, []);
