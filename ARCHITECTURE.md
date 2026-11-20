@@ -106,7 +106,7 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Sealed mode: strict mode with no network
 
-<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e77ebe1932960 -->
+<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e77ebcf442960 -->
 
 Sealed mode, the default (no `mode`, or `mode: 'sealed'`), is strict mode's view and worker with no network
 ([research 24](docs/research/24_sealed_mode/README.md), [ADR-008](docs/ADR-008-sealed-mode.md)). It is not strict mode
@@ -117,6 +117,12 @@ with its network options left empty: the sealed path never reaches the code that
   options' rules never run in sealed mode (`readIn`, `src/lib/config-schema.ts`). Those two rules are
   the only ones that read the host page (its origin and its site, from `src/lib/host-site.ts`, through `readHostPage` in
   `src/host.ts`, which `normaliseConfig` calls only when such a rule asks), so a sealed `start()` reads nothing of it.
+- **The check of the served file.** Before a registration's first frame, the build waits for the element's own request
+  for `documentUrl` (`src/lib/document-check.ts`, the lifecycle's `checkFile` effect and `fileChecked` input), which
+  compares the whole file with the digest every loader of the library is given (`src/lib/document-digest.ts`,
+  `scripts/served-document.ts`) and reads its headers; a finding ends the build with its reason, nothing framed. The
+  request carries nothing of the app's, and is the host page's: its `connect-src` and its Service Worker apply to it
+  (the `cspFetch`, `serviceWorker` and `hostRealmGlobals` rows of the host page's context).
 - **The build.** `_prepareBuild` turns to sealed mode's own path, `_prepareSealedFrame`, before anything of the network
   is asked: no `_reach` (the host page's policy is applied to nothing), no bridge frame, no request gate and no list for one. The view
   and its worker are strict mode's (`_prepareViewFrame`), under `sealedViewPolicy`, whose input has no field an origin
@@ -169,7 +175,7 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 
 ## Two builds: the network modes behind a flag
 
-<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eaedc458ed4 -->
+<!-- describes: build-flag, build-modules, reason:networkModesOff sig:3eaedfa88ed4 -->
 
 The package is built two ways, chosen by one flag that is off by default ([ADR-009](docs/ADR-009-network-modes-build-flag.md);
 `NETWORK_MODES_FLAG`, `src/lib/build-flag.ts`):
@@ -177,8 +183,8 @@ The package is built two ways, chosen by one flag that is off by default ([ADR-0
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 51 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 69 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 53 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 71 modules of `src/` |
 <!-- generated:end -->
 
 - **Two entries.** `src/index.ts` is the default build's and `src/network.ts` the network build's; both export
@@ -303,7 +309,7 @@ How a field is bounded:
 
 ## The lifecycle: one reducer, one executor
 
-<!-- describes: lifecycle:states, lifecycle:inputs, lifecycle:effects, lifecycle:transitions sig:204e433c7ef5b51d -->
+<!-- describes: lifecycle:states, lifecycle:inputs, lifecycle:effects, lifecycle:transitions sig:204e8bfa2eb111e9 -->
 
 The element's `state` is not kept by the code that reacts to the DOM. Every platform callback, timer, embedder call and
 build result is an **input** to one pure function, `reduce(state, input)`, which returns the next state and a list of
@@ -320,14 +326,15 @@ the environment it is told about in place. This is what makes the rules checkabl
   by exploring `reduce` over exactly those pairs.
 
 The states: `idle` (no environment: the element has no app, or is not in a document), `loading` (an environment is being built, and its
-guest has not checked in), `ready` (the guest checked in; its document may still be loading) and `terminated` (the
+guest has not checked in; in sealed mode a build of a registration with no answer kept waits first for the check of the
+served file, `fileChecked`, before anything is prepared or framed), `ready` (the guest checked in; its document may still be loading) and `terminated` (the
 environment is gone, with a reason). See [ADR-003](docs/ADR-003-lifecycle-and-liveness.md).
 
 <!-- generated:begin lifecycle-states -->
 | State | Inputs that can arrive in it |
 | :--- | :--- |
 | `idle` | `connect`, `disconnect`, `start`, `build`, `terminate`, `dispatchStarted`, `dispatchEnded` |
-| `loading` | `connect`, `disconnect`, `start`, `build`, `built`, `buildFailed`, `terminate`, `loadDeadline`, `frameLoad`, `viewAnnounced`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
+| `loading` | `connect`, `disconnect`, `start`, `build`, `built`, `buildFailed`, `terminate`, `fileChecked`, `loadDeadline`, `frameLoad`, `viewAnnounced`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
 | `ready` | `connect`, `disconnect`, `start`, `build`, `terminate`, `loadDeadline`, `frameLoad`, `viewAnnounced`, `announced`, `viewReady`, `dispatchStarted`, `dispatchEnded` |
 | `terminated` | `connect`, `disconnect`, `start`, `build`, `buildTerminationDue`, `terminate`, `dispatchStarted`, `dispatchEnded` |
 <!-- generated:end -->
@@ -339,9 +346,9 @@ stateDiagram-v2
     idle --> idle: build, connect, disconnect, dispatchEnded, dispatchStarted, start, terminate
     idle --> loading: build, connect
     idle --> terminated: build, connect, terminate
-    loading --> loading: announced, build, built, connect, dispatchEnded, dispatchStarted, frameLoad, terminate, viewAnnounced
+    loading --> loading: announced, build, built, connect, dispatchEnded, dispatchStarted, fileChecked, frameLoad, terminate, viewAnnounced
     loading --> ready: announced, frameLoad, viewReady
-    loading --> terminated: announced, build, buildFailed, connect, frameLoad, loadDeadline, terminate, viewAnnounced
+    loading --> terminated: announced, build, buildFailed, connect, fileChecked, frameLoad, loadDeadline, terminate, viewAnnounced
     loading --> idle: build, connect, disconnect
     ready --> terminated: announced, build, connect, frameLoad, terminate, viewAnnounced
     ready --> idle: build, connect, disconnect
@@ -364,6 +371,7 @@ stateDiagram-v2
 | `buildFailed` | the build or attach effect | always | `loading` | any | `reason: string` |
 | `buildTerminationDue` | the task effect | always | `terminated` | any | — |
 | `terminate` | terminate(), the element's own terminations, the executor | when armed in an environment | any | any | `reason: string`, `notices?: readonly Notice[]` |
+| `fileChecked` | the check of the served file | always | `loading` | `strict` | `finding: string \| null` |
 | `loadDeadline` | the load deadline | always | `loading`, `ready` | any | — |
 | `frameLoad` | the wrapper's load event | always | `loading`, `ready` | any | `stillOurs: boolean`, `guest: window \| null` |
 | `viewAnnounced` | the host page's message listener | always | `loading`, `ready` | `strict` | `source: window` |
@@ -380,6 +388,7 @@ stateDiagram-v2
 | `discardWrites` | the guest writes' overlay is dropped | — |
 | `build` | prepares the build; then `built`, or `buildFailed` if it threw | — |
 | `attach` | the prepared build becomes the element's | `prepared: unknown` |
+| `checkFile` | sealed mode: the check of the served file; then `fileChecked` | — |
 | `startLoadDeadline` | arms the load deadline (LOAD_TIMEOUT_MS) | — |
 | `stopLoadDeadline` | stops the load deadline | — |
 | `sendInitView` | strict and sealed mode, at the view's announcement: the view (`target`, the window that announced itself) gets its ports (`_setupStrictChannels`) | `target: window` |
@@ -443,6 +452,8 @@ the docs read) and the role its header comment gives.
 | `src/lib/connect-facts.ts` | none (a registry) | What each engine does with a `connect-src` source, as one table |
 | `src/lib/cookie-facts.ts` | network | Which cookies each engine sends with a request of the sandbox, as one table |
 | `src/lib/css-references.ts` | every build | URL references in CSS |
+| `src/lib/document-check.ts` | every build | The check of the served file (design 03, "The check of the file"; design 05, row 3.3) |
+| `src/lib/document-digest.ts` | every build | The digest of `sealed-document.html` this copy of the library was built with (design 03, "The check of the file") |
 | `src/lib/document-url.ts` | every build | `documentUrl` (design 03, "The public surface"): where the embedder serves `sealed-document.html`, sealed mode's view |
 | `src/lib/egress.ts` | every build | The egress table |
 | `src/lib/element-events.ts` | every build | The element's events |

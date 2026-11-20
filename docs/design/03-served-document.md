@@ -120,9 +120,75 @@ was built with, and reads the response's headers.
 body, on all three engines, so each case of the table can be told from the others before the file is framed, and under
 a report-only header no canary's report is ever sent.
 
-**Not measured:** its cost; the digest's comparison; a server that answers this request and the frame's navigation
-differently (the two differ in `Sec-Fetch-Dest`); a host page's `connect-src` and Service Worker in its path (the host
-page's Service Worker never answers the sandboxed frame's own navigation, on all three engines: review 2, probe 3).
+**As built (step 3.3).** `src/lib/document-check.ts`, with the reasons `documentMissing`, `documentChanged`,
+`documentFrameAncestors`, `documentFrameOptions`, `documentCsp` and `documentCspReportOnly`; the specs are
+`test/e2e/served-file-check.spec.ts` (three engines), `test/unit/document-check.test.ts`,
+`test/unit/document-check-kept.test.ts` and `test/unit/lifecycle-file-check.test.ts`. What the text above left open:
+
+- **How the library knows the file's bytes: one generation, given to every loader.** The file's bytes depend on how the
+  view's functions are printed, which is the printing of whatever loaded the sources: Bun's for the build, Vite's for
+  the e2e server's pages, vitest's for the unit tests. So no copy of the library computes the digest from its own
+  sources, and none carries the file's text. `servedDocument()` (`scripts/served-document.ts`) runs the generator the way
+  the build does (Bun, from the sources on disk, in a process of its own) and hashes it with the library's own
+  synchronous SHA-256 (`documentDigest`, which the check uses as well: `crypto.subtle` is absent on an insecure host
+  page). The build writes those bytes into `dist/` and defines their digest in the bundle, and refuses to write a
+  bundle that does not hold it; Vite's server and vitest put the same digest into `src/lib/document-digest.ts` as they
+  serve it (`servedDocumentDigestPlugin`), and again after any file of `src/` changed. So the digest and the file cannot
+  disagree in the bundles of either build, in Vite's server or in vitest, and a reused e2e server whose `dist/` was
+  rebuilt from the current sources accepts the file, while one whose `dist/` is older than the sources refuses it,
+  `documentChanged`, rather than run a view of other sources. A loader that gives no digest ends the build instead of
+  passing a file it cannot compare. Rejected: a checked-in constant kept equal by a test (it is the third copy of what
+  the generator already decides); generating the file in the browser (the bundle would carry the view's text, which [a
+  thinner host](#a-thinner-host) takes out of it).
+- **When, and what the first build waits for: the build's first step, before anything is prepared or framed.** The
+  request is made by the first build that needs it, not by `defineWebSandbox()`: a page that registers and never starts
+  a sealed app makes none. That build is `loading` from its start, arms its load deadline once (the deadline bounds the
+  wait as well), and its build effect runs only when the check answers: the lifecycle's input `fileChecked` and effect
+  `checkFile`, so terminate(), reset() and removal during the wait end it as any `loading` build, and the answer that
+  comes after is stale (the reducer drops it; the model in `test/model/` holds the element to it, and to never being
+  `ready` before the check answered). A file found wrong is therefore never framed, so a fallback page's own scripts never
+  run in the element's frame. Rejected: framing in parallel and holding the view's announcement until the check answers.
+  It saves the request's time on the first build only, and it loads a document known wrong where the check can read it,
+  and makes "the document did not answer" race the check's reason. Builds that wait at once share one request.
+- **Kept for the registration: an answer, for the page's life; no answer is not kept.** A pass or a finding is the
+  registration's (one registration per page): every later build of every element frames at once after a pass, and is
+  refused at once, with the same reason and no request, after a finding. A finding stays until the page loads again:
+  the comparison is with the library this page loaded, and a deploy that fixes the file is one a page loads (a deploy of
+  a new version, seen by a page that still runs the old library, is a real mismatch until then). A request that was not
+  answered (a network failure, a refusal by the page's own `connect-src`, another origin that does not allow the read,
+  which `fetch` does not tell apart) is no answer: the next build asks again. Under a `connect-src` that refuses
+  `documentUrl` that is one violation, and one report to the page's endpoint naming `documentUrl`, per build.
+- **What the request carries and inherits** (`INHERITED_CONTEXT`, the rows `hostRealmGlobals`, `serviceWorker` and
+  `cspFetch`): `credentials: 'omit'` (the frame, credentialless on Chromium, gets no cookie either), no referrer, the
+  redirects and the HTTP cache as the frame's navigation has them, and one header, a navigation's `Accept: text/html`
+  (CORS-safelisted, so no preflight), so a server that answers by what is accepted answers as it answers the frame. It is
+  made with the platform's `fetch` as the library's module found it when it was evaluated: a wrapper the page installs
+  afterwards never sees it, one installed before is the page's `fetch` to the library and adds what it adds (measured:
+  the Authorization header of such a wrapper reached the server; none from one installed after). The host page's
+  `connect-src` applies to it, and so does a Service Worker whose scope holds `documentUrl`, whose answer is then what is
+  checked (one that answers with another page ended the build with `documentChanged`, the server seeing no request).
+- **Which headers are refused, and why those** (`REFUSED_DOCUMENT_HEADERS`): `Content-Security-Policy` (the view and its
+  worker run under it beside the `<meta>`), `Content-Security-Policy-Report-Only` (it reports to an endpoint of its own),
+  each whatever its text, and `X-Frame-Options`, whatever its value (a policy on framing whose answer depends on the host
+  page's ancestors, which the host page cannot read on every engine; `SAMEORIGIN` on a same-origin file would frame, and
+  is refused all the same, as the file is served with no header that sets a policy on it). A `frame-ancestors` directive
+  in either policy header is named first. Every other header passes: `Cross-Origin-Resource-Policy` and
+  `Cross-Origin-Embedder-Policy`, one of which Firefox and WebKit need on the file under a host page's `require-corp`
+  (step 3.2), and `Permissions-Policy`, which can only narrow. Report-only headers of other kinds are not named (the
+  list above, "the check sees policies of the Content-Security-Policy kind").
+- **The order of the findings:** the status and the type, then the bytes, then the headers, so a fallback page that
+  carries the site's policy is named as another page, the cause to fix first. Another origin with CORS: the bytes and
+  the type are checked, and its headers only where it exposes them (`Access-Control-Expose-Headers`).
+- **Not built:** a `Content-Disposition: attachment` on the file is not named (the frame shows nothing, and the build
+  ends with "the document did not answer").
+
+**Measured** (step 3.3, `test/e2e/served-file-check.spec.ts`): see [docs/API.md](../API.md#registering-the-element) for the
+start-up cost per engine. A server that answers the check and the frame's navigation otherwise is judged by what the
+check read: the file to the check and another page to the frame ended with "the document did not answer"; the reverse,
+with `documentChanged`, a frame that would have worked refused, on all three engines.
+
+**Not measured:** a host page's Service Worker in the path of the frame's navigation (it never answers the sandboxed
+frame's own navigation, on all three engines: review 2, probe 3).
 
 ## The shape
 
@@ -524,8 +590,7 @@ own name; `viewScriptHash()` there is strict mode's.
 - The worker's gates and its half of the check in a worker made from the app's source.
 - The Reporting API (`report-to`) on Chromium, whose positive control failed; downloads on Firefox and WebKit, the
   same.
-- The check of the file: its cost, the digest's comparison, a server that answers it and the frame's navigation
-  differently, and a host page's `connect-src` and Service Worker in its path.
+- The check of the file in Safari, and on a network with latency (its cost was measured on loopback: step 3.3).
 - Extensions on Firefox, WebKit and Safari; Tauri and Capacitor; Electron beyond its defaults (research 34 measured a
   browser's `file:` page, a Chromium extension and Electron 45).
 - The library, with an extension installed, against `chrome-extension:` URLs.

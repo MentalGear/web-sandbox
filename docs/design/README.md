@@ -3,7 +3,7 @@
 **Status: a design, partly built.** The code as it is: [API.md](../API.md), [THREAT-MODEL.md](../THREAT-MODEL.md),
 [ARCHITECTURE.md](../../ARCHITECTURE.md). What is built is named as such where it appears: the view's value model for
 form controls ([04](04-forms-and-autofill.md)), and of step 1 the rows [05](05-build-order.md) marks built
-(`start(app, grants)`, one app per element) and of step 2 the rows it marks built.
+(`start(app, grants)`, one app per element) and of step 2 the rows it marks built, and of step 3 the rows 3.1 to 3.3.
 
 **Decided by the owner.** Sealed mode alone is the default build (D9, [ADR-009](../ADR-009-network-modes-build-flag.md)).
 Sealed mode's document becomes a static file the embedder serves, with its policy in a `<meta>` tag and no `srcdoc`
@@ -201,7 +201,8 @@ Stated once here; each file repeats what concerns it.
   today's view.
 - Autofill inside the served file, with the value model.
 - A password manager's extension, and one when another site frames the served file.
-- The check of the file: its cost, and what stands in its path on a host page.
+- The check of the file on a network with latency (step 3.3 measured it on loopback, with what stands in its path on a
+  host page).
 - Report-only headers on the file that are not Content-Security-Policy.
 - Extensions on Firefox, WebKit and Safari, and Tauri and Capacitor, as host pages (research 34 measured a browser's
   `file:` page, a Chromium extension and Electron).

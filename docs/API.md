@@ -56,6 +56,21 @@ the page frames it.
   answer …` within `LOAD_TIMEOUT_MS`. Start-up, from insertion to `ready` with the file in the browser's cache, measured
   2026-11-19 on a shared 4-core machine (medians of 24 starts, two runs): Chromium 159 31 and 37 ms, Firefox 159 64 and 70 ms,
   WebKit 27.2 36 and 37 ms, against 34, 64 and 33 ms with the view as a `srcdoc` document.
+- **The check of the file.** Before it frames the file for the first time, the element requests `documentUrl` itself,
+  where it can read the answer (the page's own origin, or a server that allows the read with CORS), and compares the
+  whole file with the one the library was built with. A missing file or one that is not `text/html`, other bytes (a dev
+  server's script, a minifier, a bundler that processes HTML, another version's copy, an app's own page), and a
+  `Content-Security-Policy`, `Content-Security-Policy-Report-Only` or `X-Frame-Options` header on it (or a
+  `frame-ancestors` in either policy) each end the build with its own reason ([`terminated` reasons](#terminated-reasons)), and
+  nothing is framed. Other headers pass (`Cross-Origin-Resource-Policy` and `Cross-Origin-Embedder-Policy` among them,
+  which an embedder policy of the page's needs on Firefox and WebKit). The answer is kept for the page: one request,
+  however many elements build; a finding refuses every later build until the page loads again. Where the answer cannot
+  be read (another origin without CORS, a `connect-src` of the page's that does not admit `documentUrl`, a network
+  failure) there is no check, the build goes on, and the next build asks again; such a `connect-src` raises one
+  violation on the page per build that asks, so admit `documentUrl` there too. The request carries no cookie, no
+  referrer and no header of the page's: it is made with `fetch` as the library found it when it was loaded, so a `fetch`
+  wrapper of the app's installed later does not see it (one installed before does), and a Service Worker of the page's
+  whose scope holds `documentUrl` can answer it, which is then what is checked.
 - **In the build with the network modes** it may be left out (`defineWebSandbox({})`): strict, cooperative and worker
   mode keep documents of their own, and `start()` of a sealed app on such an element throws.
 
@@ -149,8 +164,8 @@ The package has two builds, chosen by one build flag that is off by default
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 51 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 69 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 53 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 71 modules of `src/` |
 <!-- generated:end -->
 
 - **The default build is sealed mode alone.** It is what `bun run build:lib` writes and what the package is as
@@ -1132,7 +1147,13 @@ type FetchRecord = {
 | `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included). |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 | `the guest raised more uncaught errors or unhandled rejections in one second than their budget allows` | Worker, strict and sealed mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)). |
-| `the document at documentUrl did not answer: the file is missing, the server answers its path with another page, a header on it refuses the framing or the view's script, or the host page's frame-src does not admit it (see docs/API.md#registering-the-element)` | Sealed mode: no view announced itself from the first frame of the element's frame within `LOAD_TIMEOUT_MS`, or the frame loaded a document with no frame in it. From outside the frame the causes look alike: the file is not at `documentUrl`, the server answers that path with another page (an app's fallback page), a header on the file refuses the framing (`X-Frame-Options`, `frame-ancestors`) or the view's script, or the host page's own `frame-src` does not admit `documentUrl` (see [Registering the element](#registering-the-element) and [Host page policy](#host-page-policy)). |
+| `the document at documentUrl did not answer: the file is missing, the server answers its path with another page, a header on it refuses the framing or the view's script, or the host page's frame-src does not admit it (see docs/API.md#registering-the-element)` | Sealed mode: no view announced itself from the first frame of the element's frame within `LOAD_TIMEOUT_MS`, or the frame loaded a document with no frame in it. From outside the frame the causes look alike: the file is not at `documentUrl`, the server answers that path with another page (an app's fallback page), a header on the file refuses the framing (`X-Frame-Options`, `frame-ancestors`) or the view's script, or the host page's own `frame-src` does not admit `documentUrl` (see [Registering the element](#registering-the-element) and [Host page policy](#host-page-policy)). Where the element could read the file's answer, the check of the file names the first four causes instead (the reasons below); this reason is what is left where it could not: another origin that does not allow the read, a host page whose `connect-src` refuses the request, a network failure, or a server that answers the frame otherwise than the check. |
+| `the file at documentUrl is missing: … (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the element's own request for `documentUrl` was answered with a status that is not 2xx, or with a `Content-Type` that is not `text/html` (none counts as not HTML); the text after the colon says which. Nothing was framed. |
+| `the file at documentUrl is not this version's sealed-document.html: its bytes differ from the library's. It is another version's, or a tool rewrote it (a dev server that inserts its client's script, such as Vite's; a bundler that processes HTML, such as webpack's HTML support or Parcel; a minifier; a CDN that rewrites pages), or a cache holds an old copy: serve the package's file unchanged (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: `documentUrl` answered with bytes that are not this version's `sealed-document.html`, compared whole, by their SHA-256. Every change counts: a script a dev server inserts, a minified or reformatted copy, a copy without the guard or whose view lost its `sandbox` attribute, an app's own page, another version's file. Nothing was framed. |
+| `the file at documentUrl is served with a frame-ancestors directive (in a Content-Security-Policy header): serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: a `Content-Security-Policy` or `Content-Security-Policy-Report-Only` header on the file has a `frame-ancestors` directive. Nothing was framed. |
+| `the file at documentUrl is served with an X-Frame-Options header: serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the file is served with `X-Frame-Options`, whatever its value. Nothing was framed. |
+| `the file at documentUrl is served with a Content-Security-Policy header, which the view would run under beside its own policy: serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the file is served with `Content-Security-Policy`, whatever its text: the view and its worker would run under it beside the file's own `<meta>` policy. Nothing was framed. |
+| `the file at documentUrl is served with a Content-Security-Policy-Report-Only header, which would report the view's loads to its endpoint: serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the file is served with `Content-Security-Policy-Report-Only`, whatever its text: the view's loads would be reported to its endpoint. Nothing was framed. |
 <!-- generated:end -->
 
 Branch on `state` and the event, not on these texts. A reason names the problem, never a value: it is a fixed text
@@ -1164,11 +1185,11 @@ message names the option and what it takes. For the options it refuses as a whol
 
 ## Lifecycle
 
-<!-- describes: lifecycle:states, lifecycle:transitions, api:SandboxState sig:204eb51da4b8 -->
+<!-- describes: lifecycle:states, lifecycle:transitions, api:SandboxState sig:204e11e9a4b8 -->
 | State | Meaning |
 | :--- | :--- |
 | `idle` | No app yet (`start()` not called), or not in the document (constructed, or removed): no frame. An element with no app stays `idle` whatever is done to it. |
-| `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, for the frame to load; in strict and sealed mode, for the view to announce itself and then check in); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
+| `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, for the frame to load; in strict and sealed mode, for the view to announce itself and then check in); in sealed mode a page's first build first waits for the check of the served file, and builds no frame until it answers ([Registering the element](#registering-the-element)); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
 | `ready` | The guest can be reached; `ready` was dispatched. In cooperative mode the guest document may still be loading. |
 | `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`, the view's longest operation), an integrity check or a failed build; `terminated` was dispatched. |
 
@@ -1743,7 +1764,7 @@ page in Chromium and Firefox, with no user activation (measured; cooperative mod
 
 ### Forms and the browser's autofill
 
-<!-- describes: view-forms, inherited-context sig:5378e193 -->
+<!-- describes: view-forms, inherited-context sig:5378cf44 -->
 
 A guest's form gets nothing of the browser's autofill or autocomplete, in strict and sealed mode, and the guest's worker
 receives from a control only what the user entered into that control ([research 29](research/29_autofill/README.md); the
