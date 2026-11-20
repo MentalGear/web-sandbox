@@ -40,15 +40,14 @@ jobs:
       fail-fast: false
       matrix:
         browser: [chromium, firefox, webkit]
-        # The suite's two groups (test/e2e/groups.ts; backlog T10), each on a machine of its own and about half of the
-        # suite's time: the specs that measure the host page, with the probes, which measure it too; and the rest.
-        group: [rest, measuring]
-    env:
-      WEB_SANDBOX_E2E_GROUP: ${{ matrix.group }}
+        # An engine's suite in shards, each on a machine of its own, with the workers and the mix of specs one machine
+        # has always had (backlog T10): Playwright divides the spec files, in their order, by their number of tests.
+        shard: [1, 2, 3]
+        shards: [3]
     steps:
       - uses: actions/checkout@v4
       # A run's inputs are the checkout's files, but the Markdown ones: no page, spec or probe reads one (the unit job
-      # checks the docs). A group's result on an engine is keyed by their hash (backlog T10): a key that has passed is
+      # checks the docs). A shard's result on an engine is keyed by their hash (backlog T10): a key that has passed is
       # not run again, so a commit that changes only docs runs no browser. The marker is written after the last test
       # step and saved only by a job that succeeded, so a failed or cancelled run leaves no key behind.
       - id: inputs
@@ -57,7 +56,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .e2e-passed
-          key: e2e-passed-${{ matrix.browser }}-${{ matrix.group }}-${{ steps.inputs.outputs.hash }}
+          key: e2e-passed-${{ matrix.browser }}-${{ matrix.shard }}of${{ matrix.shards }}-${{ steps.inputs.outputs.hash }}
       - if: steps.passed.outputs.cache-hit != 'true'
         uses: oven-sh/setup-bun@v2
       - if: steps.passed.outputs.cache-hit != 'true'
@@ -68,16 +67,16 @@ jobs:
       # default build), the server serves both entries and both bundles (dist/, dist-network/), and a page refuses a
       # config that is the other build's to test, so no spec passes against the wrong build.
       - if: steps.passed.outputs.cache-hit != 'true'
-        run: bunx playwright test --project=${{ matrix.browser }}
+        run: bunx playwright test --project=${{ matrix.browser }} --shard=${{ matrix.shard }}/${{ matrix.shards }}
       # the strict-mode design probes (research 15) that ADR-005 rests on; skipped under the root config above
-      - if: steps.passed.outputs.cache-hit != 'true' && matrix.group == 'measuring'
+      - if: steps.passed.outputs.cache-hit != 'true' && matrix.shard == 1
         run: bun run test:probes --project=${{ matrix.browser }}
       - if: steps.passed.outputs.cache-hit != 'true'
         run: mkdir -p .e2e-passed && git rev-parse HEAD > .e2e-passed/commit
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report-${{ matrix.browser }}-${{ matrix.group }}
+          name: playwright-report-${{ matrix.browser }}-${{ matrix.shard }}of${{ matrix.shards }}
           path: |
             playwright-report/
             test-results/

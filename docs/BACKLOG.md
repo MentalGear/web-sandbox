@@ -844,25 +844,26 @@ its log): 3,145 tests took 128 minutes of worker time. The 15 specs that measure
 Half of all tests take under a second and are 12% of the time together, so the cost of loading a page is not where
 the time is.
 
-**Built: the suite runs as two groups, each on a machine of its own in CI.** The specs that import
-`test/e2e/host-share.ts` are the measuring group, derived from that import and never listed (`test/e2e/groups.ts`;
-`test/unit/e2e-groups.test.ts`): 15 spec files and 199 tests an engine, against 99 files and 1,114 tests in the rest,
-and about half of the suite's time each. `WEB_SANDBOX_E2E_GROUP` names the group a run takes; a run that names none is
-the whole suite. CI has a job per group and engine, with the probes in the measuring group's, each job's result keyed
-by its inputs as above. Both groups run on Playwright's default, half of the machine's cores.
+**Built: an engine's suite runs in three shards in CI, each on a machine of its own**
+(`.github/workflows/ci.yml`, Playwright's `--shard`), with the workers and the mix of specs a machine has always had,
+and the probes beside the first shard. Each shard's result is keyed by its inputs as above.
 
-**Measured, and what it ruled out** (2026-11-20). The rest on all four cores took 22.1 minutes for three engines
-on the local machine and passed (2,796 tests), and 6 to 8 minutes an engine in CI, where two of its first jobs failed,
-each on a test whose assertion depends on the machine's load: one that held the host page's thread and expected a due
-timer to run before a frame's load (`guest-realm-hardening.spec.ts`, CB3; now it holds `loading` itself), and one that
-bounded the ratio of two times measured one after the other (`links.spec.ts`, the cost, which failed on two workers
-too; now it is measured by `scalingRatio`, [S81](#s81)). So specs outside the measuring
-group assert on times and on the order of tasks too, and running them on more workers is not sound until
-S81's scans can say which do; 14 specs outside the group read a clock.
+**Measured, and what it ruled out** (2026-11-20, GitHub's runners unless said).
+- *The specs that measure the host page as a group of their own, the rest beside it.* On two workers the measuring
+  group took 14 and 16 minutes on Chromium and Firefox and 30 and 33 minutes on WebKit, where the whole suite of an
+  engine took 29 before: on one machine these specs slow each other, so the split left the wait as it was and cost more
+  machine time. It is not built.
+- *The rest on all four cores.* 22.1 minutes for three engines on the local machine, passing (2,796 tests), and 6 to 8
+  minutes an engine in CI, where two of its first jobs failed, each on a test whose assertion depended on the
+  machine's load: one that held the host page's thread and expected a due timer to run before a frame's load
+  (`guest-realm-hardening.spec.ts`, CB3; now it holds `loading` itself), and one that bounded the ratio of two times
+  measured one after the other (`links.spec.ts`, the cost, which failed on two workers too; now it is measured by
+  `scalingRatio`, [S81](#s81)). Specs that do not measure the host page assert on times and on the order of tasks too:
+  14 of them read a clock. More workers on a machine is not sound until S81's scans can say which do.
 
 **Fix, by construction**, what is left, in this order, each measured before and after on three engines:
-1. **The rest on all of the cores**, once S81's scan holds every spec that asserts on a time or on the order of two
-   tasks to a measure that does not depend on the load, or moves it to the measuring group.
+1. **More workers on a machine**, once S81's scans hold every spec that asserts on a time or on the order of two
+   tasks to a measure that does not depend on the load.
 2. **The tests load the built bundle.** The server already builds `dist/` and `dist-network/` when it starts
    (`package.spec.ts` mounts from them). Every harness page takes its build's bundle, so a run tests the code as it was
    built at its start whatever is edited meanwhile, and the tests run what the package ships. This is for that
@@ -870,9 +871,9 @@ S81's scans can say which do; 14 specs outside the group read a clock.
    from `src/`), and source maps for a failure's stack.
 3. **A key per spec**, where CI's is the whole suite's: its build's bundle (a hash), the spec and the helpers it
    imports, the harness pages, the engine's version and the Playwright config. It needs 2, and is worth building only
-   if the suite's key and the two groups leave a wait that matters: a change of one spec would run that spec, and a
+   if the key of a shard and the shards leave a wait that matters: a change of one spec would run that spec, and a
    change confined to `network` modules no spec of the default build (`BUILD_MODULES`: a `sealed` module imports no
-   `network` module). The measuring group stays out of it: the machine's load is one of its inputs.
+   `network` module). The specs that measure the host page stay out of it: the machine's load is one of their inputs.
 
 **What it does not change.** A change to code every page loads changes the bundle, and every spec runs again, as it
 must. For that case the time is the machine's cores and CI's three engines side by side (CONTRIBUTING.md, "Which
