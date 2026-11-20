@@ -29,6 +29,7 @@ const DISPATCH_STARTS_TERMINATED = "unreachable by the executor: dispatchStarted
 const STANDING_IS_CONNECTED = "unreachable by the element: a standing build is connected, connectedCallback runs only for an element that is not, and leaving the document or being adopted stepped `disconnect`, into `idle`, first";
 const BUILD_WHERE_IT_BUILDS = "unreachable by the element: a standing build is connected in the element's own document, and leaving it steps `disconnect`, into `idle`, before any embedder code can call reset()";
 const TERMINATION_WITH_NOTICES = 'not reached by the model: a termination with notices (a host-page refusal, an entry that failed) keeps the state until its nested step; the fake guest causes none, and the e2e model runs reach the entry failure';
+const VERDICTS_AFTER_CHECK_IN = "not reached by the model: the view hands on its worker's verdicts on its port after its check-in, so the check-in comes first; lifecycle-reducer.test.ts makes the other order by hand (\"the worker's verdicts: …\")";
 const NOT_THE_MODELS_GUEST = "not reached by the model: its guests announce once, from their bootstrap, and never navigate the wrapper; lifecycle-reducer.test.ts makes it by hand (\"the wrapper's load: …\", \"a guest that checked in: …\")";
 
 /**
@@ -48,7 +49,7 @@ const NEVER_MADE: Readonly<Record<string, string>> = {
     'ready -connect-> terminated': STANDING_IS_CONNECTED,
     'loading -build-> idle': BUILD_WHERE_IT_BUILDS,
     'ready -build-> idle': BUILD_WHERE_IT_BUILDS,
-    'ready -viewReady-> ready': "unreachable by the element: the view checks in once, at the INIT_VIEW the element sends at the wrapper's one load (a second load ends the build); lifecycle-reducer.test.ts makes it by hand (\"the view's check-in counts only while loading\")",
+    'ready -viewReady-> ready': "unreachable by the element: the view checks in once, at the INIT_VIEW the element sends at its one announcement (a second announcement ends the build); lifecycle-reducer.test.ts makes it by hand (\"the view's check-in counts only while loading\")",
     'ready -loadDeadline-> ready': "unreachable by the element: enterReady stops the load deadline (stopLoadDeadline), and the fake element's too; lifecycle-reducer.test.ts makes it by hand (\"the load deadline: …\"), the reducer's own bound were a stop missed",
     'loading -build-> terminated': "not reached by the model: a rebuild of a bound app is refused only for what a commit changed in the files, and a loading build's overlay is new and empty; the model's guests write only when called, a call made while loading waits for `ready`, and the strict view starts the worker that runs the entry only after its check-in",
     'loading -buildFailed-> terminated': "not reached by the model: the build or attach effect throwing (a host page's Trusted Types default policy that throws); its host pages have none, and the fake element's build does not throw; policy-guarantees.test.ts and lifecycle-edge-cases.test.ts make it",
@@ -57,6 +58,10 @@ const NEVER_MADE: Readonly<Record<string, string>> = {
     'loading -announced-> loading': "not reached by the model: worker mode's refusal (R2:C-5), a worker the host page's policy refused, keeps `loading` until its termination; the model's host pages have no policy",
     'loading -announced-> terminated': NOT_THE_MODELS_GUEST,
     'ready -announced-> terminated': NOT_THE_MODELS_GUEST,
+    'loading -viewReady-> ready': VERDICTS_AFTER_CHECK_IN,
+    'loading -workerVerdicts-> loading': VERDICTS_AFTER_CHECK_IN,
+    'ready -workerVerdicts-> ready': "unreachable by the element: the view hands on its worker's first message once, and hears none after it; lifecycle-reducer.test.ts makes a repeat by hand (\"the worker's verdicts: …\")",
+    'ready -viewAnnounced-> terminated': "not reached by the model: its views announce themselves once, before their check-in; lifecycle-reducer.test.ts makes a second announcement by hand",
     'loading -frameLoad-> terminated': NOT_THE_MODELS_GUEST,
     'ready -frameLoad-> terminated': NOT_THE_MODELS_GUEST,
 };
@@ -88,7 +93,8 @@ describe('the transitions listed from the declaration (lifecycleTransitions)', (
     it('the shape class L asks for: `ready` only from `loading`, and only on a completion; nothing out of `idle` but a build or terminate()', () => {
         const into = (state: string) => exploration.transitions.filter(transition => transition.to === state && transition.from !== state);
         expect(new Set(into('ready').map(transition => transition.from))).toEqual(new Set(['loading']));
-        expect(new Set(into('ready').map(transition => transition.input))).toEqual(new Set(['frameLoad', 'announced', 'viewReady']));
+        // strict and sealed mode complete on the later of the view's check-in and its worker's verdicts (design 03, step 5)
+        expect(new Set(into('ready').map(transition => transition.input))).toEqual(new Set(['frameLoad', 'announced', 'viewReady', 'workerVerdicts']));
         const fromIdle = exploration.transitions.filter(transition => transition.from === 'idle' && transition.to !== 'idle');
         expect(new Set(fromIdle.map(transition => transition.input))).toEqual(new Set(['connect', 'build', 'terminate']));
         // the edges step 0's exploration drew that the element never makes: none of them is declared
@@ -110,6 +116,25 @@ describe('the transitions listed from the declaration (lifecycleTransitions)', (
         for (let seed = 1; seed <= RUNS; seed++) {
             const result = runReducerSequence(forTheReducer(generate(seed)), { onStep });
             expect(result.ok, `seed ${seed}: ${result.divergence}`).toBe(true);
+        }
+        // and the strict view as sealed mode's served file, whose check answers each way (reducer-runner.ts, servedFile)
+        for (const servedFile of ['library', 'finding', 'unanswered'] as const) {
+            for (let seed = 1; seed <= RUNS / 4; seed++) {
+                const sequence = forTheReducer(generate(seed));
+                if (sequence.mode !== 'strict') continue;
+                const result = runReducerSequence(sequence, { onStep, servedFile });
+                expect(result.ok, `seed ${seed} (${servedFile}): ${result.divergence}`).toBe(true);
+            }
+        }
+        // and every strict build's start-up giving a finding, at the view's announcement or at its worker's verdicts
+        // (reducer-runner.ts, startup)
+        for (const startup of ['view', 'worker'] as const) {
+            for (let seed = 1; seed <= RUNS / 4; seed++) {
+                const sequence = forTheReducer(generate(seed));
+                if (sequence.mode !== 'strict') continue;
+                const result = runReducerSequence(sequence, { onStep, startup, servedFile: seed % 2 === 0 ? 'library' : undefined });
+                expect(result.ok, `seed ${seed} (startup ${startup}): ${result.divergence}`).toBe(true);
+            }
         }
         expect([...new Set(unlisted)]).toEqual([]);
         // and what the list says and the runs never make is exactly NEVER_MADE, each with its reason

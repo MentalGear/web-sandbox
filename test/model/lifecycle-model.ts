@@ -22,6 +22,15 @@
  *   approached by the generator, so their terminations are divergences here (they have their own specs). The view's
  *   first overrun (backlog S72) is a host line allowed in any standing strict environment: it is wall time, which a
  *   loaded machine can push past the limit, and it changes no state; the second overrun's termination stays a divergence.
+ * - sealed mode's check of its served file (design 03, "The check of the file"), where the runner serves one
+ *   (`servedFile`; the strict view is then the served file's): a build of a registration that has no answer yet waits
+ *   for the check and is never `ready` before it answered; an answer is the registration's (`fileAnswered`), so a finding
+ *   ends the builds that waited for it (from a task) and refuses every later one up front, under the no-repeat rule;
+ *   terminate(), reset() and removal during the wait act as on any `loading` build.
+ * - the start-up order (design 03, "The start-up order"), where the runner gives every strict build's start-up a finding
+ *   (`startupFinding`: the view's announcement states another version, or a gate of the view's or the worker's failed):
+ *   such a build is never `ready`, and ends with that finding while `loading`; terminate(), reset() and removal before
+ *   it act as on any `loading` build.
  */
 
 export type Mode = 'strict' | 'cooperative' | 'worker';
@@ -113,6 +122,8 @@ export const LOAD_TIMEOUT_REASONS = [
     "the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)",
 ];
 export const LOAD_TIMEOUT_MS = 5000;
+/** A served view that never announced itself, or a check of the file that did not answer, at the load deadline (API.md, the reasons). */
+export const DOCUMENT_SILENT_REASON = "the document at documentUrl did not answer: the file is missing, the server answers its path with another page, a header on it refuses the framing or the view's script, or the host page's frame-src does not admit it (see docs/API.md#registering-the-element)";
 export const RPC_SMALLEST_CALL_BYTES = 136; // "the smallest call measures about 136 bytes"
 export const TINY_BYTES_BUDGET = 64; // below that: every guest call is ARGS_NOT_TRANSFERABLE
 export const FEW_CALLS_BUDGET = 3;
@@ -196,6 +207,13 @@ export interface Env {
     watchdog: number;
     execTimeout: number;
     built: Record<string, string>; // the guest's own view less its pending changes: the files this build delivered, with its committed changes
+    checking: boolean; // a served build that waits for the check of its file (the registration had no answer when it started)
+    answersAtStart: number; // how many times the check had answered when it started
+}
+
+/** The served file a run has, where the strict view is sealed mode's (the runner's `servedFile`): its check's finding, or null. */
+export interface ServedFile {
+    readonly finding: string | null;
 }
 
 export type Pending = { change: 'write'; text: string } | { change: 'remove' };
@@ -284,6 +302,13 @@ export class LifecycleModel {
     frames: Frame[] = [];
     coverage = new Set<string>();
     readonly mode: Mode;
+    // The served file of the run (null: the strict view is a srcdoc document), how many times its check answered, and
+    // whether an answer is kept for the registration.
+    servedFile: ServedFile | null = null;
+    fileAnswers = 0;
+    fileKept = false;
+    // The finding every strict build's start-up gives in this run (the runner's `startup`), or null where it holds.
+    startupFinding: string | null = null;
 
     constructor(mode: Mode) {
         this.mode = mode;
@@ -316,11 +341,28 @@ export class LifecycleModel {
     // hold (a committed removal), and an entry whose text calls import() (a committed write can make it one).
     private buildRefusal(): string | null {
         const cfg = this.cfg;
-        if (!cfg || cfg.kind !== 'valid' || cfg.mode !== 'strict' || !cfg.entry) return null;
+        if (!cfg || cfg.kind !== 'valid' || cfg.mode !== 'strict') return null;
+        return this.entryRefusal(cfg.entry) ?? this.keptFinding();
+    }
+
+    private entryRefusal(entry: string | undefined): string | null {
+        if (!entry) return null;
         const text = this.entryText;
-        if (text === undefined || !cfg.entry.endsWith('.js')) return ENTRY_NOT_REGISTERED_REASON;
+        if (text === undefined || !entry.endsWith('.js')) return ENTRY_NOT_REGISTERED_REASON;
         if (text === IMPORT_ENTRY_TEXT) return ENTRY_IMPORT_REASON;
         return null;
+    }
+
+    // a finding of the check the registration kept refuses every build of the served file, after the entry's own refusals
+    private keptFinding(): string | null {
+        return this.fileKept && this.servedFile !== null ? this.servedFile.finding : null;
+    }
+
+    /** The check of the served file answered (the runner's fake request): `kept`, an answer the registration keeps. */
+    fileAnswered(kept: boolean) {
+        this.fileAnswers++;
+        if (kept) this.fileKept = true;
+        this.coverage.add(`file-answered|${kept ? 'kept' : 'unanswered'}`);
     }
 
     private newEnv(now: number): Env {
@@ -346,6 +388,8 @@ export class LifecycleModel {
             watchdog: valid ? positiveTimeout(valid.watchdog) : 0,
             execTimeout: valid && mode !== 'cooperative' ? positiveTimeout(valid.execTimeout) : 0,
             built: { ...this.files },
+            checking: this.servedFile !== null && mode === 'strict' && !this.fileKept,
+            answersAtStart: this.fileAnswers,
         };
     }
 
@@ -625,6 +669,8 @@ export class LifecycleModel {
                 if (ev.depth > 0) this.fail(`ready dispatched synchronously inside ${top?.cmd.op}`);
                 if (this.state !== 'loading' || !this.env || this.env.ready) this.fail(`ready while the model is ${this.state}${this.env?.ready ? ' (already ready)' : ''}`);
                 if (ev.state !== 'ready') this.fail(`state is ${ev.state} at ready`);
+                if (this.env.checking && this.fileAnswers === this.env.answersAtStart) this.fail('ready before the check of the served file answered');
+                if (this.startupFinding !== null && this.env.mode === 'strict') this.fail(`ready though the start-up gave a finding: ${this.startupFinding}`);
                 this.env.ready = true;
                 this.state = 'ready';
                 this.coverage.add(`event:ready|${this.mode}`);
@@ -697,7 +743,24 @@ export class LifecycleModel {
         if (reason === WATCHDOG_REASON) return env.watchdog > 0 && env.busy;
         if (reason === EXECUTION_TIMEOUT_REASON) return env.execTimeout > 0 && env.execBusy;
         if (reason === ENTRY_FAILED_REASON) return env.entryBad;
+        if (this.startupFinding !== null && reason === this.startupFinding && env.mode === 'strict') {
+            if (this.state === 'loading') this.coverage.add('event:terminated-startup');
+            return this.state === 'loading';
+        }
         if (LOAD_TIMEOUT_REASONS.includes(reason)) return this.state === 'loading' && now - env.startedAt >= LOAD_TIMEOUT_MS - 100;
+        if (this.servedFile !== null && env.mode === 'strict') return this.servedAllowed(reason, env, now);
+        return false;
+    }
+
+    // A served build's own terminations: the check's finding, only for a build that waited for an answer that has come
+    // (from the task that delivered it); "the document did not answer" at the load deadline.
+    private servedAllowed(reason: string, env: Env, now: number): boolean {
+        if (reason === this.servedFile!.finding) {
+            const allowed = this.state === 'loading' && env.checking && this.fileAnswers > env.answersAtStart;
+            if (allowed) this.coverage.add('event:terminated-finding');
+            return allowed;
+        }
+        if (reason === DOCUMENT_SILENT_REASON) return this.state === 'loading' && now - env.startedAt >= LOAD_TIMEOUT_MS - 100;
         return false;
     }
 

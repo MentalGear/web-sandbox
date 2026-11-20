@@ -397,7 +397,7 @@ describe('the element: what a guest learns of a failed host method (BD5:LIM-2, B
     // An element with a port of its environment, and the guest's requests delivered on it (as relay-and-rpc-budgets'
     // hostWithPort): every answer the element posts back is recorded.
     function element(methods: AppSetup['methods'] = {}) {
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
         startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'] }, { methods });

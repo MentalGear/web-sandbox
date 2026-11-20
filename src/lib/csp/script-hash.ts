@@ -82,6 +82,11 @@ const toBase64 = (bytes: Uint8Array) => {
     return btoa(binary);
 };
 
+/** SHA-256 of `bytes` in base64: the digest of the served file (document-digest.ts), synchronous where `crypto.subtle` is absent. */
+export function sha256Base64(bytes: Uint8Array): string {
+    return toBase64(sha256(bytes));
+}
+
 /**
  * Throws unless `text` is its own parsed form: the HTML parser changes CR (alone or before LF) and NUL
  * inside a <script>, so a hash over such a text would never match what the browser hashes (A3). Also

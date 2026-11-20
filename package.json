@@ -23,7 +23,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "dev": "vite dev",
+    "dev": "bun scripts/build-lib.ts && vite dev",
     "build": "vite build",
     "test": "bun run test:unit && bun run test:e2e",
     "test:unit": "vitest run",

@@ -25,7 +25,7 @@ import { startWith } from './start-app';
  * The e2e half, with a real focus event: test/e2e/teardown-reentry.spec.ts.
  */
 
-defineWebSandbox();
+defineWebSandbox({ documentUrl: '/sealed-document.html' });
 
 afterEach(() => {
     vi.restoreAllMocks();

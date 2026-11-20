@@ -1,3 +1,4 @@
+// @vitest-environment-options {"unitFetch":"refuse"}
 import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -22,7 +23,7 @@ import { startWith, type AppSetup } from './start-app';
 
 async function mount(config?: Record<string, unknown>, setup: AppSetup = {}) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     if (config) startWith(el, config, setup);

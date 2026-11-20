@@ -15,7 +15,7 @@ const NAMING_IT = "require-trusted-types-for 'script'; trusted-types web-sandbox
 
 async function mount(config: Record<string, unknown>) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     const reasons: string[] = [];
     el.addEventListener('terminated', (event: CustomEvent) => reasons.push(event.detail?.reason));
@@ -31,12 +31,22 @@ afterEach(() => {
 });
 
 describe('a browser without Trusted Types, given the page\'s policy', () => {
-    it.each(['strict', 'sealed', 'cooperative', 'worker'] as const)('%s: a list that does not name the library\'s policy ends the build with the Trusted Types reason', async (mode) => {
+    it.each(['strict', 'cooperative', 'worker'] as const)('%s: a list that does not name the library\'s policy ends the build with the Trusted Types reason', async (mode) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         vi.spyOn(console, 'error').mockImplementation(() => {});
         const { el, reasons } = await mount({ mode, capabilities: mode === 'cooperative' ? ['allow-scripts'] : [], hostContentSecurityPolicy: REQUIRING_OTHER });
         expect(el.state).toBe('terminated');
         await vi.waitFor(() => expect(reasons).toEqual([reasonText('trustedTypes')]));
+    });
+
+    it("sealed: the channel is gone: its view is the served file, which the host page's Trusted Types do not reach, and the element writes no HTML sink for it, so the list ends nothing", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { el, reasons } = await mount({ mode: 'sealed', hostContentSecurityPolicy: REQUIRING_OTHER });
+        expect(el.state).toBe('loading');
+        const frame = el.shadowRoot.querySelector('iframe') as HTMLIFrameElement;
+        expect([frame.hasAttribute('srcdoc'), frame.getAttribute('src')]).toEqual([false, new URL('/sealed-document.html', document.URL).href]);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(reasons).toEqual([]);
     });
 
     it('a list that names it, no requirement, and false end nothing', async () => {

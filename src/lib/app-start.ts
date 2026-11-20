@@ -10,8 +10,8 @@
  * neither knows, is refused before any value is read.
  *
  * What it refuses is what the host page can decide without parsing guest text: the shape and type of each option, each
- * path and the quota over the bytes given (the file store's rules), an `entry` that names no JavaScript file given, and
- * each method. A TypeError for the options, the methods and a key, a FileError for the files.
+ * path and the quota over the bytes given (the file store's rules), an `entry` that names no JavaScript file given,
+ * each method, and a sealed app on an element registered without `documentUrl`. A TypeError for the options, the methods and a key, a FileError for the files.
  *
  * Host-side only, never stringified into the guest.
  */
@@ -24,6 +24,7 @@ import { networkModes } from './network-modes';
 import { errorName, fixedDetail, joinDetails, reasonText } from './reasons';
 import type { LimitValue } from './limits';
 import { RESERVED_METHOD_PREFIX } from './rpc';
+import { registeredDocumentUrl } from './document-url';
 
 /** The app's key besides its options: its files. */
 export const APP_FILES_KEY = 'files';
@@ -67,10 +68,19 @@ export function readStart(app: unknown, grants: unknown, hostPage: HostPage): St
     const appFields = readArgument(app, APP_ARGUMENT, GRANTS_ARGUMENT);
     const grantFields = grants === undefined ? NO_FIELDS : readArgument(grants, GRANTS_ARGUMENT, APP_ARGUMENT);
     const { normalised, warnings } = readOptions(appFields, grantFields, hostPage);
+    checkServedView(normalised);
     const files = readFiles(appFields[APP_FILES_KEY]);
     checkEntry(normalised, files);
     const methods = readMethods(grantFields[GRANT_METHODS_KEY]);
     return { normalised, files, methods, warnings };
+}
+
+/**
+ * Sealed mode's view is the served file (design 03): an element registered without `documentUrl` (the network build's
+ * defineWebSandbox() allows it, for the network modes) cannot start a sealed app, and says why.
+ */
+function checkServedView(normalised: NormalisedConfig) {
+    if (normalised.config.mode === 'sealed' && registeredDocumentUrl() === null) throw refusal(`${reasonText('noDocumentUrl')}.`);
 }
 
 /**

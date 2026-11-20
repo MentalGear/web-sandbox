@@ -4,8 +4,8 @@ import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 import { VIEW_STILL_STYLE } from '@src/lib/in-sandbox-view';
 import type { InheritedContextId } from '@src/lib/inherited-context';
-import { buildOfPage, expect, ORIGIN, type Build, type SandboxDriver } from './fixture';
-import { HOST_COOKIES, REALISTIC_HOST_PATH, type ApiHit, type PageHeader, type SessionRecord } from './realistic-host-server';
+import { buildOfPage, expect, OFFSITE_ORIGIN, ORIGIN, type Build, type SandboxDriver } from './fixture';
+import { DOCUMENT_API_NAME, HOST_COOKIES, REALISTIC_HOST_PATH, type ApiHit, type PageHeader, type SessionRecord } from './realistic-host-server';
 
 /**
  * A host page that looks like a production application, for every test that wants one (S74, class A; CONTRIBUTING.md,
@@ -64,6 +64,18 @@ export interface HostOptions {
     serviceWorker?: boolean;
     /** The host site's cookies (default: on). */
     cookies?: boolean;
+    /**
+     * Where the page serves sealed mode's file: the build's own copy (default), or `'api'`, a name of the application's
+     * API (`DOCUMENT_API_NAME`), which its Service Worker answers cache-first, its fetch wrapper adds the user's token to,
+     * and the backend records with every header: the check of the file's request is then seen by each of them.
+     */
+    documentAt?: 'build' | 'api';
+    /**
+     * Sealed mode's file served with these response headers (a header's text may name `REPORT`, the page's own report
+     * endpoint), from another origin with no CORS, so the check of the file cannot read it and the view's policy check is
+     * what decides (design 03, "The policies in force"); the page's `frame-src` admits that origin.
+     */
+    fileHeaders?: Record<string, string>;
     /** Edits the policy the page would send (the directive matrix sets one directive; a test adds the origins it lists to connect-src). */
     directives?: (base: Directives) => Directives;
     /**
@@ -85,8 +97,9 @@ export const POLICY_HASHES = {
 
 /** What the page's `script-src` and `style-src` carry for a mode (docs/API.md#host-page-policy). */
 export function policyProfile(mode: HostMode, viewHash: string): { script: string[]; style: string[] } {
-    // sealed mode is strict mode's view and worker: the same profile
-    if (mode === 'strict' || mode === 'sealed') return { script: [viewHash], style: [POLICY_HASHES.wrapperStyle, POLICY_HASHES.animationStyle] };
+    // sealed mode's view is the served file, under its own policy: the page's needs nothing for it (but frame-src, below)
+    if (mode === 'sealed') return { script: [], style: [] };
+    if (mode === 'strict') return { script: [viewHash], style: [POLICY_HASHES.wrapperStyle, POLICY_HASHES.animationStyle] };
     return { script: ["'unsafe-inline'"], style: ["'unsafe-inline'"] };
 }
 
@@ -102,6 +115,9 @@ export function hostDirectives(options: HostOptions & { session: string; viewHas
         'style-src': ["'self'", ...profile.style],
         'img-src': ["'self'", 'data:', 'blob:'],
         'connect-src': ["'self'"],
+        // sealed mode's view: the served file, on the page's own origin (docs/API.md#host-page-policy), or the copy with
+        // headers on its response (`fileHeaders`)
+        'frame-src': ["'self'", ...(options.fileHeaders ? [OFFSITE_ORIGIN] : [])],
         'object-src': ["'none'"],
         'base-uri': ["'self'", 'about:'],
         'form-action': ["'self'"],
@@ -177,6 +193,16 @@ export class RealisticHost {
     /** The policy the page was sent with. */
     csp!: string;
 
+    /** The documentUrl the page registered with `documentAt: 'api'`. */
+    get documentApiUrl() { return this.api(DOCUMENT_API_NAME); }
+
+    /** The copy of sealed mode's file on another origin with `headers` on its response (HostOptions.fileHeaders). */
+    headedFile(headers: Record<string, string>): string {
+        const search = new URLSearchParams();
+        for (const [name, value] of Object.entries(headers)) search.append('h', `${name}:${value.replaceAll('REPORT', `${HOST_BASE}/report/${this.session}`)}`);
+        return `${OFFSITE_ORIGIN}${REALISTIC_HOST_PATH}/file/${this.session}/${DOCUMENT_API_NAME}?${search}`;
+    }
+
     /** The URL of one of the host's API names on its own origin. */
     api(name: string) { return `${HOST_BASE}/api/${this.session}/${name}`; }
 
@@ -204,6 +230,8 @@ export class RealisticHost {
         for (const [header, value] of Object.entries(options.headers ?? {})) query.set(`h-${header}`, value);
         if (options.cookies === false) query.set('cookies', '0');
         if (options.serviceWorker === false) query.set('sw', '0');
+        if (options.documentAt === 'api') query.set('doc', 'api');
+        if (options.fileHeaders) query.set('docUrl', this.headedFile(options.fileHeaders));
         if (options.guestCode !== 'execute' && options.ttDefault !== false) query.set('tt-default', '1');
         await page.goto(`${options.origin ?? ORIGIN}${REALISTIC_HOST_PATH}/page?${query}`);
         await page.waitForFunction(() => (window as any).harnessReady === true);

@@ -15,7 +15,7 @@ afterEach(() => { document.body.replaceChildren(); });
 
 async function build(mode: 'strict' | 'cooperative' | 'worker') {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     if (mode === 'strict') startWith(el, { mode, entry: 'main.js' }, { files: { 'main.js': 'void 0' } });
@@ -56,7 +56,7 @@ describe('every generated source starts strict', () => {
     const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
     async function element(config: Record<string, unknown>, files?: Record<string, string>) {
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
         startWith(el, config, { files });

@@ -54,7 +54,7 @@ test.describe("an origin on the host page's site is dropped in every mode, with 
 const MOUNTER = (library: string) => `
 import { defineWebSandbox } from ${JSON.stringify(library)};
 
-defineWebSandbox();
+defineWebSandbox({}); // the network modes only: this realm's elements run no sealed app
 const realm = { selfOrigin: self.origin, locationOrigin: location.origin, href: location.href };
 top.__mount = ({ html, entry, ...grants }, code) => new Promise((resolve) => {
     const el = document.createElement('web-sandbox');

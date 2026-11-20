@@ -123,6 +123,24 @@ export function handTimedScaling(source: string): MeterHit[] {
     return hits;
 }
 
+/**
+ * An e2e spec's ceiling on one time it measured, given as another time it measured, scaled (`expect(full).toBeLessThan(none
+ * * 1.5)`): the two were timed one after the other, so the load between them, and the engine's state as it moved, were in
+ * the ratio (S81). The one measure is `scalingRatio` (test/unit/scaling.ts), run inside the page from its text. A ceiling
+ * that is a constant scaled (`LIMIT_MS / 2`) is none.
+ */
+export function scaledCeilings(source: string): MeterHit[] {
+    const code = withoutComments(source);
+    const lineOf = (at: number) => code.slice(0, at).split('\n').length;
+    const hits: MeterHit[] = [];
+    const shape = /\.toBeLessThan(?:OrEqual)?\(\s*([A-Za-z_][\w.]*)\s*[*/]\s*[\d.]+\s*\)/g;
+    for (const match of code.matchAll(shape)) {
+        if (/^[A-Z][A-Z0-9_]*$/.test(match[1]!)) continue;
+        hits.push({ pattern: 'a ceiling that is another measured value, scaled', line: lineOf(match.index!), text: code.split('\n')[lineOf(match.index!) - 1]!.trim() });
+    }
+    return hits;
+}
+
 // A test's declaration, on its own line: it(…, test(…, it.each(…)(…
 const TEST_DECLARATION = /^\s*(?:it|test)\b/;
 // The time limit a scaling test declares there (test/unit/scaling.ts).

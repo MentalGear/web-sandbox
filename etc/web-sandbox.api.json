@@ -317,15 +317,16 @@
         {
           "kind": "Function",
           "canonicalReference": "web-sandbox!defineWebSandbox:function(1)",
-          "docComment": "/**\n * Registers `WebSandbox` as a custom element under `tagName` and returns the class. Importing the package\n * registers nothing, so you pick the name. Calling it again with the same name does nothing.\n *\n * @param tagName - The tag name; `'web-sandbox'` when left out. The class can be registered under one name only.\n *\n * @returns The `WebSandbox` class.\n *\n * @throws\n *\n * An `Error` if the name is already defined by another element; the browser's `NotSupportedError` for a second,\n * different name of this class, and its `SyntaxError` for a name that is not a valid custom element name.\n */\n",
+          "docComment": "/**\n * Registers `WebSandbox` as a custom element and returns the class. Importing the package registers nothing, so you name\n * the file sealed mode's view is served from, and may pick the tag.\n *\n * @remarks\n *\n * The definition is read and checked whole before anything is defined. A second call for a tag this element already\n * has does nothing when its `documentUrl` is the same, and throws when it differs. In a build with the network modes an\n * element registered without `documentUrl` runs those modes only: `start()` of a sealed app throws.\n *\n * @param definition - The tag name and the served file's URL; see {@link WebSandboxDefinition}.\n *\n * @returns The `WebSandbox` class.\n *\n * @throws\n *\n * A `TypeError` for a definition that is not an object or whose `tagName` is not a string, for a missing\n * `documentUrl` (in the default build), for one that breaks its rules (the message names the rule), and for a tag this\n * element already has with another `documentUrl`; an `Error` if the name is already defined by another element; the\n * browser's `NotSupportedError` for a second, different name of this class, and its `SyntaxError` for a name that is not\n * a valid custom element name.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
-              "text": "export declare function defineWebSandbox(tagName?: "
+              "text": "export declare function defineWebSandbox(definition: "
             },
             {
-              "kind": "Content",
-              "text": "string"
+              "kind": "Reference",
+              "text": "WebSandboxDefinition",
+              "canonicalReference": "web-sandbox!WebSandboxDefinition:type"
             },
             {
               "kind": "Content",
@@ -354,12 +355,12 @@
           "overloadIndex": 1,
           "parameters": [
             {
-              "parameterName": "tagName",
+              "parameterName": "definition",
               "parameterTypeTokenRange": {
                 "startIndex": 1,
                 "endIndex": 2
               },
-              "isOptional": true
+              "isOptional": false
             }
           ],
           "name": "defineWebSandbox"
@@ -2998,6 +2999,83 @@
           ]
         },
         {
+          "kind": "Interface",
+          "canonicalReference": "web-sandbox!SealedSandboxDefinition:interface",
+          "docComment": "/**\n * The element's tag name, and where the page serves sealed mode's view.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "export interface SealedSandboxDefinition "
+            }
+          ],
+          "fileUrlPath": "dist/host.d.ts",
+          "releaseTag": "Public",
+          "name": "SealedSandboxDefinition",
+          "preserveMemberOrder": false,
+          "members": [
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SealedSandboxDefinition#documentUrl:member",
+              "docComment": "/**\n * Where the page serves `sealed-document.html`, the file the package exports as `web-sandbox/sealed-document.html`:\n * sealed mode's view, which every element of the page frames. Serve it unchanged, with no response header that sets\n * a policy on it.\n *\n * @remarks\n *\n * A relative URL is resolved against the document's own URL (`document.URL`), never against its base URL, so a\n * `<base>` element in the page does not move it. It must be `http:` or `https:`, or else of the host page's own origin\n * (its scheme, host and port) where that origin, as the page reads it (`self.origin`), is neither opaque nor a browser\n * extension's: an Electron app's `file:` page or an app shell's own standard scheme can serve the file beside the\n * page, and a browser's `file:` page, a sandboxed frame, a `data:` page or an extension's page names an `http(s)` copy\n * of it (design 05, row 3.10). It carries no user name, password or fragment; a query and any path are yours, so a URL\n * that changes with the library's version keeps an old copy out of a cache. Whoever answers it receives every app's files and the reach of its host methods: serve it from the origin\n * that serves the library (docs/API.md#registering-the-element). The host page's own policy must admit it in\n * `frame-src`.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "readonly documentUrl: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "string | "
+                },
+                {
+                  "kind": "Reference",
+                  "text": "URL",
+                  "canonicalReference": "!URL:interface"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": true,
+              "isOptional": false,
+              "releaseTag": "Public",
+              "name": "documentUrl",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 3
+              }
+            },
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SealedSandboxDefinition#tagName:member",
+              "docComment": "/**\n * The tag name. The class can be registered under one name only.\n *\n * @defaultValue `'web-sandbox'`\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "readonly tagName?: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "string"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": true,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "tagName",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            }
+          ],
+          "extendsTokenRanges": []
+        },
+        {
           "kind": "Variable",
           "canonicalReference": "web-sandbox!VIEW_INPUT_IN_FLIGHT:var",
           "docComment": "/**\n * The most batches of the view's events the worker has not acknowledged yet (research 23). The worker's prelude answers\n * each batch with VIEW_EVENT_ACK once the handlers it dispatched to have returned, and the view sends the continuous\n * events it coalesced (VIEW_CONTINUOUS_EVENT_TYPES) only while fewer than this many are unacknowledged: a guest whose\n * handler blocks gets the latest state when it returns, and neither the worker's queue nor the host page's thread grows\n * with a stuck guest. A discrete event is posted at once, whatever is in flight. The user's own input bounds it, except\n * `focusin` and `focusout`, which the guest raises too with `set({ focus })` (applySet), one `set` a flush, each\n * charged to the time budget (BD4:LIM-4).\n */\n",
@@ -3127,7 +3205,7 @@
         {
           "kind": "Function",
           "canonicalReference": "web-sandbox!viewScriptHash:function(1)",
-          "docComment": "/**\n * The CSP hash source of the library's bootstrap for this build of the package, to allow in the host page's own\n * Content-Security-Policy (R1:R4-5): the view of sealed and strict mode runs it and, in a build with the network modes,\n * so does the fetch bridge's frame.\n *\n * @remarks\n *\n * It is the very value the element puts in the `script-src` of its documents, which inherit the host page's policy\n * (docs/API.md#host-page-policy), so one hash admits them: the view in sealed and strict mode, and with `fetchBridge`\n * the frame that makes the bridge's requests, in every mode that has it (BD1:ISO-1). In the built package the bootstrap\n * is a string literal of the bundle, so the hash is the same in a build step (importing the package needs no DOM) and in\n * the browser, however the embedder's app is bundled or minified. It changes only with the package's version and its\n * build: the default build's bootstrap has no bridge frame's part, so its hash is not the network build's\n * (docs/API.md#builds).\n *\n * The sources have no such literal: a project that bundles `src/index.ts` (not the built package) gets the hash of the\n * functions as its own transpiler prints them, which a build step that imports the sources does not compute. There the\n * value is right only where it is read, in the page that runs the sources, and the first call in a process or page\n * warns (BD3:NEW-1).\n *\n * @returns The hash source, `'sha256-…'`, quotes included.\n */\n",
+          "docComment": "/**\n * The CSP hash source of the library's bootstrap for this build of the package, to allow in the host page's own\n * Content-Security-Policy for strict mode (R1:R4-5): strict mode's view runs it and, in a build with the network modes,\n * so does the fetch bridge's frame. Sealed mode's view needs none in the host page's policy: it is the served file,\n * whose own policy admits its bootstrap.\n *\n * @remarks\n *\n * It is the very value the element puts in the `script-src` of its `srcdoc` documents, which inherit the host page's\n * policy (docs/API.md#host-page-policy), so one hash admits them: strict mode's view, and with `fetchBridge` the frame\n * that makes the bridge's requests, in every mode that has it (BD1:ISO-1). In the default build it is the hash of sealed\n * mode's bootstrap, the text `sealed-document.html` holds and its policy admits; the host page lists it for nothing. In the built package the bootstrap\n * is a string literal of the bundle, so the hash is the same in a build step (importing the package needs no DOM) and in\n * the browser, however the embedder's app is bundled or minified. It changes only with the package's version and its\n * build: the default build's bootstrap has no bridge frame's part, so its hash is not the network build's\n * (docs/API.md#builds).\n *\n * The sources have no such literal: a project that bundles `src/index.ts` (not the built package) gets the hash of the\n * functions as its own transpiler prints them, which a build step that imports the sources does not compute. There the\n * value is right only where it is read, in the page that runs the sources, and the first call in a process or page\n * warns (BD3:NEW-1).\n *\n * @returns The hash source, `'sha256-…'`, quotes included.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -4256,6 +4334,92 @@
                 }
               ],
               "name": "removeEventListener"
+            }
+          ],
+          "extendsTokenRanges": []
+        },
+        {
+          "kind": "TypeAlias",
+          "canonicalReference": "web-sandbox!WebSandboxDefinition:type",
+          "docComment": "/**\n * What {@link defineWebSandbox} takes in this build: one of the definitions of {@link WebSandboxDefinitionByBuild}.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "export type WebSandboxDefinition = "
+            },
+            {
+              "kind": "Reference",
+              "text": "WebSandboxDefinitionByBuild",
+              "canonicalReference": "web-sandbox!WebSandboxDefinitionByBuild:interface"
+            },
+            {
+              "kind": "Content",
+              "text": "[keyof "
+            },
+            {
+              "kind": "Reference",
+              "text": "WebSandboxDefinitionByBuild",
+              "canonicalReference": "web-sandbox!WebSandboxDefinitionByBuild:interface"
+            },
+            {
+              "kind": "Content",
+              "text": "]"
+            },
+            {
+              "kind": "Content",
+              "text": ";"
+            }
+          ],
+          "fileUrlPath": "dist/host.d.ts",
+          "releaseTag": "Public",
+          "name": "WebSandboxDefinition",
+          "typeTokenRange": {
+            "startIndex": 1,
+            "endIndex": 5
+          }
+        },
+        {
+          "kind": "Interface",
+          "canonicalReference": "web-sandbox!WebSandboxDefinitionByBuild:interface",
+          "docComment": "/**\n * The definitions {@link defineWebSandbox} takes, by the build that takes them.\n *\n * @remarks\n *\n * The package as published has sealed mode alone, whose view is the served file, so its definition requires\n * `documentUrl` ({@link SealedSandboxDefinition}). A build with the network modes (ADR-009; docs/API.md#builds) adds a\n * definition without it here, for an element that runs only those modes, which keep documents of their own.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "export interface WebSandboxDefinitionByBuild "
+            }
+          ],
+          "fileUrlPath": "dist/host.d.ts",
+          "releaseTag": "Public",
+          "name": "WebSandboxDefinitionByBuild",
+          "preserveMemberOrder": false,
+          "members": [
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!WebSandboxDefinitionByBuild#sealed:member",
+              "docComment": "/**\n * Every build: an element that can run sealed mode ({@link SealedSandboxDefinition}).\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "sealed: "
+                },
+                {
+                  "kind": "Reference",
+                  "text": "SealedSandboxDefinition",
+                  "canonicalReference": "web-sandbox!SealedSandboxDefinition:interface"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": false,
+              "releaseTag": "Public",
+              "name": "sealed",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
             }
           ],
           "extendsTokenRanges": []

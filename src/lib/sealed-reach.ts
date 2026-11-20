@@ -756,6 +756,26 @@ export const SEALED_REACH = {
         rest: "runs in the guest's realm or the view, where the host page's default policy does not exist; the library's host code writes no string to a sink",
         cells: { host: HOST_PURE },
     },
+    fileHeaders: {
+        rest: "makes no load and raises no violation a policy on the served file's response could refuse or report",
+        cells: {
+            host: HOST_NOTHING,
+            code: STRINGS_REFUSED,
+            timers: STRINGS_REFUSED,
+            webAssembly: NO_WEBASSEMBLY,
+            ...REQUEST_MAKERS,
+            preludeRemoved: NO_GUEST_URL,
+            urlAttribute: remains(['lateFinding'], "every URL but one the view minted is dropped before insertion (urlKeepRule, rendererUrlDrop), so no report names one; a header that refuses a minted `blob:` load is the policy check's to see (policy-check.ts), before anything of the guest's is sent or once its violation comes"),
+            loadKind: remains(['lateFinding'], "a registered file's load is a `blob:` URL the view minted: a header that refuses it refuses the check's admitted canary of its kind first (policy-check.ts), and the build ends"),
+            styleElement: remains(['lateFinding'], "applied through the CSSOM, so no `style-src` check (styleEncoding, adoptedSheets); every reference the URL rule does not keep becomes `\"\"` first (urlKeepRule, cssUrlDrop); a registered file it names loads as a `blob:` URL, as `loadKind`"),
+            styleAttribute: remains(['lateFinding'], "applied through the CSSOM, so no `style-src` check (styleEncoding, cssomDeclaration); every reference the URL rule does not keep becomes `\"\"` first (urlKeepRule, cssUrlDrop); a registered file it names loads as a `blob:` URL, as `loadKind`"),
+            form: neutralised(['navigationCancel'], 'a submission is cancelled, and no form target is kept: no form navigates, so no `form-action` of any header, seen or not, is asked'),
+            hyperlink: neutralised(['inertHref', 'navigationCancel'], 'a link navigates nowhere: no header is asked'),
+            linkHref: neutralised(['inertHref', 'navigationCancel', 'listedLinkOpen'], "a link navigates nowhere; a marked link's click has the host page open the embedder's URL, which no policy of the file's governs"),
+            svgReference: neutralised(['urlKeepRule', 'svgLocalReferences'], 'a reference keeps only a fragment of the view, which loads nothing'),
+            viewApi: remains(['lateFinding'], 'what it renders and sets: the registered files its markup and its styles name, every other URL dropped (urlKeepRule), no form or link that navigates (navigationCancel)'),
+        },
+    },
     coep: {
         rest: 'reads nothing cross-origin isolation changes, and loads nothing an embedder policy checks (a `blob:` load is not cross-origin)',
         cells: {

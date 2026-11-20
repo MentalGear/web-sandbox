@@ -38,7 +38,7 @@ const task = () => new Promise(resolve => setTimeout(resolve, 0));
 /** What start() does with `app` and `grants` on an element in the document: what it throws, and the reasons of the terminations after it. */
 async function outcomeOf(app: unknown, grants?: unknown): Promise<{ thrown: any; reasons: string[] }> {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     const reasons: string[] = [];
@@ -113,14 +113,18 @@ describe('BD5:DOC-2: a reason never carries a value of the configuration', () =>
 
     it('every templated reason, filled by each producer from hostile input, holds none of it', () => {
         const templated = (Object.keys(TERMINATION_REASONS) as ReasonId[]).filter(id => TERMINATION_REASONS[id].text.includes('…'));
-        expect(templated.sort()).toEqual(['buildFailed', 'configRefused', 'linksRefused', 'unknownMode']);
+        expect(templated.sort()).toEqual(['buildFailed', 'configRefused', 'documentUrlRefused', 'linksRefused', 'unknownMode']);
         for (const id of templated) {
             for (const value of HOSTILE) {
                 const details = [errorName({ name: value }), renamedModeNote(value), refusalDetail({ option: value })];
                 for (const detail of details) {
                     const reason = reasonText(id as 'buildFailed', detail);
-                    expect(echoes(reason, value), `${id}: ${reason}`).toBe(false);
-                    expect(reason.startsWith(TERMINATION_REASONS[id].text.split('…')[0]!)).toBe(true);
+                    // the text around the `…` is the library's own, and may share a word with a hostile value (`document`):
+                    // what the producer put in place of the `…` is what must hold none of the value
+                    const [before, after] = TERMINATION_REASONS[id].text.split('…') as [string, string];
+                    expect(reason.startsWith(before) && reason.endsWith(after)).toBe(true);
+                    const filled = reason.slice(before.length, reason.length - after.length);
+                    expect(echoes(filled, value), `${id}: ${reason}`).toBe(false);
                 }
             }
         }

@@ -28,6 +28,17 @@
  *   guest is the agent where the app's entry or markup is the agent, and answers UNKNOWN_METHOD elsewhere; a guest with
  *   no bootstrap answers nothing.
  *
+ * - with `servedFile`, the strict view is sealed mode's served file (design 03): a build of a registration with no answer
+ *   kept waits for the check of the file, one fake request the builds that wait at once share (document-check.ts), which
+ *   answers after a few ms of fake time (one request in 40 hangs past the load deadline): the library's file, a file
+ *   with a finding, or no answer. An answer is kept for the run, as the registration keeps it, and told to the model
+ *   (`fileAnswered`); every build that waited gets it as its `fileChecked`, those that are gone included, which the
+ *   reducer must drop.
+ * - every strict build's start-up (design 03, "The start-up order"): the view announces itself, gets its ports, checks
+ *   in, and then hands on its worker's verdicts, each after a few ms of fake time. With `startup`, every one of them
+ *   gives a finding, at the view's announcement (another version, a failed gate of the view's) or at the worker's
+ *   verdicts (a failed gate of the worker's), which the model expects to end the build (`startupFinding`).
+ *
  * Listener plans run as nested steps inside the dispatch, as in test/model/runner.ts. What cannot agree without a real
  * guest is filtered out (the S65 plan): every other call, and execute(), with the guest's logs and fetches and the
  * terminations a guest causes. The e2e suite (test/e2e/lifecycle-model.spec.ts) covers them.
@@ -99,7 +110,20 @@ export interface ReducerRunOptions {
     loadInsideDomOperations?: boolean;
     /** The chance that a build's guest never checks in (default 1 in 40). */
     silentGuests?: number;
+    /** The strict view is sealed mode's served file, whose check answers this way (see the module's comment). */
+    servedFile?: ServedFileAnswer;
+    /** Where every strict build's start-up gives a finding (see the module's comment); none by default. */
+    startup?: 'view' | 'worker';
 }
+
+/** The finding the runner's start-up gives (`startup`): the reducer and the model compare it as a text. */
+export const STARTUP_FINDING = 'a start-up finding of the runner';
+
+/** How the fake server answers the check of the served file: the library's file, one with a finding, or nothing readable. */
+export type ServedFileAnswer = 'library' | 'finding' | 'unanswered';
+
+/** The finding the fake server's file gives: another file's bytes. */
+export const FILE_FINDING = reasonText('documentChanged');
 
 export interface ReducerRunResult {
     ok: boolean;
@@ -168,6 +192,11 @@ export class FakeElement implements LifecycleHost {
     private deadline: Task | null = null;
     private warnedForeign = false;
     private lastSilent = false;
+    // the check of the served file: the answer kept for the registration, and the builds waiting for the request in flight
+    private fileKept: { readonly finding: string | null } | undefined = undefined;
+    private fileWaiting: Generation[] | null = null;
+    private lastHung = false;
+    onFileAnswer: ((kept: boolean) => void) | null = null;
     lastBuildAt = 0;
     private readonly rng: Rng;
 
@@ -261,7 +290,40 @@ export class FakeElement implements LifecycleHost {
         const strict = hasStrictView(mode);
         const capabilities = (this.config.capabilities ?? []) as readonly string[];
         const announces = mode === 'worker' || (mode === 'cooperative' && capabilities.includes('allow-scripts'));
-        return { buildsHere: this.parent === 'own' && this.ownerDoc === 'own', blocked: unknownModeReason(mode) ?? this.entryRefusal(), strict, announces };
+        // the model's strict mode is the network build's, whose view is a srcdoc document, unless the run serves a file:
+        // then it stands for sealed mode, whose view is the served file, checked before the first frame (host.ts, the same)
+        const served = mode === 'sealed' || (strict && this.options.servedFile !== undefined);
+        const checksFile = served && this.fileKept === undefined;
+        const blocked = unknownModeReason(mode) ?? this.entryRefusal() ?? (served ? this.fileKept?.finding ?? null : null);
+        return { buildsHere: this.parent === 'own' && this.ownerDoc === 'own', blocked, strict, served, checksFile, announces };
+    }
+
+    // host.ts, `_checkFile`: the build waits for the registration's one request in flight (document-check.ts,
+    // checkDocument), made now if there is none. Its answer is kept before any build hears it, and every build that
+    // waited hears it, with the generation it waited in.
+    checkFile() {
+        const gen = this.lc.gen;
+        this.log.push('checkFile');
+        if (this.fileWaiting !== null) {
+            this.fileWaiting.push(gen);
+            return;
+        }
+        this.fileWaiting = [gen];
+        const hung = !this.lastHung && this.rng.chance(1 / 40);
+        this.lastHung = hung;
+        this.count(hung ? 'file:hung' : 'file:asked');
+        this.schedule(hung ? 6000 : this.rng.int(1, 30), () => this.answerFile());
+    }
+
+    private answerFile() {
+        const answer = this.options.servedFile!;
+        const waiting = this.fileWaiting ?? [];
+        this.fileWaiting = null;
+        const answered = answer !== 'unanswered';
+        const finding = answer === 'finding' ? FILE_FINDING : null;
+        if (answered) this.fileKept = { finding };
+        this.onFileAnswer?.(answered);
+        for (const gen of waiting) this.step({ t: 'fileChecked', gen, finding });
     }
 
     // host.ts, `_buildRefusal`: the entry as the files hold it now
@@ -309,11 +371,17 @@ export class FakeElement implements LifecycleHost {
         this.writes = this.config.guestWrites === true ? createGuestWrites({ store: this.files, built: this.files.copy(), minted: this.minted, now: () => this.now }) : null;
         this.lastBuildAt = this.now;
         this.log.push(`build #${frame.id}${frame.silent ? ' (silent)' : ''}`);
-        // the wrapper's one load, and the guest's announcement, in either order (S46: usually the announcement first)
+        // the wrapper's one load, and the guest's or the view's announcement, in either order (S46: usually the
+        // announcement first)
         this.schedule(this.rng.int(1, 20), () => frame.onload?.());
         if (ctx.announces && !frame.silent) {
             this.schedule(this.rng.int(1, 20), () => {
                 this.step({ t: 'announced', gen: frame.gen, valid: true, refusal: null, port: { frame: frame.id }, source: frame.guest });
+            });
+        }
+        if (ctx.strict && !frame.silent) {
+            this.schedule(this.rng.int(1, 20), () => {
+                this.step({ t: 'viewAnnounced', gen: frame.gen, source: frame.guest, finding: this.options.startup === 'view' ? STARTUP_FINDING : null });
             });
         }
     }
@@ -352,7 +420,12 @@ export class FakeElement implements LifecycleHost {
         const frame = this.frame!;
         this.log.push('sendInitView');
         if (frame.silent) return;
-        this.schedule(this.rng.int(1, 10), () => this.step({ t: 'viewReady', gen: frame.gen, height: 120, stillStyleRefused: false }));
+        // the check-in, then (on the same port, in that order) the worker's verdicts
+        const verdictsAfter = this.rng.int(1, 10);
+        this.schedule(this.rng.int(1, 10), () => {
+            this.step({ t: 'viewReady', gen: frame.gen, height: 120, stillStyleRefused: false, wrapperStyleRefused: false });
+            this.schedule(verdictsAfter, () => this.step({ t: 'workerVerdicts', gen: frame.gen, finding: this.options.startup === 'worker' ? STARTUP_FINDING : null }));
+        });
     }
 
     openChannel() { this.log.push('openChannel'); }
@@ -531,6 +604,11 @@ export class FakeElement implements LifecycleHost {
 export function runReducerSequence(sequence: Sequence, options: ReducerRunOptions = {}): ReducerRunResult {
     const model = new LifecycleModel(sequence.mode);
     const el = new FakeElement(sequence.seed, options);
+    if (options.servedFile !== undefined) {
+        model.servedFile = { finding: options.servedFile === 'finding' ? FILE_FINDING : null };
+        el.onFileAnswer = (kept) => guard(() => model.fileAnswered(kept));
+    }
+    if (options.startup !== undefined) model.startupFinding = STARTUP_FINDING;
     const trace: string[] = [];
     let failure: string | null = null;
     let failedAt = -1;

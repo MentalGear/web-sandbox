@@ -1,3 +1,4 @@
+// @vitest-environment-options {"unitFetch":"refuse"}
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { BRIDGE_FRAME_OPTIONS, MAX_RESPONSE_HEAD, inBridgeFrame } from '@src/lib/in-bridge-frame';
 

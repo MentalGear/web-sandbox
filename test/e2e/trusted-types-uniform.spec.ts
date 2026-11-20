@@ -12,7 +12,8 @@ test.use({ build: 'network', otherBuildConfigs: true });
  * browser without them is given the page's policy as `hostContentSecurityPolicy`, from which the library reads the same
  * two directives and refuses as the browsers do.
  *
- * Each rule of TRUSTED_TYPES_RULES runs here in every mode (sealed mode answers as strict mode) on a real host page
+ * Each rule of TRUSTED_TYPES_RULES runs here in every mode (sealed mode's view, the served file, is reached by none of it:
+ * it is ready under every rule) on a real host page
  * (vite.config.ts, /__host-policy, with a Trusted Types default policy of its own where the engine has any), with the
  * policy given as `hostContentSecurityPolicy`
  * so that all engines have it. The browsers that have Trusted Types are the oracle: the table is what they do. Then
@@ -56,7 +57,8 @@ for (const rule of TRUSTED_TYPES_RULES) {
             const given = { hostContentSecurityPolicy: policy };
             await sandbox.registerFiles({ 'main.js': ENTRY });
             expect(await configure(sandbox, { mode: 'strict', entry: 'main.js', ...given }), 'strict').toEqual(verdict(strictAndWorker));
-            expect(await configure(sandbox, { mode: 'sealed', entry: 'main.js', ...given }), 'sealed: strict mode\'s view and worker').toEqual(verdict(strictAndWorker));
+            // sealed mode's view is the served file: the host page's Trusted Types do not reach it, and the element writes no sink for it
+            expect(await configure(sandbox, { mode: 'sealed', entry: 'main.js', ...given }), 'sealed: the channel is gone').toEqual(READY);
             expect(await configure(sandbox, { mode: 'worker', scriptUnsafe: true, ...given }), 'worker').toEqual(verdict(strictAndWorker));
             expect(await configure(sandbox, { mode: 'cooperative', scriptUnsafe: true, capabilities: ['allow-scripts'], html: '<p>x</p>', ...given }), 'cooperative').toEqual(verdict(cooperative));
             if (cooperative === 'ready') expect(await executeRuns(sandbox, `COOPERATIVE-EXEC-${execute}`), `execute() in cooperative mode ${execute}`).toBe(execute === 'runs');
@@ -81,7 +83,8 @@ async function outcomes(sandbox: SandboxDriver, extra: object = {}) {
     };
 }
 
-const ALL_ENDED = { strict: ENDED, sealed: ENDED, worker: ENDED, cooperative: ENDED };
+// sealed mode's view is the served file, which the host page's Trusted Types do not reach
+const ALL_ENDED = { strict: ENDED, sealed: READY, worker: ENDED, cooperative: ENDED };
 
 test.describe('without hostContentSecurityPolicy', () => {
     const POLICY = "require-trusted-types-for 'script'; trusted-types other; connect-src 'self'";

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createLinkTabLimiter, LINK_RULES, LINK_TABS_PER_SECOND, LINK_WINDOW_FEATURES, listedLink, MAX_LINK_LENGTH, MAX_LINKS, readLinks, type LinkRule } from '@src/lib/links';
+import { createLinkTabLimiter, LINK_ACTIVATION_POLL_MS, LINK_ACTIVATION_WAIT_MS, LINK_RULES, LINK_TABS_PER_SECOND, LINK_WINDOW_FEATURES, listedLink, MAX_LINK_LENGTH, MAX_LINKS, openWhenActivated, readLinks, type LinkRule } from '@src/lib/links';
 import { CONFIG_SCHEMA, normaliseConfig, NO_HOST_PAGE } from '@src/lib/config-schema';
 import { fixedDetail, reasonText, TERMINATION_REASONS } from '@src/lib/reasons';
 import { FRAMES } from '@src/lib/frames';
@@ -18,6 +18,8 @@ const B = 'https://help.example.org/a?b=c#d';
 
 afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
+    Reflect.deleteProperty(navigator, 'userActivation');
     document.body.replaceChildren();
 });
 
@@ -84,7 +86,7 @@ describe('start() reads it (CONFIG_SCHEMA.links)', () => {
         const hostile = 'javascript:alert("<img src=x onerror=1>")';
         let caught: unknown;
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const fresh = document.createElement('web-sandbox') as any;
         document.body.appendChild(fresh);
         try {
@@ -243,6 +245,98 @@ describe("the view's request at the host (VIEW_LINK, listedLink)", () => {
         const { el, view, open } = await element([]);
         for (const index of [0, 1, 31]) el._onViewMessage(view, { type: 'VIEW_LINK', index });
         expect(open).not.toHaveBeenCalled();
+        view.close();
+    });
+});
+
+/**
+ * The click is in the view, another process on Chromium, and the browser tells the host page of the activation on a
+ * channel of its own: the view's request can arrive first, and a tab asked for then is blocked as one with no click
+ * (test/e2e/links-popup-blocker.spec.ts saw `window.open` called and no tab). Where the page reads its activation as
+ * not active, the request waits for it, at most LINK_ACTIVATION_WAIT_MS.
+ */
+describe("the tab is asked for once the page has the click's activation (openWhenActivated)", () => {
+    it('at once where the page cannot read its activation, and where it reads it active: no timer is made', () => {
+        vi.useFakeTimers();
+        for (const activation of [undefined, { isActive: true }]) {
+            const open = vi.fn();
+            openWhenActivated(activation, open);
+            expect(open).toHaveBeenCalledTimes(1);
+            expect(vi.getTimerCount()).toBe(0);
+        }
+    });
+
+    it('not active yet: nothing is asked in that task; the tab is asked for at the first reading that is active, once, and no reading follows', () => {
+        vi.useFakeTimers();
+        const activation = { isActive: false };
+        const open = vi.fn();
+        openWhenActivated(activation, open);
+        expect(open).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(3 * LINK_ACTIVATION_POLL_MS);
+        expect(open).not.toHaveBeenCalled();
+        activation.isActive = true;
+        vi.advanceTimersByTime(LINK_ACTIVATION_POLL_MS);
+        expect(open).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(2 * LINK_ACTIVATION_WAIT_MS);
+        expect(open).toHaveBeenCalledTimes(1);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it(`never active: the tab is asked for after LINK_ACTIVATION_WAIT_MS (${LINK_ACTIVATION_WAIT_MS} ms), once, and the browser decides`, () => {
+        vi.useFakeTimers();
+        const open = vi.fn();
+        openWhenActivated({ isActive: false }, open);
+        vi.advanceTimersByTime(LINK_ACTIVATION_WAIT_MS - LINK_ACTIVATION_POLL_MS);
+        expect(open).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(LINK_ACTIVATION_POLL_MS);
+        expect(open).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(LINK_ACTIVATION_WAIT_MS);
+        expect(open).toHaveBeenCalledTimes(1);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    // the element, on a page whose activation the test sets
+    async function waiting(links: readonly string[]) {
+        const el = await mountApp({ links });
+        const view = new MessageChannel().port1;
+        el._viewPort = view;
+        const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+        const activation = { isActive: false };
+        Object.defineProperty(navigator, 'userActivation', { configurable: true, value: activation });
+        vi.useFakeTimers();
+        return { el, view, open, activation };
+    }
+
+    it("the element's request on a page that reads no activation yet: no window.open in the task of the frame, and one for the listed URL once the page reads it", async () => {
+        const { el, view, open, activation } = await waiting([A, B]);
+        el._onViewMessage(view, { type: 'VIEW_LINK', index: 1 });
+        expect(open).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(2 * LINK_ACTIVATION_POLL_MS);
+        expect(open).not.toHaveBeenCalled();
+        activation.isActive = true;
+        vi.advanceTimersByTime(LINK_ACTIVATION_POLL_MS);
+        expect(open.mock.calls).toEqual([[B, '_blank', LINK_WINDOW_FEATURES]]);
+        vi.advanceTimersByTime(2 * LINK_ACTIVATION_WAIT_MS);
+        expect(open).toHaveBeenCalledTimes(1);
+        view.close();
+    });
+
+    it('a request that is waiting when its environment ends opens nothing, then or later', async () => {
+        const { el, view, open, activation } = await waiting([A]);
+        el._onViewMessage(view, { type: 'VIEW_LINK', index: 0 });
+        el.terminate();
+        activation.isActive = true;
+        vi.advanceTimersByTime(2 * LINK_ACTIVATION_WAIT_MS);
+        expect(open).not.toHaveBeenCalled();
+        view.close();
+    });
+
+    it('a request that waits is counted when it arrives: LINK_TABS_PER_SECOND of them wait, and one more in the same second is dropped', async () => {
+        const { el, view, open, activation } = await waiting([A]);
+        for (let i = 0; i < LINK_TABS_PER_SECOND + 1; i++) el._onViewMessage(view, { type: 'VIEW_LINK', index: 0 });
+        activation.isActive = true;
+        vi.advanceTimersByTime(LINK_ACTIVATION_POLL_MS);
+        expect(open).toHaveBeenCalledTimes(LINK_TABS_PER_SECOND);
         view.close();
     });
 });

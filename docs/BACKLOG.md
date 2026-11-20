@@ -28,6 +28,9 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S84](#s84) | ⏳ open (P2 · S) · medium | The strict view's `VIEW_LISTEN` has no flow control: an `on()`/`off()` loop is uncounted (S74 board BD4:LIM-3; availability only) |
 | [S85](#s85) | ⏳ open (P3 · S) · low | The strict view's input outbox scans every slot on each event (S74 board BD4:LIM-5; availability only) |
 | [S87](#s87) | ⏳ open (P3 · S) · low | A `fileswritten` listener that calls `listGuestWrites()` copies every pending write's bytes each time (S74 board BD5:LIM-3; availability only) |
+| [S89](#s89) | ⏳ open (P3 · S) · low | A resizable `ArrayBuffer`'s maximum is reserved by the browser before any receiver measures it (review 3 of the design, finding 5; availability only) |
+| [S90](#s90) | ⏳ open (P3 · M) · to measure | On Chromium a page's policy does not govern requests to an installed extension's web-accessible resources (research 34) |
+| [T10](#t10) | ⏳ open (P2 · M) | A run reruns every spec for every change, from files served live. Built: CI keys the suite's result by its inputs, so a docs-only commit runs no browser, and each engine's suite runs in three shards on machines of their own. Left, in order: no two specs that measure the host page (half the suite's time) side by side, more workers on a machine once S81's scans exist, tests load the built bundle, a key per spec (owner, 2026-11-19) |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
 
 Done items, review rounds and the capability snapshot are in [the archive](archive/backlog/BACKLOG-done.md).
@@ -484,7 +487,8 @@ item cites its findings by ID (`BD7:`). The coordinator's evaluation is in
 `src/` grew by 38%. The owner's answers (2026-11-07, [research 24](research/24_sealed_mode/README.md) D8 and D9): sealed
 mode switches to served documents now; cooperative mode, worker mode and strict mode's network options stay, behind a
 build flag that is off by default. D9 is built ([ADR-009](ADR-009-network-modes-build-flag.md)): the default build is
-sealed mode alone. D8 is not built.
+sealed mode alone. D8 is being built as the design in [docs/design/](design/README.md) has it, with what an element
+and an app hand over ahead of it: [its build order](design/05-build-order.md) says row by row what is built.
 
 **Pass 8 reviews sealed mode again** (same scope), in the default build, after D8: two of pass 7's three data findings
 came from the host page's policy reaching a `srcdoc` document, which a served document does not inherit
@@ -546,6 +550,26 @@ on the same commit was green; each is measured against the load, not against the
 - `test/unit/view-css-loads.test.ts:308`: the scaling helper reached ratio 37.2 against a bound of 24.
 - `test/unit/lifecycle-transitions.test.ts:61`: its 5 s timeout.
 
+**Closed by construction, of this class: a ceiling on one measured time given as another, scaled.**
+`test/e2e/links.spec.ts`, "the cost", bounded `full < none * 1.5` with each time the best of three rounds, but one
+measured after the other; it failed in CI on Chromium and on WebKit ([T10](#t10), 2026-11-20), once with the first time
+at 16 ms where it is 28 ms otherwise. `test/e2e/strict-view-budget.spec.ts` (S73's count against the parse and clean)
+had the same shape. Both now run `scalingRatio` (`test/unit/scaling.ts`) inside the view, from its text: the two works
+timed alternately, each keeping its fastest, sampled while the ratio is over the bound. `test/unit/host-share.test.ts`
+fails a spec that bounds one time it measured by another.
+
+**A probe of the same class, not fixed.** Strict-mode design probe P7 (`bun run test:probes`, research 15) failed once
+in CI on Chromium (2026-11-20): it measured 5,137 ms against its 5,000 ms bound, on the machine that ran the first
+shard beside it, and passed in the next run. The probe loads no source of the library,
+so the time it measured is the machine's. It bounds one wall-clock time by a constant, which neither T9's scan nor the
+scan for scaled ceilings (above) sees.
+
+**A spec that loads the machine itself.** `test/e2e/policy-check.spec.ts`, part 4, keeps three cores busy for 200
+starts (about a minute an engine) to show that the policy check never ends a healthy sandbox under load. It does so
+beside the shard's other worker, whose tests then run on a loaded machine. It does not import `test/e2e/host-share.ts`,
+so [T10](#t10)'s first step, which is derived from that import, does not set it apart: a spec that loads the machine
+needs a worker to itself as much as one that measures it.
+
 **Fix, by construction** (candidates). (a) Positive controls wait until N deliveries arrive, with a timeout, plus a scan
 (beside T9's) for count-in-window controls. (b) The local CI mirror and the e2e fixture record the load at the start and
 refuse or annotate a run above a threshold. (c) The exhaustive exploration in `lifecycle-transitions` gets a
@@ -559,6 +583,12 @@ processes beside it (the render arrived 4.4 s after the log line each time, so C
 alone on four workers, and 6 among the other view specs. `waitInView`'s failure names each frame's visibility and element
 count, each sandbox element's state and the page's last log lines (`test/e2e/strict-view.ts`, describeFrames), so the
 next occurrence says whether the view was hidden, empty or ended.
+
+**Closed by construction, of this class.** A unit test that measures scaling declares the measure's own time limit
+(`SCALING_TIMEOUT_MS`, `test/unit/scaling.ts`), and `test/unit/host-share.test.ts` fails one under the runner's default
+limit or a number of its own: `view-autofill`'s linear submit timed out at load 8 with no ratio judged, and passes alone
+in 2.4 s. Runs of several checkouts go one at a time behind a lock (CONTRIBUTING.md, "One e2e run at a time on a
+machine"), and [T10](#t10)'s first step keeps two specs that measure the host page from running side by side.
 
 The same day, `test/e2e/strict-renderer.spec.ts` on WebKit 27.2, strict mode ("every URL the view mints is of a type that
 is not a document"), failed once among six specs run together, and its error was not kept. Not reproduced: 6 runs alone
@@ -802,6 +832,79 @@ sealed guest that tries every name it has; the answer is a row of `INHERITED_CON
 network options, as the measurement says.
 
 ---
+
+## T · Tests
+
+### <a id="t10"></a>T10 · A run reruns every spec for every change, from files served live — ⏳ **open** (P2 · M)
+
+*The owner's go-ahead, 2026-11-19.* The whole e2e suite takes about 1.2 hours on four cores with one engine after the
+other, and took about 30 minutes in CI with the three side by side, where a commit that changed only docs ran all of
+it again.
+
+**The root.** A run does not know what it depends on. Each test's page loads the library module by module from the dev
+server (`test/e2e/library.ts`: `src/index.ts` or `src/network.ts`), in a new browser context, so the files on disk
+during the run are what is tested (CONTRIBUTING.md, "No edit of served files during a run"), and no spec's result is
+tied to the inputs that produced it.
+
+**Built: the suite's result in CI is keyed by its inputs.** Each browser job of `.github/workflows/ci.yml` hashes the
+checkout's files but the Markdown ones (no page, spec or probe reads one; the unit job checks the docs) and keeps a
+marker under that hash and its engine once every test step has passed. A job whose key has passed runs no browser, so
+a commit that changes only docs costs the unit job alone. A failed or cancelled job saves no marker.
+
+**Where the time goes** (one full local run of 2026-11-19, three engines one after the other, two workers, read from
+its log): 3,145 tests took 128 minutes of worker time. The 15 specs that measure the host page (they import
+`test/e2e/host-share.ts`) are 462 tests and 49% of that time, four of them 39% alone; the other 2,683 tests are 51%.
+Half of all tests take under a second and are 12% of the time together, so the cost of loading a page is not where
+the time is.
+
+**Built: an engine's suite runs in three shards in CI, each on a machine of its own**
+(`.github/workflows/ci.yml`, Playwright's `--shard`), with the workers and the mix of specs a machine has always had,
+and the probes beside the first shard. Each shard's result is keyed by its inputs as above. A push waits 15 to 30
+minutes for its browsers where it waited about 29 (2026-11-20, GitHub's runners, two runs: the shards' jobs took 5 to
+8, 8 and 12 minutes on Chromium, 7, 10 to 14 and 15 to 18 on Firefox, 6 to 7, 8 and 14 to 30 on WebKit; 90 to 115
+minutes of machine time against about 80). Two later runs the same day took 15 minutes each from the push to the last
+browser job, with the third shard at 12 to 13 minutes on Chromium and 15 on Firefox and WebKit. A further run took 32
+minutes, by WebKit's first shard alone (31 minutes, where it took 7 before; its other shards 9 and 15): a long shard is
+not always the third, and what made that one long is not known. The third shard is the longest on every engine, and on WebKit it is as
+long as the whole suite was in one of the two runs: Playwright divides the files by their number of tests, the specs
+that measure the host page are late in their order and so share that shard's two workers, and on one machine they slow
+each other (below).
+
+**Measured, and what it ruled out** (2026-11-20, GitHub's runners unless said).
+- *The specs that measure the host page as a group of their own, the rest beside it.* On two workers the measuring
+  group took 14 and 16 minutes on Chromium and Firefox and 30 and 33 minutes on WebKit, where the whole suite of an
+  engine took 29 before: on one machine these specs slow each other, so the split left the wait as it was and cost more
+  machine time. It is not built.
+- *The rest on all four cores.* 22.1 minutes for three engines on the local machine, passing (2,796 tests), and 6 to 8
+  minutes an engine in CI, where two of its first jobs failed, each on a test whose assertion depended on the
+  machine's load: one that held the host page's thread and expected a due timer to run before a frame's load
+  (`guest-realm-hardening.spec.ts`, CB3; now it holds `loading` itself), and one that bounded the ratio of two times
+  measured one after the other (`links.spec.ts`, the cost, which failed on two workers too; now it is measured by
+  `scalingRatio`, [S81](#s81)). Specs that do not measure the host page assert on times and on the order of tasks too:
+  14 of them read a clock. More workers on a machine is not sound until S81's scans can say which do.
+
+**Fix, by construction**, what is left, in this order, each measured before and after on three engines:
+1. **No two specs that measure the host page side by side.** They are the specs that import `test/e2e/host-share.ts`
+   (derived from the import, never listed): one worker for them, on as many machines as their time asks for, and the
+   other specs in shards as now. To measure first: their time on one worker on WebKit in CI, which decides the number
+   of machines.
+2. **More workers on a machine**, for the other specs, once S81's scans hold every spec that asserts on a time or on
+   the order of two tasks to a measure that does not depend on the load.
+3. **The tests load the built bundle.** The server already builds `dist/` and `dist-network/` when it starts
+   (`package.spec.ts` mounts from them). Every harness page takes its build's bundle, so a run tests the code as it was
+   built at its start whatever is edited meanwhile, and the tests run what the package ships. This is for that
+   guarantee, not for speed. To settle first: what the specs that read a source module directly need (a helper imported
+   from `src/`), and source maps for a failure's stack.
+4. **A key per spec**, where CI's is the whole suite's: its build's bundle (a hash), the spec and the helpers it
+   imports, the harness pages, the engine's version and the Playwright config. It needs 3, and is worth building only
+   if the key of a shard and the shards leave a wait that matters: a change of one spec would run that spec, and a
+   change confined to `network` modules no spec of the default build (`BUILD_MODULES`: a `sealed` module imports no
+   `network` module). The specs that measure the host page stay out of it: the machine's load is one of their inputs.
+
+**What it does not change.** A change to code every page loads changes the bundle, and every spec runs again, as it
+must. For that case the time is the machine's cores and CI's three engines side by side (CONTRIBUTING.md, "Which
+gates, when").
+
 
 ## Parity Reference
 

@@ -102,7 +102,7 @@ test.describe('sealed mode: what the guest can reach, against every inherited ro
         await expect.poll(async () => (await host.hits()).reports.length, { message: "the host page's own violation is reported (control)", timeout: 15000 }).toBeGreaterThan(0);
     });
 
-    test("the view's residual: a registered file, on a page that refuses it, is refused and reported naming only blob, and the guest hears nothing; the guest's styles apply there, unchecked", async ({ sandbox, browserName }) => {
+    test("the view's residual on the host page is gone: a page whose img-src refuses blob: does not reach the served view, whose registered image loads, whose guest styles apply, and which raises no violation and sends no report", async ({ sandbox, browserName }) => {
         const secrets = secretsOf();
         // the realistic page without `blob:` in `img-src`; its `style-src` (the documented hashes) has no 'unsafe-inline'
         const directives = (base: Record<string, string[]>) => ({ ...withPolicySecrets(secrets)(base), 'img-src': ["'self'"] });
@@ -124,31 +124,20 @@ test.describe('sealed mode: what the guest can reach, against every inherited ro
         });
         expect(events.at(-1)).toEqual({ type: 'ready', reason: null });
         const guest = await host.guestResult<{ heard: number }>(30000);
-        expect(guest.heard, covering('cspPolicyText', "the view's refusals never reach the worker")).toBe(0);
+        expect(guest.heard, covering('cspPolicyText', "no violation reaches the worker")).toBe(0);
 
-        // the guest's styles applied in the view, through the CSSOM; its image did not: the page's img-src refused it
-        const view = await inView<{ styled: string; sheet: string; image: number }>(host.page, browserName, `({ styled: getComputedStyle(document.getElementById('sty')).color, sheet: getComputedStyle(document.getElementById('sel')).color, image: document.getElementById('img').naturalWidth })`);
+        // the view is the served file (design 03): the page's policy is not its own, so the registered image loads under the
+        // file's policy, and the guest's styles apply through the CSSOM as before
+        await expect.poll(() => inView<number>(host.page, browserName, `document.getElementById('img') ? document.getElementById('img').naturalWidth : -1`), { message: covering('cspFetch', "the page's img-src does not reach the served view: the registered image loads") }).toBeGreaterThan(0);
+        const view = await inView<{ styled: string; sheet: string }>(host.page, browserName, `({ styled: getComputedStyle(document.getElementById('sty')).color, sheet: getComputedStyle(document.getElementById('sel')).color })`);
         expect(view, 'the view is reachable').not.toBe('no-context');
         if (view === 'no-context') return;
-        await host.page.waitForTimeout(2000); // a report the browser sends after the refusal
-        expect(view.styled, covering('cspStyle', "the guest's style attribute applies under a style-src of hashes alone (cssomDeclaration)")).toBe('rgb(1, 2, 3)');
-        expect(view.sheet, covering('cspStyle', "the guest's <style> applies under a style-src of hashes alone (adoptedSheets)")).toBe('rgb(4, 5, 6)');
-        expect(view.image, covering('cspFetch', "a page's img-src without blob: refuses a registered image")).toBe(0);
-
-        // the element reports the one refusal as a violation, naming only blob: no style is checked
-        const violations = (await sandbox.violations()).map(violation => [violation.directive, violation.blockedURI]);
-        expect([...new Set(violations.map(([directive]) => directive))], covering('cspFetch', 'the refusal is reported as a violation, and no style is')).toEqual(['img-src']);
-        for (const [, blocked] of violations) expect(blocked).toBe('blob');
-
-        // what reached the page's endpoint names only blob, with no sample: nothing of the guest's styles
-        // ledger: view-report-delivery
-        const delivered = VIEW_REPORT_DELIVERY[browserName as keyof typeof VIEW_REPORT_DELIVERY];
-        const reports = (await host.hits()).reports.map(report => (report as { 'csp-report'?: Record<string, unknown> })['csp-report'] ?? {});
-        expect(reports.map(report => String(report['violated-directive'])), covering('cspReporting', "the page's endpoint receives what the engine reports from the view: the registered image, never a style")).toEqual(delivered ? ['img-src'] : []);
-        for (const report of reports) {
-            expect(String(report['blocked-uri']), covering('cspReporting', 'a report names blob as blocked')).toBe('blob');
-            expect(String(report['script-sample'] ?? ''), covering('cspReporting', 'a report carries no sample of the guest')).toBe('');
-        }
+        await host.page.waitForTimeout(2000); // a report the browser would send after a refusal
+        expect(view.styled, covering('cspStyle', "the guest's style attribute applies (cssomDeclaration)")).toBe('rgb(1, 2, 3)');
+        expect(view.sheet, covering('cspStyle', "the guest's <style> applies (adoptedSheets)")).toBe('rgb(4, 5, 6)');
+        expect(await sandbox.violations(), covering('cspFetch', 'no load of the view is refused, so no violation is dispatched')).toEqual([]);
+        const reports = (await host.hits()).reports;
+        expect(reports, covering('cspReporting', "the page's endpoint receives nothing from the served view")).toEqual([]);
     });
 
     test("the autofill row: on the realistic host, the guest's form carries the view's names and autocomplete off, and what is put into it without the user never reaches the guest", async ({ sandbox, browserName }) => {

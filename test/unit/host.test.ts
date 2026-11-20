@@ -1,3 +1,4 @@
+import { viewPolicyOf } from './served-view';
 import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { describe, it, expect, vi } from 'vitest';
 import { ALLOWED_CAPABILITIES } from '@src/csp-directives';
@@ -39,7 +40,7 @@ const frames = (el: HTMLElement) => {
 
 const mount = async (config?: Record<string, unknown>, setup: AppSetup = {}) => {
   const { defineWebSandbox } = await import('@src/host');
-  defineWebSandbox();
+  defineWebSandbox({ documentUrl: '/sealed-document.html' });
   const el = document.createElement('web-sandbox') as any;
   document.body.appendChild(el);
   if (config) startWith(el, config, setup);
@@ -217,7 +218,7 @@ describe("the host page's policy applied to the connect lists (hostContentSecuri
 describe('the scriptUnsafe guard rail (backlog S4)', () => {
   const mount = async () => {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     return el;
@@ -265,9 +266,8 @@ describe('the scriptUnsafe guard rail (backlog S4)', () => {
     }
     el.reset();
     expect(scriptUnsafeWarnings(warn)).toEqual([]);
-    const wrapper = new DOMParser().parseFromString(el.shadowRoot!.querySelector('iframe')!.srcdoc, 'text/html');
-    const guest = new DOMParser().parseFromString(wrapper.querySelector('iframe')!.getAttribute('srcdoc')!, 'text/html');
-    expect(guest.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')).not.toContain('unsafe-eval');
+    // the view's policy (a sealed view's is the served file's) admits no code from strings
+    expect(viewPolicyOf(el)).not.toContain('unsafe-eval');
     el.remove();
     warn.mockRestore();
   });
@@ -297,7 +297,7 @@ describe('no directive a <meta> policy discards is ever emitted (backlog S7)', (
 describe("the element's 'violation' event (backlog S5)", () => {
   it('dispatches a validated detail on the element, not bubbling, caps events per environment with one warning, and the cap resets with the environment', async () => {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     el.start({}); // an app, so that reset() builds the next environment

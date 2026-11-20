@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type SandboxDriver } from './fixture';
+import { pageDocumentUrl } from './library';
 import { useRecorder, wss } from './recorder';
 import { FOCUS_AND_CLIPBOARD_FACTS } from '@src/lib/engine-ledger';
 
@@ -142,24 +143,35 @@ test.describe('PD8: a second announcement from the guest window ends the environ
 // ---- CB3 ------------------------------------------------------------------------------------------------
 
 test.describe('CB3: calls while loading, and the load deadline', () => {
-    test('a call made while loading that timed out never runs when the port arrives; a call still waiting does (positive control)', async ({ sandbox, page }) => {
-        const html = `<script>globalThis.__counted = 0; bridge.expose('count', () => ++__counted); bridge.expose('counted', () => __counted);</script>`;
-        const outcome = await page.evaluate(({ html, config }) => new Promise<any>((resolve) => {
-            const el = document.querySelector('web-sandbox') as any;
-            el.start(...sandboxSplit({ ...config, html }));
-            const settled = (outcome: string) => ({ outcome, state: el.state });
-            const timedOut = el.callWithTimeout(50, 'count').then(() => settled('resolved'), (e: any) => settled(e.code));
-            const waiting = el.call('counted');
-            // `loading` lasts only until the guest checks in (S46), tens of ms: the host's thread is held past the
-            // call's timeout instead, so the timeout is due before the frame (on this thread) can even start loading.
-            // The state when it settled is asserted: 'loading' is the precondition of this test.
-            const until = performance.now() + 300;
-            while (performance.now() < until) { /* hold the host's thread */ }
-            el.addEventListener('ready', async () => resolve({ timedOut: await timedOut, waiting: await waiting }), { once: true });
-        }), { html, config: { mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true } });
-        expect(outcome).toEqual({ timedOut: { outcome: 'TIMEOUT', state: 'loading' }, waiting: 0 });
-        await page.waitForTimeout(200);
-        expect(await sandbox.call('counted')).toBe(0);
+    // `loading` is held by the test, never by the order of two tasks: the element is in sealed mode, whose frame is the
+    // served file, and the file's request waits until the call's timeout has settled. So the call times out while its
+    // request is still queued, whatever the machine's load, and the state it settled in is asserted as the precondition.
+    test.describe('a call that waits for the port', () => {
+        test.use({ build: 'default' });
+        test('a call made while loading that timed out never runs when the port arrives; a call still waiting does (positive control)', async ({ sandbox, page }) => {
+            let release = () => {};
+            const held = new Promise<void>((resolve) => { release = resolve; });
+            await page.route(`**${pageDocumentUrl('default')}`, async (route) => {
+                await held;
+                await route.continue();
+            });
+            const entry = `globalThis.__counted = 0; bridge.expose('count', () => ++__counted); bridge.expose('counted', () => __counted);`;
+            expect(await sandbox.registerFiles({ 'main.js': entry })).toBe('ok');
+            const timedOut = await page.evaluate(() => {
+                const settledAs = (window as any).startFresh({ entry: 'main.js' });
+                const el = document.querySelector('web-sandbox') as any;
+                const settled = (outcome: string) => ({ outcome, state: el.state });
+                (window as any).waiting = el.call('counted');
+                (window as any).settledAs = settledAs;
+                return el.callWithTimeout(50, 'count').then(() => settled('resolved'), (e: any) => settled(e.code));
+            });
+            expect(timedOut).toEqual({ outcome: 'TIMEOUT', state: 'loading' });
+            release();
+            expect(await page.evaluate(() => (window as any).settledAs)).toBe('ready');
+            expect(await page.evaluate(() => (window as any).waiting)).toBe(0);
+            await page.waitForTimeout(200);
+            expect(await sandbox.call('counted')).toBe(0);
+        });
     });
 
     // Since S46 `ready` is the guest's check-in, so a guest that never finishes its document is ready like any other.

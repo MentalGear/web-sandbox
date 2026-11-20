@@ -135,6 +135,8 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     // worker-bootstrap.ts, workerBootstrap: worker mode's frame
     ['SANDBOX_PORT', 'refused', 'refused'],
     ['INIT_PORT', 'type', "'INIT_PORT'"],
+    // startup-gates.ts, workerGates: the strict worker's first message, to the view (its verdicts)
+    ['WORKER_VERDICTS', 'verdicts', 'verdicts'],
     // in-bridge-frame.ts, inBridgeFrame: the fetch bridge's frame, to the host page (bridge port)
     ['BRIDGE_READY', 'type', "'BRIDGE_READY'"],
     ['BRIDGE_HEAD', 'type', "'BRIDGE_HEAD'"],
@@ -173,10 +175,19 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIEW_WRITTEN', 'type', "'VIEW_WRITTEN'"],
     ['VIEW_WRITTEN', 'id', 'm.id'],
     ['TRUSTED_TYPES_REFUSED', 'type', "'TRUSTED_TYPES_REFUSED'"],
+    ['VIEW_ANNOUNCE', 'type', "'VIEW_ANNOUNCE'"],
+    ['VIEW_ANNOUNCE', 'version', 'version'],
+    ['VIEW_ANNOUNCE', 'verdicts', 'verdicts'],
+    ['VIEW_ANNOUNCE', 'policy', 'sealed ? policyVerdicts() : null'],
+    ['VIEW_POLICY', 'type', "'VIEW_POLICY'"],
+    ['VIEW_POLICY', 'policy', 'policyVerdicts()'],
+    ['WORKER_VERDICTS', 'type', "'WORKER_VERDICTS'"],
+    ['WORKER_VERDICTS', 'verdicts', 'verdictsOf(message.data, options.gates.worker)'],
     ['VIEW_READY', 'type', "'VIEW_READY'"],
     ['VIEW_READY', 'width', 'g.innerWidth'],
     ['VIEW_READY', 'height', 'g.innerHeight'],
-    ['VIEW_READY', 'stillStyleRefused', 'true'],
+    ['VIEW_READY', 'stillStyleRefused', 'stillRefused || undefined'],
+    ['VIEW_READY', 'wrapperStyleRefused', 'wrapperRefused || undefined'],
     ['VIEW_INITIAL', 'type', "'VIEW_INITIAL'"],
     ['VIEW_INITIAL', 'dropped', 'renderDropped'],
     ['GUEST_TEXT_DROPPED', 'type', "'GUEST_TEXT_DROPPED'"],
@@ -427,9 +438,11 @@ function platformRequestUses(file: string, text: string, allowed: [number, numbe
 
 describe("the fetch bridge's requests are made by its frame, and only there (BD1:ISO-1, class E-net)", () => {
     // The functions that may name the platform's fetch: the request gate of the network modes, which guards the guest's own fetch
-    // (keepalive; the bootstrap itself names none), and the bridge's frame, which makes every bridge request. The host page's own realm makes no request
-    // (not even to learn the page's policy: test/unit/host-policy-source.test.ts).
-    const MAY_FETCH: readonly [string, string][] = [['src/lib/request-gate.ts', 'requestGate'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame']];
+    // (keepalive; the bootstrap itself names none), the bridge's frame, which makes every bridge request, and the capture of
+    // the check of sealed mode's served file (design 03), the host page's one request, for documentUrl, which carries nothing
+    // of the app's and learns nothing of the page's policy (test/unit/host-policy-source.test.ts), and the view's connect gate
+    // (startup-gates.ts), which fetches a blob: URL of the view's own that its policy refuses (design 03, the start-up gates).
+    const MAY_FETCH: readonly [string, string][] = [['src/lib/request-gate.ts', 'requestGate'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame'], ['src/lib/document-check.ts', 'platformFetchOf'], ['src/lib/in-sandbox-view.ts', 'connectCanary']];
     const unixOf = (file: string) => file.split(path.sep).join('/');
 
     it("no code of src/ names the platform's fetch outside those two functions, and the bridge's host-side modules name no other request API: the host never makes a bridge request itself", () => {
@@ -444,7 +457,7 @@ describe("the fetch bridge's requests are made by its frame, and only there (BD1
             inRealms += uses.inRealms;
         }
         expect(found).toEqual([]);
-        expect(inRealms).toBeGreaterThanOrEqual(2); // positive control: the scan sees the two that do
+        expect(inRealms).toBeGreaterThanOrEqual(3); // positive control: the scan sees the three that do
     });
 
     it("and that scan flags each way a host request to the target could be spelled, in the bridge's host-side modules", () => {

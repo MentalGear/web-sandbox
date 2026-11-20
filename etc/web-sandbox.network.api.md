@@ -28,7 +28,7 @@ export interface CooperativeSandboxConfig extends SandboxConfigOptions, NetworkS
 }
 
 // @public
-export function defineWebSandbox(tagName?: string): typeof WebSandbox;
+export function defineWebSandbox(definition: WebSandboxDefinition): typeof WebSandbox;
 
 // @public
 export const EXECUTION_TIMEOUT_GRACE_MS = 1000;
@@ -172,6 +172,12 @@ export interface NetworkModeMethods {
 }
 
 // @public
+export interface NetworkSandboxDefinition {
+    readonly documentUrl?: undefined;
+    readonly tagName?: string;
+}
+
+// @public
 export interface NetworkSandboxOptions {
     fetchBridge?: FetchBridgeConfig;
     origins?: SandboxOrigins;
@@ -296,6 +302,12 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
 }
 
 // @public
+export interface SealedSandboxDefinition {
+    readonly documentUrl: string | URL;
+    readonly tagName?: string;
+}
+
+// @public
 export interface StrictSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
     mode: 'strict';
     origins?: StrictSandboxOrigins;
@@ -372,6 +384,14 @@ export class WebSandbox extends HTMLElement {
     get started(): boolean;
     get state(): SandboxState;
     terminate(reason?: string): void;
+}
+
+// @public
+export type WebSandboxDefinition = WebSandboxDefinitionByBuild[keyof WebSandboxDefinitionByBuild];
+
+// @public
+export interface WebSandboxDefinitionByBuild {
+    sealed: SealedSandboxDefinition;
 }
 
 // @public

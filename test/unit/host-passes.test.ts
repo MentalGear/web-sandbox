@@ -168,22 +168,34 @@ describe("no platform parser, loader or markup sink is reachable from the host r
         expect([...reachFrom(row.units).keys()].filter(unit => documented.has(unit))).toEqual([]);
     });
 
-    it("the library's own documents: the view's wrapper is built from the policy and the bootstrap alone, and the guest's markup, entry and files go to the view in INIT_VIEW", () => {
+    it("the library's own documents: strict mode's wrapper is built from the policy and the bootstrap alone, sealed mode's frame writes no document, and the guest's markup, entry and files go to the view in INIT_VIEW", () => {
         const body = member('_prepareViewFrame');
         expect(body).toMatch(/const view = buildViewDocument\(policy, viewBootstrapText\(\)\);/);
         expect(body).toMatch(/setLibrarySrcdoc\(iframe, buildWrapperDocument\(view, sandboxFlags, \[\]\)\);/);
         expect(body.match(/setLibrarySrcdoc\(/g)).toHaveLength(1);
+        expect(body).toMatch(/const strictInit = this\._viewInit\(files, network\);/);
+        // sealed mode's frame: the served file at the registered URL, no document written, the same init
+        const sealed = member('_prepareSealedFrame');
+        expect(sealed).not.toMatch(/srcdoc|setLibrarySrcdoc|buildViewDocument|buildWrapperDocument|_prepareViewFrame|innerHTML/);
+        expect(sealed).toMatch(/const documentUrl = registeredDocumentUrl\(\);/);
+        expect(sealed).toMatch(/iframe\.setAttribute\('src', documentUrl\);/);
+        expect(sealed).toMatch(/strictInit: this\._viewInit\(files, null\)/);
         // `html` and the worker's source are fields of the view's init, and nothing else names them
-        expect([...body.matchAll(/\bhtml\b/g)].length).toBe(3); // its declaration, its default, and the init's `html,`
-        expect(body).toMatch(/\n\s+html,\n/);
-        const policies = [member('_prepareSealedFrame'), member('_prepareStrictFrame')].map(text => /this\._prepareViewFrame\(built, files, (this\._\w+)\(files(?:, [\w.]+)?\), /.exec(text)?.[1]);
-        expect(policies).toEqual(['this._sealedPolicy', 'this._guestPolicy']);
+        const init = member('_viewInit');
+        expect([...init.matchAll(/\bhtml\b/g)].length).toBe(3); // its declaration, its default, and the init's `html,`
+        expect(init).toMatch(/\n\s+html,\n/);
+        expect([...body.matchAll(/\bhtml\b/g)]).toHaveLength(0);
+        expect([...sealed.matchAll(/\bhtml\b/g)]).toHaveLength(0);
+        expect(/this\._prepareViewFrame\(built, files, (this\._\w+)\(files(?:, [\w.]+)?\), /.exec(member('_prepareStrictFrame'))?.[1]).toBe('this._guestPolicy');
         // the build's dispatch: the sealed frame is returned before the network modes' build, whose strict frame is returned before the document frame (DISPATCH)
-        expect(member('_prepareBuild')).toMatch(/if \(this\._config\.mode === 'sealed'\) \{\s*this\._refuseByTrustedTypes\(\);\s*return this\._prepareSealedFrame\(built, files\);\s*\}[\s\S]*return network\._prepareNetworkBuild\(built, files\);\s*$/);
+        expect(member('_prepareBuild')).toMatch(/if \(this\._config\.mode === 'sealed'\) return this\._prepareSealedFrame\(built, files\);[\s\S]*return network\._prepareNetworkBuild\(built, files\);\s*$/);
         expect(member('_prepareNetworkBuild')).toMatch(/if \(this\._config\.mode === 'strict'\) return this\._prepareStrictFrame\(built, files, reach\);\s*return this\._prepareDocumentFrame\(built, files, reach\);\s*$/);
         expect(member('_prepareBuild').match(/_prepareDocumentFrame\(/g)).toBeNull();
         expect(member('_prepareNetworkBuild').match(/_prepareDocumentFrame\(/g)).toHaveLength(1);
         const policyRow: HostPassId = 'policyFromKinds';
-        for (const unit of ['src/host.ts#this._sealedPolicy', 'src/lib/network-host.ts#this._guestPolicy']) expect(rowOf(unit)?.id, unit).toBe(policyRow);
+        expect(rowOf('src/lib/network-host.ts#this._guestPolicy')?.id).toBe(policyRow);
+        // sealed mode's view runs under the served file's constant policy: no policy from the kinds of file is built for it
+        expect(HOST_PASSES[policyRow].modes).not.toContain('sealed');
+        expect(rowOf('src/host.ts#this._sealedPolicy')).toBeUndefined();
     });
 });

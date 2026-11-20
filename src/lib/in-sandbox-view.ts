@@ -2,7 +2,7 @@ import { inSandboxFiles } from './in-sandbox-files';
 import { networkModes } from './network-modes';
 import { checkSandboxEnvironment, ENVIRONMENT_EXPECTED } from './environment-check';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
-import { escapeAttribute } from './frame-documents';
+import { escapeAttribute, WRAPPER_STYLE } from './frame-documents';
 import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './references';
 import { admits, LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
@@ -13,6 +13,10 @@ import { VIOLATION_DIRECTIVES } from './violation';
 import { cssReferences, keepsUrl, withKeptReferences } from './css-references';
 import { styleMarkup, type StyleMarkup } from './style-markup';
 import { GUEST_IMAGE_TYPES } from './guest-bytes';
+import type { FrameType } from './frames';
+import { VERSION_ATTRIBUTE } from './document-digest';
+import { GATE_CANARIES, gateNames, gateViolations, type GateName } from './startup-gates';
+import { policyCheckOptions, type PolicyCheckOptions } from './policy-check';
 
 /**
  * Strict mode's view and worker prelude (ADR-005).
@@ -1825,6 +1829,28 @@ export interface ViewOptions {
     values: { readonly [Kind in keyof typeof VIEW_VALUE_KINDS]: readonly string[] };
     /** VIEW_LINK_CLICK_STOPS: the elements a click inside a marked link is for instead of the link. */
     linkStops: readonly string[];
+    /** WRAPPER_STYLE (frame-documents.ts): the wrapper's sizing sheet, whose text the view tries under the policies it inherits. */
+    wrapperStyle: string;
+    /** VERSION_ATTRIBUTE (document-digest.ts): the attribute of the view document's root element that states its version. */
+    versionAttribute: string;
+    /**
+     * The start-up gates (startup-gates.ts, STARTUP_GATES): the view's own per mode, and every gate of the worker's, whose
+     * verdicts the view hands on.
+     */
+    gates: { view: { sealed: readonly GateName[]; strict: readonly GateName[] }; worker: readonly GateName[]; violations: Readonly<Record<string, string>> };
+    /**
+     * The policy check of the served file (policy-check.ts, POLICY_CANARIES and POLICY_FINDINGS): the attribute the file
+     * states its `<meta>`'s text in, the refused canaries with their URLs, the admitted ones, the findings by disposition,
+     * and the canaries' fixed values.
+     */
+    policy: PolicyCheckOptions;
+    /** The start-up gates' fixed canaries (startup-gates.ts, GATE_CANARIES): the image, the stylesheet and its target and colour, the base URL and the cookie's name. */
+    gateImage: string;
+    gateStyle: string;
+    gateStyleTarget: string;
+    gateStyleColor: string;
+    gateBase: string;
+    gateCookie: string;
 }
 
 /**
@@ -1836,6 +1862,13 @@ export interface ViewOptions {
  * page (event.source === parent.parent), in a capture listener that stops the event there; any other
  * message is ignored. A copy of this text that ever ran a second time in the same document would return
  * at once (the run counter), and a copy elsewhere would never receive INIT_VIEW (research 15, P1).
+ *
+ * It speaks first (design 03, "The start-up order"): once its listener is in place it runs its start-up gates
+ * (startup-gates.ts) and posts one message to its parent's parent, VIEW_ANNOUNCE: the version its document states
+ * (VERSION_ATTRIBUTE, null in strict mode's srcdoc view, which states none) and each gate's verdict, nothing else. The
+ * host page reads them in the handler that tests the source, and posts INIT_VIEW, in that step, only to the window that
+ * announced itself from the first frame of the element's frame, and only when they are its own (host.ts,
+ * _onViewAnnouncement; startup-verdicts.ts).
  */
 export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, scanCss: typeof cssReferences, keepCss: typeof withKeptReferences, keepsUrlRule: typeof keepsUrl, options: ViewOptions, makeOutbox: typeof viewInputOutbox, styleProperty: typeof isStyleProperty, encodeStyles: typeof styleMarkup, controlNames: typeof viewControlNames) {
     const g = globalThis as any;
@@ -1911,11 +1944,120 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // work, and each is charged. Like a load the platform reports (observeLoads), it takes from the credit of the CSS
     // the view prepaid first (S73; viewBudget), and is charged once that is spent.
     // Each field is read once (the view runs no guest code, so its getters are the platform's).
+    // The violations the start-up gates' own canaries raise (startup-gates.ts, `raises`), taken here, neither reported
+    // nor charged. The gates fill the lists before they provoke anything. Until INIT_VIEW nothing of the guest's exists in
+    // this document, so every violation of a gate's directive is the library's (an engine may raise two for one canary:
+    // Chromium's <base>); after it, one of each directive not yet taken still is, as its event can come late.
+    const gateDirectives: string[] = [];
+    const gateViolations: string[] = [];
+    const takenByGate = (directive: string): boolean => {
+        for (let i = 0; !initialised && i < gateDirectives.length; i++) {
+            if (directive.indexOf(gateDirectives[i]!) !== 0) continue;
+            const left = gateViolations.indexOf(gateDirectives[i]!);
+            if (left !== -1) gateViolations.splice(left, 1);
+            return true;
+        }
+        for (let i = 0; i < gateViolations.length; i++) {
+            if (directive.indexOf(gateViolations[i]!) !== 0) continue;
+            gateViolations.splice(i, 1);
+            return true;
+        }
+        return false;
+    };
+    // The served file states its version and its <meta>'s text on this document's root element (VERSION_ATTRIBUTE,
+    // POLICY_ATTRIBUTE); strict mode's srcdoc view states neither. No rendered markup exists yet, so the root is the
+    // browser's. A document that states a version is the served file (sealed mode), where the policy check runs.
+    const rootElement = call(rootOf, document, []);
+    const version = call(E.getAttribute, rootElement, [options.versionAttribute]);
+    const sealed = version !== null;
+    // A policy's text as the check compares it: its directives, each with its words separated by one space.
+    const policyWords = (text: unknown): string => {
+        const directives = String(text).split(';');
+        const kept: string[] = [];
+        for (let i = 0; i < directives.length; i++) {
+            const words = directives[i]!.trim().split(/\s+/).join(' ');
+            if (words !== '') kept.push(words);
+        }
+        return kept.join('; ');
+    };
+    const filePolicy = sealed ? policyWords(call(E.getAttribute, rootElement, [options.policy.attribute])) : '';
+    // The policy check (policy-check.ts; design 03, "What the policy check provokes"; I18): what it found of policies that
+    // are not the file's own, by disposition, whenever their events came. `onPolicyFound` is the check's while it runs;
+    // once the view has announced itself a finding goes on the view port (VIEW_POLICY), once, and before the port exists
+    // INIT_VIEW posts it first and goes no further.
+    const foundPolicies: Record<string, boolean> = { enforce: false, report: false };
+    let onPolicyFound: (() => void) | null = null;
+    let policyAnnounced = false;
+    // The verdicts by POLICY_FINDINGS' names: true where no policy of that kind was found.
+    const policyVerdicts = (): Record<string, boolean> => {
+        const out: Record<string, boolean> = {};
+        for (let i = 0; i < options.policy.findings.length; i++) {
+            const finding = options.policy.findings[i]!;
+            out[finding[0]] = foundPolicies[finding[1]] !== true;
+        }
+        return out;
+    };
+    const policyFound = (disposition: unknown) => {
+        const kind = disposition === 'report' ? 'report' : 'enforce';
+        if (foundPolicies[kind]) return;
+        foundPolicies[kind] = true;
+        if (onPolicyFound !== null) onPolicyFound();
+        if (policyAnnounced && viewPort) viewPort.postMessage({ type: 'VIEW_POLICY', policy: policyVerdicts() });
+    };
+    // The refused canaries the check has seen raise the file's own violation, by load; the host that names each canary
+    // (one per load and scheme), and the load it names.
+    const canaryHosts = new Map<string, string>();
+    for (let i = 0; i < options.policy.refused.length; i++) {
+        const canary = options.policy.refused[i]!;
+        for (let j = 0; j < canary.urls.length; j++) canaryHosts.set(canary.urls[j]!.host, canary.load);
+    }
+    const seenLoads = new Set<string>();
+    let onCanarySeen: (() => void) | null = null;
+    // The refused network canary a URL names, by its host, or null.
+    const canaryAt = (url: string): string | null => {
+        let host = '';
+        try {
+            host = new URL(url).hostname;
+        } catch {
+            // `inline`, `eval`, a scheme alone: no host
+        }
+        const load = canaryHosts.get(host);
+        return load === undefined ? null : load;
+    };
+    // The refused load a violation names: by the host of its blocked URL, or the data: worker by its directive and scheme.
+    const canaryOf = (directive: string, blockedURI: string): string | null => {
+        const load = canaryAt(blockedURI);
+        if (load !== null) return load;
+        return directive.indexOf('worker-src') === 0 && blockedURI.split(':')[0] === 'data' ? 'dataWorker' : null;
+    };
+    // Whether a violation of the file's own policy is the library's canaries', in sealed mode: until INIT_VIEW nothing of
+    // the guest's exists in this document, so every one is (and the check counts the refused canaries'); after it, a
+    // refused network canary's late one is, known by its host, and a gate's (takenByGate).
+    const takenByCheck = (directive: string, blockedURI: string): boolean => {
+        const load = canaryOf(directive, blockedURI);
+        if (initialised) return load !== null && load !== 'dataWorker';
+        takenByGate(directive);
+        if (load === null || seenLoads.has(load)) return true;
+        seenLoads.add(load);
+        if (onCanarySeen !== null) onCanarySeen();
+        return true;
+    };
     addEventListener('securitypolicyviolation', (event: any) => {
         if (!event.isTrusted) return;
-        const blockedURI = event.blockedURI;
-        if (!renderedLoads.has(String(blockedURI))) budget.observed(1, performance.now());
-        reportViolation(event.effectiveDirective || event.violatedDirective, blockedURI, event.sourceFile, event.lineNumber, event.columnNumber);
+        const directive = String(event.effectiveDirective || event.violatedDirective);
+        const blockedURI = String(event.blockedURI);
+        if (sealed) {
+            // another policy's, by its text or its disposition: the check's finding, never a report of the guest's
+            const disposition = event.disposition;
+            if (disposition === 'report' || policyWords(event.originalPolicy) !== filePolicy) {
+                policyFound(disposition);
+                return;
+            }
+            if (takenByCheck(directive, blockedURI)) return;
+        }
+        if (takenByGate(directive)) return;
+        if (!renderedLoads.has(blockedURI)) budget.observed(1, performance.now());
+        reportViolation(directive, blockedURI, event.sourceFile, event.lineNumber, event.columnNumber);
     }, true);
 
     // The directive of a kind of load (options.render.kinds and directives), as the renderer reports its refusals.
@@ -1959,6 +2101,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const current = Object.prototype.hasOwnProperty.call(currentSourceOf, name) ? currentSourceOf[name] : undefined;
         const url = String((current ? call(current, target, []) : '') || call(E.getAttribute, target, ['src']) || '');
         if (!/^https?:/i.test(url)) return;
+        if (canaryAt(url) !== null) return; // a refused canary of the policy check's, the library's own (policy-check.ts)
         reportViolation(directiveOfKind(FAILED_LOAD_KINDS[name]!), reportedUrl(url));
     }, true);
 
@@ -2871,13 +3014,19 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const headOf = getter(Document.prototype, 'head');
     const firstChildOf = getter(Node.prototype, 'firstChild');
     const styleOfElement = getter(HTMLElement.prototype, 'style');
+    // The one place the view makes a <style>: a text of the library's own (the still stylesheet, or the wrapper's sizing
+    // sheet it tries), never one of the guest's.
+    const librarySheet = (text: typeof options.stillStyle | typeof options.wrapperStyle | typeof options.gateStyle): HTMLStyleElement => {
+        const sheet = call(D.createElement, document, ['style']);
+        call(Object.getOwnPropertyDescriptor(Node.prototype, 'textContent')!.set!, sheet, [text]);
+        return sheet as HTMLStyleElement;
+    };
     const stillStyleInForce = (): boolean => {
         const head = call(headOf, document, []);
         if (!head) return false;
-        const sheet = call(D.createElement, document, ['style']);
-        call(Object.getOwnPropertyDescriptor(Node.prototype, 'textContent')!.set!, sheet, [options.stillStyle]);
+        const sheet = librarySheet(options.stillStyle);
         call(Node.prototype.insertBefore, head, [sheet, call(firstChildOf, head, [])]);
-        stillLayer = stillLayerOf(sheet as HTMLStyleElement);
+        stillLayer = stillLayerOf(sheet);
         stillPending = [];
         const names = options.still.pseudoElements;
         for (let i = 0; stillLayer && i < names.length; i++) {
@@ -2892,6 +3041,25 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const held = computed.getPropertyValue('transition-duration') === '0s' && computed.getPropertyValue('animation-name') === 'none';
         call(Node.prototype.removeChild, head, [probe]);
         return held;
+    };
+
+    // Whether the policies this document inherits admit the wrapper's sizing sheet (frame-documents.ts, WRAPPER_STYLE;
+    // R1:R3-1): the wrapper is the document they come from, and this document's own policy admits any inline style, so a
+    // <style> of the very same text applies here exactly where the wrapper's applied there. Tried once, at the check-in,
+    // before anything is rendered: it takes the default margin off the body, and is removed at once. A body that has no
+    // default margin to take tells nothing, and is not a refusal. Not the view's size: that reaches this document when the
+    // engine has laid the host page out, which the check-in can precede.
+    const wrapperStyleInForce = (): boolean => {
+        const head = call(headOf, document, []);
+        const body = call(bodyOf, document, []);
+        if (!head || !body) return true;
+        const marginOf = () => getComputedStyle(body).getPropertyValue('margin-top');
+        if (marginOf() === '0px') return true;
+        const sheet = librarySheet(options.wrapperStyle);
+        call(Node.prototype.appendChild, head, [sheet]);
+        const applied = marginOf() === '0px';
+        call(Node.prototype.removeChild, head, [sheet]);
+        return applied;
     };
 
     // The distinct URLs this view has loaded or holds (R5:M-4; VIEW_MAX_DISTINCT_URLS), without their
@@ -3737,6 +3905,21 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (body) observer.observe(body);
     };
 
+    // The verdicts the view hands on from its worker's first message (WORKER_VERDICTS): for each of `names`, true only
+    // where the worker said exactly true.
+    const verdictsOf = (data: any, names: readonly string[]): Record<string, boolean> => {
+        const has = Object.prototype.hasOwnProperty;
+        const frame = data !== null && typeof data === 'object' && data.type === 'WORKER_VERDICTS' ? data : null;
+        const said = frame === null ? null : frame.verdicts;
+        const given = said !== null && typeof said === 'object' ? said : {};
+        const out: Record<string, boolean> = {};
+        for (let i = 0; i < names.length; i++) {
+            const name = names[i]!;
+            out[name] = has.call(given, name) && given[name] === true;
+        }
+        return out;
+    };
+
     addEventListener('message', (event: MessageEvent) => {
         if (initialised || event.source !== parent.parent) return;
         const data = event.data;
@@ -3745,6 +3928,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         initialised = true;
         const logicPort = event.ports[0]!;
         viewPort = event.ports[1]!;
+        // Another policy found after the announcement and before this message (policy-check.ts): said first, and nothing
+        // of the app is shown and no worker is started; the host ends the build.
+        if (sealed && (foundPolicies.enforce || foundPolicies.report)) {
+            viewPort.postMessage({ type: 'VIEW_POLICY', policy: policyVerdicts() });
+            return;
+        }
         viewPort.onmessage = (message: MessageEvent) => {
             const m = message.data;
             if (m && m.type === 'VIEW_PING' && typeof m.n === 'number') viewPort!.postMessage({ type: 'VIEW_PONG', n: m.n });
@@ -3777,9 +3966,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         viewLinks = linksOf(data.links);
         const stillRefused = !switches.animations && !stillStyleInForce();
         if (stillRefused) switches.stylesheets = false;
-        viewPort.postMessage(stillRefused
-            ? { type: 'VIEW_READY', width: g.innerWidth, height: g.innerHeight, stillStyleRefused: true }
-            : { type: 'VIEW_READY', width: g.innerWidth, height: g.innerHeight });
+        const wrapperRefused = !wrapperStyleInForce();
+        viewPort.postMessage({ type: 'VIEW_READY', width: g.innerWidth, height: g.innerHeight, stillStyleRefused: stillRefused || undefined, wrapperStyleRefused: wrapperRefused || undefined });
         for (let i = 0; i < outbox.length; i++) viewPort.postMessage(outbox[i]);
         outbox.length = 0;
 
@@ -3987,6 +4175,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             toHostGuestText('GUEST_UNCAUGHT', message);
             countUncaught(message.length);
         };
+        // The worker's verdicts (startup-gates.ts, workerGates): its first message, which its prelude posts before any
+        // code of the guest's exists, so it is the library's. Every later message of the worker's global could be the
+        // guest's, and is not this view's to hear. Handed on to the host as booleans by the registry's names, nothing else.
+        worker!.onmessage = (message: MessageEvent) => {
+            worker!.onmessage = null;
+            viewPort!.postMessage({ type: 'WORKER_VERDICTS', verdicts: verdictsOf(message.data, options.gates.worker) });
+        };
         worker!.postMessage({ type: 'INIT_WORKER' }, [logicPort, channel.port2]);
 
         observeBody();
@@ -4013,7 +4208,289 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         }
         if (data.autoResize === true) startAutoResize();
     }, true);
+
+    // The announcement (VIEW_ANNOUNCEMENT_TYPE), once the gates have answered: the version this document states and the
+    // verdicts. The host page answers it with INIT_VIEW, posted to this window only if it is the first frame of the
+    // element's frame and only if the version and the verdicts are its own. No rendered markup exists before then, so
+    // `parent` and the root element are the browser's. A document that states a version is the served file (sealed
+    // mode); strict mode's srcdoc view states none, and runs strict mode's gates.
+    const gates = sealed ? options.gates.view.sealed : options.gates.view.strict;
+    // The view's start-up gates (startup-gates.ts, STARTUP_GATES): one canary per gate of the registry's, keyed by its
+    // name; the registry gives the names this mode runs (options.gates). A name with no canary here is a failed gate, so
+    // this table and the registry are one list (test/unit/startup-gates.test.ts). A canary answers whether the browser
+    // refused what it provoked, at once or once its load has answered; the announcement waits for every answer.
+    // The view's one use of `fetch` (class E-net: test/unit/structural.test.ts lists it), for the connect gate (a `blob:`
+    // URL of its own, which names no host) and the policy check's refused connection (a URL on the reserved `.invalid`):
+    // `connect-src 'none'` refuses each before anything is requested. True when it was refused.
+    function connectCanary(url: string): Promise<boolean> {
+        return fetch(url).then(() => false, () => true);
+    }
+    const connectGate = (): Promise<boolean> => {
+        const url = URL.createObjectURL(new Blob(['x'], { type: 'text/plain' }));
+        const done = (refused: boolean) => {
+            URL.revokeObjectURL(url);
+            return refused;
+        };
+        return connectCanary(url).then(done);
+    };
+    const throws = (act: () => unknown): boolean => {
+        try {
+            act();
+            return false;
+        } catch {
+            return true;
+        }
+    };
+    const canaries: Record<string, () => boolean | Promise<boolean>> = {
+        framing: () => parent !== g && parent.parent !== parent,
+        stringCode: () => throws(() => new Function('')),
+        connect: connectGate,
+        image: () => new Promise<boolean>((resolve) => {
+            const image = new Image();
+            image.onload = () => resolve(false);
+            image.onerror = () => resolve(true);
+            image.src = options.gateImage;
+        }),
+        style: () => {
+            // the bootstrap runs in the head, before the body exists: the target is in the head, whose elements render
+            // nothing and still compute their style
+            const head = call(headOf, document, []);
+            if (!head) return false;
+            const target = call(D.createElement, document, ['p']);
+            call(Object.getOwnPropertyDescriptor(Element.prototype, 'id')!.set!, target, [options.gateStyleTarget]);
+            call(Node.prototype.appendChild, head, [target]);
+            const sheet = librarySheet(options.gateStyle);
+            call(Node.prototype.appendChild, head, [sheet]);
+            const applied = getComputedStyle(target).getPropertyValue('color') === options.gateStyleColor;
+            call(Node.prototype.removeChild, head, [sheet]);
+            call(Node.prototype.removeChild, head, [target]);
+            return !applied;
+        },
+        base: () => {
+            const head = call(headOf, document, []);
+            if (!head) return false;
+            const before = document.baseURI;
+            const base = call(D.createElement, document, ['base']);
+            call(E.setAttribute, base, ['href', options.gateBase]);
+            call(Node.prototype.appendChild, head, [base]);
+            const moved = document.baseURI !== before;
+            call(Node.prototype.removeChild, head, [base]);
+            return !moved;
+        },
+        cookie: () => {
+            try {
+                document.cookie = options.gateCookie + '=1; max-age=5';
+                return document.cookie.indexOf(options.gateCookie + '=1') === -1;
+            } catch {
+                return true;
+            }
+        },
+        storage: () => throws(() => localStorage.length),
+        parent: () => throws(() => parent.document.title),
+    };
+    const verdicts: Record<string, boolean> = {};
+    const answers: Promise<void>[] = [];
+    for (let i = 0; i < gates.length; i++) {
+        const raised = options.gates.violations[gates[i]!];
+        if (typeof raised !== 'string') continue;
+        gateDirectives.push(raised);
+        gateViolations.push(raised);
+    }
+    for (let i = 0; i < gates.length; i++) {
+        const name = gates[i]!;
+        const canary = Object.prototype.hasOwnProperty.call(canaries, name) ? canaries[name]! : null;
+        let answer: boolean | Promise<boolean> = false;
+        try {
+            if (canary !== null) answer = canary();
+        } catch {
+            answer = false;
+        }
+        if (typeof answer === 'boolean') {
+            verdicts[name] = answer;
+            continue;
+        }
+        answers.push(answer.then((held) => { verdicts[name] = held === true; }, () => { verdicts[name] = false; }));
+    }
+    // The announcement: the version, the gates' verdicts and, in sealed mode, the policy check's (policyVerdicts); a
+    // finding after it goes on the view port (policyFound).
+    const announce = () => {
+        policyAnnounced = true;
+        parent.parent.postMessage({ type: 'VIEW_ANNOUNCE', version, verdicts, policy: sealed ? policyVerdicts() : null }, '*');
+    };
+    // The policy check runs in sealed mode once every gate held: a browser that does not enforce the file's policy has
+    // ended the build already, and the network canaries are made only where the policy refuses them.
+    const afterGates = () => {
+        let held = true;
+        for (let i = 0; i < gates.length; i++) if (verdicts[gates[i]!] !== true) held = false;
+        if (!sealed || !held) {
+            announce();
+            return;
+        }
+        if (call(bodyOf, document, []) !== null) runPolicyCheck(announce);
+        else addEventListener('DOMContentLoaded', () => runPolicyCheck(announce), { once: true });
+    };
+    if (answers.length === 0) afterGates();
+    else Promise.all(answers).then(afterGates);
+
+    // The policy check's canaries (policy-check.ts, POLICY_CANARIES; design 03, "What the policy check provokes"): each
+    // refused load in both schemes and the `data:` worker, and each admitted load from a `blob:` URL of the view's own,
+    // its canary worker among them. The violations they raise are read by the listener above, by content. It answers once
+    // each refused load has raised the file's own violation in one scheme at least, every admitted load has settled and
+    // the worker has answered, or at once when another policy's violation came; then every canary is gone. It has no
+    // clock: a load that has not answered is "not yet", and the host page's load timeout bounds the wait.
+    function runPolicyCheck(answer: () => void) {
+        const check = options.policy;
+        const values = check.values;
+        const head = call(headOf, document, []);
+        const body = call(bodyOf, document, []);
+        const placed: Element[] = [];
+        const minted: string[] = [];
+        const workers: Worker[] = [];
+        let settling = check.admitted.length;
+        let answered = false;
+        const finish = () => {
+            if (answered) return;
+            answered = true;
+            onPolicyFound = null;
+            onCanarySeen = null;
+            for (let i = 0; i < placed.length; i++) {
+                const parentNode = call(parentOf, placed[i]!, []);
+                if (parentNode) call(Node.prototype.removeChild, parentNode, [placed[i]!]);
+            }
+            for (let i = 0; i < minted.length; i++) URL.revokeObjectURL(minted[i]!);
+            for (let i = 0; i < workers.length; i++) workers[i]!.terminate();
+            answer();
+        };
+        const complete = () => {
+            if (foundPolicies.enforce || foundPolicies.report) {
+                finish();
+                return;
+            }
+            if (settling > 0) return;
+            for (let i = 0; i < check.refused.length; i++) if (!seenLoads.has(check.refused[i]!.load)) return;
+            finish();
+        };
+        // Each admitted load settles once, whichever of its outcomes comes first.
+        const settles = () => {
+            let done = false;
+            return () => {
+                if (done) return;
+                done = true;
+                settling--;
+                complete();
+            };
+        };
+        const mint = (part: BlobPart, type: string): string => {
+            const url = URL.createObjectURL(new Blob([part], { type }));
+            minted.push(url);
+            return url;
+        };
+        const element = (name: string, attributes: Readonly<Record<string, string>>, into: Node | null): Element => {
+            const made = call(D.createElement, document, [name]) as Element;
+            for (const attribute of Object.keys(attributes)) call(E.setAttribute, made, [attribute, attributes[attribute]!]);
+            placed.push(made);
+            if (into) call(Node.prototype.appendChild, into, [made]);
+            return made;
+        };
+        const on = (target: EventTarget, names: readonly string[], then: () => void) => {
+            for (let i = 0; i < names.length; i++) target.addEventListener(names[i]!, then, { once: true });
+        };
+        const ignore = () => {};
+        const startWorker = (url: string, then: () => void) => {
+            try {
+                const made = new Worker(url);
+                workers.push(made);
+                made.onmessage = then;
+                made.onerror = (event: Event) => {
+                    event.preventDefault();
+                    then();
+                };
+            } catch {
+                then(); // refused as it was built: its violation, if any, is read as every other
+            }
+        };
+        const png = (): Uint8Array => {
+            const text = atob(values.image);
+            const bytes = new Uint8Array(text.length);
+            for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+            return bytes;
+        };
+        // What the <meta> admits, from a blob: URL of the view's own: each calls its `settled` once it has settled.
+        const admittedCanaries: Record<string, (settled: () => void) => void> = {
+            style: (settled) => {
+                const link = element('link', { rel: 'stylesheet' }, null);
+                on(link, ['load', 'error'], settled);
+                call(E.setAttribute, link, ['href', mint(values.style, 'text/css')]);
+                if (head) call(Node.prototype.appendChild, head, [link]);
+            },
+            image: (settled) => {
+                const image = new Image();
+                on(image, ['load', 'error'], settled);
+                image.src = mint(png() as BlobPart, 'image/png');
+            },
+            font: (settled) => {
+                new FontFace(values.family, `url(${mint(values.font, 'font/woff2')})`).load().then(settled, settled);
+            },
+            media: (settled) => {
+                const audio = element('audio', { preload: 'auto' }, null);
+                on(audio, ['loadedmetadata', 'error'], settled);
+                call(E.setAttribute, audio, ['src', mint(values.media, 'audio/wav')]);
+                if (body) call(Node.prototype.appendChild, body, [audio]);
+            },
+            worker: (settled) => startWorker(mint(values.worker, 'text/javascript'), settled),
+        };
+        // What the <meta> refuses: to a canary's fixed URL, or the data: worker; the violation is what is read.
+        const refusedCanaries: Record<string, (url: string) => void> = {
+            script: (url) => element('script', { src: url }, head),
+            style: (url) => element('link', { rel: 'stylesheet', href: url }, head),
+            image: (url) => {
+                new Image().src = url;
+            },
+            font: (url) => {
+                new FontFace(values.family, `url(${url})`).load().then(ignore, ignore);
+            },
+            media: (url) => element('audio', { preload: 'auto', src: url }, body),
+            connect: (url) => {
+                connectCanary(url).then(ignore, ignore);
+            },
+            frame: (url) => element('iframe', { width: '0', height: '0', src: url }, body),
+            base: (url) => {
+                const base = element('base', { href: url }, head);
+                const parentNode = call(parentOf, base, []);
+                if (parentNode) call(Node.prototype.removeChild, parentNode, [base]);
+            },
+            dataWorker: () => startWorker(values.dataWorker, ignore),
+        };
+        onPolicyFound = complete;
+        onCanarySeen = complete;
+        for (let i = 0; i < check.admitted.length; i++) {
+            const load = check.admitted[i]!;
+            const settled = settles();
+            try {
+                admittedCanaries[load]!(settled);
+            } catch {
+                settled(); // it could not be made: its violation, if another policy refused it, is read as every other
+            }
+        }
+        for (let i = 0; i < check.refused.length; i++) {
+            const canary = check.refused[i]!;
+            const make = refusedCanaries[canary.load]!;
+            try {
+                if (canary.urls.length === 0) make('');
+                for (let j = 0; j < canary.urls.length; j++) make(canary.urls[j]!.url);
+            } catch {
+                // its violation is raised as it is made, or not at all: the check waits for it either way
+            }
+        }
+        complete();
+    }
 }
+
+/**
+ * The view's announcement to the host page (FRAMES, VIEW_ANNOUNCE): the first message of sealed and strict mode's
+ * start-up, which the view posts to its parent's parent before it has a port.
+ */
+export const VIEW_ANNOUNCEMENT_TYPE = 'VIEW_ANNOUNCE' satisfies FrameType;
 
 /**
  * The worker's prelude in strict mode, after the comms script and sandboxFiles, before the guest's entry.
@@ -4594,6 +5071,11 @@ export const VIEW_OPTIONS: ViewOptions = {
     namePrefixDigits: VIEW_NAME_PREFIX_DIGITS,
     values: VIEW_VALUE_KINDS,
     linkStops: VIEW_LINK_CLICK_STOPS,
+    wrapperStyle: WRAPPER_STYLE,
+    versionAttribute: VERSION_ATTRIBUTE,
+    gates: { view: gateNames('view'), worker: [...new Set([...gateNames('worker').sealed, ...gateNames('worker').strict])], violations: gateViolations() },
+    policy: policyCheckOptions(),
+    ...GATE_CANARIES,
 };
 
 // The bootstrap's text and its hash, with the bridge frame's part they were built for (the network modes', or none).
@@ -4697,13 +5179,15 @@ function bootstrap(): NonNullable<typeof cached> {
 
 /**
  * The CSP hash source of the library's bootstrap for this build of the package, to allow in the host page's own
- * Content-Security-Policy (R1:R4-5): the view of sealed and strict mode runs it and, in a build with the network modes,
- * so does the fetch bridge's frame.
+ * Content-Security-Policy for strict mode (R1:R4-5): strict mode's view runs it and, in a build with the network modes,
+ * so does the fetch bridge's frame. Sealed mode's view needs none in the host page's policy: it is the served file,
+ * whose own policy admits its bootstrap.
  *
  * @remarks
- * It is the very value the element puts in the `script-src` of its documents, which inherit the host page's policy
- * (docs/API.md#host-page-policy), so one hash admits them: the view in sealed and strict mode, and with `fetchBridge`
- * the frame that makes the bridge's requests, in every mode that has it (BD1:ISO-1). In the built package the bootstrap
+ * It is the very value the element puts in the `script-src` of its `srcdoc` documents, which inherit the host page's
+ * policy (docs/API.md#host-page-policy), so one hash admits them: strict mode's view, and with `fetchBridge` the frame
+ * that makes the bridge's requests, in every mode that has it (BD1:ISO-1). In the default build it is the hash of sealed
+ * mode's bootstrap, the text `sealed-document.html` holds and its policy admits; the host page lists it for nothing. In the built package the bootstrap
  * is a string literal of the bundle, so the hash is the same in a build step (importing the package needs no DOM) and in
  * the browser, however the embedder's app is bundled or minified. It changes only with the package's version and its
  * build: the default build's bootstrap has no bridge frame's part, so its hash is not the network build's

@@ -28,7 +28,7 @@ function sources(dir: string): string[] {
     return files;
 }
 
-defineWebSandbox();
+defineWebSandbox({ documentUrl: '/sealed-document.html' });
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -184,7 +184,8 @@ describe('the details the element dispatches are frozen, every one', () => {
         for (const type of Object.keys(ELEMENT_EVENTS)) el.addEventListener(type, (e: CustomEvent) => { heard[type] = deeplyFrozen(e.detail); });
         document.body.appendChild(el);
         startWith(el, { mode: 'strict', guestWrites: true }, { files: { 'a.txt': 'a' } });
-        el._step({ t: 'viewReady', gen: el._lc.gen, height: null, stillStyleRefused: false }); // the view's check-in: 'ready'
+        el._step({ t: 'viewReady', gen: el._lc.gen, height: null, stillStyleRefused: false, wrapperStyleRefused: false }); // the view's check-in
+        el._step({ t: 'workerVerdicts', gen: el._lc.gen, finding: null }); // and its worker's verdicts: 'ready'
         el._dispatchLog({ level: 'log', args: [{ a: [{ b: 1 }] }] }, 'guest');
         el._dispatchViolation({ type: 'VIOLATION', directive: 'img-src', blockedURI: 'https://x.example/' }, 'view');
         await el._handleGuestWrite(el._guestWrites, { change: 'write', path: 'w.txt', entry: 'w' });

@@ -71,7 +71,9 @@ export const GUEST_ENTRIES: readonly GuestEntry[] = [
     { member: '_buildRefusal', takes: ['entry', 'files'], holds: ['this._files', 'this._config.entry'] },
     { member: '_prepareBuild', takes: ['html', 'entry', 'files'], holds: ['this._files'] },
     { member: '_prepareDocumentFrame', takes: ['html', 'files'], holds: ['built', 'files', 'this._config.html'] },
-    { member: '_prepareViewFrame', takes: ['html', 'entry', 'files'], holds: ['built', 'files', 'this._config.entry', 'this._config.html'] },
+    { member: '_prepareViewFrame', takes: ['html', 'entry', 'files'], holds: ['built', 'files'] },
+    { member: '_prepareSealedFrame', takes: ['html', 'entry', 'files'], holds: ['built', 'files'] },
+    { member: '_viewInit', takes: ['html', 'entry', 'files'], holds: ['files', 'this._config.entry', 'this._config.html'] },
     { member: '_attachBuild', takes: ['html', 'entry', 'files'], holds: ['prepared'] },
     { member: '_setupStrictChannels', takes: ['html', 'entry', 'files'], holds: ['this._strictInit'] },
     { member: '_teardown', takes: ['writes'], holds: ['this._guestWrites', 'this._strictInit'] },
@@ -101,6 +103,7 @@ export interface HostPass {
 
 const ALL: readonly SandboxMode[] = ['strict', 'sealed', 'cooperative', 'worker'];
 const VIEW_MODES: readonly SandboxMode[] = ['strict', 'sealed'];
+const NETWORK_MODES: readonly SandboxMode[] = ['strict', 'cooperative', 'worker'];
 const FILES_CAP = 'linear in the files, which MAX_FILES (1000) and MAX_TOTAL_BYTES (8 MiB) cap';
 
 export const HOST_PASSES = {
@@ -110,7 +113,7 @@ export const HOST_PASSES = {
         units: [
             'src/host.ts#this.start', 'src/host.ts#this._bind',
             'src/lib/app-start.ts#readStart', 'src/lib/app-start.ts#readArgument', 'src/lib/app-start.ts#checkKey', 'src/lib/app-start.ts#readOptions', 'src/lib/app-start.ts#copiedOptions', 'src/lib/app-start.ts#copied',
-            'src/lib/app-start.ts#readFiles', 'src/lib/app-start.ts#checkEntry', 'src/lib/app-start.ts#refusal', 'src/lib/app-start.ts#startRefusal',
+            'src/lib/app-start.ts#readFiles', 'src/lib/app-start.ts#checkEntry', 'src/lib/app-start.ts#checkServedView', 'src/lib/app-start.ts#refusal', 'src/lib/app-start.ts#startRefusal',
             'src/lib/config-schema.ts#unknownModeReason', 'src/lib/config-schema.ts#isSandboxMode', 'src/lib/config-schema.ts#renamedModeNote',
             'src/lib/reasons.ts#reasonText', 'src/lib/reasons.ts#joinDetails', 'src/lib/reasons.ts#errorName', 'src/lib/reasons.ts#branded',
             'src/lib/csp/origin-kinds.ts#shown', 'src/lib/minted-errors.ts#mintUncodedError', 'src/lib/minted-errors.ts#failedText',
@@ -162,22 +165,22 @@ export const HOST_PASSES = {
         cost: `linear in the stylesheets (BD7:LIM-2's class); ${FILES_CAP}`,
     },
     viewBuild: {
-        does: "the strict or sealed build: the entry and the files become the worker's source (the files as an escaped literal, toInlineScriptLiteral), and that source and `html` travel to the view in INIT_VIEW, a structured clone; the wrapper and the view documents are the library's own (the policy and the bootstrap), so no markup of the guest's reaches a sink or a parser of the host realm (BD7:LIM-1)",
+        does: "the strict or sealed build: the entry and the files become the worker's source (the files as an escaped literal, toInlineScriptLiteral), and that source and `html` travel to the view in INIT_VIEW, a structured clone (_viewInit); strict mode's wrapper and view documents are the library's own (the policy and the bootstrap), and sealed mode's view is the served file, which the host realm only frames, so no markup of the guest's reaches a sink or a parser of the host realm (BD7:LIM-1)",
         takes: ['html', 'entry', 'files'], modes: VIEW_MODES, rule: 'pure',
         units: [
-            'src/host.ts#this._prepareBuild', 'src/host.ts#this._prepareSealedFrame', 'src/lib/network-host.ts#this._prepareNetworkBuild', 'src/lib/network-host.ts#this._prepareStrictFrame', 'src/host.ts#this._prepareViewFrame',
-            'src/host.ts#this._getStrictWorkerSource', 'src/lib/frame-documents.ts#toInlineScriptLiteral', 'src/lib/in-sandbox-view.ts#buildViewDocument',
+            'src/host.ts#this._prepareBuild', 'src/host.ts#this._prepareSealedFrame', 'src/lib/network-host.ts#this._prepareNetworkBuild', 'src/lib/network-host.ts#this._prepareStrictFrame', 'src/host.ts#this._prepareViewFrame', 'src/host.ts#this._viewInit',
+            'src/host.ts#this._getStrictWorkerSource', 'src/lib/startup-gates.ts#gatesOf', 'src/lib/startup-gates.ts#gateViolations', 'src/lib/frame-documents.ts#toInlineScriptLiteral', 'src/lib/in-sandbox-view.ts#buildViewDocument',
             'src/lib/frame-documents.ts#buildWrapperDocument', 'src/lib/frame-documents.ts#escapeAttribute',
             'src/host.ts#workerGlobalsStatement', 'src/host.ts#workerGlobalsCall', 'src/lib/worker-globals.ts#workerGlobalsFor',
         ],
         cost: `linear in the entry and the files; ${FILES_CAP}`,
     },
     policyFromKinds: {
-        does: "each registered file's type, and only its type, chooses which fixed directives of the policy admit `blob:`: the policy holds nothing of the guest's",
-        takes: ['files'], modes: ALL, rule: 'pure',
+        does: "each registered file's type, and only its type, chooses which fixed directives of the policy admit `blob:`: the policy holds nothing of the guest's. Not sealed mode's: its view runs under the served file's constant policy (design 03, \"A thinner host\")",
+        takes: ['files'], modes: NETWORK_MODES, rule: 'pure',
         units: [
-            'src/host.ts#this._sealedPolicy', 'src/host.ts#this._viewFileKinds', 'src/lib/network-host.ts#this._guestPolicy', 'src/lib/network-host.ts#this._policyInput', 'src/lib/network-host.ts#this._gateConnect',
-            'src/lib/csp/csp-generator.ts#sealedViewPolicy', 'src/lib/csp/csp-generator.ts#strictViewPolicy', 'src/lib/csp/csp-generator.ts#cooperativePolicy',
+            'src/host.ts#this._viewFileKinds', 'src/lib/network-host.ts#this._guestPolicy', 'src/lib/network-host.ts#this._policyInput', 'src/lib/network-host.ts#this._gateConnect',
+            'src/lib/csp/csp-generator.ts#strictViewPolicy', 'src/lib/csp/csp-generator.ts#cooperativePolicy',
             'src/lib/csp/csp-generator.ts#fileKinds', 'src/lib/csp/csp-generator.ts#connectSources', 'src/lib/csp/csp-generator.ts#fetchDirectives',
             'src/lib/csp/csp-generator.ts#format', 'src/lib/csp/csp-generator.ts#sourcesOf',
         ],
@@ -240,9 +243,9 @@ export const HOST_PASSES = {
         cost: 'linear in the report, whose strings VIOLATION_MAX_STRING caps',
     },
     viewFrames: {
-        does: "the view's frames: its check-in's numbers, the notes of what it dropped of the initial view (three constants, which decide the element's warning), the guest's error texts, cut again (viewErrorLine), and a link's request: its index, an integer within the element's own `links`, opens that list's URL (listedLink), never a string of the view's",
+        does: "the view's frames: its check-in's numbers, its worker's verdicts (one boolean per name of the start-up gates' registry, read by the registry's names only: verdictFinding), a late finding of its policy check (one boolean per name of POLICY_FINDINGS, read the same way: policyFinding), the notes of what it dropped of the initial view (three constants, which decide the element's warning), the guest's error texts, cut again (viewErrorLine), and a link's request: its index, an integer within the element's own `links`, opens that list's URL (listedLink), never a string of the view's",
         takes: ['viewFrames'], modes: VIEW_MODES, rule: 'pure',
-        units: ['src/host.ts#this._onViewMessage', 'src/host.ts#this._warnAboutStrictHtml', 'src/host.ts#dropsScript', 'src/host.ts#viewErrorLine', 'src/host.ts#uncaughtLine', 'src/host.ts#this._openListedLink', 'src/lib/links.ts#listedLink'],
+        units: ['src/host.ts#this._onViewMessage', 'src/lib/startup-verdicts.ts#verdictFinding', 'src/lib/startup-verdicts.ts#policyFinding', 'src/lib/startup-verdicts.ts#firstFailed', 'src/lib/startup-verdicts.ts#hasOwn', 'src/host.ts#this._warnAboutStrictHtml', 'src/host.ts#dropsScript', 'src/host.ts#viewErrorLine', 'src/host.ts#uncaughtLine', 'src/host.ts#this._openListedLink', 'src/host.ts#this._openTab', 'src/lib/links.ts#openWhenActivated', 'src/lib/links.ts#listedLink'],
         cost: "constant, or linear in a text the view cut to guestText.maxLength",
     },
     fetchBridge: {
@@ -256,9 +259,9 @@ export const HOST_PASSES = {
         cost: 'linear in the request and the response, which `fetchBridge.maxBytes` caps',
     },
     announcement: {
-        does: "the guest frame's announcement: a port, taken once from the guest frame's own window, or a bootstrap's refusal, whose name is looked up in the library's table (ENVIRONMENT_REFUSALS) and whose reason, a text of the library's, ends the build",
+        does: "the guest frame's announcement: a port, taken once from the guest frame's own window, or a bootstrap's refusal, whose name is looked up in the library's table (ENVIRONMENT_REFUSALS) and whose reason, a text of the library's, ends the build; and the view's announcement, a constant type, taken only from the first frame of the element's frame (firstFrameOf), whose version is compared whole with the library's digest and whose verdicts are read by the registry's names (announcementFinding), and whose answer is the reducer's",
         takes: ['announcement'], modes: ALL, rule: 'pure',
-        units: ['src/host.ts#this._listenForAnnouncement', 'src/lib/network-host.ts#this._onAnnouncement', 'src/host.ts#this._step', 'src/host.ts#this._refusedByHostPage', 'src/host.ts#hostNotice', 'src/lib/reasons.ts#hostLine', 'src/lib/reasons.ts#fill'],
+        units: ['src/host.ts#this._listenForAnnouncement', 'src/host.ts#this._onViewAnnouncement', 'src/host.ts#this._announcementFinding', 'src/lib/startup-verdicts.ts#announcementFinding', 'src/host.ts#firstFrameOf', 'src/lib/network-host.ts#this._onAnnouncement', 'src/host.ts#this._step', 'src/host.ts#this._refusedByHostPage', 'src/host.ts#hostNotice', 'src/lib/reasons.ts#hostLine', 'src/lib/reasons.ts#fill'],
         cost: 'constant: a lookup of one name',
     },
     carried: {
@@ -300,6 +303,10 @@ export const LIBRARY_SINKS = {
     'src/host.ts#this._prepareViewFrame': {
         names: ['createElement', 'setAttribute', 'cssText'],
         why: "the wrapper's iframe, its sandbox flags and a constant style",
+    },
+    'src/host.ts#this._prepareSealedFrame': {
+        names: ['createElement', 'setAttribute', 'cssText'],
+        why: "the served file's iframe: its sandbox flags, the documentUrl registration validated (document-url.ts) as its src, and a constant style; it writes no document",
     },
     'src/lib/frame-documents.ts#setWrapperFrameIsolation': {
         names: ['setAttribute'],

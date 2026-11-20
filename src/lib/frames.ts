@@ -18,11 +18,11 @@ export interface ChannelRow {
 }
 
 export const CHANNELS = {
-    'announcement': { kind: 'window message', summary: "A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), and any bootstrap's refusal of an environment other than the one built." },
+    'announcement': { kind: 'window message', summary: "A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), the view's announcement, and any bootstrap's refusal of an environment other than the one built." },
     'logic-port': { kind: 'MessagePort', summary: 'The host and the guest: calls both ways, execute(), liveness, and the guest bootstrap\'s lines and reports.' },
     'view-port': { kind: 'MessagePort', summary: "Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness, and the user's click on a listed link." },
     'render-port': { kind: 'MessagePort', summary: "Strict mode: the view and the guest's worker; the host is not on this path." },
-    'view-init': { kind: 'window message', summary: 'Strict mode: the host hands the view its two ports, once per build.' },
+    'view-init': { kind: 'window message', summary: 'Strict and sealed mode: the host hands the view its two ports, once per build, in answer to its announcement.' },
     'worker': { kind: 'worker message', summary: 'A frame and the worker it spawned: the worker gets its ports, and worker mode\'s worker says it started.' },
     'bridge-init': { kind: 'window message', summary: "The fetch bridge: the host hands the bridge's frame its port, once per build." },
     'bridge-port': { kind: 'MessagePort', summary: "The fetch bridge: the host and the bridge's frame, which makes every request the host decided; the guest is not on this path." },
@@ -88,8 +88,31 @@ export const FRAMES = {
         routes: [{ channel: 'worker', from: ['worker'], to: ['worker-frame'] }],
         fields: NONE,
     },
+    VIEW_ANNOUNCE: {
+        purpose: "The view speaks first (design 03, \"The start-up order\"): once its start-up gates have answered it announces itself to its parent's parent before it has a port, and the host page posts INIT_VIEW only to the window that announced itself from the first frame of the element's frame, and only when the version and the verdicts are its own (startup-verdicts.ts). It holds nothing else, and nothing in it is a secret.",
+        routes: [{ channel: 'announcement', from: ['view'], to: ['host'] }],
+        fields: {
+            version: { bound: 'constant', how: "the digest the view's document states (VERSION_ATTRIBUTE, document-digest.ts), or null where it states none (strict mode's srcdoc view); compared whole with the library's own" },
+            verdicts: { bound: 'not a string', how: "one boolean per start-up gate of the view's (startup-gates.ts), keyed by the registry's names; the host reads only the names its registry gives, each as exactly true" },
+            policy: { bound: 'not a string', how: "the served file's view: one boolean per finding of the policy check (policy-check.ts, POLICY_FINDINGS), keyed by its names, true where no policy of that kind was seen; null in strict mode's view. The host reads only the registry's names, each as exactly true" },
+        },
+    },
+    VIEW_POLICY: {
+        purpose: "The served file's view saw a policy that is not the file's own after it announced itself (policy-check.ts; design 03, \"What the policy check provokes\"): posted once, whenever the violation came, and first on the view port when it came before INIT_VIEW, which then starts nothing. The host ends the build with the reason of the first finding.",
+        routes: [{ channel: 'view-port', from: ['view'], to: ['host'] }],
+        fields: {
+            policy: { bound: 'not a string', how: "one boolean per finding of POLICY_FINDINGS, keyed by its names, as in VIEW_ANNOUNCE; the host reads only the registry's names" },
+        },
+    },
+    WORKER_VERDICTS: {
+        purpose: "The verdicts of the worker's start-up gates (startup-gates.ts, workerGates): the worker's first message, posted by its prelude before any code of the guest's exists, which the view hands on to the host after its check-in. The build is `ready` only once they held.",
+        routes: [{ channel: 'worker', from: ['strict-worker'], to: ['view'] }, { channel: 'view-port', from: ['view'], to: ['host'] }],
+        fields: {
+            verdicts: { bound: 'not a string', how: "one boolean per start-up gate of the worker's, keyed by the registry's names: the view copies only the registry's names, each as exactly true, and the host reads only those of its build's mode" },
+        },
+    },
     INIT_VIEW: {
-        purpose: "The host hands the view the logic and view ports, at the wrapper's load, with what the build shows.",
+        purpose: "The host hands the view the logic and view ports, at the view's announcement, with what the build shows: posted to the window that announced itself, which is the first frame of the element's frame.",
         routes: [{ channel: 'view-init', from: ['host'], to: ['view'] }],
         fields: {
             workerSource: { bound: 'host', how: "the worker's source: the prelude and the embedder's entry" },
@@ -178,12 +201,13 @@ export const FRAMES = {
 
     // ---- the view port
     VIEW_READY: {
-        purpose: "The view's check-in, its first frame: the strict build is ready.",
+        purpose: "The view's check-in, its first frame: the build is ready once its worker's verdicts have held too.",
         routes: [{ channel: 'view-port', from: ['view'], to: ['host'] }],
         fields: {
-            width: { bound: 'not a string', how: "the view's own window" },
-            height: { bound: 'not a string', how: "the view's own window" },
-            stillStyleRefused: { bound: 'not a string', how: "true when the host page's style-src refused the still stylesheet" },
+            width: { bound: 'not a string', how: "the view's own window, as it reads it at the check-in" },
+            height: { bound: 'not a string', how: "the view's own window, as it reads it at the check-in: the warning's figure, never its evidence" },
+            stillStyleRefused: { bound: 'not a string', how: "true when the host page's style-src refused the still stylesheet, else absent" },
+            wrapperStyleRefused: { bound: 'not a string', how: "true when the policies the view inherits refuse the wrapper's sizing sheet (wrapperStyleInForce), else absent" },
         },
     },
     VIEW_INITIAL: {

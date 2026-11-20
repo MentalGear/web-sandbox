@@ -21,7 +21,7 @@ const bootstrapOf = (el: HTMLElement) => parse(innerSourceOf(el)).querySelector(
 
 async function mount(config?: Record<string, unknown>, setup: AppSetup = {}) {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     if (config) startWith(el, config, setup);
@@ -335,10 +335,10 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount({});
         const reasons = terminations(el);
-        // the strict view's ports, handed over at the wrapper's load (the `sendInitView` effect, applied through the
-        // class's prototype, CB7), throw; the wrapper's load of the standing environment, as the platform delivers it
+        // the view's ports, handed over at its announcement (the `sendInitView` effect, applied through the class's
+        // prototype, CB7), throw; the view's announcement in the standing environment, as the element's listener steps it
         vi.spyOn(Object.getPrototypeOf(el), '_setupStrictChannels').mockImplementation(() => { throw new Error('could not hand over the port'); });
-        el._step({ t: 'frameLoad', gen: el._lc.gen, stillOurs: true, guest: {} });
+        el._step({ t: 'viewAnnounced', gen: el._lc.gen, source: {}, finding: null });
         expect([el.state, wrapperOf(el), reasons]).toEqual(['terminated', null, ['the environment could not be built (Error)']]);
     });
 });
@@ -352,7 +352,7 @@ describe('A8: the default bootstrap is parser-safe', () => {
     it('every bootstrap the element builds passes (cooperative and worker mode, files, module graph, markup references, fetch bridge, auto-sizing)', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const files = { 'app.js': 'import "./lib.js"; </script><!--', 'lib.js': 'export {}', 'a.css': 'p{}', 'i.svg': '<svg/>' };
         for (const mode of ['cooperative', 'worker']) {
             const el = document.createElement('web-sandbox') as any;

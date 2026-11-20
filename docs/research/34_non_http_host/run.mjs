@@ -16,6 +16,7 @@ const PLAN = [
     ['extension-chromium', ['probe-ext.mjs']],
     ['extension-hash-load', ['probe-ext-load.mjs', 'hash']],
     ['electron', ['probe-electron.mjs'], ['xvfb-run', '-a']],
+    ['electron-library', ['probe-electron-library.mjs'], ['xvfb-run', '-a']],
 ];
 const only = process.argv.slice(2);
 const lock = process.env.WEB_SANDBOX_LOCK;

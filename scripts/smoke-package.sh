@@ -28,7 +28,9 @@ const unnamed: SandboxConfig = { html: '<p>hi</p>', origins: { images: ['https:/
 const bridged: SandboxConfig = { fetchBridge: { allow: [] } };
 // @ts-expect-error 'iframe' is no mode: were the package's types `any`, this line would not be an error
 const renamed: SandboxConfig = { mode: 'iframe' };
-const element: typeof WebSandbox = defineWebSandbox('consumer-sandbox');
+const element: typeof WebSandbox = defineWebSandbox({ tagName: 'consumer-sandbox', documentUrl: '/sealed-document.html' });
+// @ts-expect-error the default build's sealed mode has no view without the served file: documentUrl is required
+defineWebSandbox({ tagName: 'consumer-sandbox' });
 console.log(element.name, SAFE_CAPABILITIES.length, sealed, named, strict, cooperative, worker, unnamed, bridged, renamed);
 TS
 }
@@ -49,8 +51,10 @@ const renamed: SandboxConfig = { mode: 'iframe' };
 const scripted: SandboxConfig = { mode: 'strict', origins: { scripts: ['https://cdn.example'] } };
 // the network modes' event is in the element's event map, by declaration merging
 const fetched: WebSandboxEventMap['fetch'] | null = null;
-const element: typeof WebSandbox = defineWebSandbox('consumer-sandbox');
-console.log(element.name, SAFE_CAPABILITIES.length, UNSAFE_CAPABILITIES.length, sealed, strict, typed, unnamed, config, renamed, scripted, fetched);
+const element: typeof WebSandbox = defineWebSandbox({ tagName: 'consumer-sandbox', documentUrl: new URL('/sealed-document.html', location.href) });
+// the network modes keep documents of their own: a registration without documentUrl runs them, and refuses sealed mode
+const networkOnly: typeof WebSandbox = defineWebSandbox({ tagName: 'network-only-sandbox' });
+console.log(element.name, networkOnly.name, SAFE_CAPABILITIES.length, UNSAFE_CAPABILITIES.length, sealed, strict, typed, unnamed, config, renamed, scripted, fetched);
 TS
 }
 
@@ -157,6 +161,20 @@ TS
     else
         cp "$served" "$work/sealed-document.html"
     fi
+    # The check of the file (design 03) compares a served file with the digest the bundle carries: the digest the file
+    # states of itself, its version, which is the SHA-256 of the file without it (src/lib/document-digest.ts); the
+    # installed bundle holds it, in base64, and so does a consumer's bundle of it.
+    local digest
+    digest="$(bun -e "import { statedDigest } from '$root/src/lib/document-digest.ts'; const stated = statedDigest(await Bun.file(process.argv[1]).text()); if (stated === null) process.exit(1); process.stdout.write(stated);" "$served")" || {
+        echo "package smoke test failed ($build build): sealed-document.html does not state a digest that holds" >&2
+        exit 1
+    }
+    for bundle in "$(dirname "$served")/index.js" out/consumer.js; do
+        if ! grep -qF "\"$digest\"" "$bundle"; then
+            echo "package smoke test failed ($build build): $bundle does not hold the digest of sealed-document.html ($digest)" >&2
+            exit 1
+        fi
+    done
     echo "package smoke test passed: $(basename "$tarball"), the $build build, view bootstrap $plain, sealed-document.html $(sha256sum "$served" | cut -c1-16)"
 }
 

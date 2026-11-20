@@ -4,7 +4,7 @@ This project uses [Bun](https://bun.sh) for everything: installing, running scri
 
 ```bash
 bun install
-bun run dev          # playground at http://localhost:4444/playground/index.html
+bun run dev          # builds dist/ (sealed mode's served file), then the playground at http://localhost:4444/playground/index.html
 bun run typecheck    # tsc over src, tests, playground and research specs
 bun run test         # unit (vitest) then e2e (playwright; builds the package first)
 WEB_SANDBOX_MODEL_RUNS=2000 bun run test:e2e test/e2e/lifecycle-model.spec.ts  # nightly: the lifecycle model suite at 2000 sequences per engine (CI runs 40)
@@ -35,8 +35,8 @@ The package is sealed mode alone unless it is built with `WEB_SANDBOX_NETWORK_MO
 - **E2e tests.** A test names its build: `test.use({ build: 'network' })` at the top of a file of network-mode tests,
   and `test.use({ build: buildOfMode(mode) })` in a `describe` of a loop over modes; the fixture's default is
   `'default'`. The fixture tells every page of the test its build, each harness page loads that build's entry
-  (`test/e2e/library.ts`), and `setConfig()` on such a page throws for a config that is the other build's to test: a
-  network mode on the default build, a sealed config on the network build. A test whose subject is exactly that (the
+  (`test/e2e/library.ts`), and `start()` of every element such a page defines throws for grants that are the other
+  build's to test: a network mode on the default build, a sealed config on the network build. A test whose subject is exactly that (the
   default build's refusal; the network build's own sealed mode) says `test.use({ otherBuildConfigs: true })`. A spec
   that opens a browser context of its own calls `pairWithBuild(context, build)`.
 - **Docs and the API gate.** `bun run api:update` writes both builds' reports and doc models. The reference in
@@ -56,16 +56,25 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
 - **The port.** CI serves on 4444. Locally the port is derived from the checkout's absolute path, in 20000–29999
   (`test/e2e/server.ts`; `bun -e 'import("./test/e2e/server.ts").then(m => console.log(m.E2E_ORIGIN))'` prints it), and
   `WEB_SANDBOX_E2E_PORT` overrides it. Specs never name a port: they use `ORIGIN` and `HARNESS` from
-  `test/e2e/fixture.ts`, or a path relative to `baseURL`. `bun run dev` stays on 4444.
+  `test/e2e/fixture.ts`, or a path relative to `baseURL`. `bun run dev` stays on 4444. The e2e server listens on
+  127.0.0.1, so `ORIGIN` (`localhost`) and `OFFSITE_ORIGIN` (`127.0.0.1`, the same server as another site) both reach it
+  on a machine whose `localhost` is `::1` first.
 - **The bundles.** The server's start builds `dist/` (the default build) and `dist-network/` (the bundle of the build
   with the network modes); `package.spec.ts` mounts each from its bundle.
+- **The served file.** Sealed mode's view is each build's `sealed-document.html`, which the server answers at
+  `/dist/sealed-document.html` and `/dist-network/sealed-document.html` as the bytes on disk, with a content type and no
+  other header, never through Vite's HTML transform (`vite.config.ts`, `SERVED_DOCUMENTS`;
+  `test/e2e/served-document.spec.ts` compares the two). Every harness page registers its build's
+  (`pageDocumentUrl()`, `test/e2e/library.ts`). The file holds the view's bootstrap as the build wrote it, so a change to
+  the view's sources reaches sealed mode's view only through a build.
 - **Reuse.** Locally Playwright reuses a server that is already running, but only one that answers
   `/__e2e-root?root=<this checkout>` with 200: the e2e server of this very checkout (`vite.config.ts`). Any other server
   answers 409 (or 404, a `bun run dev` or a checkout from before this), so Playwright starts this checkout's own; if the
   port is taken, the run stops with "Port … is already in use" rather than testing another checkout's code. Free the port
-  or set `WEB_SANDBOX_E2E_PORT`. A reused server serves `dist/` and `dist-network/` as they were built when it
-  started: rebuild (`bun run build:lib`, and `WEB_SANDBOX_NETWORK_MODES=1 bun scripts/build-lib.ts --out dist-network`)
-  before running `package.spec.ts` against it.
+  or set `WEB_SANDBOX_E2E_PORT`. A reused server serves `dist/` and `dist-network/` as they were last built, by its
+  start or since: rebuild (`bun run build:lib`, and `WEB_SANDBOX_NETWORK_MODES=1 bun scripts/build-lib.ts --out
+  dist-network`) before running `package.spec.ts` against it, and before any sealed-mode spec once the view's sources
+  changed, since every sealed view is that build's `sealed-document.html`.
 - **What the host page has left.** A spec that measures the host page's ticks, a busy share or its longest stall uses
   `test/e2e/host-share.ts` (the best of N windows against the page's own idle baseline, the documented bounds, the
   stall meter), never a meter of its own: `test/unit/host-share.test.ts` fails on one (backlog T9). One window on each
@@ -73,6 +82,9 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
 - **Scaling in a unit test.** A unit test that asserts a cost is linear uses `scalingRatio` from `test/unit/scaling.ts`
   (the sizes sampled alternately, each one's fastest time kept, sampling continued while the ratio is over its bound),
   never a best-of-N or a ratio of clock reads of its own: `test/unit/host-share.test.ts` fails on one (backlog T9).
+  Such a test declares the measure's own time limit, `it(name, { timeout: SCALING_TIMEOUT_MS }, …)`: the measure takes
+  as long as the machine is loaded, so the runner's default limit would fail a linear cost by the load, and the same
+  test fails a scaling test without it.
 - **A host page like a production app's.** A spec that asks what a feature of the host page does to the sandbox runs on
   the realistic host (`test/e2e/realistic-host.ts`; served by `test/e2e/realistic-host-server.ts`, which also plays the
   app's backend and records what reaches it): a strict CSP that admits the library the way docs/API.md#host-page-policy
@@ -86,9 +98,42 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
   never a silent partial state; a new directive is added to `CSP_DIRECTIVES` and must be classified (cases, or excluded
   with a reason), and `test/unit/realistic-host-coverage.test.ts` fails for an `INHERITED_CONTEXT` row that neither the
   realistic-host spec nor the matrix covers.
+- **The served file under test.** A spec that asks what a changed `sealed-document.html`, or a header on its response,
+  does to sealed mode serves it from `test/e2e/served-file-server.ts`, which the e2e server mounts at `/__served-file`:
+  the file as a deployment gets it wrong (`FILE_VARIANTS`), a directive of its `<meta>` changed, a header added, and a
+  record of every request for it. The comment at the top of that file lists each parameter. A sealed start prints the
+  refusals of its start-up gates' and its policy check's canaries to the browser's console (docs/API.md, "Registering
+  the element"): a spec that holds a start to a quiet console takes those lines out with `withoutStartupCanaries`
+  (`test/e2e/startup-canaries.ts`), and no others. A spec that asks whether something reached the network records what
+  the browser routes (`context.route`), not Playwright's `request` events: Chromium reports a load its policy refused as a
+  request.
 - **Discovery.** Specs are found under the checkout's own `test/e2e/` and `docs/research/`; anything under the
   checkout's own `.claude/` (nested worktrees, scratch copies) is ignored, by a pattern anchored at the checkout's root,
   so a checkout that itself lives under another one's `.claude/worktrees/` still finds its specs.
+
+## Gates, and work in several checkouts
+
+- **Which gates, when.** Before a change is merged into the working branch: `bun run typecheck`, the unit suite,
+  `bun run api:check`, `bun run docs:check`, the package smoke test when the package's files changed, and on three
+  engines the specs the change touches. CI runs the whole e2e suite and the probes on every push to a pull request, its
+  three engines side by side and each engine's suite in three shards, and is the gate of the whole suite; a browser job whose inputs (every file but the
+  Markdown ones) have already passed on its engine is not run again ([T10](docs/BACKLOG.md#t10)). Run the whole suite locally too for a change that moves
+  many specs at once (the view's document, the harness pages, the fixture). The lifecycle model runs at 400 sequences or
+  more when the lifecycle, the frames it reads or the guest's writes change; CI runs it at 40.
+- **One e2e run at a time on a machine.** Runs of several checkouts share the machine's cores, and the specs that
+  measure the host page need them ([S81](docs/BACKLOG.md#s81)): put every e2e and probe run behind one lock,
+  `flock ~/.cache/web-sandbox-e2e.lock <command>`. Write a run's whole output to a file and read the file: a failure's
+  detail is not in its last lines.
+- **No edit of served files during a run.** The e2e server serves `src/`, `test/`, `examples/` and `playground/` as
+  they are on disk, so an edit there during a run changes what the rest of the run tests
+  ([T10](docs/BACKLOG.md#t10) removes this). Docs, and unit tests no page loads, are safe to edit.
+- **A worktree** (a contributor's second checkout, or an agent's under `.claude/worktrees/`) is created from the default
+  branch: reset it to the working branch before anything else. Work is committed there and not pushed; it reaches the
+  working branch by cherry-pick, and the gates run again on the merged result, since two changes that each pass can
+  fail together. A worktree whose work is still going rebases onto the working branch's head before its last gates. Once
+  merged, the worktree and its branch are removed.
+- **One commit a row or a finding**, its message saying what holds now; a report of the work names every existing test
+  it changed and why, and every gate with its real numbers.
 
 ## Security changes
 
@@ -252,7 +297,7 @@ docs/API.md and the port table of ADR-005 are built this way.
   `METHOD_ORDER`, and a new event needs its row in `ELEMENT_EVENTS`, with "Bubbles." or "Does not bubble." in its doc.
 - **Markers.** A handwritten section that describes code starts with `<!-- describes: ID, ID sig:HASH -->`. The hash is
   taken from the described items' semantic signatures: names, types, values and transitions, never formatting or
-  wording. An export of the public API is the item `api:Name` (`api:WebSandbox.setConfig` for a member); a container's
+  wording. An export of the public API is the item `api:Name` (`api:WebSandbox.start` for a member); a container's
   signature has its members', so a section about the element goes stale when a method is added.
 - **When a marker fails.** `bun run docs:check` (CI runs it) names the section and the items that changed. Read the
   section against the change; fix any sentence that is now wrong; then run `bun run docs:gen --accept`, which writes the

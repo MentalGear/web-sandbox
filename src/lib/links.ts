@@ -114,5 +114,46 @@ export function createLinkTabLimiter(now: () => number = () => performance.now()
     };
 }
 
+/**
+ * The longest the host page waits for the user's activation to reach it before it asks for a listed link's tab (ms).
+ *
+ * @remarks
+ * The click is in the view, a frame of another process on Chromium, and the browser tells the host page of the
+ * activation on a channel of its own: the view's request can arrive first, and a tab asked for then is blocked as one
+ * with no click (measured: `window.open` called, no tab, in 4 of 200 clicks on a loaded machine; research 30 read the
+ * page's activation as inactive at 2% of its requests). Where the page can read its activation and reads none, the
+ * request waits for it, at most this long, well inside every engine's window after a click; then it asks whatever the
+ * page reads, and the browser's blocker decides, as for a request that waited for nothing.
+ */
+export const LINK_ACTIVATION_WAIT_MS = 500;
+
+/** How often the wait reads the page's activation again (ms). */
+export const LINK_ACTIVATION_POLL_MS = 10;
+
+/** The page's own view of its user activation (`navigator.userActivation`), where the engine has it. */
+export interface ActivationView {
+    readonly isActive: boolean;
+}
+
+/**
+ * Runs `open` once: at once where the page reads its activation as active, or cannot read it; else when it reads it
+ * active, or after LINK_ACTIVATION_WAIT_MS, whichever is first (LINK_ACTIVATION_WAIT_MS says why).
+ */
+export function openWhenActivated(activation: ActivationView | undefined, open: () => void, now: () => number = () => performance.now()): void {
+    if (activation === undefined || activation.isActive) {
+        open();
+        return;
+    }
+    const deadline = now() + LINK_ACTIVATION_WAIT_MS;
+    const read = () => {
+        if (activation.isActive || now() >= deadline) {
+            open();
+            return;
+        }
+        setTimeout(read, LINK_ACTIVATION_POLL_MS);
+    };
+    setTimeout(read, LINK_ACTIVATION_POLL_MS);
+}
+
 /** The features of the host page's `window.open` for a listed link: a new tab with no opener and no referrer. */
 export const LINK_WINDOW_FEATURES = 'noopener,noreferrer';

@@ -14,7 +14,7 @@ import { reasonText } from '@src/lib/reasons';
  * The network build's part is test/unit/start-network.test.ts.
  */
 
-defineWebSandbox();
+defineWebSandbox({ documentUrl: '/sealed-document.html' });
 
 const newElement = () => document.createElement('web-sandbox') as any;
 

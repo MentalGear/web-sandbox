@@ -10,6 +10,7 @@ import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { isViewFileType, VIEW_WRITE_TYPES } from '@src/lib/in-sandbox-view';
 import { mimeTypeFor as typeForPath } from '@src/lib/files';
 import { checkIn } from './check-in';
+import { gatesOf } from '@src/lib/startup-gates';
 import { commitAt } from './guest-commit';
 import { startWith } from './start-app';
 
@@ -24,7 +25,7 @@ import { startWith } from './start-app';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (file: string) => readFileSync(path.join(ROOT, file), 'utf8');
 
-defineWebSandbox();
+defineWebSandbox({ documentUrl: '/sealed-document.html' });
 
 function element() {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -91,7 +92,11 @@ function playBuild(el: any, mode: 'cooperative' | 'worker' | 'strict') {
             el._setupStrictChannels({ postMessage() {} });
             port = el._port;
         },
-        ready: () => el._onViewMessage(el._viewPort, { type: 'VIEW_READY', width: 300, height: 150 }),
+        ready: () => {
+            el._onViewMessage(el._viewPort, { type: 'VIEW_READY', width: 300, height: 150 });
+            // design 03, the start-up order: after the check-in, the worker's verdicts, every gate of strict mode's held
+            el._onViewMessage(el._viewPort, { type: 'WORKER_VERDICTS', verdicts: Object.fromEntries(gatesOf('worker', 'strict').map(name => [name, true])) });
+        },
     };
 }
 

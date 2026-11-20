@@ -15,7 +15,7 @@ import { LOAD_KINDS } from "./lib/load-kinds";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
 import { crossingText, mintError, mintUncodedError } from "./lib/minted-errors";
 import { createBroker, type BudgetRefusal } from "./lib/rpc";
-import { createLinkTabLimiter, LINK_WINDOW_FEATURES, listedLink } from "./lib/links";
+import { createLinkTabLimiter, LINK_WINDOW_FEATURES, listedLink, openWhenActivated, type ActivationView } from "./lib/links";
 import { createSizeOf } from "./lib/structured-size";
 import { keepOnlyWorkerGlobals, removeSecureContextOnly, SEALED_WORKER_GLOBALS, SECURE_CONTEXT_ONLY, STRICT_WORKER_GLOBALS, STRICT_WORKER_NAVIGATOR_MEMBERS, WORKER_NAVIGATOR_MEMBERS, workerGlobalsFor } from "./lib/worker-globals";
 import { dynamicImportAt } from "./lib/entry-imports";
@@ -32,6 +32,11 @@ import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, NO_HOST_PAGE, STRICT_VIEW_FLAGS, unknownModeReason, type AppOptionName, type CallBudget, type EmbedderOptionName, type StoredConfig } from "./lib/config-schema";
 import { readStart, type StartValues } from "./lib/app-start";
+import { hostPage, readDocumentUrl, registeredDocumentUrl, storeRegistration } from "./lib/document-url";
+import { canCheckDocument, checkDocument, keptDocumentCheck } from "./lib/document-check";
+import { sealedDocumentDigest } from "./lib/document-digest";
+import { gatesOf, gateViolations, takeGateViolations, workerGates, type GateMode } from "./lib/startup-gates";
+import { announcementFinding, policyFinding, verdictFinding } from "./lib/startup-verdicts";
 import type { Holds } from "./lib/utils";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
@@ -39,7 +44,7 @@ import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from ".
 import { errorName, hostLine, reasonText } from "./lib/reasons";
 import { ENVIRONMENT_CHECKS, ENVIRONMENT_EXPECTED, ENVIRONMENT_REFUSED_TYPE } from "./lib/environment-check";
 import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type Generation, type LcInput, type LcState, type LifecycleHost, type Notice } from "./lib/lifecycle";
-import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, STRICT_DIRECTIVE, isStyleProperty, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_SET_STYLE_LIMITS, VIEW_STYLE_PROPERTIES, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, VIEW_ANNOUNCEMENT_TYPE, STRICT_DIRECTIVE, isStyleProperty, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_SET_STYLE_LIMITS, VIEW_STYLE_PROPERTIES, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
  * The options of one of the modes the build has ({@link SandboxConfigByMode}), the app's and the embedder's together: a
@@ -600,6 +605,24 @@ function guestWindowOf(iframe: HTMLIFrameElement | null): Window | null {
     const wrapper = iframe?.contentWindow;
     if (!wrapper || wrapper.length < 1) return null;
     return wrapper[0] ?? null;
+}
+
+// The first frame of the element's frame as it is now, or null (design 03, "Who receives the first port"): read inside
+// `try`, since the read throws while the frame holds no document of its own and when the element is out of the document;
+// a throw is "not the view".
+function firstFrameOf(iframe: HTMLIFrameElement): Window | null {
+    try {
+        return guestWindowOf(iframe);
+    } catch {
+        return null;
+    }
+}
+
+// The page's own view of its user activation, where the engine has one (links.ts, openWhenActivated).
+function pageActivation(): ActivationView | undefined {
+    const activation: unknown = (navigator as { userActivation?: unknown }).userActivation;
+    if (typeof activation !== 'object' || activation === null) return undefined;
+    return activation as ActivationView;
 }
 
 // A worker's uncaught error as a guest line, prefixed once: Chromium's ErrorEvent message already starts with
@@ -1240,12 +1263,18 @@ export class WebSandbox extends ElementBase {
      * is read here; what it does is the reducer's (`announced`): which one is accepted, and whether the build expects one,
      * are the build's progress there, and so is the window it came from, which the wrapper's load must still hold.
      *
+     * In strict and sealed mode (`announcer` 'view') the view speaks first (design 03, "Who receives the first port"): it
+     * posts VIEW_ANNOUNCE to its parent's parent, and this listener takes it only from the window that is the first frame
+     * of the element's own frame, read when the message arrives (firstFrameOf). The reducer (`viewAnnounced`) answers it
+     * with the view's ports, posted to that window: so a document at the frame's URL that is not the view, and says
+     * nothing, receives no port, and no other window's announcement is heard.
+     *
      * The same listener hears the other portless message of the library's frames: a bootstrap's refusal of a document
      * that is not the one the library built (ENVIRONMENT_REFUSED, environment-check.ts; S74), in every mode and from the
      * fetch bridge's frame too. It ends the environment with the reason of the check that failed (`bridge` is the bridge
-     * frame, or null; `announces` is false in strict mode, whose view takes no announcement).
+     * frame, or null).
      */
-    private _listenForAnnouncement(iframe: HTMLIFrameElement, bridge: HTMLIFrameElement | null, announces: boolean) {
+    private _listenForAnnouncement(iframe: HTMLIFrameElement, bridge: HTMLIFrameElement | null, announcer: 'guest' | 'view') {
         const host = window;
         // The environment this listener belongs to: installed by its build, removed by its teardown (_stopListening).
         // Its input carries it, so one that a teardown made stale is dropped (S65).
@@ -1266,8 +1295,11 @@ export class WebSandbox extends ElementBase {
                 this._refusedByHostPage(reason, gen);
                 return;
             }
-            // Strict mode's view checks in on its own port instead (R1:R3-1): there is no announcement to take.
-            if (!announces || !guestWindow || event.source !== guestWindow) return;
+            if (announcer === 'view') {
+                this._onViewAnnouncement(iframe, event, gen);
+                return;
+            }
+            if (!guestWindow || event.source !== guestWindow) return;
             if (data.type !== ANNOUNCEMENT_TYPE) return;
             event.stopImmediatePropagation(); // the port is the element's: no other listener on this window sees it
             // What it is (one port, or worker mode's refusal) and what it does are the network modes' (network-host.ts,
@@ -1276,6 +1308,39 @@ export class WebSandbox extends ElementBase {
         };
         host.addEventListener('message', onMessage, true);
         this._stopListening = () => host.removeEventListener('message', onMessage, true);
+    }
+
+    // The view's announcement (VIEW_ANNOUNCE), taken only when it is trusted and comes from the first frame of the
+    // element's frame as that frame is now: a frame of the host page, the file's own document, a second frame inside the
+    // file and a page that frames the host page are none of them, and are not heard. Read in this handler, once the source
+    // is the view's: the version it states and its gates' verdicts (startup-verdicts.ts), by the element's own registries;
+    // the reducer then posts the ports, in this step, to that window, or ends the build with the finding and posts nothing.
+    private _onViewAnnouncement(iframe: HTMLIFrameElement, event: MessageEvent, gen: Generation) {
+        const data = event.data;
+        if (data.type !== VIEW_ANNOUNCEMENT_TYPE || !event.isTrusted) return;
+        const source = event.source;
+        if (source === null || source !== firstFrameOf(iframe)) return;
+        event.stopImmediatePropagation(); // the announcement is the element's: no other listener on this window sees it
+        step(this, { t: 'viewAnnounced', gen, source, finding: this._announcementFinding(data) });
+    }
+
+    // What the view's announcement says against this element's registries: the version, for the served file (the digest
+    // this library was built with: a library loaded without one cannot compare, and ends the build with its error's
+    // name), then the verdicts of the gates of this build's mode, then the served view's policy check's.
+    private _announcementFinding(data: { version?: unknown; verdicts?: unknown; policy?: unknown }): string | null {
+        if (!this._viewIsServed()) return announcementFinding(data, 'strict', null);
+        let expected: string;
+        try {
+            expected = sealedDocumentDigest();
+        } catch (error) {
+            return buildFailureReason(error, 'complete');
+        }
+        return announcementFinding(data, 'sealed', expected);
+    }
+
+    // The mode whose start-up gates this build runs (startup-gates.ts): sealed mode's served file, or strict mode's view.
+    private _gateMode(): GateMode {
+        return this._viewIsServed() ? 'sealed' : 'strict';
     }
 
     // One frame from the guest's port: the guest document's bootstrap's, or (worker and strict mode) the worker's.
@@ -1357,11 +1422,26 @@ export class WebSandbox extends ElementBase {
         if (data?.type === 'VIEW_READY') {
             // The view's check-in, the first frame on the port only its bootstrap holds (R1:R3-1): the strict build is ready,
             // if it is still loading (the reducer's `viewReady`), and what the view measured is checked then (`checkView`).
-            step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true });
+            step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true, wrapperStyleRefused: data.wrapperStyleRefused === true });
+            return;
+        }
+        if (data?.type === 'WORKER_VERDICTS') {
+            // The worker's verdicts, which the view hands on from the worker's first message (startup-gates.ts,
+            // workerGates): the build is ready only once they held, and a failed gate ends it, before anything that
+            // waited for `ready` is sent (the reducer's `workerVerdicts`).
+            step(this, { t: 'workerVerdicts', gen, finding: verdictFinding(data.verdicts, 'worker', this._gateMode()) });
+            return;
+        }
+        if (data?.type === 'VIEW_POLICY') {
+            // The served view saw a policy that is not the file's own after it announced itself (policy-check.ts; design
+            // 03, "What the policy check provokes"): the build ends with the reason of the first finding, whatever its
+            // state. Strict mode's view runs no policy check, so its build reads nothing here.
+            const finding = this._viewIsServed() ? policyFinding(data.policy) : null;
+            if (finding !== null) step(this, { t: 'terminate', reason: finding, gen });
             return;
         }
         if (data?.type === 'VIEW_LINK') {
-            this._openListedLink(data.index);
+            this._openListedLink(viewPort, data.index);
             return;
         }
         if (data?.type === 'VIEW_INITIAL') {
@@ -1456,21 +1536,31 @@ export class WebSandbox extends ElementBase {
      * The view's request for a listed link (VIEW_LINK; design 02, I6): the user's trusted click on a link the view marked.
      * Only the view posts on its port, and only the current environment's port reaches here (_onViewMessage). The index
      * is checked against this element's own list (listedLink: an integer within it, else nothing opens), and the URL
-     * opened is that list's string, in the task of this message, so the browser's popup blocker still sees the click: no
-     * text of the guest's is part of it. `noopener` and `noreferrer` give the tab no handle on this page and no referrer;
+     * opened is that list's string: no text of the guest's is part of it. The tab is asked for in the task of this
+     * message where the page reads the click's activation as its own already, and else once it does (openWhenActivated:
+     * the view is another process on Chromium, and its request can arrive before the browser has told this page of the
+     * click), so the browser's popup blocker sees the click. `noopener` and `noreferrer` give the tab no handle on this page and no referrer;
      * `window.open` then answers null whether or not the browser opened the tab. At most LINK_TABS_PER_SECOND open in any
      * one-second window, whatever the browser allows (docs/design/REVIEW-3.md, finding 1): a request past it opens nothing
      * and is not queued.
      */
-    private _openListedLink(index: unknown) {
+    private _openListedLink(viewPort: MessagePort, index: unknown) {
         const url = listedLink(this._config.links, index);
         if (url === null) return;
         if (!this._linkTabs.admit()) return;
+        openWhenActivated(pageActivation(), () => this._openTab(viewPort, url));
+    }
+
+    // The tab of a listed link, for the view that asked while it is still the element's: a request that waited for the
+    // page's activation (links.ts, LINK_ACTIVATION_WAIT_MS) opens nothing once its environment is gone.
+    private _openTab(viewPort: MessagePort, url: string) {
+        if (viewPort !== this._viewPort) return;
         window.open(url, '_blank', LINK_WINDOW_FEATURES);
     }
 
-    // The view's height against the frame's (R1:R3-1): a view 150 px high in a taller frame means the host page's style-src
-    // refused the wrapper's style (frame-documents.ts, WRAPPER_STYLE), which nothing on this side can see. Once per element.
+    // The warning that the host page's style-src refused the wrapper's style (frame-documents.ts, WRAPPER_STYLE), which
+    // nothing on this side can see (R1:R3-1), with the view's height and the frame's: asked only once the view found the
+    // refusal (`_checkView`), and said where it shows, a view 150 px high in a taller frame. Once per element.
     private _checkViewSize(height: unknown) {
         const frame = this._iframe?.clientHeight ?? 0;
         if (this._warnedWrapperStyle || typeof height !== 'number' || height > 150 || frame <= height + 1) return;
@@ -1689,8 +1779,36 @@ export class WebSandbox extends ElementBase {
     private _buildContext(): BuildContext {
         if (!buildsHere(this)) return NOT_HERE;
         const strict = hasStrictView(this._config.mode);
+        const served = this._viewIsServed();
+        // the check of the served file (document-check.ts): an answer the registration kept is not asked again, and a
+        // finding it kept refuses the build before anything is framed; with none, the build waits for the check where the
+        // realm can make the request
+        const documentUrl = registeredDocumentUrl();
+        const kept = served && documentUrl !== null ? keptDocumentCheck(documentUrl) : undefined;
+        const checksFile = served && documentUrl !== null && kept === undefined && canCheckDocument();
+        const blocked = this._buildRefusal() ?? kept?.finding ?? null;
         // a bootstrap runs, and announces its port, exactly where the inline script can run (_getMarkupPlan's test, BR:CB1)
-        return { buildsHere: true, blocked: this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
+        return { buildsHere: true, blocked, strict, served, checksFile, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
+    }
+
+    // The executor's `checkFile` effect (design 03, "The check of the file"): the registration's request for documentUrl,
+    // shared with every build that waits for it at once (document-check.ts). Its answer is this build's `fileChecked`,
+    // stamped with the build's generation, so the answer of a build that is gone (removed, reset, terminated meanwhile)
+    // is dropped by the reducer; the registration keeps it all the same. A library with no digest to compare with ends the
+    // build with the error's name.
+    private _checkFile() {
+        const gen = this._lc.gen;
+        const documentUrl = registeredDocumentUrl();
+        if (documentUrl === null) throw mintUncodedError(Error, 'a sealed build checked a file without documentUrl'); // _buildContext decides
+        checkDocument(documentUrl).then(
+            (check) => step(this, { t: 'fileChecked', gen, finding: check.answered ? check.finding : null }),
+            (error) => step(this, { t: 'fileChecked', gen, finding: buildFailureReason(error, 'build') }),
+        );
+    }
+
+    // Sealed mode's view is the served file (design 03); strict mode's is the srcdoc document network-host.ts builds.
+    private _viewIsServed(): boolean {
+        return this._config.mode === 'sealed';
     }
 
     // `loading` is bounded (BR:CB3): a build that has not completed within LOAD_TIMEOUT_MS of host ticks ends with a
@@ -1742,8 +1860,10 @@ export class WebSandbox extends ElementBase {
         return networkElement(this)?._documentSandboxFlags() ?? '';
     }
 
-    // Sealed mode's view policy (sealedViewPolicy, docs/research/24_sealed_mode): the strict view's template with no
-    // origins input, so no network source; blob: only for the kinds of load the view's files need, as in strict mode.
+    // Sealed mode's view policy as a srcdoc view would carry it (sealedViewPolicy, docs/research/24_sealed_mode): the
+    // strict view's template with no origins input, so no network source; blob: only for the kinds of load the view's
+    // files need, as in strict mode. No build reaches it: sealed mode's view is the served file, whose policy is the
+    // file's constant one (design 03); it is deleted with sealed mode's srcdoc path (design 05, step 4).
     private _sealedPolicy(files: FileSnapshotEntry[]): string {
         const kinds = this._viewFileKinds(files);
         return sealedViewPolicy({ fileKinds: new Set(SEALED_FILE_KINDS.filter(kind => kinds.has(kind))), bootstrapHash: viewBootstrapHash() });
@@ -1791,12 +1911,10 @@ export class WebSandbox extends ElementBase {
         const built = this._files.copy();
         const files = built.snapshot();
         // Sealed mode has no network (docs/research/24_sealed_mode): a path of its own from here, which takes nothing of
-        // `origins` or `fetchBridge` and makes no bridge (_prepareSealedFrame), so the host page's policy is applied to
-        // nothing and only its Trusted Types list is read.
-        if (this._config.mode === 'sealed') {
-            this._refuseByTrustedTypes();
-            return this._prepareSealedFrame(built, files);
-        }
+        // `origins` or `fetchBridge` and makes no bridge (_prepareSealedFrame). Its view is the served file (design 03),
+        // which the host page's policy does not reach and no HTML sink of the host page writes: nothing of the host page's
+        // policy is read.
+        if (this._config.mode === 'sealed') return this._prepareSealedFrame(built, files);
         // Strict, cooperative and worker mode are the network modes' (network-host.ts, _prepareNetworkBuild). The config
         // schema refuses their configs where the build has none (networkModesOffRefusal), so no other mode reaches a build.
         const network = networkElement(this);
@@ -1812,14 +1930,25 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Sealed mode (docs/research/24_sealed_mode): the strict view with no network, by construction. The view's policy is
-     * sealedViewPolicy (no origins input: every fetch directive 'none' or blob:, connect-src 'none'); the request gate
-     * gets no list, so it admits nothing; INIT_VIEW carries no origins; the worker's sandboxFetch() refuses in the guest
-     * and sends nothing; and the build has no network to start (no bridge frame). Nothing here reads `origins`,
-     * `fetchBridge` or the host page.
+     * Sealed mode (docs/research/24_sealed_mode): the strict view with no network, by construction. Its view is the served
+     * file (design 03, "The shape"), sealed-document.html at the registered documentUrl: F, the file, framed in the
+     * element's shadow root with the flags of the app's grants and no referrer, holds C, the view, in its static markup,
+     * under the file's constant policy (POLICY_DIRECTIVES: no network source, connect-src 'none'). The request gate gets no
+     * list, so it admits nothing; INIT_VIEW carries no origins and goes to the window that announced itself; the worker's
+     * sandboxFetch() refuses in the guest and sends nothing; and the build has no network to start (no bridge frame).
+     * Nothing here reads `origins`, `fetchBridge` or the host page's policy.
      */
     private _prepareSealedFrame(built: FileStore, files: FileSnapshotEntry[]): PreparedBuild {
-        return this._prepareViewFrame(built, files, this._sealedPolicy(files), null);
+        const documentUrl = registeredDocumentUrl();
+        if (documentUrl === null) throw mintUncodedError(Error, 'a sealed app was not refused on an element without documentUrl'); // start() decides (noDocumentUrl)
+        const iframe = document.createElement('iframe');
+        // F's flags narrow C's static attribute, the most the library grants (SEALED_VIEW_FLAGS): scripts and forms always,
+        // a capability only when the grants have it; never allow-same-origin
+        iframe.setAttribute('sandbox', this._getSandboxFlags());
+        setWrapperFrameIsolation(iframe);
+        iframe.style.cssText = "width:100%;height:100%;border:none";
+        iframe.setAttribute('src', documentUrl);
+        return { iframe, built, strictInit: this._viewInit(files, null), network: null };
     }
 
     /**
@@ -1830,6 +1959,22 @@ export class WebSandbox extends ElementBase {
      * null in sealed mode; the build it returns has no network of its own (the caller adds strict mode's).
      */
     private _prepareViewFrame(built: FileStore, files: FileSnapshotEntry[], policy: string, network: ViewNetwork | null): PreparedBuild {
+        const strictInit = this._viewInit(files, network);
+        const sandboxFlags = this._getSandboxFlags();
+        const view = buildViewDocument(policy, viewBootstrapText());
+
+        const iframe = document.createElement("iframe");
+        iframe.setAttribute("sandbox", sandboxFlags);
+        setWrapperFrameIsolation(iframe);
+        iframe.style.cssText = "width:100%;height:100%;border:none";
+        setLibrarySrcdoc(iframe, buildWrapperDocument(view, sandboxFlags, []));
+        return { iframe, built, strictInit, network: null };
+    }
+
+    // What the view of strict and sealed mode is given at its announcement (INIT_VIEW): the worker's source, the entry's
+    // marker, the files it may show, the initial markup and the embedder's switches and links, and in strict mode the
+    // origins its renderer admits. The same for the served file and the srcdoc view.
+    private _viewInit(files: FileSnapshotEntry[], network: ViewNetwork | null): StrictInit {
         const mode = network ? 'strict' : 'sealed';
         let entrySource = '';
         const entry = this._config.entry;
@@ -1840,7 +1985,6 @@ export class WebSandbox extends ElementBase {
         }
 
         const html = this._config.html || '<div id="root"></div>';
-        const sandboxFlags = this._getSandboxFlags();
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
         // never a type that opens as a document (BR:ST1); stylesheets with only the URLs the view keeps (files.ts viewStylesheets)
         const viewFiles = viewStylesheets(files.filter(candidate => isViewFileType(candidate[1])));
@@ -1856,14 +2000,7 @@ export class WebSandbox extends ElementBase {
             links: [...this._config.links],
         };
         if (network) strictInit.origins = { images: [...network.origins.images], media: [...network.origins.media] };
-        const view = buildViewDocument(policy, viewBootstrapText());
-
-        const iframe = document.createElement("iframe");
-        iframe.setAttribute("sandbox", sandboxFlags);
-        setWrapperFrameIsolation(iframe);
-        iframe.style.cssText = "width:100%;height:100%;border:none";
-        setLibrarySrcdoc(iframe, buildWrapperDocument(view, sandboxFlags, []));
-        return { iframe, built, strictInit, network: null };
+        return strictInit;
     }
 
     // The executor's `attach` effect: the prepared build becomes the element's, every per-build resource made here (the
@@ -1878,10 +2015,11 @@ export class WebSandbox extends ElementBase {
         this._iframe = iframe;
         this._strictInit = prepared.strictInit;
         iframe.onload = this._frameLoadHandler(iframe);
-        // The guest announces its port from its first statement (BR:CB1), so the listener is in place before the frame is
-        // inserted. Strict mode's view checks in on its own port instead (R1:R3-1); every mode's bootstraps may refuse an
-        // environment other than the one built (environment-check.ts), the fetch bridge's frame included.
-        this._listenForAnnouncement(iframe, prepared.network ? prepared.network.bridgeFrame : null, prepared.strictInit === null);
+        // The guest announces its port from its first statement (BR:CB1), and strict and sealed mode's view announces
+        // itself before it has a port (design 03), so the listener is in place before the frame is inserted; every mode's
+        // bootstraps may refuse an environment other than the one built (environment-check.ts), the fetch bridge's frame
+        // included.
+        this._listenForAnnouncement(iframe, prepared.network ? prepared.network.bridgeFrame : null, prepared.strictInit === null ? 'guest' : 'view');
         this.shadowRoot!.appendChild(iframe);
         // The bridge's frame after the wrapper, which stays the shadow root's first. A sealed build has no network: no
         // bridge, and the reserved method refuses, as before the first build (its guest's sandboxFetch() never calls it; a guest's
@@ -1891,7 +2029,8 @@ export class WebSandbox extends ElementBase {
         this._exposeFetch(bridge);
     }
 
-    // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
+    // The worker's source in strict mode: the scope check, the worker's start-up gates around the globals allowlist (their
+    // verdicts are the worker's first message, and a failed gate stops the script before anything below), the comms script (bridge, logs, violations, execute,
     // the fetch bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
     // ports), the code-from-string refusal unless scriptUnsafe (code-from-strings.ts), then the guest's entry in a
     // function scope of its own, then the line that marks the entry as having
@@ -1912,9 +2051,16 @@ export class WebSandbox extends ElementBase {
         const scriptUnsafe = this._config.scriptUnsafe === true;
         const sealed = network === null; // no network of the build's own: sealed mode, whose worker has no request maker
         const options = { maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
+        const workerGateNames = gatesOf('worker', sealed ? 'sealed' : 'strict');
         const prelude = `(function (g) {${STRICT_DIRECTIVE}`
             + `(${assertEntryScoped.toString()})(g);`
+            // the start-up gates (startup-gates.ts): the listener that takes their canaries' violations, then the canaries
+            // that need the worker's own names before the allowlist, the rest after it; then the verdicts go to the view,
+            // and a failed gate stops the script there
+            + `(${takeGateViolations.toString()})(g, ${toInlineScriptLiteral(workerGateNames)}, ${toInlineScriptLiteral(gateViolations(workerGateNames))});`
+            + `var gates = (${workerGates.toString()})(g, ${toInlineScriptLiteral(workerGateNames)}, ${toInlineScriptLiteral(workerGlobalsFor(sealed ? SEALED_WORKER_GLOBALS : STRICT_WORKER_GLOBALS, scriptUnsafe))});`
             + workerGlobalsStatement('g', scriptUnsafe, sealed)
+            + 'gates();'
             + `var comms = (${inSandboxScript.toString()})(${scriptUnsafe}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()}${network ? `, undefined, ${network.requestGateSource}` : ''});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}, ${this._config.guestWrites === true ? 'comms.writeFiles' : 'null'}, ${toInlineScriptLiteral(VIEW_FILE_TYPES)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)}, ${isStyleProperty.toString()});`
@@ -2005,9 +2151,15 @@ export class WebSandbox extends ElementBase {
         if (this._viewPort) this._startViewWatchdog(this._viewPort);
     }
 
-    // `checkView`: what the strict view reports at its check-in (R1:R3-1).
-    private _checkView(height: unknown, stillStyleRefused: boolean) {
-        this._checkViewSize(height);
+    // `checkView`: what the view reports at its check-in (R1:R3-1). The wrapper-style warning has one cause, the host
+    // page's style-src refusing the wrapper's style, and the view finds that cause itself: the policies it inherits are the
+    // wrapper's, and it tries the wrapper's very text (in-sandbox-view.ts, wrapperStyleInForce). Its size is no evidence:
+    // the frame's size reaches the view when the engine has laid the host page out, which the view's check-in can precede
+    // (150 px, then the frame filled a moment later), so a size read then would warn of a refusal there was not. Only where
+    // the view is in the wrapper the element wrote: the served file sizes its view by a sheet its own policy admits
+    // (sealed-document.ts, SEALED_DOCUMENT_STYLE).
+    private _checkView(height: unknown, stillStyleRefused: boolean, wrapperStyleRefused: boolean) {
+        if (wrapperStyleRefused && !this._viewIsServed()) this._checkViewSize(height);
         if (stillStyleRefused) this._warnStillStyleRefused();
     }
 
@@ -2029,6 +2181,7 @@ const LIFECYCLE = WebSandbox.prototype as unknown as {
     _buildContext(): BuildContext;
     _prepareBuild(): PreparedBuild;
     _attachBuild(prepared: PreparedBuild): void;
+    _checkFile(): void;
     _startLoadDeadline(): void;
     _teardown(): void;
     _discardGuestWrites(): void;
@@ -2036,7 +2189,7 @@ const LIFECYCLE = WebSandbox.prototype as unknown as {
     _dispatchGuestLog(frame: unknown): void;
     _stopLoadDeadline(): void;
     _setupStrictChannels(target: Window): void;
-    _checkView(height: unknown, stillStyleRefused: boolean): void;
+    _checkView(height: unknown, stillStyleRefused: boolean, wrapperStyleRefused: boolean): void;
     _flush(): void;
     _startWatchdogs(): void;
     _startAutoResize(): void;
@@ -2053,7 +2206,7 @@ interface LifecycleFields {
 }
 
 // The context of a build where the element may not build (buildsHere): it stops instead, and asks nothing else.
-const NOT_HERE: BuildContext = Object.freeze({ buildsHere: false, blocked: null, strict: false, announces: false });
+const NOT_HERE: BuildContext = Object.freeze({ buildsHere: false, blocked: null, strict: false, served: false, checksFile: false, announces: false });
 
 /**
  * The lifecycle executor's one entry (S65; src/lib/lifecycle.ts, `step`): reduce `input` against the element's
@@ -2100,6 +2253,7 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
         discardWrites: () => Reflect.apply(LIFECYCLE._discardGuestWrites, element, []),
         build: () => Reflect.apply(LIFECYCLE._prepareBuild, element, []),
         attach: (prepared) => Reflect.apply(LIFECYCLE._attachBuild, element, [prepared as PreparedBuild]),
+        checkFile: () => Reflect.apply(LIFECYCLE._checkFile, element, []),
         startLoadDeadline: () => Reflect.apply(LIFECYCLE._startLoadDeadline, element, []),
         failureReason: buildFailureReason,
         warn: (text) => console.warn(text),
@@ -2130,7 +2284,7 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
             if (setupChannel) Reflect.apply(setupChannel, element, [port as MessagePort | null]);
         },
         closePort: (port) => (port as MessagePort | null)?.close(),
-        checkView: (height, stillStyleRefused) => Reflect.apply(LIFECYCLE._checkView, element, [height, stillStyleRefused]),
+        checkView: (height, stillStyleRefused, wrapperStyleRefused) => Reflect.apply(LIFECYCLE._checkView, element, [height, stillStyleRefused, wrapperStyleRefused]),
         flush: () => Reflect.apply(LIFECYCLE._flush, element, []),
         startWatchdogs: () => Reflect.apply(LIFECYCLE._startWatchdogs, element, []),
         startAutoResize: () => Reflect.apply(LIFECYCLE._startAutoResize, element, []),
@@ -2230,17 +2384,94 @@ function adopted(element: WebSandbox) {
 }
 
 /**
- * Registers `WebSandbox` as a custom element under `tagName` and returns the class. Importing the package
- * registers nothing, so you pick the name. Calling it again with the same name does nothing.
- *
- * @param tagName - The tag name; `'web-sandbox'` when left out. The class can be registered under one name only.
- * @returns The `WebSandbox` class.
- * @throws An `Error` if the name is already defined by another element; the browser's `NotSupportedError` for a second,
- * different name of this class, and its `SyntaxError` for a name that is not a valid custom element name.
+ * What {@link defineWebSandbox} takes in this build: one of the definitions of {@link WebSandboxDefinitionByBuild}.
  */
-export function defineWebSandbox(tagName = 'web-sandbox'): typeof WebSandbox {
+export type WebSandboxDefinition = WebSandboxDefinitionByBuild[keyof WebSandboxDefinitionByBuild];
+
+/**
+ * The definitions {@link defineWebSandbox} takes, by the build that takes them.
+ *
+ * @remarks
+ * The package as published has sealed mode alone, whose view is the served file, so its definition requires
+ * `documentUrl` ({@link SealedSandboxDefinition}). A build with the network modes (ADR-009; docs/API.md#builds) adds a
+ * definition without it here, for an element that runs only those modes, which keep documents of their own.
+ */
+export interface WebSandboxDefinitionByBuild {
+    /** Every build: an element that can run sealed mode ({@link SealedSandboxDefinition}). */
+    sealed: SealedSandboxDefinition;
+}
+
+/**
+ * The element's tag name, and where the page serves sealed mode's view.
+ */
+export interface SealedSandboxDefinition {
+    /**
+     * The tag name. The class can be registered under one name only.
+     *
+     * @defaultValue `'web-sandbox'`
+     */
+    readonly tagName?: string;
+    /**
+     * Where the page serves `sealed-document.html`, the file the package exports as `web-sandbox/sealed-document.html`:
+     * sealed mode's view, which every element of the page frames. Serve it unchanged, with no response header that sets
+     * a policy on it.
+     *
+     * @remarks
+     * A relative URL is resolved against the document's own URL (`document.URL`), never against its base URL, so a
+     * `<base>` element in the page does not move it. It must be `http:` or `https:`, or else of the host page's own origin
+     * (its scheme, host and port) where that origin, as the page reads it (`self.origin`), is neither opaque nor a browser
+     * extension's: an Electron app's `file:` page or an app shell's own standard scheme can serve the file beside the
+     * page, and a browser's `file:` page, a sandboxed frame, a `data:` page or an extension's page names an `http(s)` copy
+     * of it (design 05, row 3.10). It carries no user name, password or fragment; a query and any path are yours, so a URL
+     * that changes with the library's version keeps an old copy out of a cache. Whoever answers it receives every app's files and the reach of its host methods: serve it from the origin
+     * that serves the library (docs/API.md#registering-the-element). The host page's own policy must admit it in
+     * `frame-src`.
+     */
+    readonly documentUrl: string | URL;
+}
+
+/**
+ * Registers `WebSandbox` as a custom element and returns the class. Importing the package registers nothing, so you name
+ * the file sealed mode's view is served from, and may pick the tag.
+ *
+ * @remarks
+ * The definition is read and checked whole before anything is defined. A second call for a tag this element already
+ * has does nothing when its `documentUrl` is the same, and throws when it differs. In a build with the network modes an
+ * element registered without `documentUrl` runs those modes only: `start()` of a sealed app throws.
+ *
+ * @param definition - The tag name and the served file's URL; see {@link WebSandboxDefinition}.
+ * @returns The `WebSandbox` class.
+ * @throws A `TypeError` for a definition that is not an object or whose `tagName` is not a string, for a missing
+ * `documentUrl` (in the default build), for one that breaks its rules (the message names the rule), and for a tag this
+ * element already has with another `documentUrl`; an `Error` if the name is already defined by another element; the
+ * browser's `NotSupportedError` for a second, different name of this class, and its `SyntaxError` for a name that is not
+ * a valid custom element name.
+ */
+export function defineWebSandbox(definition: WebSandboxDefinition): typeof WebSandbox {
+    // sanitised first (the tag name, the URL resolved against the document's own URL and checked), then the element is
+    // defined, then the URL stored
+    const { tagName, documentUrl } = readDefinition(definition);
     const existing = customElements.get(tagName);
     if (existing && existing !== WebSandbox) throw mintUncodedError(Error, `<${tagName}> is already defined by another element`);
-    if (!existing) customElements.define(tagName, WebSandbox);
+    if (existing) {
+        if (registeredDocumentUrl() !== documentUrl) throw definitionRefusal(reasonText('documentUrlChanged'));
+        return WebSandbox;
+    }
+    customElements.define(tagName, WebSandbox);
+    storeRegistration(documentUrl);
     return WebSandbox;
 }
+
+// What defineWebSandbox() was given, read once per field: the tag name, and the served file's URL, resolved and checked,
+// or null (only where the build has the network modes).
+function readDefinition(definition: unknown): { tagName: string; documentUrl: string | null } {
+    if (typeof definition !== 'object' || definition === null || Array.isArray(definition)) throw definitionRefusal(reasonText('definitionRefused'));
+    const given = definition as { tagName?: unknown; documentUrl?: unknown };
+    const tagName = given.tagName;
+    const url = given.documentUrl;
+    if (tagName !== undefined && typeof tagName !== 'string') throw definitionRefusal(reasonText('definitionRefused'));
+    if (url === undefined && networkModes() === null) throw definitionRefusal(reasonText('documentUrlMissing'));
+    return { tagName: tagName ?? 'web-sandbox', documentUrl: url === undefined ? null : readDocumentUrl(url, hostPage()) };
+}
+
+const definitionRefusal = (message: string) => mintUncodedError(TypeError, `[Sandbox] defineWebSandbox(): ${message}.`);

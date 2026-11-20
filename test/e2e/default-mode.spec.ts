@@ -1,7 +1,8 @@
 import { test, expect, ORIGIN, startAs, type CallOutcome } from './fixture';
 import type { Page } from '@playwright/test';
 import type { SandboxConfig } from '@src/host';
-import { inFrames, inView, waitInView } from './strict-view';
+import { inFrames, inView, viewPolicy, waitInView } from './strict-view';
+import { servedFilePolicy } from './served-file';
 
 // The build with the network modes (ADR-009), and the default mode beside the named ones: these tests give the build with the network modes sealed configs too.
 test.use({ build: 'network', otherBuildConfigs: true });
@@ -41,15 +42,16 @@ function scriptWarnings(page: Page): string[] {
     return warnings;
 }
 
-/** What the view document holds: where its scripts are, its policy, its body, how often its bootstrap ran. */
+/** What the view document holds: where its scripts are, its body, how often its bootstrap ran. */
 const VIEW_STATE = `({
     scripts: Array.from(document.scripts).map(s => s.parentNode.localName),
-    policy: document.querySelector('meta[http-equiv="Content-Security-Policy"]').content,
     body: document.body.innerHTML,
     runs: globalThis.__sandboxViewRuns,
 })`;
-const HASH_ONLY = /^default-src 'none'; script-src 'sha256-[A-Za-z0-9+/]{43}='; script-src-attr 'none';/;
-const CONNECT_SRC = `document.querySelector('meta[http-equiv="Content-Security-Policy"]').content.split('; ').find(d => d.startsWith('connect-src'))`;
+// a policy that admits scripts by hash alone: strict mode's view (its bootstrap), sealed mode's file (its guard and the view)
+const HASH_ONLY = /^default-src 'none'; script-src 'sha256-[A-Za-z0-9+/]{43}='(?: 'sha256-[A-Za-z0-9+/]{43}=')?; script-src-attr 'none';/;
+/** The view's policy's connect-src (viewPolicy: the srcdoc view's own, or the served file's). */
+const connectSrc = async (page: Page, browserName: string) => (await viewPolicy(page, browserName)).split('; ').find(d => d.startsWith('connect-src'));
 
 test.describe('sealed is the default mode; strict is named', () => {
     test("an app started with no option is sealed: a view whose one script is the hashed bootstrap, and whose connect-src stays 'none' with a JSON file in the app; strict mode's has blob: (positive control)", async ({ sandbox, page, browserName }) => {
@@ -59,15 +61,16 @@ test.describe('sealed is the default mode; strict is named', () => {
         expect((await inFrames(page, browserName, '1')).map(f => f.path)).toEqual(['main', 'main/wrapper', 'main/wrapper/view']);
         const view = await inView<any>(page, browserName, VIEW_STATE);
         expect(view.scripts).toEqual(['head']);
-        expect(view.policy).toMatch(HASH_ONLY);
+        // the default's view is the served file's: its policy is the file's constant one
+        expect(await viewPolicy(page, browserName)).toBe(servedFilePolicy());
         expect(view.body).toBe('<div id="root"></div>');
         // the default's policy, told apart from strict mode's: a JSON file of the app adds blob: to connect-src in strict
         // mode only (sealed mode reads files with sandboxFiles.read(), which makes no request)
-        await expect.poll(() => inView(page, browserName, CONNECT_SRC)).toBe("connect-src 'none'");
+        await expect.poll(() => connectSrc(page, browserName)).toBe("connect-src 'none'");
         expect(await page.evaluate((a) => startFresh({ mode: 'strict' }, a), app)).toBe('ready');
-        await expect.poll(() => inView(page, browserName, CONNECT_SRC)).toBe('connect-src blob:');
+        await expect.poll(() => connectSrc(page, browserName)).toBe('connect-src blob:');
         expect(await page.evaluate((a) => startFresh({}, a), app)).toBe('ready');
-        await expect.poll(() => inView(page, browserName, CONNECT_SRC)).toBe("connect-src 'none'");
+        await expect.poll(() => connectSrc(page, browserName)).toBe("connect-src 'none'");
     });
 
     for (const { name, config, warning } of VIEW_CONFIGS) {
@@ -76,7 +79,8 @@ test.describe('sealed is the default mode; strict is named', () => {
             expect(await apply(page, { ...config, html: '<h1 id="hello" onclick="x()">Hello</h1><p>world</p>' } as SandboxConfig)).toBe('ready');
             await waitInView(page, browserName, `!!document.getElementById('hello')`);
             const view = await inView<any>(page, browserName, VIEW_STATE);
-            expect(view).toEqual({ scripts: ['head'], policy: expect.stringMatching(HASH_ONLY), body: '<h1 id="hello">Hello</h1><p>world</p>', runs: 1 });
+            expect(view).toEqual({ scripts: ['head'], body: '<h1 id="hello">Hello</h1><p>world</p>', runs: 1 });
+            expect(await viewPolicy(page, browserName)).toMatch(HASH_ONLY);
             expect((await inFrames(page, browserName, '1')).map(f => f.path)).toEqual(['main', 'main/wrapper', 'main/wrapper/view']);
             // the worker is there and idle: it answers, and has no method of the guest's (no entry ran)
             const outcome = await page.evaluate(() => settleOutcome((document.querySelector('web-sandbox') as any).callWithTimeout(4000, 'anything')));
@@ -144,9 +148,13 @@ test('the playground opens on its sealed demo preset: both sandboxes are sealed 
     await page.waitForFunction(() => (window as any).SandboxControl?.sandboxElement?.state === 'ready');
     expect(await page.locator('#presetSelect').inputValue()).toBe('sealed-demo');
     expect(JSON.parse(await page.locator('#rulesEditor').inputValue()).mode).toBe('sealed');
-    // each sandbox's view: one script (the bootstrap) under a hash-only policy, and the entry's rendered button
-    const VIEW = `[document.scripts.length, document.querySelector('meta[http-equiv="Content-Security-Policy"]').content.split(';')[1].trim().slice(0, 19), !!document.getElementById('add')]`;
+    // each sandbox's view: one script (the bootstrap), no policy of its own, and the entry's rendered button; its frame is the
+    // served file, under the file's hash-only policy
+    const VIEW = `[document.scripts.length, document.querySelectorAll('meta[http-equiv="Content-Security-Policy"]').length, !!document.getElementById('add')]`;
     const views = async () => (await inFrames(page, browserName, VIEW, path => path === 'main/wrapper/view')).filter(f => f.path === 'main/wrapper/view').map(f => f.value);
-    await expect.poll(views, { timeout: 8000 }).toEqual([[1, "script-src 'sha256-", true], [1, "script-src 'sha256-", true]]);
+    await expect.poll(views, { timeout: 8000 }).toEqual([[1, 0, true], [1, 0, true]]);
+    const FILE = `[location.pathname, document.querySelector('meta[http-equiv="Content-Security-Policy"]').content]`;
+    const files = (await inFrames<[string, string]>(page, browserName, FILE, path => path === 'main/wrapper')).filter(f => f.path === 'main/wrapper').map(f => f.value);
+    expect(files).toEqual([['/dist/sealed-document.html', servedFilePolicy()], ['/dist/sealed-document.html', servedFilePolicy()]]);
     expect(await markers(page, browserName)).toEqual([]);
 });

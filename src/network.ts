@@ -2,14 +2,15 @@
  * Public entry point of the package built with the network modes (`WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib`;
  * ADR-009): everything the default build exports (sealed.ts), with strict, cooperative and worker mode, `origins` and
  * `fetchBridge` installed into the element as this module is imported, and their types and values exported.
- * Importing it registers no element: call defineWebSandbox() (optionally with your own tag name).
+ * Importing it registers no element: call defineWebSandbox() (with the served file's URL where an element runs sealed mode,
+ * and optionally a tag name).
  */
 import { installNetworkModes } from "./lib/network-install";
 
 installNetworkModes();
 
 export * from "./sealed";
-export type { CooperativeSandboxConfig, NetworkModeEvents, NetworkModeMethods, NetworkSandboxOptions, StrictSandboxConfig, WorkerSandboxConfig } from "./lib/network-types";
+export type { CooperativeSandboxConfig, NetworkModeEvents, NetworkModeMethods, NetworkSandboxDefinition, NetworkSandboxOptions, StrictSandboxConfig, WorkerSandboxConfig } from "./lib/network-types";
 export type { SandboxOrigins, StrictSandboxOrigins } from "./lib/csp/origins";
 export type { FetchBridgeConfig, FetchErrorCode, FetchRecord } from "./lib/fetch-bridge";
 export { FETCH_ERROR_CODES } from "./lib/fetch-bridge";

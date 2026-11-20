@@ -287,7 +287,7 @@ describe('R3-3: one byte budget per RPC message, and per channel in flight', () 
     });
 
     it("both brokers the library makes measure: the element's call() refuses a call past the budget", async () => {
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
@@ -396,7 +396,7 @@ describe('R3-1: the Trusted Types policy blesses only the sandbox\'s own documen
 // ---- low findings -------------------------------------------------------------------------------------------------
 
 const mountElement = async (config?: Record<string, unknown>, setup: AppSetup = {}) => {
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     if (config) startWith(el, config, setup);
@@ -412,7 +412,7 @@ describe('R1-3: a value that should be dropped never refuses the whole config', 
         ['html that is not a string', { html: 5 }, '"html" must be a string'],
     ])('%s: a value of the wrong type is refused by start(), with a TypeError that names it; nothing is built', async (_, config, refusal) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const el = document.createElement('web-sandbox') as any;
         expect(() => startWith(el, { mode: 'cooperative', capabilities: ['allow-scripts'], ...config })).toThrow(`[Sandbox] start(): ${refusal}`);
         expect(el.started).toBe(false);

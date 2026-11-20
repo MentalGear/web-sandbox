@@ -106,8 +106,10 @@ test.describe('host page policy', () => {
         const hash = await viewHash(sandbox);
         await openWithPolicy(page, { csp: `script-src 'self' ${hash}` });
         await strictEntry(sandbox);
-        await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents.length)).toBe(2);
-        expect(await page.evaluate(() => (window as any).sandboxEvents)).toEqual([{ type: 'ready', reason: null }, { type: 'terminated', reason: WORKER_REFUSED }]);
+        // the build is never ready: it waits for the worker's start-up verdicts, which a worker that was never loaded
+        // cannot send (design 03, the start-up order)
+        await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents.length)).toBe(1);
+        expect(await page.evaluate(() => (window as any).sandboxEvents)).toEqual([{ type: 'terminated', reason: WORKER_REFUSED }]);
         expect(await sandbox.logs()).toContain(`[Sandbox] ${WORKER_REFUSED}`);
         expect((await sandbox.logs()).filter(line => line.includes('entry failed'))).toEqual([]);
     });

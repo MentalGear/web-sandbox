@@ -46,7 +46,8 @@ defineWebSandbox(options: { tagName?: string; documentUrl: string | URL }): type
   It is a constant because the view cannot compute a digest everywhere: under a host page that is not a secure context
   (`http:` on a name that is not loopback), `crypto.subtle` was undefined in the view on all three engines (research 31,
   Q1b).
-- **Schemes.** `documentUrl` is on `http:` or `https:`, and there is no `srcdoc` fallback (D8). A host page that is
+- **Schemes.** `documentUrl` is on `http:` or `https:`, or of the host page's own origin where that origin is neither
+  opaque nor an extension's (as built, below), and there is no `srcdoc` fallback (D8). A host page that is
   not on `http(s)` itself (a `file:` page, a browser extension's own page, an app shell on a scheme of its own) names
   an `http(s)` copy of the file: with one, the design ran from every such host page tried, a `file:` page on all three
   engines, a Chromium extension's page and Electron ([research 34](../research/34_non_http_host/README.md), measured). With the file beside the host page instead:
@@ -64,6 +65,41 @@ defineWebSandbox(options: { tagName?: string; documentUrl: string | URL }): type
   The owner's decision: no `srcdoc` path, and `documentUrl` may also be a URL of the host page's own origin where that
   origin is not opaque, which admits Electron and no browser's `file:` page
   ([index](README.md#decided-after-review-2-and-the-first-two-steps), 3; built as [05](05-build-order.md)'s 3.10).
+
+  **As built (step 3.10).** One rule, `documentUrlRefusal` (`src/lib/document-url.ts`), in the function that reads
+  `documentUrl` before anything is defined or stored: `http:` or `https:` on any host page; or else the URL's scheme,
+  host and port are the host page's own origin as the page reads it (`self.origin`), and that origin is neither `"null"`
+  nor a browser extension's (`EXTENSION_SCHEMES`); no user name or password, and no fragment. The page's address and
+  origin are read once, together (`hostPage()`: `document.URL` and `self.origin`). What the text above left open:
+
+  - **"Own origin" is the page's reading, never the URL parser's.** The parser's `origin` of a `file:` URL is `"null"`
+    in some engines (so it equals an opaque page's) and `"file://"` in others, that of a `blob:` URL is its creator's
+    (so it equals an `http(s)` page's), and that of an app shell's scheme is `"null"` wherever the engine does not know
+    the scheme as standard. So the URL's side is built from its own scheme and host (`scheme://host[:port]`), which
+    never reads `"null"` and never another scheme's origin, and is compared with `self.origin`, which the browser
+    computes from the document's real origin: a browser's `file:` page reads `"null"` (refused, the guard cannot hold
+    there), Electron's reads `"file://"` and an app shell's `"app://bundle"` (admitted, the guard measured to hold).
+  - **An extension's page is not opaque**, so "own origin, not opaque" alone would admit it; decision 3 sends it to an
+    `http(s)` copy, since the file runs there only as a sandbox page with a narrowed policy, where the guest's realms
+    read every file of the extension under the `<meta>` (research 34). So the rule refuses the browsers' extension
+    schemes by name (`chrome-extension:`, `moz-extension:`, `safari-web-extension:`), with a reason of their own.
+    That is a list of names, not a construction: the page reads nothing that tells an extension's page from an app
+    shell's, so an extension scheme a browser adds needs a row in `EXTENSION_SCHEMES`. `documentUrl` is the embedder's
+    own value, so the list keeps an embedder from a wrong deployment and is no boundary against the guest.
+  - **Each refusal names what to do.** An opaque host page (a browser's `file:` page, a sandboxed frame, a `data:` page)
+    and an extension's page are refused with the rule that names an `http(s)` copy of the file; a URL off `http(s)` of
+    another origin than the page's (a `blob:` or `data:` URL, another scheme, another host) with the rule of the origin.
+  - **The check of the file** is unchanged: on a scheme whose requests the page's `fetch` cannot make (a browser's
+    `file:` page on Chromium and WebKit, research 34), the request fails and there is no check; on Electron's `file:`
+    and its `app:` (registered with `supportFetchAPI`) the page reads the file, and the check is the one of an
+    `http(s)` URL.
+
+  The specs: `test/unit/document-url.test.ts` (the rule over every scheme against every kind of host page origin),
+  `test/unit/document-check-own-scheme.test.ts` (the check on an app shell's scheme, refused and answered),
+  `test/e2e/document-url-host.spec.ts` (three engines: a browser's `file:` page with the file beside it, a page a
+  `sandbox` policy makes opaque and a `data:` page, each refused and each ready with an `http` copy; an `http` page's
+  `file:` and own `blob:` URL refused), and research 34's Electron probe against the library
+  ([`probe-electron-library.mjs`](../research/34_non_http_host/probe-electron-library.mjs)).
 
 "No backend, no server config" becomes "one static file, no response headers that set a policy on it"
 ([below](#the-policies-in-force)).
@@ -120,15 +156,91 @@ was built with, and reads the response's headers.
 body, on all three engines, so each case of the table can be told from the others before the file is framed, and under
 a report-only header no canary's report is ever sent.
 
-**Not measured:** its cost; the digest's comparison; a server that answers this request and the frame's navigation
-differently (the two differ in `Sec-Fetch-Dest`); a host page's `connect-src` and Service Worker in its path (the host
-page's Service Worker never answers the sandboxed frame's own navigation, on all three engines: review 2, probe 3).
+**As built (step 3.3).** `src/lib/document-check.ts`, with the reasons `documentMissing`, `documentNotHtml`, `documentChanged`,
+`documentFrameAncestors`, `documentFrameOptions`, `documentCsp` and `documentCspReportOnly`; the specs are
+`test/e2e/served-file-check.spec.ts` (three engines), `test/unit/document-check.test.ts`,
+`test/unit/document-check-kept.test.ts` and `test/unit/lifecycle-file-check.test.ts`. What the text above left open:
+
+- **How the library knows the file's bytes: one generation, given to every loader.** The file's bytes depend on how the
+  view's functions are printed, which is the printing of whatever loaded the sources: Bun's for the build, Vite's for
+  the e2e server's pages, vitest's for the unit tests. So no copy of the library computes the digest from its own
+  sources, and none carries the file's text. `servedDocument()` (`scripts/served-document.ts`) runs the generator the way
+  the build does (Bun, from the sources on disk, in a process of its own) and hashes it with the library's own
+  synchronous SHA-256 (`documentDigest`, which the check uses as well: `crypto.subtle` is absent on an insecure host
+  page). The build writes those bytes into `dist/` and defines their digest in the bundle, and refuses to write a
+  bundle that does not hold it; Vite's server and vitest put the same digest into `src/lib/document-digest.ts` as they
+  serve it (`servedDocumentDigestPlugin`), and again after any file of `src/` changed. So the digest and the file cannot
+  disagree in the bundles of either build, in Vite's server or in vitest, and a reused e2e server whose `dist/` was
+  rebuilt from the current sources accepts the file, while one whose `dist/` is older than the sources refuses it,
+  `documentChanged`, rather than run a view of other sources. A loader that gives no digest ends the build instead of
+  passing a file it cannot compare. Rejected: a checked-in constant kept equal by a test (it is the third copy of what
+  the generator already decides); generating the file in the browser (the bundle would carry the view's text, which [a
+  thinner host](#a-thinner-host) takes out of it).
+- **When, and what the first build waits for: the build's first step, before anything is prepared or framed.** The
+  request is made by the first build that needs it, not by `defineWebSandbox()`: a page that registers and never starts
+  a sealed app makes none. That build is `loading` from its start, arms its load deadline once (the deadline bounds the
+  wait as well), and its build effect runs only when the check answers: the lifecycle's input `fileChecked` and effect
+  `checkFile`, so terminate(), reset() and removal during the wait end it as any `loading` build, and the answer that
+  comes after is stale (the reducer drops it; the model in `test/model/` holds the element to it, and to never being
+  `ready` before the check answered). A file found wrong is therefore never framed, so a fallback page's own scripts never
+  run in the element's frame. Rejected: framing in parallel and holding the view's announcement until the check answers.
+  It saves the request's time on the first build only, and it loads a document known wrong where the check can read it,
+  and makes "the document did not answer" race the check's reason. Builds that wait at once share one request.
+- **Kept for the registration: an answer, for the page's life; no answer is not kept.** A pass or a finding is the
+  registration's (one registration per page): every later build of every element frames at once after a pass, and is
+  refused at once, with the same reason and no request, after a finding. A finding stays until the page loads again:
+  the comparison is with the library this page loaded, and a deploy that fixes the file is one a page loads (a deploy of
+  a new version, seen by a page that still runs the old library, is a real mismatch until then). A request that was not
+  answered (a network failure, a refusal by the page's own `connect-src`, another origin that does not allow the read,
+  which `fetch` does not tell apart) is no answer: the next build asks again. Under a `connect-src` that refuses
+  `documentUrl` that is one violation, and one report to the page's endpoint naming `documentUrl`, per build.
+- **What the request carries and inherits** (`INHERITED_CONTEXT`, the rows `hostRealmGlobals`, `serviceWorker` and
+  `cspFetch`): `credentials: 'omit'` (the frame, credentialless on Chromium, gets no cookie either), no referrer, the
+  redirects and the HTTP cache as the frame's navigation has them, and one header, a navigation's `Accept: text/html`
+  (CORS-safelisted, so no preflight), so a server that answers by what is accepted answers as it answers the frame. It is
+  made with the platform's `fetch` as the library's module found it when it was evaluated: a wrapper the page installs
+  afterwards never sees it, one installed before is the page's `fetch` to the library and adds what it adds (measured:
+  the Authorization header of such a wrapper reached the server; none from one installed after). That stays a
+  documented limit (docs/API.md, the registration section, says how to avoid it). An `XMLHttpRequest` is no better (the
+  page can wrap it as well), and a `fetch` taken from a fresh realm, a same-origin `about:blank` frame of the host page's,
+  would make the library's one frame that is not a sandbox's (`test/unit/frame-isolation.test.ts` holds every frame of
+  `src/` to being one), would still be under a Service Worker that controls the page, and would not stop a page that
+  patches frame creation: the wrapper is the embedder's own code, and the header it adds goes to `documentUrl`'s host,
+  which is trusted with the app already. The host page's
+  `connect-src` applies to it, and so does a Service Worker whose scope holds `documentUrl`, whose answer is then what is
+  checked (one that answers with another page ended the build with `documentChanged`, the server seeing no request).
+- **Which headers are refused, and why those** (`REFUSED_DOCUMENT_HEADERS`): `Content-Security-Policy` (the view and its
+  worker run under it beside the `<meta>`), `Content-Security-Policy-Report-Only` (it reports to an endpoint of its own),
+  each whatever its text, and `X-Frame-Options`, whatever its value (a policy on framing whose answer depends on the host
+  page's ancestors, which the host page cannot read on every engine; `SAMEORIGIN` on a same-origin file would frame, and
+  is refused all the same, as the file is served with no header that sets a policy on it). A `frame-ancestors` directive
+  in either policy header is named first. Every other header passes: `Cross-Origin-Resource-Policy` and
+  `Cross-Origin-Embedder-Policy`, one of which Firefox and WebKit need on the file under a host page's `require-corp`
+  (step 3.2), and `Permissions-Policy`, which can only narrow. Report-only headers of other kinds are not named (the
+  list above, "the check sees policies of the Content-Security-Policy kind").
+- **The order of the findings:** the status and the type, then the bytes, then the headers, so a fallback page that
+  carries the site's policy is named as another page, the cause to fix first. Another origin with CORS: the bytes and
+  the type are checked, and its headers only where it exposes them (`Access-Control-Expose-Headers`).
+- **Not built:** a `Content-Disposition: attachment` on the file is not named (the frame shows nothing, and the build
+  ends with "the document did not answer").
+
+**Measured** (step 3.3, `test/e2e/served-file-check.spec.ts`, 2026-11-20, two runs): the check adds 5 to 8 ms to a
+page's first build on Chromium, 5 to 11 ms on Firefox and 20 to 52 ms on WebKit, against a later build that makes none
+(medians of 12; docs/API.md#registering-the-element has the figures). With a cacheable file Chromium's frame took the check's response
+from the cache, and Firefox and WebKit requested the file again. Against a library that makes no check, 23 of the
+spec's and the realistic host's 26 tests of it failed on Chromium (the three that passed are the positive control, the
+40 clean starts and the measure). A server that answers the check and the frame's navigation otherwise is judged by what the
+check read: the file to the check and another page to the frame ended with "the document did not answer"; the reverse,
+with `documentChanged`, a frame that would have worked refused, on all three engines.
+
+**Not measured:** a host page's Service Worker in the path of the frame's navigation (it never answers the sandboxed
+frame's own navigation, on all three engines: review 2, probe 3).
 
 ## The shape
 
 ```
 host page
-└─ <web-sandbox>, closed shadow root
+└─ <web-sandbox>, shadow root
    └─ <iframe src=documentUrl sandbox="allow-scripts allow-forms …">                     F, the served file
       └─ <iframe sandbox="allow-scripts allow-forms allow-orientation-lock" srcdoc="…">  C, the view, in F's static markup
          └─ Worker(blob:)                                                                the guest's logic, started by C
@@ -149,10 +261,10 @@ host page
   page answers only the window that is the first frame of the element's own frame
   ([the start-up order](#the-start-up-order), steps 2 and 3). C accepts messages only from its parent's parent, as
   today's view does. The ports go from the host page to C, and C hands one to the worker. F handles no message.
-- **The frame of F is in the element's closed shadow root, and that is load-bearing.** A frame in a shadow tree is not
+- **The frame of F is in the element's shadow root, and that is load-bearing.** A frame in a shadow tree is not
   in the page's `window.frames`, so a site that frames the host page cannot reach F's frame and navigate it to a document
   of its own, which would then answer the handshake and receive the app. Measured on all three engines (review 2,
-  finding 8; research 31, Q5, in this design's start-up order): with the frame in a closed shadow root the framing page
+  finding 8; research 31, Q5, in this design's start-up order): with the frame in a shadow root, open or closed, the framing page
   saw no frame, before F's first load and after it; with the same frame in the light DOM
   it replaced F before its load, received the app and its files, called a host method and received the user's state.
   Today's view rests on the same property. The handshake authenticates nothing, so this is what keeps other sites out
@@ -195,6 +307,35 @@ F with its row in `POLICY_DIRECTIVES`; a quirks-mode F and a script that sizes C
 (opaque to F) nor the host page (F is opaque to it) can size C from outside. Also seen once on WebKit, not repeated:
 with `allow-same-origin` on F's frame, the guard's `window.stop()` kept the host page's `load` event from firing for
 30 seconds; 3.2 and 3.4 measure it, since a guarded case ends with "the document did not answer".
+
+**As built (step 3.2).** What holds now, where the text above was silent or the code had to decide:
+
+- C fills F by F's one stylesheet, the wrapper's sizing rule (`SEALED_DOCUMENT_STYLE`), admitted by its hash (`POLICY_DIRECTIVES`,
+  `style-src`); C fills F and auto-resize sizes the element through it on all three engines (`test/e2e/served-view.spec.ts`).
+- The element's shadow root is open. What keeps a page that frames the host page from F's frame is that the
+  frame is in a shadow tree, which `window.frames` does not list, open or closed: measured on all three engines, the
+  framing page read the host page's `length` as 0 and found no window at index 0, and a frame in the light DOM was found
+  (the spec's positive control, and the same spec fails with the element's frame moved to the light DOM). A closed root
+  would add nothing against the host page's own scripts, which reach the element's fields ([01](01-one-element-one-app.md#what-leaves-the-element)).
+- The view speaks first in strict mode too: the two views run one bootstrap function, so both announce themselves
+  (`VIEW_ANNOUNCE`, with the version and the verdicts since 3.4) and the host page answers only the first frame
+  of the element's frame (the reducer's `viewAnnounced`). A view that announces itself twice, or once its build is
+  ready, ends the build (`secondAnnouncement`); a reloaded view ends it at once this way, before the
+  liveness budget could. A served frame that loads a document with no frame ends at once with "the document did not answer",
+  as does a deadline with no announcement.
+- The wrapper-style warning is given only in strict mode, where the element wrote the wrapper and the host page's
+  `style-src` can refuse its style; F's sizing sheet is admitted by F's own policy. The view can check in before its
+  frame's size has reached it (Firefox, in the directive matrix: 150 px at the check-in, and the frame filled a moment
+  later), so the warning rests on the view's own finding of the refusal, not on its size (step 3.4, below).
+- A second load of F ends the build with `secondLoad` on Chromium and WebKit; on Firefox the reloaded view's second
+  announcement arrives first and ends it with `secondAnnouncement`.
+- In the build with the network modes, an element registered without `documentUrl` runs the network modes only, and
+  `start()` of a sealed app throws with the reason `noDocumentUrl`.
+- The guarded cases did not hold the host page's `load` here: the twelve ways wait for the navigation's commit, not
+  `load`, so the WebKit observation above (30 s with `allow-same-origin` on F) is not measured again; the element never
+  frames F so.
+- Under the host page's `Cross-Origin-Embedder-Policy: require-corp` (without COOP), measured with the directive matrix:
+  see docs/API.md#host-page-policy.
 
 **What the constant policy gives up.** Today's per-build policy admits `blob:` only for the kinds of file the app
 registered. A constant policy admits it for all four kinds, and the renderer's URL rule (`keepsUrl`) is then the only
@@ -300,15 +441,17 @@ came before the `<meta>`'s or with it, never after (research 31, Q8: 100 starts 
 that answers when its expected events are in had seen the header in every start. That is an observed order, not a
 guaranteed one, which is why the listener stays after the verdict.
 
-**What is left unseen, and what closes it.** Under two kinds of header the check passes and a guest's load, if the view
+**What is left unseen, and what closes it.** Under three kinds of header the check passes and a guest's load, if the view
 ever made it, would be reported on Chromium and Firefox (the full URL under `font-src`, `media-src` and `form-action`,
 the origin under `frame-src` and `object-src`):
 
 - a header that names the canaries' reserved host. An honest deployment has no reason to write one, and the host that
   serves the file is [trusted with the app](#who-is-trusted-with-the-app) already;
-- any `form-action` header, which a site-wide policy often has.
+- any `form-action` header, which a site-wide policy often has;
+- a header with `object-src` alone: the check makes no object ([as built](#policy-check-as-built): an object is loaded
+  only while it is rendered, so its violation is not one the check can wait for).
 
-Where [the check of the file](#the-check-of-the-file) can read the answer, it names both before the file is framed.
+Where [the check of the file](#the-check-of-the-file) can read the answer, it names each before the file is framed.
 Where it cannot, each is closed by a rule of the renderer, which is why I18 is two checks and not one:
 
 | Directive | The rule that keeps the load from existing |
@@ -320,10 +463,108 @@ Where it cannot, each is closed by a rule of the renderer, which is why I18 is t
 Step 3.6 brings the test of those rules: a guest font, media, frame, object and form under each of the five headers,
 enforced and report-only, and no report that carries guest text.
 
+<a id="policy-check-as-built"></a>**As built (step 3.6).** `src/lib/policy-check.ts` holds the file's policy (POLICY_DIRECTIVES, which the generator reads),
+the canaries derived from it (POLICY_CANARIES, rendered below) and what the check finds (POLICY_FINDINGS); the view runs
+the check (`inSandboxView`: its violation listener and `runPolicyCheck`), the host reads it (`policyFinding`,
+startup-verdicts.ts), and a finding ends the build with `viewCsp` or `viewCspReportOnly`; the INHERITED_CONTEXT row
+`fileHeaders` has its column in SEALED_REACH. The specs are `test/e2e/policy-check.spec.ts` (three engines),
+`test/unit/policy-check.test.ts`, and the sealed cases of the directive matrix and the realistic host on the file's
+response. What the text above left open:
+
+- **The canaries have a registry of their own, derived from POLICY_DIRECTIVES, not rows of STARTUP_GATES.** Its rows
+  are the `<meta>`'s directives, all of them (`satisfies` a record of every directive, and the unit test holds the
+  `<meta>`'s text to it), so a directive added to the policy is a type error until it is classified. A gate is a
+  verdict on the browser, final at start-up, in both modes; a finding of the check names a policy, can come at any time,
+  and exists in sealed mode only. What reaches the host is the same kind of value: a name and a boolean per row of
+  POLICY_FINDINGS (`csp`, `cspReportOnly`), true where no policy of that kind was seen, and the host takes the reason
+  from its own registry.
+- **How a finding reaches the host, whenever it comes.** Before the announcement it is in the announcement (`policy`,
+  read after the version and the gates). After it, the view posts VIEW_POLICY on the view port, once; one that came
+  between the announcement and INIT_VIEW is posted first on the port, and the view then shows nothing and starts no
+  worker. The host ends the build with a `terminate`, in whatever state it is: no second announcement, so no
+  `secondAnnouncement`.
+- **The view knows the file's policy because the file states it.** The generator writes the `<meta>`'s text, from the
+  one value, into an attribute of C's root element beside the version (`POLICY_ATTRIBUTE`), outside every hashed text;
+  the view compares every violation's `originalPolicy`, its directives with their words separated by one space, with
+  it. No hash is computed in the view (`crypto.subtle` is absent under an insecure host page, and the view cannot hash a
+  text that holds its own hash). A copy whose `<meta>` a tool changed, and not the attribute, is another policy to its
+  own view.
+- **Which events are the canaries'.** Until INIT_VIEW nothing of the guest's exists in the view, so every violation of
+  the file's text is the library's: taken, neither reported nor charged, and counted by the check; after it, a refused
+  canary's late one is known by its host, and a gate's by the rule of step 3.5. An event of another text, or with the
+  disposition `report`, is a finding, never a `violation` of the guest's. A refused media canary's `error`, which the
+  view otherwise reports as a failed load, is known by its host too. The guest's worker hears none of the check's
+  events: the canaries run in the view and its own canary worker.
+- **One host per load and scheme** (`font-http.canary.invalid`, `font-https.canary.invalid`), not per load: an engine that
+  upgrades the `http:` canary (`upgrade-insecure-requests`, Chromium's upgrade of mixed media) or cuts it to its origin
+  still names the canary it was issued as. The check waits for each refused load in one scheme at least: on an `https:`
+  host page the `http:` twin is blocked as mixed content, which no policy is asked about, so it may raise nothing.
+- **The worker's half is the view's canary worker.** A `blob:` worker inherits the policies of the document that makes
+  it, which are fixed when that document is created, so the guest's worker, made later by the same view, runs under
+  exactly the policies the canary worker ran under, and the canary worker's findings come before anything of the guest's
+  is sent. Canaries in the guest's prelude could not answer before the entry: their events come in tasks, after the
+  worker's whole script. On Firefox the worker's refusals are filed in the view's document anyway (research 31, Q8), where
+  the listener reads them as every other.
+- **After the gates, only where they held.** A browser that does not enforce the file's policy has ended the build with
+  a gate's reason already, and the check's network canaries are made only where the policy refuses them.
+- **No clock.** The check answers once each refused load has raised the file's own violation, every admitted load has
+  settled and the canary worker has answered, or at once on a finding; the elements, URLs and workers it made go then.
+  The only time limit is the load deadline.
+- **Only loads the platform starts when they are issued** (`REFUSED_LOADS`). The check waits for each refused load's
+  violation, so a load whose start the embedder's page governs cannot be one of them. HTML loads an `<object>` or
+  `<embed>` only while it is being rendered: in a sandbox whose parent has `display: none` (a tab of the page that is
+  not shown, as the playground's second sandbox is) Chromium makes no load and raises no violation, so a check with an
+  object canary never answers there, and the build ends at the load deadline as `documentSilent` (measured 2026-11-20;
+  Firefox and WebKit raise it there, and under `visibility: hidden` and in a parent of no size all three do).
+  A canary made and not waited for would be seen by the order of two tasks, so there is none: `object-src` has no
+  canary, the renderer's rule stands behind it as it does behind `form-action`, and
+  `test/e2e/policy-check.spec.ts` (part 4b) starts a sandbox in each of the three kinds of parent on three engines.
+- **What the engines did that the text above did not say.** Under an enforced header the file's own `<base>`, which
+  precedes its `<meta>`, is refused too, so a header with `base-uri` (the `<meta>`'s exact text among them) ends the build
+  with `environmentBase` before the check; a `trusted-types` list that does not name `web-sandbox` is seen once the view
+  makes its Trusted Types policy, after its announcement, and ends the build then; Firefox logs the admitted font's
+  rejection by its font sanitizer. WebKit sees a header that names the canaries' host (`policy-canary-host` in the engine
+  ledger).
+- **Measured** (2026-11-20, `test/e2e/policy-check.spec.ts`): 200 starts per engine with three cores busy, none refused;
+  its cost from insertion to `ready` against a file whose check provokes nothing is within the spread of a first start on
+  Chromium and WebKit and 10 to 16 ms on Firefox (docs/API.md#registering-the-element). Against the check's mutants: with
+  another policy's violations ignored, 38 of the 43 tests of parts 1 and 3 failed on Chromium (the five that passed expect
+  an outcome that is not the check's); with no late VIEW_POLICY, both of part 3; with the URL rule keeping network URLs,
+  the four font and media cases of part 2, each with a report that carried the guest's URL.
+
+<!-- describes: policy-canaries, policy-findings sig:0349720b -->
+<!-- generated:begin policy-canaries -->
+| Directive | The `<meta>`'s sources | Admitted canary | Refused canary | Why one is missing | What the check does not see, and what stands behind it |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `default-src` | `'none'` | none | none | it governs no load of the view's: the file names every fetch directive a load of the view's is checked against. A header's `default-src` is seen through the canaries of the directives it stands for |  |
+| `script-src` | the hash of the guard text, the hash of the view text | the view's own bootstrap | `script`: `http://script-http.canary.invalid/web-sandbox-canary` and `https://script-https.canary.invalid/web-sandbox-canary` | the admitted load is the view's own bootstrap: a policy that refuses it stops the view before it runs (`documentSilent`), and one that only reports it raises its event in the view. Code from strings is the `stringCode` gate's canary, whose events are read as every other |  |
+| `script-src-attr` | `'none'` | none | none | an event handler attribute is no load: its refusal names no URL, and the view compiles none (the renderer keeps no handler attribute) | a header that names `script-src-attr` alone: no handler of the guest's exists in the view for it to refuse or sample (the renderer drops every `on*` attribute) |
+| `style-src` | the hash of the still text, the hash of the sizing text, `blob:` | `style`: from a `blob:` URL of the view's own | `style`: `http://style-http.canary.invalid/web-sandbox-canary` and `https://style-https.canary.invalid/web-sandbox-canary` |  |  |
+| `img-src` | `blob:` | `image`: from a `blob:` URL of the view's own | `image`: `http://image-http.canary.invalid/web-sandbox-canary` and `https://image-https.canary.invalid/web-sandbox-canary` |  |  |
+| `font-src` | `blob:` | `font`: from a `blob:` URL of the view's own | `font`: `http://font-http.canary.invalid/web-sandbox-canary` and `https://font-https.canary.invalid/web-sandbox-canary` |  | a header that names the canaries' own host (`*.canary.invalid`), on Chromium and Firefox: the view loads a font only from a `blob:` URL it minted (keepsUrl, the cut of CSS URLs), which carries nothing of the guest's |
+| `media-src` | `blob:` | `media`: from a `blob:` URL of the view's own | `media`: `http://media-http.canary.invalid/web-sandbox-canary` and `https://media-https.canary.invalid/web-sandbox-canary` |  | a header that names the canaries' own host, on Chromium and Firefox: the view loads media only from a `blob:` URL it minted (keepsUrl) |
+| `connect-src` | `'none'` | none | `connect`: `http://connect-http.canary.invalid/web-sandbox-canary` and `https://connect-https.canary.invalid/web-sandbox-canary` | `'none'` admits nothing to load |  |
+| `worker-src` | `blob:` | `worker`: from a `blob:` URL of the view's own | `dataWorker`: a `data:` worker | the refused canary is a `data:` worker: a worker of a network URL fails before the policy is asked, with no request (research 31, Q6) |  |
+| `frame-src` | `'none'` | none | `frame`: `http://frame-http.canary.invalid/web-sandbox-canary` and `https://frame-https.canary.invalid/web-sandbox-canary` | `'none'` admits nothing to load | a header that names the canaries' own host, on Chromium and Firefox: the renderer removes every nested browsing context (RENDER_REMOVED_ELEMENTS) |
+| `object-src` | `'none'` | none | none | HTML loads an `<object>` or `<embed>` only while it is being rendered, which the embedder's layout decides: in a sandbox that is not rendered (`display: none`) Chromium makes no load and raises no violation, so a check that waited for one would never answer there, and one that did not wait would see such a header only by the order of two tasks | an `object-src` header alone (a header's `default-src` is seen through the other canaries): the renderer removes every object and embed (RENDER_REMOVED_ELEMENTS), so no load of the guest's exists for it to report |
+| `base-uri` | `'none'` | none | `base`: `http://base-http.canary.invalid/web-sandbox-canary` and `https://base-https.canary.invalid/web-sandbox-canary` | `'none'` admits no `<base>`; the `base` gate's `<base>` is refused too |  |
+| `form-action` | `'none'` | none | none | a refused form replaced the view with an error page on Chromium (research 31, Q6), so the check submits no form on any engine | any `form-action` header: the renderer drops `action`, `formaction`, `method` and `target`, and the view cancels every `submit` in the capture phase, so no form of the guest's navigates |
+| `manifest-src` | `'none'` | none | none | no engine fetches a manifest a framed document links, so there is no load to refuse, and none of a guest's to report |  |
+<!-- generated:end -->
+
+<!-- generated:begin policy-findings -->
+| Finding | Violations of | Ends the build with |
+| :--- | :--- | :--- |
+| `csp` | another policy, disposition `enforce` (a `Content-Security-Policy` header) | `viewCsp`: the view of the file at documentUrl runs under a Content-Security-Policy that is not the file's own (a header on the file's response, which the view and its worker inherit beside the file's <meta>): serve the file with no Content-Security-Policy header (see docs/API.md#registering-the-element) |
+| `cspReportOnly` | another policy, disposition `report` (a `Content-Security-Policy-Report-Only` header) | `viewCspReportOnly`: the view of the file at documentUrl runs under a Content-Security-Policy-Report-Only header on the file's response, which would report the view's loads to its endpoint: serve the file without one (see docs/API.md#registering-the-element) |
+<!-- generated:end -->
+
 **Not measured:** a form canary aimed at a frame of the view's own, which might leave the view standing on Chromium; a
 header with both scheme sources (`font-src http: https: blob:`), which admits both canaries as `*` does; a header that
-refuses only the canary whose event arrives last; the check with no time limit of its own on a loaded WebKit; the
-check in the library's bundle.
+refuses only the canary whose event arrives last; the check on an `https:` host page, where the `http:` twins are
+mixed content (the check waits for one scheme per load, so it answers there by construction, but no engine was run so);
+a sandbox started while its page is hidden (a tab in the background), where an engine may put off a load the check
+waits for: two tries to hide a page of a headed browser under `xvfb` left it `visible`, so none was run.
 
 What "serve it unchanged" excludes, for the docs: a `Content-Security-Policy` or
 `Content-Security-Policy-Report-Only` header on the file, `X-Frame-Options` or a `frame-ancestors` that refuses the host
@@ -363,6 +604,57 @@ have, and no data of the embedder's is sent before both. A file of another versi
 guest's. A hostile document at `documentUrl` can announce whatever it likes; that is the trust of
 [the file's host](#who-is-trusted-with-the-app), which no order of messages changes.
 
+**As built (step 3.4).** `src/lib/startup-verdicts.ts` reads the announcement and the worker's verdicts; the reducer's
+`viewAnnounced` (with its `finding`), `viewReady` and `workerVerdicts` act on them (`src/lib/lifecycle.ts`); the gates'
+registry is `STARTUP_GATES` (`src/lib/startup-gates.ts`, filled by step 3.5); the specs are `test/e2e/startup-order.spec.ts`
+(three engines), `test/unit/lifecycle-reducer.test.ts` ("the start-up order") and the model runs with a start-up finding
+(`test/unit/lifecycle-transitions.test.ts`, `test/model/reducer-runner.ts`, `startup`). What the text above left open:
+
+- **The version is the file's digest: one value.** The view cannot hold the digest of the file that holds it, and the
+  check of the file must compare every byte, so the file states its digest of itself: the generator lays the file out
+  with the version empty, takes that text's SHA-256, and writes it into one attribute of C's root element
+  (`VERSION_ATTRIBUTE`, `data-web-sandbox-version`), outside every text the policy admits by hash, so the policy is the
+  same whatever the attribute says (`renderSealedDocument`). The check of the file holds a file to it by taking the
+  digest out of that attribute, the file's one statement of a version, and hashing the rest (`holdsDigest`,
+  `src/lib/document-digest.ts`): the same bytes with the digest anywhere else are another file. The view announces the
+  attribute as its version. So the library carries one constant, given to every loader as row 3.3's digest is
+  (`scripts/served-document.ts` reads it from the generated file, `statedDigest`), and there are no two values that must
+  agree. Rejected: a version written into the bootstrap (it changes the script's hash, so the file could not hold the
+  digest of itself, and the library would carry a second constant), and the package's `version` (one value per release,
+  which a file generated from other sources of the same release shares).
+- **What "another version" means where the check could not read the bytes.** A view whose document states another
+  digest, or none, is another version's file: the host page posts it nothing and ends the build with `documentVersion`.
+  It is a check of what a copy states about itself, nothing more: a copy rewritten by a tool keeps the version it was
+  generated with, which is why a meta mutant still reaches the gates (3.5), and why the check of the file, where it can
+  read, is what refuses such a copy (`documentChanged`). Where the check read the file and passed, the version always
+  matches.
+- **Strict mode's view states no version.** Its document is the `srcdoc` this very element writes in the same step, so it
+  is of this version by construction; the host compares the version for the served file only, and both views read
+  their verdicts by the same registry, per mode.
+- **The host reads the announcement in the handler that tested its source**: `_onViewAnnouncement` computes the finding
+  (the version, then each of the view's gates of the build's mode, the first that is not exactly `true` naming its
+  reason) and steps `viewAnnounced{source, finding}`; with a finding the reducer ends the build and posts nothing, with
+  none it posts INIT_VIEW to that window in the same step. A forged announcement can only end its own build.
+- **How the worker's verdicts travel, and when.** The logic port reaches the worker in INIT_WORKER, which a worker
+  handles only after its whole script, the entry included, has run, so no verdict can travel on that port before the
+  entry. The worker's prelude instead posts its verdicts on its own global, as its first message, before any code of the
+  guest's exists; the view takes the first message of its worker only (it stops listening after it, so nothing the guest
+  posts later is heard), copies the registry's names as booleans, and hands them on on the view port after its check-in
+  (`WORKER_VERDICTS`, `FRAMES`). A failed gate posts its verdicts and then throws, cancelled in the worker, so nothing
+  after it in the worker's script runs and the view hears no entry error.
+- **`'ready'` and the waiting calls.** The reducer's build has `checkedIn` and `workerHeld`; the build is `ready`, and
+  the `flush` effect runs, only once both are true, in either order. A failed worker verdict ends the build while it is
+  `loading`, so no call and no `execute()` is ever posted to that worker, and the guest's entry never ran there. An entry
+  that does not parse sends no verdicts, so its build ends with "the guest entry failed to start" while `loading`, where
+  it was `ready` for a moment before.
+- **The wrapper-style warning.** The view's size at its check-in can precede the host page's layout of the frame (row
+  3.2), so the size is no evidence of anything. The warning's one cause, a host page's `style-src` that refuses the
+  wrapper's style, is found by the view itself: the policies it inherits are the wrapper's, its own policy admits any
+  inline style, so a `<style>` of the wrapper's very text applies in the view exactly where the wrapper's applied
+  (`wrapperStyleInForce`); VIEW_READY says `wrapperStyleRefused`, and the element warns only then. A check-in at
+  150 px whose view found no refusal warns nothing (`test/e2e/view-size-warning.spec.ts` makes the check-in precede the
+  frame's size; `test/unit/view-size-check.test.ts`).
+
 **Measured** (research 31, Q1 and Q7, a fixture of this order with a library worker): it works on all three engines. The
 right file announced itself and received the app in 100 of 100 starts per engine, half of them with the host page's
 thread busy for 200 ms after insertion; a file of another version received nothing. The view speaking first costs the
@@ -394,7 +686,7 @@ document; it never gave `undefined` (research 31, Q7, the same on all three engi
 - **The last accepting row is the trust of [the file's host](#who-is-trusted-with-the-app)**: a document that answers
   `documentUrl` and speaks the view's protocol is that host's doing. The check of the file refuses it where it can
   read the answer (the body is not the library's file). Against a page that frames the host page, what keeps its
-  document out of index 0 is the closed shadow root ([the shape](#the-shape)): with the frame in the light DOM, that
+  document out of index 0 is the shadow root ([the shape](#the-shape)): with the frame in the light DOM, that
   page's document announced itself and received the app, in this order as in the other (Q7).
 - So a document that is not the library's view and does not claim to be receives no port: impossible to reach, for
   every window that is not at index 0 of the element's frame; a documented limit for one that is.
@@ -419,6 +711,77 @@ browser does not refuse ends the build with a termination reason.
 
 The gates are defence in depth after the construction, never in place of it: they answer "the browser has a bug or a
 setting that dissolves the policy", for the cases a canary can provoke.
+
+**As built (step 3.5).** One registry, `STARTUP_GATES` (`src/lib/startup-gates.ts`), rendered here; the view's canaries
+(a table in `inSandboxView`) and the worker's (`workerGates`, two tables around the allowlist) are keyed by its names; the
+worker's listener for its canaries' violations (`takeGateViolations`) is the one part that outlives the start of guest
+code, and is under the capture scan (class G); the
+bootstrap and the worker's source are given the names each mode runs (`gatesOf`), and the host reads the verdicts by them
+(`startup-verdicts.ts`); `test/unit/startup-gates.test.ts` holds the tables to the registry, and
+`test/e2e/startup-gates.spec.ts` runs each gate under its mutant on three engines.
+
+<!-- describes: startup-gates sig:6a94 -->
+<!-- generated:begin startup-gates -->
+| Gate | Runs in | Modes | Provokes | Passes | Fails | Ends the build with | Its mutant |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `opaque` | worker | sealed, strict | reads the worker's `self.origin` (the view's own is the environment check's, environment-check.ts, the `origin` row: it runs first, and ends the build with `environmentOrigin`) | `'null'`: the worker has an opaque origin | an origin: the worker holds an origin's authority | `gateOpaque`: a start-up gate failed: the sandbox's worker has an origin, not an opaque one: this browser did not keep the sandbox sandboxed, so the guest's entry did not run | none through the element alone: a view that is not opaque (its `sandbox` attribute with `allow-same-origin`, in a copy without its guard, framed without `sandbox`) is refused by the environment check before it starts a worker; test/unit/startup-gates.test.ts runs the canary |
+| `framing` | view | sealed, strict | compares the view's window with its parent and its parent's parent | all three differ: the view is a frame of a frame, as the file or the wrapper holds it | the view is the top-level document, or its frame is | `gateFraming`: a start-up gate failed: the sandbox's view is not a frame of a frame: it is not in the frame the library built, so nothing of the app was sent | none through the element, which always frames the file: a file opened at the top level without its guard has no host page to announce itself to; test/unit/startup-gates.test.ts runs the view top-level, where it fails |
+| `stringCode` | view, worker | sealed (it provokes a refusal of the view's policy: strict mode's view inherits the host page's policy, which would report the canary to the host page's endpoint, and admits what the embedder's network options name) | builds a function from the empty string (`new Function('')`) | it throws: the policy runs no code from strings | the function is built | `gateStringCode`: a start-up gate failed: the sandbox's view or its worker can run a string as code, which its policy forbids: this browser did not enforce it, so nothing of the app was sent | `'unsafe-eval'` in `script-src`; no `<meta>` |
+| `connect` | view | sealed (it provokes a refusal of the view's policy: strict mode's view inherits the host page's policy, which would report the canary to the host page's endpoint, and admits what the embedder's network options name) | requests a `blob:` URL of the view's own with `fetch` (the worker has no name that makes a request: the allowlist took them, and `allowlist` confirms it) | the request is refused, before it leaves the realm | the request is answered | `gateConnect`: a start-up gate failed: a request of the sandbox's view was not refused, though its policy forbids every connection: this browser did not enforce it, so nothing of the app was sent | `connect-src * data: blob:`; no `<meta>` |
+| `image` | view | sealed (it provokes a refusal of the view's policy: strict mode's view inherits the host page's policy, which would report the canary to the host page's endpoint, and admits what the embedder's network options name) | loads a `data:` image (an empty SVG) | the image's `error` event | its `load` event | `gateImage`: a start-up gate failed: the sandbox's view loaded an image its policy forbids: this browser did not enforce it, so nothing of the app was sent | `img-src * data: blob:`; no `<meta>` |
+| `style` | view | sealed (it provokes a refusal of the view's policy: strict mode's view inherits the host page's policy, which would report the canary to the host page's endpoint, and admits what the embedder's network options name) | inserts a `<style>` of a text the policy does not admit by hash, for an element of its own | the element's computed colour is not the sheet's | it is the sheet's | `gateStyle`: a start-up gate failed: the sandbox's view applied a stylesheet its policy forbids: this browser did not enforce it, so nothing of the app was sent | `style-src 'unsafe-inline' blob:`; no `<meta>` |
+| `base` | view | sealed (it provokes a refusal of the view's policy: strict mode's view inherits the host page's policy, which would report the canary to the host page's endpoint, and admits what the embedder's network options name) | inserts a `<base href="http://gate.invalid/">` (a reserved name: nothing is requested) | the document's base URL is unchanged | it is the canary's | `gateBase`: a start-up gate failed: the sandbox's view took a <base> its policy forbids: this browser did not enforce it, so nothing of the app was sent | `base-uri *`; no `<meta>` |
+| `cookie` | view | sealed, strict | writes a cookie of a fixed name, for 5 seconds | the write throws, or the cookie is not kept | it is kept | `gateCookie`: a start-up gate failed: the sandbox's view kept a cookie, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent | none through the element: the environment check refuses a view that is not opaque first (`opaque`); test/unit/startup-gates.test.ts runs the canary |
+| `storage` | view, worker | sealed, strict | `localStorage` in the view, `indexedDB.open` in the worker | it throws | a store opens | `gateStorage`: a start-up gate failed: the sandbox's view or its worker opened a store, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent | none through the element: the environment check refuses a view that is not opaque first (`opaque`); test/unit/startup-gates.test.ts runs the canary |
+| `parent` | view | sealed, strict | reads its parent's document | the read throws: the parent is of another origin | the parent's document is read | `gateParent`: a start-up gate failed: the sandbox's view read its parent's document: this browser did not keep its frames apart, so nothing of the app was sent | none through the element: the environment check refuses a view that is not opaque first (`opaque`); test/unit/startup-gates.test.ts runs the canary |
+| `allowlist` | worker | sealed, strict | reads, right after the globals allowlist, every name of the worker's global and of its prototypes (what the allowlist prunes) | each is a name of the allowlist (sealed mode's has none that makes a request: no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` or `importScripts`), a prototype's `constructor`, or a constant | a name off the allowlist is still there | `gateAllowlist`: a start-up gate failed: the sandbox's worker still had a name off its globals allowlist after the allowlist ran: the guest's entry did not run, and no call was sent | a name off the allowlist given back between the allowlist and this gate (the worker's source with `fetch` put back) |
+<!-- generated:end -->
+
+What the text above left open:
+
+- **Which gates strict mode runs.** Its view runs the same bootstrap, but its document is a `srcdoc` of the host page's,
+  which inherits the host page's policy: a canary that provokes a policy (`raises`) would be refused, and reported to the
+  host page's endpoint, by a policy the library did not write, and strict mode's own policy admits what the embedder's
+  network options name. So those gates run in sealed mode only, and strict mode runs the ones that read the sandbox:
+  framing, cookie, storage, parent, and in the worker opaque, storage and the allowlist. The view tells which list is its own
+  by the version its document states (the served file states one, strict mode's view none); the host reads the verdicts
+  of its build's mode only, so no gate can end a healthy strict build.
+- **The view's origin is the environment check's.** The view's bootstrap checks its origin first (environment-check.ts,
+  the `origin` row, S74), before any gate, and ends the build with `environmentOrigin`; so the view runs no opaque gate,
+  and its cookie, storage and parent gates, which a view that is not opaque would trip, are reached only past a browser
+  whose origin reads opaque and is not: no mutant through the element provokes them, and the unit test runs them.
+- **Where the worker's gates run.** First in the prelude, right after the scope check: the canaries that need the
+  worker's own names (opaque, code from strings, storage) before the globals allowlist; the allowlist gate right after
+  it; then the verdicts are the worker's first message, and a failed gate throws there, so nothing after it in the
+  worker's script runs. The worker has no connect canary: a sealed worker's source names no request maker
+  (`test/unit/sealed-no-network-names.test.ts`), and needs none, since the allowlist took every one; what research 31
+  ran as the worker's "network names" gate is the allowlist gate, which checks that every name of the worker's global
+  and its prototypes is the allowlist's, in both modes, without naming the request makers it confirms are gone.
+- **The canaries' own violations.** Five view canaries and one of the worker's are refused by the file's policy and raise
+  a `securitypolicyviolation`. The realm takes one event per such gate, by its directive (`raises`), ahead of the
+  listener that reports violations, so a start dispatches no violation of the library's canaries (the view takes them
+  in its listener; the worker's prelude adds one, ahead of the bootstrap's, which reads through getters captured before
+  any guest code and leaves once it took them all). Under a second policy that refuses a canary too, its second event is
+  the policy check's finding, never a report of the guest's: in the view by its text (step 3.6); in the worker the same
+  policies are the view's, which the check saw first.
+- **What the browser logs.** Every engine logs each refusal a canary provokes to its developer console (four to seven
+  lines a sealed start; no page script reads them, the element's `violation` events carry none). The design did not
+  foresee it, and step 3.6's per-directive canaries add more; the realistic host's and the package's specs take exactly
+  those lines out of their quiet-console checks (`test/e2e/startup-canaries.ts`).
+- **No canary reaches the network.** Every canary's URL is `data:`, a `blob:` URL of the view's own (its one `fetch`,
+  `connectCanary`, which class E-net's scan lists), or
+  `http://gate.invalid/` as a base URL, which requests nothing; the spec records every request of a start, under the
+  library's file and under a file with no `<meta>`, and finds none but the page's and the file's.
+- **Cost.** Once per build, bounded by `LOAD_TIMEOUT_MS` (no constant of its own: a gate that never answers leaves the
+  view silent, and the build ends as the document that did not answer). With the wait for the worker's verdicts, a page's
+  later build went from 35, 67 and 38 ms to 41, 74 and 31 ms from insertion to `ready` (Chromium, Firefox, WebKit;
+  2026-11-20, medians of 12, load average 3.9; docs/API.md#registering-the-element). Not compared in one page: there is
+  no build without the gates to compare with.
+- **The mutants.** A mutated file states the library's version (a tool that rewrote the file leaves it so) and is served
+  where the check of the file cannot read it. "F framed without `sandbox`" is the host page's own code keeping the
+  attribute off the element's frame, and "the worker's allowlist step skipped" is the page's code giving the worker
+  `fetch` back between the allowlist and its gate: a host page's script reaches the element's members
+  ([01](01-one-element-one-app.md#what-leaves-the-element)), so each precondition is one the test makes.
 
 ## A thinner host
 
@@ -490,13 +853,13 @@ own name; `viewScriptHash()` there is strict mode's.
 - The file as it will ship: research 28's spike ran the library's per-build wrapper as a served file, and research 31
   a fixture of this design with no bundle of the library's: its guest loads reached the browser directly, not through
   the renderer, the cut of CSS URLs or the view's `submit` handling.
-- The policy check in the library's bundle, with no time limit of its own on a loaded machine; and a form canary that
+- The policy check on an `https:` host page and in a page that is hidden (a tab in the background), and a form canary that
   leaves the view standing on Chromium.
-- The worker's gates and its half of the check in a worker made from the app's source.
+- The worker's gates in a worker made from the app's source (its half of the check is the view's canary worker:
+  [above](#what-the-policy-check-provokes)).
 - The Reporting API (`report-to`) on Chromium, whose positive control failed; downloads on Firefox and WebKit, the
   same.
-- The check of the file: its cost, the digest's comparison, a server that answers it and the frame's navigation
-  differently, and a host page's `connect-src` and Service Worker in its path.
+- The check of the file in Safari, and on a network with latency (its cost was measured on loopback: step 3.3).
 - Extensions on Firefox, WebKit and Safari; Tauri and Capacitor; Electron beyond its defaults (research 34 measured a
   browser's `file:` page, a Chromium extension and Electron 45).
 - The library, with an extension installed, against `chrome-extension:` URLs.

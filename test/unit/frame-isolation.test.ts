@@ -32,8 +32,9 @@ describe('every frame of a sandbox goes through setWrapperFrameIsolation', () =>
             if (frames > 0) made[file] = { frames, isolated: [...text.matchAll(/\bsetWrapperFrameIsolation\(/g)].length };
         }
         const sandbox = Object.entries(made).filter(([file]) => !(file in NOT_A_SANDBOX_FRAME));
-        // the element's two wrapper frames (the view's, and cooperative and worker mode's) and the bridge's frame: the scan sees them (a positive control)
-        expect(sandbox.map(([file, counts]) => [file, counts.frames])).toEqual([['src/host.ts', 1], ['src/lib/bridge-frame.ts', 1], ['src/lib/network-host.ts', 1]]);
+        // the element's frames (the served file's, sealed mode's view; strict mode's srcdoc wrapper; cooperative and worker
+        // mode's wrapper) and the bridge's frame: the scan sees them (a positive control)
+        expect(sandbox.map(([file, counts]) => [file, counts.frames])).toEqual([['src/host.ts', 2], ['src/lib/bridge-frame.ts', 1], ['src/lib/network-host.ts', 1]]);
         for (const [file, counts] of sandbox) expect(counts.isolated, file).toBeGreaterThanOrEqual(counts.frames);
         for (const file of Object.keys(NOT_A_SANDBOX_FRAME)) expect(Object.keys(made), `${file} still makes a frame, or leaves the list`).toContain(file);
     });

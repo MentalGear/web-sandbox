@@ -1,3 +1,4 @@
+// @vitest-environment-options {"unitFetch":"refuse"}
 import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -31,7 +32,7 @@ afterEach(() => {
 /** The bootstrap script of the guest document the element writes for `config` (cooperative mode's, or worker mode's frame's). */
 async function guestBootstrapOf(config: Record<string, unknown>): Promise<string> {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     startWith(el, config);
@@ -251,9 +252,15 @@ describe('the element ends the sandbox on a refusal, by its own table', () => {
         expect(host).toContain('Object.entries(ENVIRONMENT_CHECKS).map(([id, row]) => [id, reasonText(row.reason)])');
     });
 
-    it('listens in every mode: a strict build installs the listener too, and announces nothing', () => {
-        expect(host).toContain('this._listenForAnnouncement(iframe, prepared.network ? prepared.network.bridgeFrame : null, prepared.strictInit === null);');
-        expect(host).toContain('if (!announces || !guestWindow || event.source !== guestWindow) return;');
+    it("listens in every mode: a strict or sealed build installs the listener too, and takes the view's announcement there, never a guest's port", () => {
+        expect(host).toContain("this._listenForAnnouncement(iframe, prepared.network ? prepared.network.bridgeFrame : null, prepared.strictInit === null ? 'guest' : 'view');");
+        // the refusal is heard first, in every mode; then a view build hands the message to the view's announcement alone
+        const refusal = host.indexOf('if (data.type === ENVIRONMENT_REFUSED_TYPE) {');
+        const view = host.indexOf("if (announcer === 'view') {\n                this._onViewAnnouncement(iframe, event, gen);\n                return;\n            }");
+        const guest = host.indexOf('if (!guestWindow || event.source !== guestWindow) return;');
+        expect(refusal).toBeGreaterThan(0);
+        expect(view).toBeGreaterThan(refusal);
+        expect(guest).toBeGreaterThan(view);
     });
 });
 
@@ -264,7 +271,7 @@ describe('the element refuses to build on a cross-origin isolated host page, bef
 
     const build = async (config: Record<string, unknown>) => {
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         const events: { type: string; reason: string | null }[] = [];

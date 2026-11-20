@@ -168,7 +168,7 @@ describe('C-1: every RPC frame is built from bounded parts at the sender, and ch
         broker.expose('n'.repeat(257), () => 1);
         broker.handleMessage(request(1, 'n'.repeat(257)));
         expect(frames[0].code).toBe('UNKNOWN_METHOD');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const methods = (length: number) => ({ methods: { ['n'.repeat(length)]: () => 1 } });
         expect(() => (document.createElement('web-sandbox') as any).start({}, methods(257))).toThrow(TypeError);
         expect(() => (document.createElement('web-sandbox') as any).start({}, methods(256))).not.toThrow();
@@ -352,7 +352,7 @@ describe('M-2: the calls the guest initiates have a per-second budget, in the gu
     // broker of an older bootstrap, or delivery bunched up) are answered BUSY there.
     function hostWithPort(methods: AppSetup['methods']) {
         realPlatform();
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
@@ -394,7 +394,7 @@ describe('M-2: the calls the guest initiates have a per-second budget, in the gu
 
     it("both ends take the budget from one place, the element's config: the guest's bootstrap carries the host's values", () => {
         realPlatform();
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
@@ -410,7 +410,7 @@ describe("L-4: guest lines the host's window drops are announced in 'sandbox-log
     it("one 'source: host' warn line per environment, when the host first drops guest lines", () => {
         realPlatform();
         vi.spyOn(performance, 'now').mockImplementation(() => 1000);
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
@@ -440,7 +440,7 @@ describe("L-4: guest lines the host's window drops are announced in 'sandbox-log
 describe('L-1: re-inserted from a terminated listener after a refused build, the element is terminated, not idle', () => {
     it('an entry the files no longer hold', async () => {
         realPlatform();
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         const slot = document.createElement('div');
@@ -467,7 +467,7 @@ describe('L-1: re-inserted from a terminated listener after a refused build, the
 describe("L-2: a call whose arguments' getter ends the environment settles", () => {
     function loadingElement() {
         realPlatform();
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
         document.body.appendChild(el);
@@ -573,7 +573,7 @@ describe('M-4: a valid URL is reported in full in the fetch record, up to the UR
 describe("M-2: callLimits, the call budget's option (the owner's name)", () => {
     function element() {
         realPlatform();
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const created = () => {
             const el = document.createElement('web-sandbox') as any;

@@ -1,3 +1,4 @@
+import { withoutStartupCanaries } from './startup-canaries';
 import { test, expect, ORIGIN, buildOfMode } from './fixture';
 import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { waitInView, inFrames } from './strict-view';
@@ -57,11 +58,18 @@ async function quietBaseline(host: RealisticHost) {
     return { violations: await host.cspViolations(), reports: (await host.hits()).reports.length, consoleErrors: [...host.consoleErrors] };
 }
 
+const WEBKIT_UNKNOWN_FLAG = "Error while parsing the 'sandbox' attribute: 'allow-orientation-lock' is an invalid sandbox flag.";
+
 async function expectQuiet(host: RealisticHost, baseline: Awaited<ReturnType<typeof quietBaseline>>, label: string) {
     await host.page.waitForTimeout(500);
     expect(await host.cspViolations(), covering('trustedTypesRequirement', `${label}: the library's own writes give the host page no securitypolicyviolation event`)).toEqual(baseline.violations);
     expect((await host.hits()).reports.length, covering('trustedTypesRequirement', `${label}: nor a CSP report to the page's report-uri`)).toBe(baseline.reports);
-    expect(host.consoleErrors, covering('trustedTypesRequirement', `${label}: nor a console error`)).toEqual(baseline.consoleErrors);
+    // WebKit does not know `allow-orientation-lock`, which the served file's view carries in its static attribute (design 03,
+    // "The sandbox flags"), and logs it as invalid while it applies the others: the one line of the file's own markup
+    // and sealed mode's start-up gates refuse their canaries under the file's own policy, which every engine logs: the
+    // lines of those canaries alone (startup-canaries.ts)
+    const errors = withoutStartupCanaries(host.consoleErrors.filter(line => line !== WEBKIT_UNKNOWN_FLAG));
+    expect(errors, covering('trustedTypesRequirement', `${label}: nor a console error`)).toEqual(baseline.consoleErrors);
     expect(await host.ttDefaultCalls(), covering('trustedTypesDefault', `${label}: the host's Trusted Types default policy is never asked for a string of the library's`)).toEqual([]);
     expect(await host.reportedErrors(), covering('hostRealmGlobals', `${label}: the host's error reporter sees no error or rejection of the library's host code`)).toEqual([]);
     expect(host.pageErrors, covering('hostRealmGlobals', `${label}: nor an uncaught exception`)).toEqual([]);
@@ -233,6 +241,60 @@ test.describe('the view modes: sealed (the default) and strict', () => {
             } finally {
                 await sibling.stop();
             }
+        });
+    }
+});
+
+test.describe("sealed mode's check of the served file on the production host (design 03, \"The check of the file\")", () => {
+    test.use({ build: 'default' });
+
+    test("the check's request goes past the app's fetch wrapper, carries no cookie, token or referrer, and the app's Service Worker answers it; the frame's navigation it never answers", async ({ sandbox, browserName }) => {
+        const host = await RealisticHost.open(sandbox, { mode: 'sealed', documentAt: 'api' });
+        const worker = await ownRequestControl(host, 'check-control', browserName);
+        await host.hits(true);
+        expect(await host.embed('sealed', { guest: 'return { ran: true };' }), covering('hostRealmGlobals', 'the library\'s file, checked: ready')).toEqual(READY);
+        const hits = hitsNamed((await host.hits()).api, 'sealed-document.html');
+        // the frame's navigation reaches the server (no Service Worker answers an opaque frame's navigation); the check's
+        // request does too, unless the cache-first worker answered it
+        const navigations = hits.filter(hit => hit.headers['sec-fetch-dest'] === 'iframe');
+        expect(navigations, covering('serviceWorker', "the frame's navigation is never the Service Worker's")).toHaveLength(1);
+        const checks = hits.filter(hit => hit.headers['sec-fetch-dest'] !== 'iframe');
+        expect(checks, covering('serviceWorker', "the check's request, from the network the first time (through the worker where it controls the page)")).toHaveLength(1);
+        const check = checks[0]!.headers;
+        expect(check.authorization, covering('hostRealmGlobals', "the app's fetch wrapper, installed after the library, never sees the check's request")).toBeUndefined();
+        expect(check.cookie, covering('hostRealmGlobals', 'the request carries no cookie of the host site')).toBeUndefined();
+        expect(check.referer, covering('hostRealmGlobals', 'nor the host page\'s URL')).toBeUndefined();
+        if (worker.controlled) await expectServiceWorkerLog(host, 'sealed-document.html', ['network']);
+    });
+
+    test("a connect-src that does not admit documentUrl: no check, a violation on the page per build that asks, and the build runs", async ({ sandbox }) => {
+        const host = await RealisticHost.open(sandbox, { mode: 'sealed', directives: (base) => ({ ...base, 'connect-src': ['https://api.example'] }) });
+        const before = (await host.cspViolations()).length;
+        expect(await host.embed('sealed', { guest: 'return { ran: true };' }), covering('cspFetch', 'the build runs without the check')).toEqual(READY);
+        const added = (await host.cspViolations()).slice(before);
+        expect(added.map(line => line.split(' ').slice(0, 2).join(' ')), covering('cspFetch', 'the refused request is one connect-src violation on the page, naming documentUrl')).toEqual([`connect-src ${ORIGIN}/dist/sealed-document.html`]);
+    });
+});
+
+// The production app's site-wide policy, put on the served file's response as a site-wide header puts it on every path
+// (design 03, "The policies in force"), from another origin with no CORS, so the view's policy check decides.
+test.describe("sealed mode under the site's policy on the served file's response (design 03, \"The policies in force\")", () => {
+    test.use({ build: 'default' });
+    const SITE_POLICY = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; report-uri REPORT";
+    const cases = [
+        ['content-security-policy-report-only', 'viewCspReportOnly', 'report-only: the view sees it, and the build ends before anything of the app is sent'],
+        ['content-security-policy', 'documentSilent', "enforced: it refuses the file's guard and the view's bootstrap, so no view runs"],
+    ] as const;
+    for (const [header, reason, what] of cases) {
+        test(`${header}: ${what}`, async ({ sandbox, page }) => {
+            const host = await RealisticHost.open(sandbox, { mode: 'sealed', fileHeaders: { [header]: SITE_POLICY } });
+            await host.hits(true);
+            await host.embed('sealed', { guest: "sandboxView.render('<p>HOSTGUEST-render</p>'); return { ran: true };" });
+            await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents.at(-1)), { timeout: 15000 }).toEqual({ type: 'terminated', reason: TERMINATION_REASONS[reason].text });
+            expect(await host.sandbox.logs(), covering('fileHeaders', 'nothing of the guest ran')).not.toContainEqual(expect.stringContaining('HOSTGUEST'));
+            await page.waitForTimeout(1000); // the reports of the canaries' refusals, sent as they happened
+            const reports = (await host.hits()).reports.map(report => JSON.stringify(report));
+            expect(reports.filter(report => /HOSTGUEST|HOST-SESSION-TOKEN/.test(report)), covering('fileHeaders', 'no report carries guest text or the app\'s state')).toEqual([]);
         });
     }
 });

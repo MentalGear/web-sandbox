@@ -26,30 +26,146 @@ leaves to you, read the [threat model](THREAT-MODEL.md).
 
 ## Registering the element
 
-<!-- describes: api:defineWebSandbox sig:8e1b -->
+<!-- describes: api:defineWebSandbox sig:eb5d -->
 ```ts
 import { defineWebSandbox } from 'web-sandbox';
 
-defineWebSandbox();                  // <web-sandbox>
-defineWebSandbox('my-sandbox');      // or a tag name of your own (instead, not as well)
+defineWebSandbox({ documentUrl: '/static/sealed-document.html' });                        // <web-sandbox>
+defineWebSandbox({ tagName: 'my-sandbox', documentUrl: '/static/sealed-document.html' }); // or a tag of your own (instead, not as well)
 ```
+
+Sealed mode's view is a static file the package ships, `sealed-document.html`: the package exports it as
+`web-sandbox/sealed-document.html` (`dist/sealed-document.html`). Serve it unchanged, from the origin that serves the
+library (copy it into the directory your site serves static files from), and give its URL once, here: every element of
+the page frames it.
+
+- **Where it is resolved.** A relative `documentUrl` is resolved against the document's own URL (`document.URL`), never
+  its base URL: a `<base>` in the page, which injected markup can add without any script, does not move it.
+- **What it may be.** `http:` or `https:`, on any host page; or else a URL of the host page's own origin (its scheme,
+  host and port) where that origin, as the page reads it (`self.origin`), is neither opaque nor a browser extension's:
+  an Electron app's `file:` page or an app shell's own standard scheme (such as Electron's `app://bundle` registered as
+  `standard` and `secure`) can serve the file beside the page. A browser's `file:` page (its origin reads `"null"`,
+  where the file's guard cannot tell whether its frame is sandboxed), a sandboxed frame, a `data:` page and an
+  extension's page name an `http(s)` copy of the file instead (sent with `Access-Control-Allow-Origin` for the check of
+  the file to read it). No user name, password or fragment; a query and any path are yours (a URL that changes with the
+  library's version keeps an old copy out of a cache). Anything else throws a `TypeError` that names the rule. On a
+  scheme whose requests the page's `fetch` cannot make (a browser refuses some for a `file:` page), there is no check of
+  the file, as for another origin without CORS.
+- **Once.** A second definition of the same tag with the same `documentUrl` does nothing, and with another one throws.
+- **Who is trusted with it.** Whoever answers `documentUrl` receives every app's files, its ports and, through them, the
+  reach of its host methods: the host that serves it is trusted as the host of the library's own script is. On the origin
+  that serves the library it adds no one.
+- **The host page's policy** must admit it in `frame-src` ([Host page policy](#host-page-policy)).
+- **One load per build.** The element frames the file once per build (`start()`, `reset()`, an insertion), in its shadow
+  root, with no referrer and the flags of the app's grants; a second load of that frame ends the build. The view speaks
+  first: the element posts its ports only to the window that announced itself from the first frame of its frame, so a
+  page at `documentUrl` that is not the file receives none, and the build ends with `the document at documentUrl did not
+  answer …` within `LOAD_TIMEOUT_MS`. Start-up, from insertion to `ready` with the file in the browser's cache, measured
+  2026-11-19 on a shared 4-core machine (medians of 24 starts, two runs): Chromium 159 31 and 37 ms, Firefox 159 64 and 70 ms,
+  WebKit 27.2 36 and 37 ms, against 34, 64 and 33 ms with the view as a `srcdoc` document.
+- **The check of the file.** Before it frames the file for the first time, the element requests `documentUrl` itself,
+  where it can read the answer (the page's own origin, or a server that allows the read with CORS), and compares the
+  whole file with the one the library was built with. A missing file or one that is not `text/html`, other bytes (a dev
+  server's script, a minifier, a bundler that processes HTML, another version's copy, an app's own page), and a
+  `Content-Security-Policy`, `Content-Security-Policy-Report-Only` or `X-Frame-Options` header on it (or a
+  `frame-ancestors` in either policy) each end the build with its own reason ([`terminated` reasons](#terminated-reasons)), and
+  nothing is framed. Other headers pass (`Cross-Origin-Resource-Policy` and `Cross-Origin-Embedder-Policy` among them,
+  which an embedder policy of the page's needs on Firefox and WebKit). The answer is kept for the page: one request,
+  however many elements build; a finding refuses every later build until the page loads again. Where the answer cannot
+  be read (another origin without CORS, a `connect-src` of the page's that does not admit `documentUrl`, a network
+  failure) there is no check, the build goes on, and the next build asks again; such a `connect-src` raises one
+  violation on the page per build that asks, so admit `documentUrl` there too. The request carries no cookie, no
+  referrer and no header of the page's: it is made with `fetch` as the library found it when it was loaded, so a `fetch`
+  wrapper of the app's installed later does not see it. One installed before the library is the page's `fetch` as far as
+  the library can tell, and adds what it adds: a wrapper that puts the user's token on every request sends it to
+  `documentUrl`'s host, which is trusted with the app already. Load the library before such a wrapper, or have the
+  wrapper leave `documentUrl` alone. A Service Worker of the page's whose scope holds `documentUrl` can answer the
+  request, and what it answers is what is checked (a page of its own ended the build with the reason for other bytes).
+  Its cost is one request and one SHA-256 of the file per page, before the first frame, bounded by `LOAD_TIMEOUT_MS`
+  (a check that has not answered by then ends the build as the document that did not answer). Measured 2026-11-20 on a
+  4-core machine, loopback, from insertion to `ready` (medians of 12, two runs, the second on an idle machine), a page's
+  first build with a cold and a warm cache against a later build, which makes no check: Chromium 159 41 and 42 ms against
+  35 ms, then 36 and 33 against 28; Firefox 159 74 and 77 against 67, then 56 and 50 against 45; WebKit 27.2 90 and 82
+  against 38, then 46 and 48 against 26. With a cacheable file, Chromium's frame took the check's response from the
+  cache (one request reached the server); Firefox and WebKit requested the file again for the frame (two).
+- **The start-up order and gates.** The view announces itself with the version its file states (the file's digest,
+  which the check of the file compares too) and the verdicts of its start-up gates; a view of another version, or with a
+  failed gate, is given nothing, and the build ends with its reason. The guest's worker runs gates of its own before the
+  entry, and the build is `ready`, and sends the calls that waited, only once they held: a failed gate stops the worker
+  before the entry and ends the build, and no call reaches it. The gates are canaries that confirm the browser enforces
+  the file's policy, the view's sandbox and the worker's allowlist ([design 03](design/03-served-document.md#the-start-up-gates)):
+  defence in depth after those constructions, never in their place, and run in sealed mode where they provoke the file's
+  policy, since strict mode's view inherits your page's policy. No canary reaches the network, and the element dispatches
+  no `violation` for one; but the browser logs each refusal it makes to its developer console, which no page script can
+  read or silence: a sealed start shows four to seven such lines there (a `blob:` connection, a `data:` image, an
+  inline style, a `<base>` to `http://gate.invalid/`, and on Firefox the code-from-string canaries), all naming the file's
+  own policy. Their cost, and the wait
+  for the worker's verdicts, are once per build and bounded by `LOAD_TIMEOUT_MS`. Measured 2026-11-20 on a 4-core
+  machine (load average 3.9), loopback, from insertion to `ready` for a later build of a page (the file checked, the
+  check kept), medians of 12: Chromium 159 41 ms, Firefox 159 74 ms, WebKit 27.2 31 ms, against 35, 67 and 38 ms
+  before them on the same machine (the first run above).
+- **The policy check.** A `Content-Security-Policy` or `Content-Security-Policy-Report-Only` header on the file's
+  response (a site-wide one reaches it too) applies to the view and its worker beside the file's own policy, and would
+  report the view's loads to its endpoint. So, before it announces itself, the view makes per directive of its policy a
+  load the policy admits (a `blob:` URL of its own, and a worker of its own) and one it refuses (a fixed URL on the
+  reserved name `canary.invalid`, in `http:` and `https:`), and reads every violation its document hears by the policy
+  text and disposition it carries ([design 03](design/03-served-document.md#what-the-policy-check-provokes)): one of
+  another policy ends the build with `viewCsp` or `viewCspReportOnly`, before anything of the app is sent, or whenever
+  it comes after. Where the check of the file can read the answer it names the header first; an enforced header that
+  refuses the view's script stops the view before it runs (`the document … did not answer`). No canary reaches the
+  network, and the element dispatches no `violation` for one. What such an endpoint receives before the build ends are
+  the canaries' own reports, library strings only, with no referrer; the check does not see a header that names
+  `canary.invalid` itself, any `form-action`, or `object-src` or `script-src-attr` alone, and under those no load of the
+  guest's exists to report. The check makes no `<object>`: one is loaded only while it is rendered, so a sandbox in a
+  part of your page that is not shown (`display: none`) would never see it refused, and the check waits only for loads
+  that start wherever the sandbox is. The browser logs each refusal to its developer console: a sealed start shows,
+  besides the gates' lines,
+  one or two per refused canary (`script`, `style`, `image`, `font`, `media`, `connect`, `frame` and `base`,
+  each to a `*.canary.invalid` host, and a `data:` worker), all naming the file's own policy, and on Firefox one for
+  the check's own font, which its font sanitizer rejects. Its cost is once per
+  build, bounded by `LOAD_TIMEOUT_MS`, with no time limit of its own. Measured 2026-11-20 on a shared 4-core
+  machine, loopback, from insertion to `ready` on a new page each (medians of 24, alternating with a file whose check
+  provokes nothing; three runs): Chromium 159 98 to 105 ms against 103 to 113, Firefox 159 157 to 167 against 144 to
+  151, WebKit 27.2 88 to 108 against 103 to 126: on Firefox 10 to 16 ms, on the others within the spread of a first start.
+  With three cores kept busy, 200 starts per engine were all `ready`, and none dispatched a `violation`.
+- **In the build with the network modes** it may be left out (`defineWebSandbox({})`): strict, cooperative and worker
+  mode keep documents of their own, and `start()` of a sealed app on such an element throws.
+
+<a id="define-refusals"></a>**`defineWebSandbox()`'s refusals.** Each is a `TypeError` whose message is
+`[Sandbox] defineWebSandbox(): ` and the text below; nothing is defined or stored.
+
+<!-- generated:begin define-refusals -->
+| Message | Cause |
+| :--- | :--- |
+| `defineWebSandbox() takes one object, { tagName, documentUrl }, whose tagName is a string when given` | `defineWebSandbox()` was given something other than an object, or a `tagName` that is not a string. |
+| `documentUrl is required: the URL where the page serves sealed-document.html, the view of sealed mode (see docs/API.md#registering-the-element)` | In the default build, `defineWebSandbox()` was given no `documentUrl`: sealed mode, the only mode of that build, has no view without it. |
+| `documentUrl is refused: …` | `documentUrl` breaks one of its rules, which the message names after the colon: a string or a `URL`, resolved against the document's own URL (`document.URL`, never a `<base>`); on `http:` or `https:`, or else of the host page's own origin (its scheme, host and port) where that origin, as the page reads it (`self.origin`), is neither opaque nor a browser extension's: a browser's `file:` page, a sandboxed frame, a `data:` page and an extension's page name an `http(s)` copy of the file; no user name or password, and no fragment. A query and any path are the embedder's. |
+| `the element is already defined with another documentUrl` | The tag is already defined by this element with another `documentUrl` (or without one). A second definition with the same one does nothing. |
+<!-- generated:end -->
 
 <!-- generated:begin api-define -->
 ```ts
-function defineWebSandbox(tagName?: string): typeof WebSandbox
+function defineWebSandbox(definition: WebSandboxDefinition): typeof WebSandbox
 ```
 
-Registers `WebSandbox` as a custom element under `tagName` and returns the class. Importing the package
-registers nothing, so you pick the name. Calling it again with the same name does nothing.
+Registers `WebSandbox` as a custom element and returns the class. Importing the package registers nothing, so you name
+the file sealed mode's view is served from, and may pick the tag.
+
+The definition is read and checked whole before anything is defined. A second call for a tag this element already
+has does nothing when its `documentUrl` is the same, and throws when it differs. In a build with the network modes an
+element registered without `documentUrl` runs those modes only: `start()` of a sealed app throws.
 
 **Parameters**
 
-- `tagName`: The tag name; `'web-sandbox'` when left out. The class can be registered under one name only.
+- `definition`: The tag name and the served file's URL; see `WebSandboxDefinition`.
 
 **Returns:** The `WebSandbox` class.
 
-**Throws:** An `Error` if the name is already defined by another element; the browser's `NotSupportedError` for a second,
-different name of this class, and its `SyntaxError` for a name that is not a valid custom element name.
+**Throws:** A `TypeError` for a definition that is not an object or whose `tagName` is not a string, for a missing
+`documentUrl` (in the default build), for one that breaks its rules (the message names the rule), and for a tag this
+element already has with another `documentUrl`; an `Error` if the name is already defined by another element; the
+browser's `NotSupportedError` for a second, different name of this class, and its `SyntaxError` for a name that is not
+a valid custom element name.
 <!-- generated:end -->
 
 ---
@@ -105,8 +221,8 @@ The package has two builds, chosen by one build flag that is off by default
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 50 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 68 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 56 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 74 modules of `src/` |
 <!-- generated:end -->
 
 - **The default build is sealed mode alone.** It is what `bun run build:lib` writes and what the package is as
@@ -545,8 +661,11 @@ sandbox.start({ html, entry: 'main.js', files }, { links: ['https://docs.example
   every other `href` is inert, as it is without `links`.
 - **The click is the request.** On the user's click on a marked link, or on anything inside it but a form control, a
   label or a summary, the view sends your page the link's index in the list, and the element calls
-  `window.open(url, '_blank', 'noopener,noreferrer')` with your own copy of that URL, in the task of that message, so
-  the browser's popup blocker allows it for the click. Enter on a focused link is such a click; a middle click
+  `window.open(url, '_blank', 'noopener,noreferrer')` with your own copy of that URL, in the task of that message where
+  your page already reads the click's activation as its own (`navigator.userActivation`), so the browser's popup blocker
+  allows it for the click. The view is another process on Chromium, and its message can arrive before the browser has
+  told your page of the click: the element then waits until the page reads the activation, at most 500 ms
+  (`LINK_ACTIVATION_WAIT_MS`), and asks then. Enter on a focused link is such a click; a middle click
   (`auxclick`), a script's `click()` and a dispatched event are not. The app's worker has nothing to call: no method of
   the guest's opens a link. The view still cancels the click, so the view itself navigates nowhere.
 - **One request a user action.** While a key is held, no click is a request: the first press of Enter on a focused
@@ -1071,11 +1190,11 @@ type FetchRecord = {
 | `the guest stopped responding (watchdog)` | `watchdogTimeout` expired. |
 | `the guest entry failed to start` | Strict and sealed mode: the entry threw or did not parse. |
 | `the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)` | The frame loaded but the library's startup script (strict mode's view bootstrap, cooperative and worker mode's bootstrap) never checked in: the host page's policy refused it. See [Host page policy](#host-page-policy). |
-| `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src, or a Cross-Origin-Embedder-Policy the engine applies to it; see docs/API.md#host-page-policy)` | Strict, sealed and worker mode: the worker's script could not be loaded at all; nothing of the guest's ran. Worker mode is never `ready` then. |
+| `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src, or a Cross-Origin-Embedder-Policy the engine applies to it; see docs/API.md#host-page-policy)` | Strict, sealed and worker mode: the worker's script could not be loaded at all; nothing of the guest's ran. The build is never `ready` then: worker mode's frame announces the refusal, and strict and sealed mode wait for the worker's start-up verdicts, which a worker that was never loaded cannot send. |
 | `the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)` | The host page enforces Trusted Types and its `trusted-types` directive does not name `web-sandbox`, also when the host page's own default policy takes the element's strings (the view and worker mode's frame need the policy themselves). |
 | `the sandbox document's origin is not opaque: it is not running in the frame the library built` | A bootstrap of the library's (strict mode's view, the cooperative guest's document, worker mode's frame, the fetch bridge's frame) read an origin other than `'null'`: its document is not in a frame the library sandboxed as built. It stayed inert, so nothing of the guest's ran. |
 | `the sandbox document is not an about:srcdoc document: it is not the document the library built` | A bootstrap of the library's read a document URL other than `about:srcdoc`: its document is not the srcdoc the library wrote. It stayed inert, so nothing of the guest's ran. |
-| `the sandbox document's base URL is not about:blank: the host page's Content-Security-Policy must allow the library's <base> (base-uri must include about: or be omitted; see docs/API.md#host-page-policy)` | A bootstrap of the library's read a base URL other than `about:blank`: the host page's `base-uri` refused the `<base>` the library's wrapper sets, so the sandbox would have seen the host page's URL. It stayed inert, so nothing of the guest's ran. Allow `about:` in `base-uri`, or omit the directive (see [Host page policy](#host-page-policy)). |
+| `the sandbox document's base URL is not about:blank: the host page's Content-Security-Policy must allow the library's <base> (base-uri must include about: or be omitted; see docs/API.md#host-page-policy)` | A bootstrap of the library's read a base URL other than `about:blank`: the host page's `base-uri` refused the `<base>` the library's wrapper sets, so the sandbox would have seen the host page's URL. It stayed inert, so nothing of the guest's ran. Allow `about:` in `base-uri`, or omit the directive (see [Host page policy](#host-page-policy)). In sealed mode the view's base URL is the served file's own `<base>`, which the host page's policy does not reach: there the cause is an enforced `Content-Security-Policy` header on the file's response whose `base-uri` refuses it (the file's `<base>` comes before its `<meta>`); serve the file without that header (see [Registering the element](#registering-the-element)). |
 | `the host page is cross-origin isolated (COOP and COEP); a sandbox does not run there (see docs/API.md#host-page-policy)` | The host page reads `crossOriginIsolated === true` (it sends both `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`), and a guest never runs cross-origin isolated, on any engine. The element builds no frame (a bootstrap of the library's that reads it in its own document stays inert too), so nothing of the guest's ran. Serve the page that embeds a sandbox without COOP and COEP (see [Host page policy](#host-page-policy)). |
 | `the guest entry is not a registered JavaScript file` | Strict and sealed mode: `entry` names no registered JavaScript file. |
 | `the guest entry calls import() or a phase of it (import.source()), which loads nothing in strict and sealed mode: bundle its modules into the entry` | Strict and sealed mode: the entry's text holds `import` followed by `(` or `.` (after any whitespace and comments), in code, a string or a comment: an `import()`, or a phase of one (`import.source()`, `import.defer()`); a static import and `import.meta` do not compile in the worker's classic script. The worker's policy admits no module script, so an import could load nothing, and the host page's policy, which the worker inherits, would report the URL it named to the page's report endpoint; the build refuses the entry instead, and nothing of the guest's runs. Bundle the modules into the entry, and keep `import(` and `import.` out of its strings and comments. |
@@ -1084,10 +1203,32 @@ type FetchRecord = {
 | `the environment could not be built (…)` | Building the frame failed. |
 | `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
 | `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame (also before its first load, once the guest had checked in). |
-| `the guest frame announced itself again (it reloaded or rewrote its document)` | Cooperative and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
-| `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included). |
+| `the guest frame announced itself again (it reloaded or rewrote its document)` | Cooperative and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. Strict and sealed mode: the view announced itself a second time, or once its build was `ready` (its document reloaded or was rewritten, so its bootstrap ran again). |
+| `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time: its frame had not loaded (without `allow-scripts`: subresources included), or, in strict and sealed mode, the view had its ports (sealed mode) or had checked in (strict mode) and its check-in or its worker's start-up verdicts did not come. |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 | `the guest raised more uncaught errors or unhandled rejections in one second than their budget allows` | Worker, strict and sealed mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)). |
+| `the document at documentUrl did not answer: the file is missing, the server answers its path with another page, a header on it refuses the framing or the view's script, or the host page's frame-src does not admit it (see docs/API.md#registering-the-element)` | Sealed mode: no view announced itself from the first frame of the element's frame within `LOAD_TIMEOUT_MS`, or the frame loaded a document with no frame in it, or the view ran and its start-up gates or its policy check had not answered by then (they wait for the browser to refuse each canary, with no time limit of their own). From outside the frame the first causes look alike: the file is not at `documentUrl`, the server answers that path with another page (an app's fallback page), a header on the file refuses the framing (`X-Frame-Options`, `frame-ancestors`) or the view's script, or the host page's own `frame-src` does not admit `documentUrl` (see [Registering the element](#registering-the-element) and [Host page policy](#host-page-policy)). Where the element could read the file's answer, the check of the file names the first four causes instead (the reasons below); this reason is what is left where it could not: another origin that does not allow the read, a host page whose `connect-src` refuses the request, a network failure, or a server that answers the frame otherwise than the check. |
+| `the file at documentUrl is missing: the server answered with a status that is not 2xx (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the element's own request for `documentUrl` was answered with a status that is not 2xx. Nothing was framed. |
+| `the file at documentUrl is not served as HTML: its Content-Type is not text/html (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the element's own request for `documentUrl` was answered with a `Content-Type` that is not `text/html` (none counts as not HTML). Nothing was framed. |
+| `the file at documentUrl is not this version's sealed-document.html: its bytes differ from the library's. It is another version's, or a tool rewrote it (a dev server that inserts its client's script, such as Vite's; a bundler that processes HTML, such as webpack's HTML support or Parcel; a minifier; a CDN that rewrites pages), or a cache holds an old copy: serve the package's file unchanged (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: `documentUrl` answered with bytes that are not this version's `sealed-document.html`, compared whole, by their SHA-256. Every change counts: a script a dev server inserts, a minified or reformatted copy, a copy without the guard or whose view lost its `sandbox` attribute, an app's own page, another version's file. Nothing was framed. |
+| `the file at documentUrl is served with a frame-ancestors directive (in a Content-Security-Policy header): serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: a `Content-Security-Policy` or `Content-Security-Policy-Report-Only` header on the file has a `frame-ancestors` directive. Nothing was framed. |
+| `the file at documentUrl is served with an X-Frame-Options header: serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the file is served with `X-Frame-Options`, whatever its value. Nothing was framed. |
+| `the file at documentUrl is served with a Content-Security-Policy header, which the view would run under beside its own policy: serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the file is served with `Content-Security-Policy`, whatever its text: the view and its worker would run under it beside the file's own `<meta>` policy. Nothing was framed. |
+| `the file at documentUrl is served with a Content-Security-Policy-Report-Only header, which would report the view's loads to its endpoint: serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the file is served with `Content-Security-Policy-Report-Only`, whatever its text: the view's loads would be reported to its endpoint. Nothing was framed. |
+| `the file at documentUrl is another version's sealed-document.html: its view states another version than this library's, so it was given nothing. Serve the file of the package this page loads, at a URL that changes with the version (see docs/API.md#registering-the-element)` | Sealed mode: the view of the file at `documentUrl` announced itself with a version other than this library's (the digest of the file it was generated as, which the file states of itself), or with none. It received no port and nothing of the app. The check of the file names such a file `documentChanged` where it can read its bytes; this reason is what is left where it could not: another origin that does not allow the read, or a server that answers the frame otherwise than the check. |
+| `a start-up gate failed: the sandbox's worker has an origin, not an opaque one: this browser did not keep the sandbox sandboxed, so the guest's entry did not run` | Strict and sealed mode, a start-up gate ([design 03](design/03-served-document.md#the-start-up-gates)): the guest's worker read an origin other than `'null'` (the view's own origin is the environment check's: `environmentOrigin`). Defence in depth after the construction: the view is sandboxed by its own attribute, and its worker shares its origin. No guest code ran in that worker, and no call was sent to it. |
+| `a start-up gate failed: the sandbox's view is not a frame of a frame: it is not in the frame the library built, so nothing of the app was sent` | Strict and sealed mode, a start-up gate: the view's window is its parent, or its parent's parent: it is not a frame of the file or the wrapper. Nothing of the app was sent. |
+| `a start-up gate failed: the sandbox's view or its worker can run a string as code, which its policy forbids: this browser did not enforce it, so nothing of the app was sent` | Sealed mode, a start-up gate: `new Function('')` did not throw in the view or the worker, though the file's policy has no `'unsafe-eval'`. Nothing of the app was sent to that view, or no guest code ran in that worker. |
+| `a start-up gate failed: a request of the sandbox's view was not refused, though its policy forbids every connection: this browser did not enforce it, so nothing of the app was sent` | Sealed mode, a start-up gate: the view's `fetch` of a `blob:` URL of its own was answered, though the file's policy has `connect-src 'none'`. Nothing of the app was sent. |
+| `a start-up gate failed: the sandbox's view loaded an image its policy forbids: this browser did not enforce it, so nothing of the app was sent` | Sealed mode, a start-up gate: a `data:` image loaded in the view, though the file's policy admits only `blob:` images. Nothing of the app was sent. |
+| `a start-up gate failed: the sandbox's view applied a stylesheet its policy forbids: this browser did not enforce it, so nothing of the app was sent` | Sealed mode, a start-up gate: a `<style>` the file's policy does not admit by hash applied in the view. Nothing of the app was sent. |
+| `a start-up gate failed: the sandbox's view took a <base> its policy forbids: this browser did not enforce it, so nothing of the app was sent` | Sealed mode, a start-up gate: a `<base>` changed the view's base URL, though the file's policy has `base-uri 'none'`. Nothing of the app was sent. |
+| `a start-up gate failed: the sandbox's view kept a cookie, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent` | Strict and sealed mode, a start-up gate: the view wrote a cookie and read it back. Nothing of the app was sent. |
+| `a start-up gate failed: the sandbox's view or its worker opened a store, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent` | Strict and sealed mode, a start-up gate: `localStorage` in the view or `indexedDB.open` in the worker did not throw. Nothing of the app was sent to that view, or no guest code ran in that worker. |
+| `a start-up gate failed: the sandbox's view read its parent's document: this browser did not keep its frames apart, so nothing of the app was sent` | Strict and sealed mode, a start-up gate: the view read its parent's document. Nothing of the app was sent. |
+| `a start-up gate failed: the sandbox's worker still had a name off its globals allowlist after the allowlist ran: the guest's entry did not run, and no call was sent` | Strict and sealed mode, a start-up gate: after the worker's globals allowlist a name off it was still on the worker's global or its prototypes (in sealed mode the allowlist has no name that makes a request: `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `importScripts`). The worker's script stopped there: the entry did not run, and no call or `execute()` was sent to it. |
+| `the view of the file at documentUrl runs under a Content-Security-Policy that is not the file's own (a header on the file's response, which the view and its worker inherit beside the file's <meta>): serve the file with no Content-Security-Policy header (see docs/API.md#registering-the-element)` | Sealed mode, the policy check ([design 03](design/03-served-document.md#what-the-policy-check-provokes)): a violation in the view's document carried a policy text that is not the file's own `<meta>`, with the disposition `enforce`, or a load the `<meta>` admits was refused by another policy: an enforced `Content-Security-Policy` on the file's response (or a `<meta>` the file was changed to). Before the announcement nothing of the app was sent; a violation after it ends the build whenever it comes. Where the check of the file could read the answer, it names the header first (`documentCsp`). |
+| `the view of the file at documentUrl runs under a Content-Security-Policy-Report-Only header on the file's response, which would report the view's loads to its endpoint: serve the file without one (see docs/API.md#registering-the-element)` | Sealed mode, the policy check: a violation in the view's document had the disposition `report`: a `Content-Security-Policy-Report-Only` header on the file's response, whose endpoint receives the view's refusals. What it received before the build ended were the canaries' own reports, library strings only. Before the announcement nothing of the app was sent; a violation after it ends the build whenever it comes. Where the check of the file could read the answer, it names the header first (`documentCspReportOnly`). |
 <!-- generated:end -->
 
 Branch on `state` and the event, not on these texts. A reason names the problem, never a value: it is a fixed text
@@ -1112,17 +1253,18 @@ message names the option and what it takes. For the options it refuses as a whol
 | `html is longer than 262144 characters, the most the view renders at once: render the rest from the entry` | Strict and sealed mode: the app's `html` is longer than `VIEW_RENDER_MAX_LENGTH` (262144) characters, the most one render takes (the initial view is one). It is refused before anything reads it. Render the rest from the entry, in renders of that size. |
 | `links is refused: …` | The grant `links` breaks one of its rules, which the reason names after the colon: a list, of at most `MAX_LINKS` entries, each a string of at most 2048 characters that parses as a URL, has the scheme `https:`, has no user name or password and is equal to its own serialisation (`new URL(entry).href`), no two equal. Nothing of the list is kept. |
 | `the configuration could not be used (…)` | An option's rule failed on its value with an error that is not one of start()'s own refusals (each of which says the option and what it takes); the error's name follows, as in `(RangeError)`. |
+| `sealed mode's view is the served sealed-document.html, and this element was registered without documentUrl: pass it to defineWebSandbox() (see docs/API.md#registering-the-element)` | In a build with the network modes: `mode` is `'sealed'` or left out, and the element was registered without `documentUrl`. Sealed mode has no view but the served file; strict, cooperative and worker mode need none. |
 <!-- generated:end -->
 
 ---
 
 ## Lifecycle
 
-<!-- describes: lifecycle:states, lifecycle:transitions, api:SandboxState sig:204e8b0aa4b8 -->
+<!-- describes: lifecycle:states, lifecycle:transitions, api:SandboxState sig:204e249ba4b8 -->
 | State | Meaning |
 | :--- | :--- |
 | `idle` | No app yet (`start()` not called), or not in the document (constructed, or removed): no frame. An element with no app stays `idle` whatever is done to it. |
-| `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, and in strict mode, for the frame to load); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
+| `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, for the frame to load; in strict and sealed mode, for the view to announce itself and then check in, and for its worker's start-up gates to hold); in sealed mode a page's first build first waits for the check of the served file, and builds no frame until it answers ([Registering the element](#registering-the-element)); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
 | `ready` | The guest can be reached; `ready` was dispatched. In cooperative mode the guest document may still be loading. |
 | `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`, the view's longest operation), an integrity check or a failed build; `terminated` was dispatched. |
 
@@ -1142,10 +1284,16 @@ and resets the per-environment caps (log rate, violations). Listeners run synchr
 ### `ready` and the startup gate
 
 `ready` means the guest's startup script checked in: the bootstrap, the first script of the guest document (cooperative
-mode), announced its port; in worker mode the worker's frame announced it once its worker runs; in strict mode the
-view's bootstrap posted its check-in on the port only it holds. It does not wait for the guest's images or its own scripts, so `LOAD_TIMEOUT_MS`
+mode), announced its port; in worker mode the worker's frame announced it once its worker runs; in strict and sealed
+mode the view's bootstrap announced itself to the host page with the version its document states and its start-up
+gates' verdicts, the host page posted it its ports (only to the window that is the first frame of the element's frame,
+and only when the version is this library's and every gate held), the view posted its check-in on the port only it
+holds, and the guest's worker reported that its own gates held, before the entry ran (design 03,
+[the start-up order](design/03-served-document.md#the-start-up-order)). It does not wait for the guest's images or its own scripts, so `LOAD_TIMEOUT_MS`
 bounds only that check-in; a page with slow images, or one that never finishes its document, is `ready`. A frame
-that loaded but whose startup script never checked in was refused by the host page's policy, and the reason says so.
+that loaded but whose startup script never checked in was refused by the host page's policy, and the reason says so. In
+sealed mode a view that never announced itself, or a frame of `documentUrl` that holds no frame, ends with "the document
+at documentUrl did not answer", whose text lists what looks alike from outside the frame.
 The exception is a cooperative frame without `allow-scripts`: no script runs in it, so `ready` comes with the frame's load,
 and no guest script has run.
 
@@ -1694,7 +1842,7 @@ page in Chromium and Firefox, with no user activation (measured; cooperative mod
 
 ### Forms and the browser's autofill
 
-<!-- describes: view-forms, inherited-context sig:5378e193 -->
+<!-- describes: view-forms, inherited-context sig:5378fc24 -->
 
 A guest's form gets nothing of the browser's autofill or autocomplete, in strict and sealed mode, and the guest's worker
 receives from a control only what the user entered into that control ([research 29](research/29_autofill/README.md); the
@@ -1761,6 +1909,24 @@ asks the browser for anything your page's policy decides (see [Host page policy]
 `'iframe'` is not a mode; it starts nothing, like any value that is not a mode. [ADR-005](ADR-005-strict-mode.md),
 [ADR-008](ADR-008-sealed-mode.md)
 
+### Migrating to one app per element
+
+What changes for an embed written against `setConfig()`:
+
+| You have | Now | What to do |
+| :--- | :--- | :--- |
+| `setConfig(config)`, with `registerFiles()` before or after it | [`start(app, grants)`](#startapp-grants), once per element. The app is its own content (`html`, `entry`, `files`); the grants are everything you decide (`mode` and its options, `methods`) | split the config: what the app's author wrote goes in the first argument, what you allow in the second |
+| `expose(name, fn)` and `unexpose()` | `grants.methods`, copied when `start()` is called | give every host method to `start()` |
+| a second `setConfig()`, a `load()`, or other files, on the same element | an element runs one app; `reset()` builds that app again, and a second `start()` throws | make a new element for another app or other grants; `started` says whether an element has its app |
+| a config the element could not take ended with `terminated` | `start()` throws a `TypeError` and nothing is stored | catch it where you call `start()` |
+| `execute(code)` | only in the build with the network modes ([Builds](#builds)) | call a method the app publishes with `bridge.expose()`, or use that build |
+| a listener for `sandbox-log`, `violation`, `fileswritten`, `fileschanged` or `fetch` on an ancestor or on `window` | these events do not bubble | listen on the element, or in the capture phase |
+| `commitGuestWrites(paths)` | [`commitGuestWrites(writes)`](#commitguestwriteswrites-options) takes the values `listGuestWrites()` returned and commits all of them or none; it answers `false` when one is stale | list, check and commit the values; on `false`, list again |
+| a pending write's `content` as a `Uint8Array`, or a write posted or cloned as it is | `content` is a `GuestBytes`, which is not cloneable | `content.bytes()` for the bytes (post these), `text()`, `image()` to show a raster image, `save()` to let the user keep the file |
+| in the guest, `sandboxFiles.write(path, { content, type })` | refused with `INVALID_FILE`: a write's type is its path's | name the file by the type it has |
+| a `Blob` or a `File` among the arguments or the result of `call()` or of a host method, in either direction | refused (`ARGS_NOT_TRANSFERABLE`, `RESULT_NOT_TRANSFERABLE`), and so is a resizable `ArrayBuffer` | send the bytes (`await blob.arrayBuffer()`) |
+| `call<T>()` and `callWithTimeout<T>()` | both answer `Promise<unknown>` | narrow the result in your code: it is the guest's data |
+
 ### Migrating to sealed as the default
 
 What changes for an embed written when strict mode was the default:
@@ -1773,9 +1939,28 @@ What changes for an embed written when strict mode was the default:
 | no `mode`, with `scriptUnsafe: true` (which `execute()` needs) | refused: `start()` throws, nothing is stored, with the message `` scriptUnsafe runs strings as code, which sealed mode (the default) does not: set `mode: 'strict'`, in a build with the network modes (WEB_SANDBOX_NETWORK_MODES=1) ``; in TypeScript, a type error. Sealed mode runs only the app's `entry`: without `scriptUnsafe`, `execute()` does nothing | add `mode: 'strict'`, in a build with the network modes |
 | no `mode` (or `mode: 'strict'`), with `html` longer than 262144 characters (`VIEW_RENDER_MAX_LENGTH`) | refused in both modes: `start()` throws, nothing is stored, with the message `html is longer than 262144 characters, the most the view renders at once: render the rest from the entry` | render the rest from the entry, in renders of at most that size |
 | no `mode` (or `mode: 'strict'`), with `links` that break one of its rules | refused in both modes: `start()` throws, nothing is stored, with the message `links is refused: …` and the rule (see [Links](#links)) | list each URL as `new URL(url).href` spells it, `https:` and without credentials, at most `MAX_LINKS` of them |
+| no `mode`, in a build with the network modes, on an element registered without `documentUrl` (`defineWebSandbox({})`) | refused: `start()` throws, nothing is stored, with the message `sealed mode's view is the served sealed-document.html, and this element was registered without documentUrl: pass it to defineWebSandbox() (see docs/API.md#registering-the-element)` | serve the file and pass its URL to `defineWebSandbox()`, or name a network mode |
 | `mode: 'strict'`, `'cooperative'` or `'worker'`, in a build with the network modes | unchanged | nothing |
 | TypeScript that types a config with no mode as `StrictSandboxConfig` | `mode` is required there | add `mode: 'strict'`, or type it `SealedSandboxConfig` |
 | a host page policy that lists origins for the sandbox in `img-src`, `connect-src` and so on | sealed mode needs none of them | keep `blob:`; drop the origins if nothing else of the page needs them |
+
+### Migrating to the served document
+
+What changes for an embed written when sealed mode's view was a document the element wrote into your page
+([Registering the element](#registering-the-element) has each rule in full):
+
+| You have | Now | What to do |
+| :--- | :--- | :--- |
+| `defineWebSandbox()`, or `defineWebSandbox('my-sandbox')` | `defineWebSandbox({ tagName, documentUrl })`: one object. In the default build `documentUrl` is required, and anything else throws a `TypeError` that names the rule ([the refusals](#define-refusals)) | serve the package's `sealed-document.html` (`web-sandbox/sealed-document.html`, `dist/sealed-document.html`) from your site, unchanged, and give its URL once: `defineWebSandbox({ documentUrl: '/static/sealed-document.html' })` |
+| nothing to serve for the sandbox | sealed mode's view is that file, framed by its URL. The element compares it with the digest the library was built with where it can read it, and the view states its version; a file of another version, or a changed one, ends the build with its own reason | copy the file with every version of the package, to a URL that changes with the version, served as `text/html` |
+| a site-wide `Content-Security-Policy`, `Content-Security-Policy-Report-Only` or `X-Frame-Options` header | on the file's response it ends the build: the view and its worker would run under it, and its endpoint would receive their refusals (`the file at documentUrl is served with …`, or `the view of the file at documentUrl runs under …`) | serve the file's path without those headers; a `frame-ancestors` there must admit your page |
+| for sealed mode, the view bootstrap's hash in your page's `script-src`, `blob:` in its `worker-src`, the library's style hashes | your page's policy does not reach sealed mode's view, which runs under the file's own policy. It must admit `documentUrl` in `frame-src`; admitting it in `connect-src` too lets the element check the file before it frames it | add `documentUrl` to `frame-src` (and `connect-src`); keep the hashes only for strict mode ([Host page policy](#host-page-policy)) |
+| a build with the network modes, registered with no argument | an element registered without `documentUrl` runs the network modes only: `start()` of a sealed app throws | pass `documentUrl` if the page starts sealed apps |
+| a host page that is not on `http:` or `https:` (a `file:` page, an extension's page, an app shell's own scheme) | `documentUrl` is `http(s)`, or a URL of the page's own origin where that origin is neither opaque nor an extension's | where the refusal says so, name an `http(s)` copy of the file |
+| a listener that waits for `ready` and then for `terminated` when the guest's worker cannot start (your page's policy refuses `blob:` workers, or the entry is refused) | such a build is never `ready`: it ends with `terminated` alone, since `ready` waits for the worker's start-up verdicts | listen for `terminated` from the start, not only after `ready` |
+| code that matches the reason of a strict view that reloaded (`the sandbox view stopped responding`, after the liveness budget) | it ends at once, with `the guest frame announced itself again (it reloaded or rewrote its document)` | match the new reason |
+| a quiet browser console on a sealed start | each sealed start logs the refusals of the library's own canaries (its start-up gates and its policy check), which no script can read or silence | nothing in production; a test that asserts a quiet console leaves out the lines that name `canary.invalid`, `gate.invalid` and the file's own policy |
+| a page with `Cross-Origin-Embedder-Policy: require-corp` and no `Cross-Origin-Opener-Policy: same-origin` | Chromium frames the file; Firefox and WebKit refuse the frame of a file whose response does not opt in | see [the row of that header](#host-page-policy) |
 
 **What strict mode does not cover**: the host page's availability wherever the view shares the host page's thread
 (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation; desktop Chromium 127+ runs it in a
@@ -2159,6 +2344,7 @@ input](#sandboxview-strict-mode) describes them, and [research 23](research/23_v
 | URLs of `links` | 32 | `MAX_LINKS` |
 | Characters of a URL of `links` | 2048 | — |
 | Tabs one element opens for `links` in any one-second window | 2 | `LINK_TABS_PER_SECOND` |
+| Longest wait for the user's activation to reach the host page before a listed link's tab is asked for (ms) | 500 | — |
 | Strict: characters per `sandboxView.render()`, `text()` or `set()` value, and of `html` (the initial view) | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
 | Strict: elements in the view | 50000 | — |
@@ -2451,25 +2637,31 @@ page with one loop where it shares its thread ([Modes](#modes)).
 ## Host page policy
 
 <!-- describes: api:viewScriptHash sig:ce76 -->
-The sandbox's frames are `srcdoc` documents, and a `srcdoc` document inherits the policies of the page that made it:
-a copy of its Content-Security-Policy list, its Trusted Types requirement and its Cross-Origin-Embedder-Policy. Every
-policy in the list must allow a load, so your page's policy narrows the sandbox's, never widens it. What your page's
-policy must allow:
+Sealed mode's view is the served file, `sealed-document.html` at your `documentUrl` ([Registering the
+element](#registering-the-element)): a document of its own, whose one policy is the file's own `<meta>`, so your
+page's policy does not reach it. What your page's policy decides for sealed mode is only whether the element may frame
+the file: `frame-src` (or `child-src`, or `default-src`, which it falls back to) must admit `documentUrl`. The frames of
+strict, cooperative and worker mode are `srcdoc` documents, and a `srcdoc` document inherits the policies of the page
+that made it: a copy of its Content-Security-Policy list, its Trusted Types requirement and its
+Cross-Origin-Embedder-Policy. Every policy in the list must allow a load, so your page's policy narrows those modes'
+sandboxes, never widens them. What your page's policy must allow:
 
-| Your page's | sealed (default) and strict | cooperative | worker |
-| :--- | :--- | :--- | :--- |
-| `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; strict mode: `'unsafe-eval'` for `execute()` (sealed mode runs no string as code) | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
-| `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
-| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; while `allowAnimations` is `false` (the default), also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`. Nothing for the guest's own styles: the view applies its `style` attributes, `<style>` elements and `set({ css })` through the CSSOM, which no `style-src` checks ([below](#your-report-endpoint)); `blob:` where the guest links a registered stylesheet | `'unsafe-inline'`, or the wrapper style's hash (no animation stylesheet); `'unsafe-inline'` for the guest's own inline styles, which its document holds as written | `'unsafe-inline'`, or the wrapper style's hash (no animation stylesheet) |
-| `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind (sealed mode needs none in `connect-src`, which is `'none'` there); strict mode: every origin in `origins` (in `connect-src`, named by scheme and host, not `'self'`: [below](#your-connect-src)); sealed mode: no origin, it has none | `blob:` for registered files of that kind; every origin in `origins` | the same |
-| `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
-| `base-uri` | `about:` (for example `base-uri 'self' about:`), or omit the directive: the wrapper sets `<base href="about:blank">` so the guest never sees your page's URL, and a policy that refuses it (`'self'`, `'none'`) ends the build, because every bootstrap first checks its document's base URL | the same | the same |
-| With `fetchBridge` (not in sealed mode) | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy; name each origin by scheme and host, [below](#your-connect-src)) | the same: `'unsafe-inline'` admits the frame's script | the same |
-| Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox` from their first write (so the page gets no violation, console error or report from them), which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused. A browser without Trusted Types (Firefox 146; Chromium 159, Firefox 159 and WebKit 27.2, measured 2026-11-14, all have it) cannot do this itself: pass your page's policy as `hostContentSecurityPolicy` and the library refuses as the others do (a `trusted-types` list that does not name the policy ends the build with the Trusted Types reason, and `execute()` warns and does nothing); without it nothing is applied there ([Trusted Types without the browser](#trusted-types-without-the-browser)) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
-| `Cross-Origin-Embedder-Policy: require-corp` (without `Cross-Origin-Opener-Policy: same-origin`) | works on every engine measured on 2026-11-14 (Chromium 159, Firefox 159, WebKit 27.2); an engine that applies a CORP check to the view's `blob:` worker refuses it | works; resources from `origins` need CORP or CORS headers | as strict |
-| `Cross-Origin-Opener-Policy: same-origin` with `Cross-Origin-Embedder-Policy` (`require-corp` or `credentialless`), when the browser makes the page cross-origin isolated (`crossOriginIsolated` is `true`) | **not supported, on any engine**: a guest never runs cross-origin isolated. The element reads `crossOriginIsolated` of your page before it creates a frame and, when it is `true`, ends the build with `the host page is cross-origin isolated …`; no frame exists and nothing of the guest runs. The outcome follows your page's isolation, not the engine (which pairs isolate a page is the browser's: COOP with `require-corp` does everywhere, and with `credentialless` in Chromium and Firefox but not in WebKit, where the sandbox then runs). The library's own bootstraps check the same value in their documents as well | not supported (the same) | not supported (the same) |
+| Your page's | sealed (default) | strict | cooperative | worker |
+| :--- | :--- | :--- | :--- | :--- |
+| `script-src` | nothing: the view's script runs under the file's policy | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
+| `worker-src` (or `script-src` without it) | nothing | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
+| `style-src` | nothing: the file sizes the view with a stylesheet its own policy admits | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; while `allowAnimations` is `false` (the default), also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`. Nothing for the guest's own styles: the view applies its `style` attributes, `<style>` elements and `set({ css })` through the CSSOM, which no `style-src` checks ([below](#your-report-endpoint)); `blob:` where the guest links a registered stylesheet | `'unsafe-inline'`, or the wrapper style's hash (no animation stylesheet); `'unsafe-inline'` for the guest's own inline styles, which its document holds as written | `'unsafe-inline'`, or the wrapper style's hash (no animation stylesheet) |
+| `img-src`, `media-src`, `font-src`, `connect-src` | nothing: the view's loads are the file's policy's (`blob:` for registered files, `connect-src 'none'`) | `blob:` for registered files of that kind; every origin in `origins` (in `connect-src`, named by scheme and host, not `'self'`: [below](#your-connect-src)) | `blob:` for registered files of that kind; every origin in `origins` | the same |
+| `frame-src` / `child-src` | `documentUrl` (`'self'` when the file is on your page's origin); a policy that refuses it ends the build with `the document at documentUrl did not answer …` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
+| `base-uri` | nothing: the file sets its own base | `about:` (for example `base-uri 'self' about:`), or omit the directive: the wrapper sets `<base href="about:blank">` so the guest never sees your page's URL, and a policy that refuses it (`'self'`, `'none'`) ends the build, because every bootstrap first checks its document's base URL | the same | the same |
+| With `fetchBridge` | — (sealed mode has none) | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy; name each origin by scheme and host, [below](#your-connect-src)) | the same: `'unsafe-inline'` admits the frame's script | the same |
+| Trusted Types | nothing: the element writes no HTML for sealed mode's view (it sets the frame's URL), and the file's document has no Trusted Types requirement of yours, so `require-trusted-types-for` and a `trusted-types` list change nothing there | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox` from their first write (so the page gets no violation, console error or report from them), which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused. A browser without Trusted Types (Firefox 146; Chromium 159, Firefox 159 and WebKit 27.2, measured 2026-11-14, all have it) cannot do this itself: pass your page's policy as `hostContentSecurityPolicy` and the library refuses as the others do (a `trusted-types` list that does not name the policy ends the build with the Trusted Types reason, and `execute()` warns and does nothing); without it nothing is applied there ([Trusted Types without the browser](#trusted-types-without-the-browser)) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
+| `Cross-Origin-Embedder-Policy: require-corp` (without `Cross-Origin-Opener-Policy: same-origin`) | Chromium frames the file (the element's frame is `credentialless`); Firefox and WebKit refuse the frame of a file whose response does not opt in, and the build ends with `the document at documentUrl did not answer …` (measured 2026-11-19, Chromium 159, Firefox 159, WebKit 27.2); with `credentialless` instead, Firefox refuses it the same way | works on every engine measured on 2026-11-14 (Chromium 159, Firefox 159, WebKit 27.2); an engine that applies a CORP check to the view's `blob:` worker refuses it | works; resources from `origins` need CORP or CORS headers | as strict |
+| `Cross-Origin-Opener-Policy: same-origin` with `Cross-Origin-Embedder-Policy` (`require-corp` or `credentialless`), when the browser makes the page cross-origin isolated (`crossOriginIsolated` is `true`) | not supported (as strict mode: the element builds no frame) | **not supported, on any engine**: a guest never runs cross-origin isolated. The element reads `crossOriginIsolated` of your page before it creates a frame and, when it is `true`, ends the build with `the host page is cross-origin isolated …`; no frame exists and nothing of the guest runs. The outcome follows your page's isolation, not the engine (which pairs isolate a page is the browser's: COOP with `require-corp` does everywhere, and with `credentialless` in Chromium and Firefox but not in WebKit, where the sandbox then runs). The library's own bootstraps check the same value in their documents as well | not supported (the same) | not supported (the same) |
 
-- **What a refusal looks like**: the build ends with a reason that names your page's policy: `the sandbox's startup
+- **What a refusal looks like**: in sealed mode, a `frame-src` that refuses `documentUrl` ends the build with `the
+  document at documentUrl did not answer …`, whose text lists the other causes that look the same from outside the
+  frame. In the other modes the build ends with a reason that names your page's policy: `the sandbox's startup
   script did not run …` (a refused bootstrap), `the sandbox's worker could not be loaded …` (a refused `blob:` worker),
   `… does not allow the policy name 'web-sandbox' …` (Trusted Types), `the sandbox document's base URL is not about:blank
   …` (a `base-uri` without `about:`; the bootstrap stays inert, so nothing of the guest's runs), `the host page is cross-origin isolated …` (COOP and COEP together: an isolated host page; no frame is created). The fetch bridge's frame and the strict view run
@@ -2477,7 +2669,8 @@ policy must allow:
   ends the build with the startup reason above. A bridge frame that fails to start alone (its script refused while the
   sandbox runs) leaves the sandbox running and fails the bridge closed: every `sandboxFetch()` rejects with `FETCH_FAILED`,
   each `fetch` record is `refused` with a `reason` that names the hash, and the element warns once. A refused wrapper style leaves the frame 150 px
-  high, and the element warns with the hash to allow; so does a refused animation stylesheet (`allowAnimations` `false`, the default),
+  high, and the element warns with the hash to allow, once the view found the refusal itself (it tries the wrapper's
+  text under the policies it inherits; the view's size at its check-in, which can precede the frame's layout, decides nothing); so does a refused animation stylesheet (`allowAnimations` `false`, the default),
   whose view then shows no guest stylesheet.
 - **Cooperative and worker mode need `'unsafe-inline'` in your page's `script-src`**, and that has a price. Their
   bootstrap is inline and its hash changes with every build, so no hash or nonce can name it. Next to a hash or a nonce a
@@ -2684,8 +2877,8 @@ Values:
 <!-- generated:begin api-exports-values -->
 | Export | Build | What it is |
 | :--- | :--- | :--- |
-| `defineWebSandbox` | every build | Registers `WebSandbox` as a custom element under `tagName` and returns the class. |
-| `viewScriptHash` | every build | The CSP hash source of the library's bootstrap for this build of the package, to allow in the host page's own Content-Security-Policy: the view of sealed and strict mode runs it and, in a build with the network modes, so does the fetch bridge's frame. |
+| `defineWebSandbox` | every build | Registers `WebSandbox` as a custom element and returns the class. |
+| `viewScriptHash` | every build | The CSP hash source of the library's bootstrap for this build of the package, to allow in the host page's own Content-Security-Policy for strict mode: strict mode's view runs it and, in a build with the network modes, so does the fetch bridge's frame. |
 | `SandboxDevTools` | every build | Logs one sandbox's `sandbox-log` lines to the host page's console, safely: the values go after a fixed first argument, so a guest string is never read as a console format string. |
 | `WebSandbox` | every build | The `<web-sandbox>` custom element: one app, given once with `start()`, run in a sandboxed environment that `reset()` rebuilds. |
 | `AUTO_RESIZE_MAX_HEIGHT` | every build | The tallest height, in CSS pixels, a guest can give the element; larger reports are clamped to it. |
@@ -2738,6 +2931,7 @@ Types:
 | `HostMethod` | every build | A host method the guest calls with `bridge.call(name, ...args)`, given to `start()` in `SandboxGrants`. |
 | `NetworkModeEvents` | network | The events the network modes add to the element's (`WebSandboxEventMap`): in a build that has them, the element's event map holds these too. |
 | `NetworkModeMethods` | network | The methods the network modes add to the element (`WebSandbox`): in a build that has them, the element has these too, and in the default build it has none of them. |
+| `NetworkSandboxDefinition` | network | The definition of an element that runs the network modes only, in the build with them: no `documentUrl`, since strict, cooperative and worker mode keep documents of their own. |
 | `NetworkSandboxOptions` | network | The options that open the network: `origins` and `fetchBridge`. |
 | `RpcError` | every build | The shape of every rejection of `call()` and `callWithTimeout()`: a plain `Error` with an own `code`. |
 | `RpcErrorCode` | every build | Why a call was refused: the `code` of an `RpcError`. |
@@ -2756,10 +2950,13 @@ Types:
 | `SandboxState` | every build | Where the element is in its lifecycle; read it from `state`. |
 | `SandboxViolation` | every build | The `detail` of a `violation` event: the guest's policy refused a load. |
 | `SealedSandboxConfig` | every build | The configuration of sealed mode, the default ([ADR-008](ADR-008-sealed-mode.md)): strict mode with no network. |
+| `SealedSandboxDefinition` | every build | The element's tag name, and where the page serves sealed mode's view. |
 | `StrictSandboxConfig` | network | The configuration of strict mode ([ADR-005](ADR-005-strict-mode.md)): sealed mode's view and worker, with the network options. |
 | `StrictSandboxOrigins` | network | `SandboxOrigins` in strict mode: no `scripts`, since the view runs only the library's bootstrap ([ADR-005](ADR-005-strict-mode.md)). |
 | `UnsafeCapability` | network | A member of `UNSAFE_CAPABILITIES`: an entry of the `unsafeCapabilities` option. |
 | `UnsafePermission` | network | A member of `UNSAFE_PERMISSIONS`: a capability granted through the frames' `allow` attribute, not a sandbox flag. |
+| `WebSandboxDefinition` | every build | What `defineWebSandbox` takes in this build: one of the definitions of `WebSandboxDefinitionByBuild`. |
+| `WebSandboxDefinitionByBuild` | every build | The definitions `defineWebSandbox` takes, by the build that takes them. |
 | `WebSandboxEventMap` | every build | The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`. |
 | `WorkerSandboxConfig` | network | The configuration of worker mode: guest code runs in a worker inside the frame. |
 <!-- generated:end -->

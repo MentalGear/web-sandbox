@@ -17,21 +17,23 @@ import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
 import { NETWORK_MODES_FLAG } from './build-flag';
 import { MAX_LINK_LENGTH } from './links';
+import { SEALED_DOCUMENT_FILE } from './frame-documents';
 
 export interface ReasonRow {
     /** The reason, with `…` where it varies. */
     readonly text: string;
     /**
      * Where it is decided: the element (host.ts) or the lifecycle reducer (lifecycle.ts), as a `terminated` reason; or
-     * start(), as the message of the TypeError it throws, which is never a termination.
+     * start() or defineWebSandbox(), as the message of the TypeError it throws, which is never a termination.
      */
-    readonly decidedBy: 'host' | 'lifecycle' | 'start';
+    readonly decidedBy: 'host' | 'lifecycle' | 'start' | 'define';
 }
 
 // The repeated-overrun rule in words (in-sandbox-view.ts, viewBudget; S72, class P).
 const OVERRUN_MS = VIEW_MAX_OPERATION_MS;
 const OVERRUN_MINUTES = VIEW_OVERRUN_WINDOW_MS / 60000;
 const HOST_PAGE_POLICY = 'see docs/API.md#host-page-policy';
+const REGISTRATION = 'see docs/API.md#registering-the-element';
 
 export const TERMINATION_REASONS = {
     host: { text: 'terminated by the host', decidedBy: 'host' },
@@ -67,6 +69,43 @@ export const TERMINATION_REASONS = {
     loadTimeout: { text: 'the sandbox did not finish loading', decidedBy: 'lifecycle' },
     frameMissing: { text: 'the guest frame is missing', decidedBy: 'lifecycle' },
     uncaughtBudget: { text: 'the guest raised more uncaught errors or unhandled rejections in one second than their budget allows', decidedBy: 'host' },
+    // Sealed mode's view is the served file (design 03): the frame of documentUrl, whose view speaks first
+    documentSilent: { text: `the document at documentUrl did not answer: the file is missing, the server answers its path with another page, a header on it refuses the framing or the view's script, or the host page's frame-src does not admit it (${REGISTRATION})`, decidedBy: 'lifecycle' },
+    // The check of the file (document-check.ts; design 03): what the element read of documentUrl's answer, where it could
+    // read it, before it framed the file. One reason per finding, and one per refused header, by the header's name.
+    documentMissing: { text: `the file at documentUrl is missing: the server answered with a status that is not 2xx (${REGISTRATION})`, decidedBy: 'host' },
+    documentNotHtml: { text: `the file at documentUrl is not served as HTML: its Content-Type is not text/html (${REGISTRATION})`, decidedBy: 'host' },
+    documentChanged: { text: `the file at documentUrl is not this version's ${SEALED_DOCUMENT_FILE}: its bytes differ from the library's. It is another version's, or a tool rewrote it (a dev server that inserts its client's script, such as Vite's; a bundler that processes HTML, such as webpack's HTML support or Parcel; a minifier; a CDN that rewrites pages), or a cache holds an old copy: serve the package's file unchanged (${REGISTRATION})`, decidedBy: 'host' },
+    documentFrameAncestors: { text: `the file at documentUrl is served with a frame-ancestors directive (in a Content-Security-Policy header): serve it without one (${REGISTRATION})`, decidedBy: 'host' },
+    documentFrameOptions: { text: `the file at documentUrl is served with an X-Frame-Options header: serve it without one (${REGISTRATION})`, decidedBy: 'host' },
+    documentCsp: { text: `the file at documentUrl is served with a Content-Security-Policy header, which the view would run under beside its own policy: serve it without one (${REGISTRATION})`, decidedBy: 'host' },
+    documentCspReportOnly: { text: `the file at documentUrl is served with a Content-Security-Policy-Report-Only header, which would report the view's loads to its endpoint: serve it without one (${REGISTRATION})`, decidedBy: 'host' },
+    // The view's announcement (startup-verdicts.ts; design 03, "A file of another version"): the version the served view
+    // states is not this library's, where the check of the file could not read the bytes
+    documentVersion: { text: `the file at documentUrl is another version's ${SEALED_DOCUMENT_FILE}: its view states another version than this library's, so it was given nothing. Serve the file of the package this page loads, at a URL that changes with the version (${REGISTRATION})`, decidedBy: 'host' },
+    // The start-up gates (startup-gates.ts, STARTUP_GATES; design 03, "The start-up gates"): a canary the browser did not
+    // refuse, in the view before it announced itself or in the worker before the entry ran. One reason per gate.
+    gateOpaque: { text: "a start-up gate failed: the sandbox's worker has an origin, not an opaque one: this browser did not keep the sandbox sandboxed, so the guest's entry did not run", decidedBy: 'host' },
+    gateFraming: { text: "a start-up gate failed: the sandbox's view is not a frame of a frame: it is not in the frame the library built, so nothing of the app was sent", decidedBy: 'host' },
+    gateStringCode: { text: "a start-up gate failed: the sandbox's view or its worker can run a string as code, which its policy forbids: this browser did not enforce it, so nothing of the app was sent", decidedBy: 'host' },
+    gateConnect: { text: "a start-up gate failed: a request of the sandbox's view was not refused, though its policy forbids every connection: this browser did not enforce it, so nothing of the app was sent", decidedBy: 'host' },
+    gateImage: { text: "a start-up gate failed: the sandbox's view loaded an image its policy forbids: this browser did not enforce it, so nothing of the app was sent", decidedBy: 'host' },
+    gateStyle: { text: "a start-up gate failed: the sandbox's view applied a stylesheet its policy forbids: this browser did not enforce it, so nothing of the app was sent", decidedBy: 'host' },
+    gateBase: { text: "a start-up gate failed: the sandbox's view took a <base> its policy forbids: this browser did not enforce it, so nothing of the app was sent", decidedBy: 'host' },
+    gateCookie: { text: "a start-up gate failed: the sandbox's view kept a cookie, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent", decidedBy: 'host' },
+    gateStorage: { text: "a start-up gate failed: the sandbox's view or its worker opened a store, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent", decidedBy: 'host' },
+    gateParent: { text: "a start-up gate failed: the sandbox's view read its parent's document: this browser did not keep its frames apart, so nothing of the app was sent", decidedBy: 'host' },
+    gateAllowlist: { text: "a start-up gate failed: the sandbox's worker still had a name off its globals allowlist after the allowlist ran: the guest's entry did not run, and no call was sent", decidedBy: 'host' },
+    // The policy check (policy-check.ts, POLICY_FINDINGS; design 03, "What the policy check provokes"; I18): the view saw a
+    // policy that is not the file's own, by the kind of header that sets one, before it announced itself or later.
+    viewCsp: { text: `the view of the file at documentUrl runs under a Content-Security-Policy that is not the file's own (a header on the file's response, which the view and its worker inherit beside the file's <meta>): serve the file with no Content-Security-Policy header (${REGISTRATION})`, decidedBy: 'host' },
+    viewCspReportOnly: { text: `the view of the file at documentUrl runs under a Content-Security-Policy-Report-Only header on the file's response, which would report the view's loads to its endpoint: serve the file without one (${REGISTRATION})`, decidedBy: 'host' },
+    noDocumentUrl: { text: `sealed mode's view is the served ${SEALED_DOCUMENT_FILE}, and this element was registered without documentUrl: pass it to defineWebSandbox() (${REGISTRATION})`, decidedBy: 'start' },
+    // defineWebSandbox(): the definition, read before anything is defined or stored
+    definitionRefused: { text: 'defineWebSandbox() takes one object, { tagName, documentUrl }, whose tagName is a string when given', decidedBy: 'define' },
+    documentUrlMissing: { text: `documentUrl is required: the URL where the page serves ${SEALED_DOCUMENT_FILE}, the view of sealed mode (${REGISTRATION})`, decidedBy: 'define' },
+    documentUrlRefused: { text: 'documentUrl is refused: …', decidedBy: 'define' },
+    documentUrlChanged: { text: 'the element is already defined with another documentUrl', decidedBy: 'define' },
 } as const satisfies Record<string, ReasonRow>;
 
 export type ReasonId = keyof typeof TERMINATION_REASONS;
@@ -77,11 +116,11 @@ export const reasonCauses = () => ({
     watchdog: '`watchdogTimeout` expired.',
     entryFailed: 'Strict and sealed mode: the entry threw or did not parse.',
     startupBlocked: "The frame loaded but the library's startup script (strict mode's view bootstrap, cooperative and worker mode's bootstrap) never checked in: the host page's policy refused it. See [Host page policy](#host-page-policy).",
-    workerRefused: "Strict, sealed and worker mode: the worker's script could not be loaded at all; nothing of the guest's ran. Worker mode is never `ready` then.",
+    workerRefused: "Strict, sealed and worker mode: the worker's script could not be loaded at all; nothing of the guest's ran. The build is never `ready` then: worker mode's frame announces the refusal, and strict and sealed mode wait for the worker's start-up verdicts, which a worker that was never loaded cannot send.",
     trustedTypes: `The host page enforces Trusted Types and its \`trusted-types\` directive does not name \`${TRUSTED_TYPES_POLICY}\`, also when the host page's own default policy takes the element's strings (the view and worker mode's frame need the policy themselves).`,
     environmentOrigin: "A bootstrap of the library's (strict mode's view, the cooperative guest's document, worker mode's frame, the fetch bridge's frame) read an origin other than `'null'`: its document is not in a frame the library sandboxed as built. It stayed inert, so nothing of the guest's ran.",
     environmentUrl: "A bootstrap of the library's read a document URL other than `about:srcdoc`: its document is not the srcdoc the library wrote. It stayed inert, so nothing of the guest's ran.",
-    environmentBase: "A bootstrap of the library's read a base URL other than `about:blank`: the host page's `base-uri` refused the `<base>` the library's wrapper sets, so the sandbox would have seen the host page's URL. It stayed inert, so nothing of the guest's ran. Allow `about:` in `base-uri`, or omit the directive (see [Host page policy](#host-page-policy)).",
+    environmentBase: "A bootstrap of the library's read a base URL other than `about:blank`: the host page's `base-uri` refused the `<base>` the library's wrapper sets, so the sandbox would have seen the host page's URL. It stayed inert, so nothing of the guest's ran. Allow `about:` in `base-uri`, or omit the directive (see [Host page policy](#host-page-policy)). In sealed mode the view's base URL is the served file's own `<base>`, which the host page's policy does not reach: there the cause is an enforced `Content-Security-Policy` header on the file's response whose `base-uri` refuses it (the file's `<base>` comes before its `<meta>`); serve the file without that header (see [Registering the element](#registering-the-element)).",
     environmentIsolated: "The host page reads `crossOriginIsolated === true` (it sends both `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`), and a guest never runs cross-origin isolated, on any engine. The element builds no frame (a bootstrap of the library's that reads it in its own document stays inert too), so nothing of the guest's ran. Serve the page that embeds a sandbox without COOP and COEP (see [Host page policy](#host-page-policy)).",
     entryNotRegistered: 'Strict and sealed mode: `entry` names no registered JavaScript file.',
     entryImport: "Strict and sealed mode: the entry's text holds `import` followed by `(` or `.` (after any whitespace and comments), in code, a string or a comment: an `import()`, or a phase of one (`import.source()`, `import.defer()`); a static import and `import.meta` do not compile in the worker's classic script. The worker's policy admits no module script, so an import could load nothing, and the host page's policy, which the worker inherits, would report the URL it named to the page's report endpoint; the build refuses the entry instead, and nothing of the guest's runs. Bundle the modules into the entry, and keep `import(` and `import.` out of its strings and comments.",
@@ -97,10 +136,37 @@ export const reasonCauses = () => ({
     buildFailed: 'Building the frame failed.',
     executionTimeout: "The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline.",
     secondLoad: "Something navigated or reloaded the library's frame (also before its first load, once the guest had checked in).",
-    secondAnnouncement: 'Cooperative and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs.',
-    loadTimeout: 'The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included).',
+    secondAnnouncement: 'Cooperative and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. Strict and sealed mode: the view announced itself a second time, or once its build was `ready` (its document reloaded or was rewritten, so its bootstrap ran again).',
+    loadTimeout: "The build was still `loading` after `LOAD_TIMEOUT_MS` of host time: its frame had not loaded (without `allow-scripts`: subresources included), or, in strict and sealed mode, the view had its ports (sealed mode) or had checked in (strict mode) and its check-in or its worker's start-up verdicts did not come.",
     frameMissing: "The library's frame has no guest frame.",
     uncaughtBudget: 'Worker, strict and sealed mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)).',
+    documentSilent: "Sealed mode: no view announced itself from the first frame of the element's frame within `LOAD_TIMEOUT_MS`, or the frame loaded a document with no frame in it, or the view ran and its start-up gates or its policy check had not answered by then (they wait for the browser to refuse each canary, with no time limit of their own). From outside the frame the first causes look alike: the file is not at `documentUrl`, the server answers that path with another page (an app's fallback page), a header on the file refuses the framing (`X-Frame-Options`, `frame-ancestors`) or the view's script, or the host page's own `frame-src` does not admit `documentUrl` (see [Registering the element](#registering-the-element) and [Host page policy](#host-page-policy)). Where the element could read the file's answer, the check of the file names the first four causes instead (the reasons below); this reason is what is left where it could not: another origin that does not allow the read, a host page whose `connect-src` refuses the request, a network failure, or a server that answers the frame otherwise than the check.",
+    documentMissing: "Sealed mode, the check of the file: the element's own request for `documentUrl` was answered with a status that is not 2xx. Nothing was framed.",
+    documentNotHtml: "Sealed mode, the check of the file: the element's own request for `documentUrl` was answered with a `Content-Type` that is not `text/html` (none counts as not HTML). Nothing was framed.",
+    documentChanged: "Sealed mode, the check of the file: `documentUrl` answered with bytes that are not this version's `sealed-document.html`, compared whole, by their SHA-256. Every change counts: a script a dev server inserts, a minified or reformatted copy, a copy without the guard or whose view lost its `sandbox` attribute, an app's own page, another version's file. Nothing was framed.",
+    documentFrameAncestors: 'Sealed mode, the check of the file: a `Content-Security-Policy` or `Content-Security-Policy-Report-Only` header on the file has a `frame-ancestors` directive. Nothing was framed.',
+    documentFrameOptions: 'Sealed mode, the check of the file: the file is served with `X-Frame-Options`, whatever its value. Nothing was framed.',
+    documentCsp: 'Sealed mode, the check of the file: the file is served with `Content-Security-Policy`, whatever its text: the view and its worker would run under it beside the file\'s own `<meta>` policy. Nothing was framed.',
+    documentCspReportOnly: "Sealed mode, the check of the file: the file is served with `Content-Security-Policy-Report-Only`, whatever its text: the view's loads would be reported to its endpoint. Nothing was framed.",
+    documentVersion: "Sealed mode: the view of the file at `documentUrl` announced itself with a version other than this library's (the digest of the file it was generated as, which the file states of itself), or with none. It received no port and nothing of the app. The check of the file names such a file `documentChanged` where it can read its bytes; this reason is what is left where it could not: another origin that does not allow the read, or a server that answers the frame otherwise than the check.",
+    gateOpaque: "Strict and sealed mode, a start-up gate ([design 03](design/03-served-document.md#the-start-up-gates)): the guest's worker read an origin other than `'null'` (the view's own origin is the environment check's: `environmentOrigin`). Defence in depth after the construction: the view is sandboxed by its own attribute, and its worker shares its origin. No guest code ran in that worker, and no call was sent to it.",
+    gateFraming: "Strict and sealed mode, a start-up gate: the view's window is its parent, or its parent's parent: it is not a frame of the file or the wrapper. Nothing of the app was sent.",
+    gateStringCode: "Sealed mode, a start-up gate: `new Function('')` did not throw in the view or the worker, though the file's policy has no `'unsafe-eval'`. Nothing of the app was sent to that view, or no guest code ran in that worker.",
+    gateConnect: "Sealed mode, a start-up gate: the view's `fetch` of a `blob:` URL of its own was answered, though the file's policy has `connect-src 'none'`. Nothing of the app was sent.",
+    gateImage: "Sealed mode, a start-up gate: a `data:` image loaded in the view, though the file's policy admits only `blob:` images. Nothing of the app was sent.",
+    gateStyle: "Sealed mode, a start-up gate: a `<style>` the file's policy does not admit by hash applied in the view. Nothing of the app was sent.",
+    gateBase: "Sealed mode, a start-up gate: a `<base>` changed the view's base URL, though the file's policy has `base-uri 'none'`. Nothing of the app was sent.",
+    gateCookie: 'Strict and sealed mode, a start-up gate: the view wrote a cookie and read it back. Nothing of the app was sent.',
+    gateStorage: 'Strict and sealed mode, a start-up gate: `localStorage` in the view or `indexedDB.open` in the worker did not throw. Nothing of the app was sent to that view, or no guest code ran in that worker.',
+    gateParent: "Strict and sealed mode, a start-up gate: the view read its parent's document. Nothing of the app was sent.",
+    gateAllowlist: "Strict and sealed mode, a start-up gate: after the worker's globals allowlist a name off it was still on the worker's global or its prototypes (in sealed mode the allowlist has no name that makes a request: `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `importScripts`). The worker's script stopped there: the entry did not run, and no call or `execute()` was sent to it.",
+    viewCsp: "Sealed mode, the policy check ([design 03](design/03-served-document.md#what-the-policy-check-provokes)): a violation in the view's document carried a policy text that is not the file's own `<meta>`, with the disposition `enforce`, or a load the `<meta>` admits was refused by another policy: an enforced `Content-Security-Policy` on the file's response (or a `<meta>` the file was changed to). Before the announcement nothing of the app was sent; a violation after it ends the build whenever it comes. Where the check of the file could read the answer, it names the header first (`documentCsp`).",
+    viewCspReportOnly: "Sealed mode, the policy check: a violation in the view's document had the disposition `report`: a `Content-Security-Policy-Report-Only` header on the file's response, whose endpoint receives the view's refusals. What it received before the build ended were the canaries' own reports, library strings only. Before the announcement nothing of the app was sent; a violation after it ends the build whenever it comes. Where the check of the file could read the answer, it names the header first (`documentCspReportOnly`).",
+    noDocumentUrl: "In a build with the network modes: `mode` is `'sealed'` or left out, and the element was registered without `documentUrl`. Sealed mode has no view but the served file; strict, cooperative and worker mode need none.",
+    definitionRefused: '`defineWebSandbox()` was given something other than an object, or a `tagName` that is not a string.',
+    documentUrlMissing: 'In the default build, `defineWebSandbox()` was given no `documentUrl`: sealed mode, the only mode of that build, has no view without it.',
+    documentUrlRefused: "`documentUrl` breaks one of its rules, which the message names after the colon: a string or a `URL`, resolved against the document's own URL (`document.URL`, never a `<base>`); on `http:` or `https:`, or else of the host page's own origin (its scheme, host and port) where that origin, as the page reads it (`self.origin`), is neither opaque nor a browser extension's: a browser's `file:` page, a sandboxed frame, a `data:` page and an extension's page name an `http(s)` copy of the file; no user name or password, and no fragment. A query and any path are the embedder's.",
+    documentUrlChanged: 'The tag is already defined by this element with another `documentUrl` (or without one). A second definition with the same one does nothing.',
 }) as const satisfies Record<ReasonId, string>;
 
 /** The reasons the lifecycle reducer decides. */
@@ -137,6 +203,9 @@ export const HOST_LINE_OCCASIONS = {
 
 type Varying<Texts extends Record<string, { readonly text: string }>> = { [K in keyof Texts]: Texts[K]['text'] extends `${string}…${string}` ? K : never }[keyof Texts];
 type Templated = Varying<typeof TERMINATION_REASONS>;
+
+/** A reason whose text does not vary: `reasonText()` takes it alone. */
+export type FixedReasonId = Exclude<ReasonId, Templated>;
 
 declare const LIBRARY_DETAIL: unique symbol;
 /**
@@ -187,7 +256,7 @@ export function errorName(error: unknown): LibraryDetail {
 }
 
 /** The reason `id` gives; one whose text varies takes the detail, a LibraryDetail, that goes in place of its `…`. */
-export function reasonText(id: Exclude<ReasonId, Templated>): string;
+export function reasonText(id: FixedReasonId): string;
 export function reasonText(id: Templated, detail: LibraryDetail): string;
 export function reasonText(id: ReasonId, detail?: LibraryDetail): string {
     return fill(TERMINATION_REASONS[id].text, detail);

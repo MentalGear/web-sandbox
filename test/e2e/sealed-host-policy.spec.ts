@@ -162,7 +162,8 @@ test.describe('sealed mode: the host page\'s policy can never be checked by the 
         const secrets = { nonce: `HN${tag()}`, key: `RK${tag()}` };
         const host = await RealisticHost.open(sandbox, { mode: 'sealed', directives: withSecrets(secrets) });
         const styleSrc = /(?:^|; )style-src ([^;]*)/.exec(host.csp)![1]!.split(' ');
-        expect(styleSrc, 'the page admits the library by its hashes alone (docs/API.md#host-page-policy)').toEqual(["'self'", POLICY_HASHES.wrapperStyle, POLICY_HASHES.animationStyle, "'report-sample'"]);
+        // sealed mode's view is the served file: the page's style-src holds nothing of the library's (docs/API.md#host-page-policy)
+        expect(styleSrc, "the page's style-src admits nothing for the library, and no 'unsafe-inline'").toEqual(["'self'", "'report-sample'"]);
         await host.hits(true);
 
         const name = `SEALEDSTYLES${tag()} `;

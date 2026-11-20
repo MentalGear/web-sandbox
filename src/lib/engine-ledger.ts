@@ -381,6 +381,22 @@ export const ENGINE_DIFFERENCES = {
         why: "A WebKit platform behaviour; the flag stays dropped and nothing is submitted",
         tests: [`${E2E}allow-forms-and-view-writes.spec.ts`],
     },
+    'policy-canary-host': {
+        what: "A policy on the served file's response whose source names the policy check's canaries' reserved host (`*.canary.invalid`)",
+        chromium: 'Admits the canaries: the check sees nothing, and the build is ready',
+        firefox: 'Admits the canaries: the check sees nothing, and the build is ready',
+        webkit: "Refuses them: the header's own violation comes beside the file's, and the check ends the build",
+        why: "The engines' matching of a host source in an opaque document (research 31, Q6). Where the check sees nothing, the renderer's rules keep every load of the guest's from existing, so no report carries guest text on any engine (design 03, \"What is left unseen\")",
+        tests: [`${E2E}policy-check.spec.ts`],
+    },
+    'opaque-reports': {
+        what: "Reports of a policy on the served file's response for the refusals of its opaque view",
+        chromium: "Sent to the policy's endpoint",
+        firefox: "Sent to the policy's endpoint",
+        webkit: 'Not sent: WebKit sends no report from an opaque document but the refusals of code from strings, filed under the file\'s URL',
+        why: 'A WebKit platform behaviour (research 31, Q3); the violations are raised in the view on every engine, which is what the policy check reads',
+        tests: [`${E2E}policy-check.spec.ts`],
+    },
     'form-control-parts': {
         what: "The style an engine computes for a form control's user-agent parts (`::file-selector-button`, the range thumb)",
         chromium: "The file button's part",

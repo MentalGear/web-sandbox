@@ -10,7 +10,7 @@ import { startWith } from './start-app';
  * check-in.ts plays it as `true`; this drives the real handler, so a handler that always said `true` is caught: the load
  * of a frame other than the element's would end the build, for a frame with no window, as `frameMissing`.
  */
-defineWebSandbox();
+defineWebSandbox({ documentUrl: '/sealed-document.html' });
 
 afterEach(() => {
     vi.restoreAllMocks();

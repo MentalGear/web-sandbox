@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite';
-import { realpathSync } from 'fs';
+import { readFileSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { realisticHostMiddleware, REALISTIC_HOST_PATH } from './test/e2e/realistic-host-server';
+import { servedDocumentDigestPlugin } from './scripts/served-document';
+import { servedFileMiddleware, SERVED_FILE_PATH } from './test/e2e/served-file-server';
 
 // The e2e server (playwright.config.ts sets WEB_SANDBOX_E2E): no HMR websocket, and no page with the dev client that
 // would open one. Through the socket the dev server reloads every connected page whenever a file in its module graph
@@ -28,6 +30,13 @@ function withoutDevClient(html: string): string {
   return parts.join('');
 }
 
+// Each build's sealed-document.html (scripts/build-lib.ts writes it into dist/ and dist-network/), served as the static
+// file it is: the bytes on disk, with a content type and nothing else, never through Vite's HTML transform, which would
+// insert its client's script ahead of the file's policy (research 32 found most dev servers rewrite a served .html;
+// test/e2e/served-document.spec.ts compares what this answers with the file, byte for byte). Read at each request, so
+// it is the file as the last build wrote it.
+const SERVED_DOCUMENTS = ['/dist/sealed-document.html', '/dist-network/sealed-document.html'] as const;
+
 export default defineConfig({
   root: '.',
   resolve: {
@@ -36,7 +45,11 @@ export default defineConfig({
     }
   },
   server: {
-    // host: 'localhost',
+    // The e2e server listens on the IPv4 loopback address, so both of the fixture's names reach it: `localhost`, the
+    // host page's origin, and `127.0.0.1`, the same server as another site (test/e2e/fixture.ts, OFFSITE_ORIGIN). Left to
+    // `localhost`, it listens on whichever address that name resolves to first, and where that is `::1` alone,
+    // 127.0.0.1 answers nothing.
+    ...(e2e ? { host: '127.0.0.1' } : {}),
     port: e2ePort,
     // open: '/playground/index.html',
     strictPort: true,
@@ -52,7 +65,9 @@ export default defineConfig({
       input: 'playground/index.html',
     },
   },
-  plugins: [{
+  // The served file's digest in src/lib/document-digest.ts, from the generation the build writes dist/ from
+  // (scripts/served-document.ts): the check of the file compares what this server answers at documentUrl with it.
+  plugins: [servedDocumentDigestPlugin(), {
     name: 'dev-server',
     transformIndexHtml: {
       order: 'post',
@@ -73,6 +88,13 @@ export default defineConfig({
           res.end(`web-sandbox e2e server for ${root}\n`);
         });
       }
+      server.middlewares.use((req, res, next) => {
+        const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+        if (!(SERVED_DOCUMENTS as readonly string[]).includes(path)) return next();
+        res.setHeader('content-type', 'text/html');
+        res.setHeader('cache-control', 'no-store');
+        res.end(readFileSync(join(__dirname, path)));
+      });
       // Test endpoint (fetch bridge specs, backlog B5): answers with the request's method and headers, so a
       // spec can see what reached the harness origin, outside the browser. Same origin as the harness, so a
       // credentialed request here carries the harness's cookies in every engine. CORS for any origin: the bridge's
@@ -105,6 +127,9 @@ export default defineConfig({
       // Test endpoint (test/e2e/realistic-host.ts): the realistic host page and the backend it talks to, which records what
       // reaches it per test session (test/e2e/realistic-host-server.ts).
       if (e2e) server.middlewares.use(REALISTIC_HOST_PATH, realisticHostMiddleware());
+      // Test endpoint (test/e2e/served-file-check.ts): sealed mode's file served the ways a deployment gets it wrong, and
+      // what reaches its path, per test session (test/e2e/served-file-server.ts).
+      if (e2e) server.middlewares.use(SERVED_FILE_PATH, servedFileMiddleware());
       server.httpServer?.once('listening', () => {
         const { port, host } = server.config.server;
         const protocol = server.config.server.https ? 'https' : 'http';

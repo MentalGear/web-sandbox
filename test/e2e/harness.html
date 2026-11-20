@@ -9,11 +9,12 @@
         The library is the build the test asked for (test/e2e/library.ts): the default build, or the one with the network modes.
     -->
     <script type="module">
-        import { buildSettled, loadLibrary } from '/test/e2e/library.ts';
+        import { buildSettled, loadLibrary, pageDocumentUrl } from '/test/e2e/library.ts';
 
         const { defineWebSandbox } = await loadLibrary();
 
-        defineWebSandbox();
+        // sealed mode's view: the build's own sealed-document.html, which the e2e server serves unchanged
+        defineWebSandbox({ documentUrl: pageDocumentUrl() });
 
         // The events that carry guest data do not bubble (design 01, I5): the harness hears every sandbox's in the capture
         // phase, which runs down the whole path whatever `bubbles` says

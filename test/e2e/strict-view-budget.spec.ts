@@ -7,6 +7,7 @@ import { styleMarkup } from '@src/lib/style-markup';
 import { VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
 import { busyOf, busyShare, describeShare, idleBaseline, lag, loadedShare, operationCost, startLag, viewBound } from './host-share';
 import { VIEW_MODES } from './view-modes';
+import { scalingRatio } from '../unit/scaling';
 
 // The build with the network modes (ADR-009): this file's tests mount them. A sealed test names the default build.
 test.use({ build: 'network' });
@@ -162,6 +163,8 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         expect(requested).toEqual([]);
     });
 
+    // the count takes under this share of the parse and clean the view does with every render anyway
+    const COUNT_BOUND = 0.5;
     test('S73: counting what CSS can load costs little next to parsing and cleaning it (a 256 KiB render full of CSS)', async ({ sandbox, page, browserName }) => {
         test.setTimeout(60000);
         await mountEntry(sandbox, `sandboxView.render('<div id="a"></div>');`);
@@ -173,11 +176,12 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         // stylesheet, every rule naming two URLs: without escapes, with one escape per rule, and with every code point of
         // every name escaped, the most escapes such CSS holds (with animations not allowed, the default, the renderer
         // drops every style attribute with a backslash: only the stylesheet's would be counted).
-        type Cost = { parse: number; clean: number; count: number; tokens: number; bound: number; length: number };
+        type Cost = { parse: number; clean: number; count: number; counting: { ratio: number; message: string }; tokens: number; bound: number; length: number };
         // run from a timer in the view, and read once done: one evaluation may take no more than 3 s (strict-view.ts)
         await inView(page, browserName, `(window.__s73 = null, setTimeout(() => {
             const count = (${cssLoadBound.toString()});
             const sanitize = (${sanitizeRender.toString()});
+            const ratioOfFastest = (${scalingRatio.toString()});
             const scanCss = (${cssReferences.toString()});
             const keepCss = (${withKeptReferences.toString()});
             const keepsUrl = (${keepsUrl.toString()});
@@ -193,8 +197,8 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
                 for (let i = 0; sheet.length < half - 300; i++) sheet += '.c' + i + ' { background: ' + url + '(https://a.example/s' + i + '.png), ' + imageSet + '("y.png" 1x); ' + color + ': red }\\n';
                 return attributes + '<style>' + sheet + '</style>';
             };
-            // each the best of 3 rounds of 10 runs, after 5 to warm up: Firefox's clock moves in whole milliseconds, its
-            // compiler takes a few runs, and the machine is shared
+            // a time for the log: the best of 3 rounds of 10 runs, after 5 to warm up (Firefox's clock moves in whole
+            // milliseconds, and its compiler takes a few runs)
             const timed = (run) => {
                 for (let i = 0; i < 5; i++) run();
                 let best = Infinity;
@@ -232,10 +236,14 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
                 const list = texts(result);
                 const bound = counted(list);
                 const parse = timed(parsed);
-                const clean = timed(cleaned);
-                const whole = timed(() => counted(texts(result)));
                 const tokens = timed(() => counted(list));
-                return { parse, clean, count: whole, tokens, bound, length: html.length };
+                // the count against the parse and clean: timed alternately, 10 runs a sample, each keeping its fastest
+                // (scalingRatio)
+                const whole = () => counted(texts(result));
+                for (let i = 0; i < 5; i++) { cleaned(); whole(); }
+                const tenOf = (run) => () => ({ run: () => { for (let i = 0; i < 10; i++) run(); } });
+                const counting = ratioOfFastest(tenOf(cleaned), tenOf(whole), { bound: ${COUNT_BOUND} });
+                return { parse, clean: counting.smallMs / 10, count: counting.largeMs / 10, counting: { ratio: counting.ratio, message: counting.message }, tokens, bound, length: html.length };
             };
             window.__s73 = [measure(render('url', 'image-set', 'color')), measure(render('url', 'image-set', 'co\\\\6c or')), measure(render(escape('url'), escape('image-set'), 'color'))];
         }, 0), true)`);
@@ -247,7 +255,7 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         }
         // Against what the view does with every render anyway, parse and clean (it lays out and paints besides): Firefox
         // parses three to seven times as fast as the others, and there the count is about half of the bare parse
-        for (const cost of measured) expect(cost.count).toBeLessThan(cost.clean / 2);
+        for (const cost of measured) expect(cost.counting.ratio, cost.counting.message).toBeLessThan(COUNT_BOUND);
     });
 
     test('observing the loads costs nothing while the view loads nothing', async ({ sandbox, page, browserName }) => {

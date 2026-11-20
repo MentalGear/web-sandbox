@@ -7,18 +7,29 @@
  *                          names, a Permissions-Policy, a Referrer-Policy, nosniff, and the PAGE_HEADERS a spec sets) and, unless cookies=0, the host site's cookies with SameSite None, Lax and Strict.
  *                          Its one script is external (realistic-host-page.ts), so a policy without 'unsafe-inline' runs it.
  *   GET  /sw.js            the host app's Service Worker: cache-first for its API, reporting what it handled
+ *   GET  /api/S/sealed-document.html
+ *                          sealed mode's file (the default build's), served as a name of the API (`?doc=api` on the page
+ *                          registers it as documentUrl), recorded as every API request is
  *   *    /api/S/NAME       the host app's own API: answers { name, n } (n counts the session's hits on that name) and records the
  *                          request with every header the browser sent, so a spec reads the Cookie and Authorization headers and the Referer that
  *                          reached it. CORS for any origin, as a public API's would be
- *   POST /report/S         the page's CSP report-uri, recorded
+ *   GET  /file/S/sealed-document.html?h=name:value
+ *                          sealed mode's file (the default build's) with the response headers named, and no CORS
+ *   POST /report/S         the page's CSP report-uri, recorded (and the file's, where a header on it names it)
  *   POST /sw-seen/S        the Service Worker's own log of the requests it handled
  *   GET  /hits/S           everything recorded for the session (?clear=1 empties it)
  *
  * A session is a test's own: tests running at once on one server never see each other's requests.
  */
+import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { fileURLToPath } from 'node:url';
 
 export const REALISTIC_HOST_PATH = '/__realistic-host';
+
+/** The API name under which the server answers with sealed mode's file (the page's `?doc=api`). */
+export const DOCUMENT_API_NAME = 'sealed-document.html';
+const SEALED_DOCUMENT = fileURLToPath(new URL('../../dist/sealed-document.html', import.meta.url));
 
 /** The host app's cookies and what each says about its SameSite attribute (the page sets them at load). */
 export const HOST_COOKIES = [
@@ -137,9 +148,28 @@ export function realisticHostMiddleware() {
                 res.end();
                 return;
             }
+            if (name === DOCUMENT_API_NAME) {
+                res.setHeader('content-type', 'text/html');
+                res.setHeader('cache-control', 'no-store');
+                res.end(readFileSync(SEALED_DOCUMENT));
+                return;
+            }
             const n = (record.counters.get(name) ?? 0) + 1;
             record.counters.set(name, n);
             json(res, { name, n });
+            return;
+        }
+        // sealed mode's file with the response headers a spec names (`h=name:value`), and no CORS, so the check of the file
+        // cannot read it and what decides is the view's policy check (design 03, "The policies in force")
+        if (route === 'file' && rest.join('/') === DOCUMENT_API_NAME) {
+            res.setHeader('content-type', 'text/html');
+            res.setHeader('cache-control', 'no-store');
+            res.removeHeader('access-control-allow-origin');
+            for (const pair of url.searchParams.getAll('h')) {
+                const colon = pair.indexOf(':');
+                res.setHeader(pair.slice(0, colon), pair.slice(colon + 1));
+            }
+            res.end(readFileSync(SEALED_DOCUMENT));
             return;
         }
         if (route === 'report') {

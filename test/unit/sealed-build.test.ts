@@ -19,6 +19,8 @@ import { refuseCodeFromStrings } from '@src/lib/code-from-strings';
 import { reasonText } from '@src/lib/reasons';
 import { inheritedContext } from '../../tools/docgen/extractors/inherited-context';
 import { startWith } from './start-app';
+import { isServed, viewPolicyOf } from './served-view';
+import { sealedDocumentPolicy } from '@src/lib/sealed-document';
 
 /**
  * Sealed mode's build path (docs/research/24_sealed_mode, step 2): strict mode's view and worker with no network, and no
@@ -74,7 +76,8 @@ const SEALED_EVERY = {
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
 const wrapperOf = (el: HTMLElement) => el.shadowRoot!.querySelector('iframe');
-const policyOf = (el: HTMLElement) => parse(parse(wrapperOf(el)!.srcdoc).querySelector('iframe')!.getAttribute('srcdoc')!).querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
+// the policy the view runs under: the served file's constant one in sealed mode, the srcdoc view's in strict mode
+const policyOf = (el: HTMLElement) => viewPolicyOf(el);
 const directives = (policy: string) => new Map(policy.split('; ').map(part => { const [name, ...sources] = part.split(' '); return [name!, sources]; }));
 /** The bootstrap's features literal in a strict or sealed worker's source: the argument before createSizeOf's source. */
 const featuresOf = (source: string): Record<string, unknown> => {
@@ -87,7 +90,7 @@ const networkSources = (policy: string) => [...directives(policy).values()].flat
 
 async function mount() {
     const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
     return el;
@@ -182,10 +185,10 @@ describe('T4: a sealed build wires no network source: its policy, its gate list,
         return { el, prepared: el._prepareBuild(), features: featuresOf(el._strictInit.workerSource) };
     };
 
-    it('sealed: the view policy is sealedViewPolicy over its file kinds, no gate and no gate list, sandboxFetch() refuses in the guest, one frame, INIT_VIEW names no origins, the build has no network', async () => {
+    it("sealed: the view is the served file, under the file's constant policy whatever the files, no gate and no gate list, sandboxFetch() refuses in the guest, one frame, INIT_VIEW names no origins, the build has no network", async () => {
         const { el, prepared, features } = await build({ mode: 'sealed' });
-        const kinds = new Set<SealedFileKind>(['styles', 'images', 'fonts', 'media']);
-        expect(policyOf(el)).toBe(sealedViewPolicy({ fileKinds: kinds, bootstrapHash: HASH }));
+        expect(isServed(wrapperOf(el)!)).toBe(true);
+        expect(policyOf(el)).toBe(sealedDocumentPolicy());
         expect(networkSources(policyOf(el))).toEqual([]);
         expect(directives(policyOf(el)).get('connect-src')).toEqual(["'none'"]);
         expect(features).not.toHaveProperty('connect');
@@ -236,8 +239,11 @@ describe("a sealed build carries no state of the host page into the worker's fea
         document.cookie = `host=${MARK}-cookie`;
     };
 
-    /** Everything a sealed build hands the guest, as text: the wrapper and view documents, INIT_VIEW (the worker's source included), each registered file. */
-    const handedOver = (el: any): string => [wrapperOf(el)!.srcdoc, JSON.stringify(el._strictInit), JSON.stringify(el._prepareBuild().strictInit)].join('\n');
+    /**
+     * Everything a sealed build hands the guest, as text: the frame (its URL, and a document had it one: the served file
+     * has none the element writes), INIT_VIEW (the worker's source included), each registered file.
+     */
+    const handedOver = (el: any): string => [wrapperOf(el)!.outerHTML, wrapperOf(el)!.srcdoc, JSON.stringify(el._strictInit), JSON.stringify(el._prepareBuild().strictInit)].join('\n');
 
     it('markers in the title, the markup, the name, the history, the storage and the cookies appear in none of it, in the default mode and with every option set', async () => {
         poison();
@@ -326,12 +332,12 @@ const forbiddenIn = (paths: Map<string, string[]>) => FORBIDDEN.filter(node => p
 
 describe('T5: the call graph of the sealed build path reaches no network code', () => {
     // _prepareBuild up to the end of its sealed branch: what runs for a sealed build before it returns
+    const SEALED_BRANCH = "if (this._config.mode === 'sealed') return this._prepareSealedFrame(built, files);";
     const sealedPrefix = () => {
         const body = member('_prepareBuild');
-        const branch = body.indexOf("if (this._config.mode === 'sealed') {");
+        const branch = body.indexOf(SEALED_BRANCH);
         expect(branch, 'the sealed branch of _prepareBuild').toBeGreaterThan(0);
-        const end = body.indexOf('}', branch);
-        return body.slice(0, end + 1);
+        return body.slice(0, branch + SEALED_BRANCH.length);
     };
 
     it('the graph sees what it must: every network node is code it can read, and _prepareBuild as a whole reaches them (positive control)', () => {
@@ -355,16 +361,20 @@ describe('T5: the call graph of the sealed build path reaches no network code', 
     it('the sealed branch is the first thing _prepareBuild decides by mode, and nothing before it or in it reaches network code', () => {
         const prefix = sealedPrefix();
         expect(prefix.indexOf('this._reach(')).toBe(-1);
-        expect(prefix).toMatch(/if \(this\._config\.mode === 'sealed'\) \{\s*this\._refuseByTrustedTypes\(\);\s*return this\._prepareSealedFrame\(built, files\);\s*\}$/);
+        expect(prefix.endsWith(SEALED_BRANCH)).toBe(true);
+        // the served view reads nothing of the host page's policy: not even its Trusted Types list (no HTML sink is written)
+        expect(prefix).not.toContain('_refuseByTrustedTypes');
         expect(forbiddenIn(reach('src/host.ts', prefix))).toEqual([]);
         expect(reach('src/host.ts', prefix).has('src/host.ts#this._prepareSealedFrame')).toBe(true);
     });
 
-    it('the sealed frame (_prepareSealedFrame, the shared view, the worker source, the sealed policy) reaches no network code, and returns no network', () => {
+    it("the sealed frame (_prepareSealedFrame, the view's init, the worker source) reaches no network code and no policy generator, and returns no network", () => {
         const paths = reach('src/host.ts', member('_prepareSealedFrame'));
         expect(forbiddenIn(paths)).toEqual([]);
-        for (const node of ['src/host.ts#this._prepareViewFrame', 'src/host.ts#this._getStrictWorkerSource', 'src/host.ts#this._sealedPolicy', 'src/lib/csp/csp-generator.ts#sealedViewPolicy']) expect(paths.has(node), node).toBe(true);
-        expect(member('_prepareSealedFrame')).toMatch(/return this\._prepareViewFrame\(built, files, this\._sealedPolicy\(files\), null\);\s*$/);
+        for (const node of ['src/host.ts#this._viewInit', 'src/host.ts#this._getStrictWorkerSource']) expect(paths.has(node), node).toBe(true);
+        // its view runs under the served file's constant policy: no policy is generated for it, and no srcdoc view built
+        for (const node of ['src/host.ts#this._prepareViewFrame', 'src/host.ts#this._sealedPolicy', 'src/lib/csp/csp-generator.ts#sealedViewPolicy']) expect(paths.has(node), node).toBe(false);
+        expect(member('_prepareSealedFrame')).toMatch(/return \{ iframe, built, strictInit: this\._viewInit\(files, null\), network: null \};\s*$/);
         expect(member('_prepareViewFrame')).toMatch(/return \{ iframe, built, strictInit, network: null \};\s*$/);
     });
 
@@ -451,7 +461,7 @@ describe("T6: the egress table's sealed column: every surface of sealed mode is 
 // ---- T9: INHERITED_CONTEXT's sealed field
 
 describe("T9: every row of the host page's context says what it is in sealed mode, and the build bears out the rows sealed mode drops", () => {
-    it('every row has its standing; a row that does not apply says why; 15 remain, 3 are reduced, 5 do not apply (research 24, §1.4; the autofill row, research 29)', () => {
+    it('every row has its standing; a row that does not apply says why; 15 remain, 4 are reduced, 5 do not apply (research 24, §1.4; the autofill row, research 29; the headers of the served file, design 03)', () => {
         const rows = inheritedContextRows();
         for (const row of rows) {
             expect(['remains', 'reduced', 'not-applicable'], row.id).toContain(row.sealed?.standing);
@@ -460,7 +470,7 @@ describe("T9: every row of the host page's context says what it is in sealed mod
         }
         const by = (standing: string) => rows.filter(row => row.sealed.standing === standing).map(row => row.id).sort();
         expect(by('not-applicable')).toEqual(['ancestorOrigins', 'cookies', 'referrer', 'serviceWorker', 'uiSurfaces']);
-        expect(by('reduced')).toEqual(['autofill', 'cspFetch', 'cspReporting']);
+        expect(by('reduced')).toEqual(['autofill', 'cspFetch', 'cspReporting', 'fileHeaders']);
         expect(by('remains')).toHaveLength(15);
         expect(rows).toHaveLength(Object.keys(INHERITED_CONTEXT).length);
     });
@@ -473,7 +483,7 @@ describe("T9: every row of the host page's context says what it is in sealed mod
             const policy = directives(policyOf(el));
             return {
                 sources: networkSources(policyOf(el)),
-                fetchSources: ['img-src', 'font-src', 'media-src', 'style-src', 'connect-src'].flatMap(name => policy.get(name)!).filter(source => !["'none'", "'unsafe-inline'", 'blob:'].includes(source)),
+                fetchSources: ['img-src', 'font-src', 'media-src', 'style-src', 'connect-src'].flatMap(name => policy.get(name)!).filter(source => !["'none'", "'unsafe-inline'", 'blob:'].includes(source) && !source.startsWith("'sha256-")), // a hash admits a text, never a load
                 gate: (el._strictInit.workerSource as string).includes('function requestGate('),
                 connect: featuresOf(el._strictInit.workerSource).connect as string[] | undefined,
                 bridge: el.shadowRoot.querySelectorAll('iframe').length > 1,

@@ -163,7 +163,7 @@ describe('the view bootstrap: the switches from INIT_VIEW', () => {
 describe('the configuration: allowAnimations and allowAutoplay', () => {
     async function element() {
         const { defineWebSandbox } = await import('@src/host');
-        defineWebSandbox();
+        defineWebSandbox({ documentUrl: '/sealed-document.html' });
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const created = () => {
             const el = document.createElement('web-sandbox') as any;

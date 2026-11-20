@@ -23,7 +23,7 @@ afterEach(() => {
 const task = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function element(config?: Record<string, unknown>) {
-    defineWebSandbox();
+    defineWebSandbox({ documentUrl: '/sealed-document.html' });
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
@@ -100,6 +100,7 @@ describe('L-2: a delay of 2^31 ms or more waits; Infinity is off', () => {
         const ALLOWED: Record<string, string> = {
             'src/lib/long-timer.ts': 'the helper itself',
             'src/lib/auto-resize.ts': 'at most AUTO_RESIZE_MIN_INTERVAL_MS, a constant',
+            'src/lib/links.ts': 'LINK_ACTIVATION_POLL_MS, a constant',
             'src/lib/in-sandbox-view.ts': "the view's own rate arithmetic: at most the time its budget takes to cover one flush",
         };
         const files = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap(entry => {

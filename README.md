@@ -89,11 +89,16 @@ The whole picture, on one page, with the realms, channels, frames and lifecycle 
 ```js
 import { defineWebSandbox } from 'web-sandbox';   // or './src/index.ts' from a checkout
 
-defineWebSandbox();                             // registers <web-sandbox>; pass a name to use your own tag
+// registers <web-sandbox>: sealed mode's view is the package's sealed-document.html, which you serve unchanged
+defineWebSandbox({ documentUrl: '/static/sealed-document.html' });
 const sandbox = document.createElement('web-sandbox');
 sandbox.start({ html: '<h1>Hello</h1>' });      // the app, once: sealed mode, the default, shows it, runs no script in it
 document.body.append(sandbox);                  // it builds once it is in the document
 ```
+
+The package exports the file as `web-sandbox/sealed-document.html` (`dist/sealed-document.html`): copy it into the
+directory your site serves static files from, and give its URL once, at registration
+([API](docs/API.md#registering-the-element)); your page's own policy admits it in `frame-src`.
 
 An element runs one app, given once with `start(app, grants)`: the app's own content (`html`, `entry`, `files`) as the
 first argument, and what you allow it (its host methods, `guestWrites`, the other options) as the second. A second
@@ -119,15 +124,16 @@ for the build with the network modes), or build the package
 the browser ([Host page policy](docs/API.md#host-page-policy)). `bun run dev` serves the playground on port 4444 only
 (`strictPort`).
 
-**Your page's own policy applies inside the sandbox.** Its frames are `srcdoc` documents, which inherit the host
-page's Content-Security-Policy, Trusted Types and Cross-Origin-Embedder-Policy. A host policy that refuses what the
-sandbox needs ends the build with a reason that names it; what to allow, per mode, is in
-[API.md](docs/API.md#host-page-policy). Sealed and strict mode need the view bootstrap's hash in your `script-src`,
-`blob:` in your `worker-src`, and the hashes of the library's two styles (or `'unsafe-inline'`) in your `style-src`, and
-nothing for the guest's own styles: the view applies them through the CSSOM, which your `style-src` does not check, so
-your report endpoint hears nothing of them. Cooperative and worker mode need `'unsafe-inline'` in your `script-src`, which
-browsers ignore next to a hash or a nonce: they cost a page its own nonce- or hash-based script policy, so prefer sealed
-mode (the default) or strict mode.
+**Your page's own policy.** Sealed mode's view is the served file, whose one policy is its own `<meta>`: your page's
+policy does not reach it, and needs only to admit `documentUrl` in `frame-src`. The frames of the other modes are
+`srcdoc` documents, which inherit the host page's Content-Security-Policy, Trusted Types and
+Cross-Origin-Embedder-Policy. A host policy that refuses what the sandbox needs ends the build with a reason that names
+it; what to allow, per mode, is in [API.md](docs/API.md#host-page-policy). Strict mode needs the view bootstrap's hash in
+your `script-src`, `blob:` in your `worker-src`, and the hashes of the library's two styles (or `'unsafe-inline'`) in
+your `style-src`, and nothing for the guest's own styles: the view applies them through the CSSOM, which your
+`style-src` does not check, so your report endpoint hears nothing of them. Cooperative and worker mode need
+`'unsafe-inline'` in your `script-src`, which browsers ignore next to a hash or a nonce: they cost a page its own nonce-
+or hash-based script policy, so prefer sealed mode (the default) or strict mode.
 
 ### Modes
 
@@ -732,7 +738,8 @@ Why it is built this way: [ADR-005](docs/ADR-005-strict-mode.md).
 ## Backlog
 
 Open work — broken scaffolding, security follow-ups, planned capabilities — is tracked in
-[`docs/BACKLOG.md`](docs/BACKLOG.md). Whether to continue this project rather than adopt an
+[`docs/BACKLOG.md`](docs/BACKLOG.md). The design being built (one app per element, what an app hands over, sealed mode in a
+served document), its invariants, its reviews and what is built of it row by row: [`docs/design/`](docs/design/README.md). Whether to continue this project rather than adopt an
 existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-001-continue-or-adopt.md).
 
 ## Security Mitigations

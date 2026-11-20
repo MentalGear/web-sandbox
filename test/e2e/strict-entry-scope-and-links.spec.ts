@@ -141,8 +141,8 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
 
         test('an entry that closes its scope early and declares at the top level of the script does not start: terminated with "the guest entry failed to start", naming the declaration', async ({ sandbox }) => {
             await sandbox.registerFiles({ 'main.js': `}).call(this); function Worker() {} (function () {` });
-            expect(await sandbox.mount(inMode(mode, { entry: 'main.js' }))).toBe('ready');
-            await expect.poll(() => sandbox.state(), { timeout: 8000 }).toBe('terminated');
+            // never ready: the scope check stops the worker's script before its start-up verdicts (design 03, the start-up order)
+            expect(await sandbox.mount(inMode(mode, { entry: 'main.js' }))).toBe('terminated');
             expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
             // the entry's own error text is a guest line (FR:F3), never part of the host line or the reason
             expect(await sandbox.waitForLog(/^Uncaught .*the entry declares "Worker" at the top level/)).toBeTruthy();

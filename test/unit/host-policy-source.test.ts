@@ -48,6 +48,14 @@ const BLANKED_FIELDS: Readonly<Record<string, string>> = {
     'src/lib/violation.ts': "VIOLATION_EVENT_FIELDS: the blank the field reads to guest code in the guest's worker (BD6:ISO-1)",
 };
 
+/**
+ * Files that read a violation's `originalPolicy` only to compare it with a text of the library's, and pass on nothing of
+ * it but a boolean, with why. None of them reads a policy of the host page's.
+ */
+const COMPARED_POLICIES: Readonly<Record<string, string>> = {
+    'src/lib/in-sandbox-view.ts': "the served view's policy check (policy-check.ts): in sealed mode only, whose document inherits no policy of the host page's, each violation's policy text is compared with the file's own <meta>, and only the finding's name and a boolean leave the view",
+};
+
 const isString = (token: Token | undefined): boolean => token !== undefined && (token.kind === SyntaxKind.StringLiteral || token.kind === SyntaxKind.NoSubstitutionTemplateLiteral);
 const unquoted = (token: Token): string => token.text.slice(1, -1);
 
@@ -63,7 +71,8 @@ function asksThePage(file: string, text: string): string[] {
         if (isString(token) && /host-csp/.test(token.text)) say(`a module of the read (${token.text})`);
         // the one API that reports a page's policy text: a violation's `originalPolicy`
         const writesBlank = file in BLANKED_FIELDS && next?.kind === SyntaxKind.ColonToken && tokens[i - 1]?.kind !== SyntaxKind.DotToken;
-        if (token.kind === SyntaxKind.Identifier && token.text === 'originalPolicy' && !writesBlank) say('originalPolicy');
+        const compares = file in COMPARED_POLICIES && tokens[i - 1]?.kind === SyntaxKind.DotToken;
+        if (token.kind === SyntaxKind.Identifier && token.text === 'originalPolicy' && !writesBlank && !compares) say('originalPolicy');
         if (isString(token) && unquoted(token) === 'originalPolicy') say("'originalPolicy'");
         // a listener for the violations of a document of the host page's
         const listens = token.text === 'addEventListener' && next?.kind === SyntaxKind.OpenParenToken && isString(tokens[i + 2]) && unquoted(tokens[i + 2]!).toLowerCase() === 'securitypolicyviolation';

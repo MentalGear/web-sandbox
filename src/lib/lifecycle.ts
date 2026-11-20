@@ -10,9 +10,10 @@
  * executor (host.ts, the module-level `step`): every termination, terminate() and the element's own, each with the
  * generation it was armed in (`terminate{gen}`); the binding of the element's one app (start(): `start`); every build
  * (connect, start(), reset(): `connect`, `build`, and the build effect's `built` and `buildFailed`), the element's
- * removal and adoption (`disconnect`) and the load deadline (`loadDeadline`); and the completion of a build and
- * the `ready` gate (the wrapper's load, `frameLoad`; the guest's announcement, `announced`; the view's check-in,
- * `viewReady`). The executor is the one writer of `_lc`, and makes the lifecycle's two events;
+ * removal and adoption (`disconnect`), the check of sealed mode's served file before its first frame (`fileChecked`;
+ * design 03) and the load deadline (`loadDeadline`); and the completion of a build and
+ * the `ready` gate (the frame's load, `frameLoad`; the guest's announcement, `announced`; the view's announcement,
+ * `viewAnnounced`, its check-in, `viewReady`, and its worker's verdicts, `workerVerdicts`). The executor is the one writer of `_lc`, and makes the lifecycle's two events;
  * test/unit/lifecycle-reducer.test.ts holds host.ts to it by its source ("class L in host.ts").
  *
  * Class L's invariant (research 18): each transition is reachable by one path, guarded by one predicate; events are
@@ -46,14 +47,19 @@ import { mintUncodedError } from './minted-errors';
  * What a build reads besides the reducer's own state, asked of the host at the moment the build starts: whether the
  * element may build where it is (host.ts, buildsHere: in the defining realm's document, and connected; R2:L-1), the
  * refusal the config and the files give (an unknown mode, AR:A4; a strict entry that names no JavaScript file of the
- * files, R2:L-4; a cross-origin isolated host page; an entry that calls import()), and the two facts of the build that its completion depends on: strict
- * mode (the view checks in on its port, VIEW_READY) and whether the guest frame runs a bootstrap that announces its
- * port (`allow-scripts` in cooperative mode, always in worker mode; BR:CB1).
+ * files, R2:L-4; a cross-origin isolated host page; an entry that calls import()), and the facts of the build that its completion depends on: strict
+ * mode (the view announces itself, then checks in on its port, VIEW_READY), whether the view is the served file
+ * (sealed mode: design 03, which names what a silent file means), whether the build waits for the check of that file
+ * before it frames it (`checksFile`: the registration has no answer kept, and the realm can make the request;
+ * document-check.ts; absent, it does not), and whether the guest frame runs a bootstrap that announces its port (`allow-scripts` in
+ * cooperative mode, always in worker mode; BR:CB1). A finding the registration kept is a refusal, in `blocked`.
  */
 export interface BuildContext {
     buildsHere: boolean;
     blocked: string | null;
     strict: boolean;
+    served: boolean;
+    checksFile?: boolean;
     announces: boolean;
 }
 
@@ -69,11 +75,21 @@ export interface Notice {
  */
 export interface BuildProgress {
     readonly strict: boolean;
+    readonly served: boolean;
     readonly announces: boolean;
-    readonly frameLoaded: boolean; // the wrapper's one load arrived
-    readonly accepted: boolean; // the one announcement this build accepts arrived (a port, or worker mode's refusal)
-    // The window the accepted announcement came from, when it carried a port (the guest checked in), else null: the
-    // guest frame the wrapper's load must hold (S46). Opaque here, compared by identity only; released with the build.
+    // The check of the served file (design 03): `none` for a build that does not wait for it; `pending` from the build's
+    // start until it answers, while nothing is prepared or framed; `answered` once it let the build go on.
+    readonly fileCheck: 'none' | 'pending' | 'answered';
+    readonly frameLoaded: boolean; // the frame's one load arrived (the wrapper's, or the served file's)
+    // the one announcement this build accepts arrived (a port, worker mode's refusal, or the view's announcement)
+    readonly accepted: boolean;
+    // Strict and sealed mode (design 03, "The start-up order", step 5): the view checked in on its port (VIEW_READY), and
+    // its worker's start-up gates all held (WORKER_VERDICTS). The build is `ready` once both are true, never before.
+    readonly checkedIn: boolean;
+    readonly workerHeld: boolean;
+    // The window the accepted announcement came from, when it carried a port (the guest checked in) or was the view's,
+    // else null: the guest frame the frame's load must hold (S46). Opaque here, compared by identity only; released with
+    // the build.
     readonly announcer: unknown;
 }
 
@@ -208,18 +224,35 @@ export const LC_INPUTS = {
     // sandbox); with `notices`, the lines dispatched before it, one by one. In any state: a guarded effect that throws
     // after its own output terminated ends that environment again, which changes nothing.
     terminate: { from: "terminate(), the element's own terminations, the executor", stamped: 'optional', states: ANY_STATE, fields: { reason: field<string>('string'), notices: optional<readonly Notice[]>('readonly Notice[]') } },
+    // The check of the served file answered, for the build of `gen` (design 03, "The check of the file"): `finding`, the
+    // reason it found, ends the build; null (the library's file, or no answer it could read) lets it go on. One per
+    // build that waits for it (`checksFile`), only while that build is loading and nothing of it is framed yet.
+    fileChecked: { from: 'the check of the served file', stamped: 'always', states: ['loading'], app: 'bound', modes: ['strict'], fields: { finding: field<string | null>('string | null') } },
     // The load deadline (BR:CB3): LOAD_TIMEOUT_MS of loading.
     loadDeadline: { from: 'the load deadline', stamped: 'always', states: STANDING, app: 'bound', fields: {} },
     // The wrapper's load, in the microtask the host's load handler queues (R4:L-1): `gen` as the load event found it;
     // `stillOurs` whether, in the microtask, the frame is still the element's and both are connected; `guest` the guest
     // frame's window, or null (R2:L-6, S46): compared with the build's `announcer` by identity.
     frameLoad: { from: "the wrapper's load event", stamped: 'always', states: STANDING, app: 'bound', fields: { stillOurs: field<boolean>('boolean'), guest: field<unknown>('window | null') } },
+    // The view's announcement (design 03, "Who receives the first port"): heard by the host page's listener only from the
+    // window that is the first frame of the element's frame (`source`), in sealed and strict mode, before any port, and
+    // read there against the element's registries (startup-verdicts.ts): `finding`, the reason its version or a verdict of
+    // its start-up gates gives, ends the build with no port; null lets the view get its ports in answer (`sendInitView`),
+    // once per build.
+    viewAnnounced: { from: "the host page's message listener", stamped: 'always', states: STANDING, app: 'bound', modes: ['strict'], fields: { source: field<unknown>('window'), finding: field<string | null>('string | null') } },
     // The guest frame's announcement (BR:CB1). `valid`: trusted, and exactly one port or worker mode's refusal; `refusal`:
     // the reason worker mode's frame gave for a worker that could not start (R2:C-5), else null; `source`:
     // the window it came from (the guest frame's: the host's listener hears no other). A strict build listens for none.
     announced: { from: "the host page's message listener", stamped: 'always', states: STANDING, app: 'bound', modes: ['cooperative', 'worker'], fields: { valid: field<boolean>('boolean'), refusal: field<string | null>('string | null'), port: field<unknown>('unknown'), source: field<unknown>('window') } },
     // The strict view's check-in on its port (R1:R3-1), with what the host checks then.
-    viewReady: { from: "the view port's VIEW_READY", stamped: 'always', states: STANDING, app: 'bound', modes: ['strict'], fields: { height: field<unknown>('unknown'), stillStyleRefused: field<boolean>('boolean') } },
+    // `wrapperStyleRefused`: the view found that the policies it inherits refuse the wrapper's style (in-sandbox-view.ts,
+    // wrapperStyleInForce), which is what keeps a strict view 150 px high in its frame.
+    viewReady: { from: "the view port's VIEW_READY", stamped: 'always', states: STANDING, app: 'bound', modes: ['strict'], fields: { height: field<unknown>('unknown'), stillStyleRefused: field<boolean>('boolean'), wrapperStyleRefused: field<boolean>('boolean') } },
+    // The verdicts of the worker's start-up gates (design 03, "The start-up order", step 4), which the view hands on from
+    // the worker's first message, on the view port after its check-in: `finding`, the reason of the first gate that did
+    // not hold (startup-verdicts.ts), ends the build before anything that waited for `ready` is sent; null lets it be
+    // `ready` once the view has checked in.
+    workerVerdicts: { from: "the view port's WORKER_VERDICTS", stamped: 'always', states: STANDING, app: 'bound', modes: ['strict'], fields: { finding: field<string | null>('string | null') } },
     // Around each 'terminated' dispatch (the executor's; R4:L-3: every one, so the no-repeat rule holds for all).
     dispatchStarted: { from: 'the executor', stamped: 'never', states: ANY_STATE, fields: { reason: field<string>('string') } },
     dispatchEnded: { from: 'the executor', stamped: 'never', states: ANY_STATE, fields: {} },
@@ -250,12 +283,14 @@ export const LC_EFFECTS = {
     // host.ts, `_attachBuild`: the prepared build becomes the element's (its frame, its announcement listener, its bridge
     // and overlay); no embedder code runs there, so no other build can come in between (LM-2)
     attach: { summary: "the prepared build becomes the element's", fields: { prepared: /* @__PURE__ */ field<unknown>('unknown') } },
+    // host.ts, `_checkFile`: the registration's request for documentUrl (document-check.ts), whose answer is `fileChecked`
+    checkFile: { summary: 'sealed mode: the check of the served file; then `fileChecked`' },
     startLoadDeadline: { summary: 'arms the load deadline (LOAD_TIMEOUT_MS)' },
     stopLoadDeadline: { summary: 'stops the load deadline' },
-    sendInitView: { summary: "strict mode, at the wrapper's load: the view (`target`) gets its ports (`_setupStrictChannels`)", fields: { target: /* @__PURE__ */ field<unknown>('window') } },
+    sendInitView: { summary: "strict and sealed mode, at the view's announcement: the view (`target`, the window that announced itself) gets its ports (`_setupStrictChannels`)", fields: { target: /* @__PURE__ */ field<unknown>('window') } },
     openChannel: { summary: 'cooperative and worker mode: the announced port, or none (`_setupChannel`)', fields: { port: /* @__PURE__ */ field<unknown>('unknown') } },
     closePort: { summary: 'an announced port no build takes', fields: { port: /* @__PURE__ */ field<unknown>('unknown') } },
-    checkView: { summary: "the view's size and still-style warnings (R3-1)", fields: { height: /* @__PURE__ */ field<unknown>('unknown'), stillStyleRefused: /* @__PURE__ */ field<boolean>('boolean') } },
+    checkView: { summary: "the view's size and still-style warnings (R3-1)", fields: { height: /* @__PURE__ */ field<unknown>('unknown'), stillStyleRefused: /* @__PURE__ */ field<boolean>('boolean'), wrapperStyleRefused: /* @__PURE__ */ field<boolean>('boolean') } },
     flush: { summary: 'what waited for `ready` goes to the port (`_flushQueues`)' },
     startWatchdogs: { summary: "the guest's and, in strict mode, the view's" },
     startAutoResize: { summary: 'the resizer, in place for the reports buffered before the port' },
@@ -376,9 +411,21 @@ function initialize(state: LcCommon, ctx: BuildContext): LcOutput {
         const refused = endBuild(torn, refusal);
         return { state: refused.state, effects: [...effects, ...refused.effects] };
     }
-    const build: BuildProgress = { strict: ctx.strict, announces: ctx.announces, frameLoaded: false, accepted: false, announcer: null };
-    effects.push({ k: 'build' });
+    const checking = ctx.served && ctx.checksFile === true;
+    const build: BuildProgress = { strict: ctx.strict, served: ctx.served, announces: ctx.announces, fileCheck: checking ? 'pending' : 'none', frameLoaded: false, accepted: false, checkedIn: false, workerHeld: false, announcer: null };
+    // A build that checks the file first (design 03, the start-up order, step 1): its deadline bounds the wait as well,
+    // armed once, here; the build effect runs when the check lets it (`fileChecked`).
+    effects.push(...(checking ? [{ k: 'startLoadDeadline' } as const, { k: 'checkFile' } as const] : [{ k: 'build' } as const]));
     return { state: { ...torn, state: 'loading', build, pending: null }, effects };
+}
+
+// The check of the served file answered (design 03): a finding ends the build with its reason, before anything was
+// prepared or framed; no finding lets the build be prepared and framed now. It arrives only for the build that waits for
+// it (stamped, and one per `checkFile`), so the state is that build's, `loading` and `pending`.
+function fileChecked(state: LcState, input: Extract<LcInput, { t: 'fileChecked' }>): LcOutput {
+    if (state.state !== 'loading' || state.build.fileCheck !== 'pending') return unchanged(state);
+    if (input.finding !== null) return terminateNow(state, input.finding);
+    return { state: { ...state, build: { ...state.build, fileCheck: 'answered' } }, effects: [{ k: 'build' }] };
 }
 
 // The transition to `ready`, in every mode, and the one place what waited for it is released (R5:L-1). The load
@@ -403,11 +450,13 @@ function finishBuild(state: StandingState, port: unknown): LcOutput {
     return enterReady(state, [{ k: 'openChannel', port }]);
 }
 
-// The wrapper's load. The wrapper is written once and has no script, so it
-// loads exactly once: a second load means something navigated or reloaded it. A guest that checked in already must be
-// the one the load holds (S46). Then: a bootstrap's check-in completes the build, after this load; strict mode hands the
-// view its ports and completes at VIEW_READY, never on this load alone (R1:R3-1: it also fires for a view whose bootstrap
-// the host page refused); a guest with no bootstrap completes now.
+// The frame's load: the wrapper's, which is written once and has no script, or the served file's (design 03, "One
+// load"), so it loads exactly once: a second load means something navigated or reloaded it. A guest or a view that
+// announced itself already must be the one the load holds (S46). Then: a bootstrap's check-in completes the build, after
+// this load; strict and sealed mode's view gets its ports at its own announcement, which may come before this load or
+// after it, and the build completes at VIEW_READY, never on this load alone (R1:R3-1: it also fires for a view whose
+// bootstrap never ran); a guest with no bootstrap completes now. A served file that loaded a document with no frame
+// (another page at documentUrl, or a file whose guard stopped it) holds no view that could ever announce itself.
 function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>): LcOutput {
     if (!input.stillOurs || !standing(state)) return unchanged(state);
     const build = state.build;
@@ -415,10 +464,22 @@ function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>):
     if (build.frameLoaded) return guarded(terminateNow(state, reasonText('secondLoad')));
     const loaded: StandingState = { ...state, build: { ...build, frameLoaded: true } };
     if (build.announcer !== null) return guarded(input.guest === build.announcer ? unchanged(loaded) : terminateNow(loaded, reasonText('secondLoad')));
-    if (input.guest === null) return guarded(terminateNow(loaded, reasonText('frameMissing')));
-    if (build.announces) return guarded(unchanged(loaded));
-    if (build.strict) return { state: loaded, effects: [{ k: 'sendInitView', target: input.guest }], guarded: true };
+    if (input.guest === null) return guarded(terminateNow(loaded, reasonText(build.served ? 'documentSilent' : 'frameMissing')));
+    if (build.announces || build.strict) return guarded(unchanged(loaded));
     return finishBuild(loaded, null);
+}
+
+// The view's announcement, from the first frame of the element's frame (the host's listener hears no other window): the
+// view gets its ports, posted to the window that spoke (design 03, "Who receives the first port"), unless its version
+// or one of its gates' verdicts gave a finding: then the build ends with it, and nothing is posted to any window. One
+// per build, and only while it is loading: a view that announces itself again (or once its build is ready, which only a
+// view that announced itself reaches) reloaded or rewrote its document, and ends the build, as a guest frame's second
+// announcement does.
+function viewAnnounced(state: LcState, input: Extract<LcInput, { t: 'viewAnnounced' }>): LcOutput {
+    if (state.state !== 'loading' || state.build.accepted) return terminateNow(state, reasonText('secondAnnouncement'));
+    if (input.finding !== null) return terminateNow(state, input.finding);
+    const announced: StandingState = { ...state, build: { ...state.build, accepted: true, announcer: input.source } };
+    return { state: announced, effects: [{ k: 'sendInitView', target: input.source }], guarded: true };
 }
 
 // The guest frame's announcement: exactly one per environment, from a build that expects one. Any other (a second one,
@@ -434,6 +495,25 @@ function announced(state: LcState, input: Extract<LcInput, { t: 'announced' }>):
     }
     const checkedIn: StandingState = { ...state, build: { ...build, accepted: true, announcer: input.source } };
     return { ...finishBuild(checkedIn, input.port), guarded: true };
+}
+
+// The view's check-in (R1:R3-1) and its worker's verdicts (design 03, "The start-up order", steps 4 and 5): the build is
+// `ready`, and what waited for it is sent, only once both have come, in whichever order; a failed gate of the worker's
+// ends the build first. One of each per build: a repeat changes nothing. Guarded, like the two other completions (see
+// LcOutput.guarded).
+function viewReady(state: LcState, input: Extract<LcInput, { t: 'viewReady' }>): LcOutput {
+    if (state.state !== 'loading' || state.build.checkedIn) return unchanged(state);
+    const checkedIn: StandingState = { ...state, build: { ...state.build, checkedIn: true } };
+    const check: Effect = { k: 'checkView', height: input.height, stillStyleRefused: input.stillStyleRefused, wrapperStyleRefused: input.wrapperStyleRefused };
+    if (checkedIn.build.workerHeld) return enterReady(checkedIn, [check]);
+    return { state: checkedIn, effects: [check], guarded: true };
+}
+
+function workerVerdicts(state: LcState, input: Extract<LcInput, { t: 'workerVerdicts' }>): LcOutput {
+    if (state.state !== 'loading' || state.build.workerHeld) return unchanged(state);
+    if (input.finding !== null) return terminateNow(state, input.finding);
+    const held: StandingState = { ...state, build: { ...state.build, workerHeld: true } };
+    return held.build.checkedIn ? enterReady(held) : unchanged(held);
 }
 
 // A frame of ours the host page's policy refused (host.ts, `_refusedByHostPage`, for the view's refusals): one host line,
@@ -454,15 +534,21 @@ function terminate(state: LcState, input: Extract<LcInput, { t: 'terminate' }>):
     return { state, effects };
 }
 
-// Why a build is still `loading` at its deadline: once the wrapper has loaded, the frame that runs the library's startup
-// script (the strict view, or the guest's bootstrap) has loaded too, and that script runs first: had it run, it would
-// have checked in. So the host page's policy stopped it (R1:R3-1). Before the wrapper's load, the frame did not finish
-// loading. A deadline bounds `loading` only, of the build it was started for (LM-2): the input carries that build's
-// generation, and it acts only while that build is `loading`; `enterReady` stops it as well, but the bound does not rest
-// on a timer stopped.
+// Why a build is still `loading` at its deadline. A served view that never announced itself is "the document did not
+// answer" (design 03, "The start-up order", step 6), and so is a check of the file that did not answer within the
+// deadline (nothing was framed then): from outside the frame a missing file, another page at documentUrl,
+// a header that refuses the framing or the view's script and a host page's frame-src that refuses the file look alike.
+// Otherwise: once the wrapper has loaded, the frame that runs the library's startup script (the strict view, or the
+// guest's bootstrap) has loaded too, and that script runs first: had it run, it would have checked in. So the host
+// page's policy stopped it (R1:R3-1). Before the wrapper's load, the frame did not finish loading. A deadline bounds
+// `loading` only, of the build it was started for (LM-2): the input carries that build's generation, and it acts only
+// while that build is `loading`; `enterReady` stops it as well, but the bound does not rest on a timer stopped.
 function loadDeadline(state: LcState): LcOutput {
     if (state.state !== 'loading') return unchanged(state);
     const build = state.build;
+    if (build.served) return terminateNow(state, reasonText(build.accepted ? 'loadTimeout' : 'documentSilent'));
+    // a view that checked in ran its script: what did not come is its worker's verdicts
+    if (build.checkedIn) return terminateNow(state, reasonText('loadTimeout'));
     const scripted = build.strict || build.announces;
     return terminateNow(state, build.frameLoaded && scripted ? reasonText('startupBlocked') : reasonText('loadTimeout'));
 }
@@ -526,7 +612,10 @@ export function reduce(state: LcState, input: LcInput): LcOutput {
             //   made there or later and released by the `teardown` effect: one frame, one listener, one deadline per build;
             // - the deadline starts here, once per build (one `built` per build effect), and acts only for its generation
             //   and only while that build is `loading` (`loadDeadline`).
-            return state.state === 'loading' ? { state, effects: [{ k: 'attach', prepared: input.prepared }, { k: 'startLoadDeadline' }] } : unchanged(state);
+            // A build that waited for the check of its file armed its deadline at its start (`initialize`): one per build.
+            if (state.state !== 'loading') return unchanged(state);
+            if (state.build.fileCheck === 'answered') return { state, effects: [{ k: 'attach', prepared: input.prepared }] };
+            return { state, effects: [{ k: 'attach', prepared: input.prepared }, { k: 'startLoadDeadline' }] };
         case 'buildFailed':
             // A build's failure carries the generation of its build, because it is that build's answer: a refusal known
             // before building is decided inside `initialize` and needs no input, so this input comes only from the build
@@ -541,17 +630,23 @@ export function reduce(state: LcState, input: LcInput): LcOutput {
         case 'terminate':
             // an element with no app has no environment to end, and is never `terminated`
             return state.started ? terminate(state, input) : unchanged(state);
+        case 'fileChecked':
+            return fileChecked(state, input);
         case 'loadDeadline':
             return loadDeadline(state);
         case 'frameLoad':
             return frameLoad(state, input);
         case 'announced':
             return announced(state, input);
+        case 'viewAnnounced':
+            return viewAnnounced(state, input);
         case 'viewReady':
             // host.ts, `_onViewMessage` VIEW_READY: the view's check-in, the first frame on the port only its bootstrap
-            // holds (R1:R3-1). Guarded, like the two other completions (see LcOutput.guarded).
-            if (state.state !== 'loading') return unchanged(state);
-            return enterReady(state, [{ k: 'checkView', height: input.height, stillStyleRefused: input.stillStyleRefused }]);
+            // holds (R1:R3-1)
+            return viewReady(state, input);
+        case 'workerVerdicts':
+            // host.ts, `_onViewMessage` WORKER_VERDICTS
+            return workerVerdicts(state, input);
         case 'dispatchStarted':
             return { state: { ...state, dispatching: [...state.dispatching, input.reason] }, effects: NOTHING };
         case 'dispatchEnded':
@@ -577,13 +672,15 @@ export interface LifecycleHost {
     // The build effect: prepares the build, and returns what it prepared, which `attach` makes the element's (LM-2).
     build(): unknown;
     attach(prepared: unknown): void;
+    // The check of the served file: its answer comes back as `fileChecked`, stamped with this generation.
+    checkFile(): void;
     failureReason(error: unknown, phase: 'build' | 'complete'): string;
     startLoadDeadline(): void;
     stopLoadDeadline(): void;
     sendInitView(target: unknown): void;
     openChannel(port: unknown): void;
     closePort(port: unknown): void;
-    checkView(height: unknown, stillStyleRefused: boolean): void;
+    checkView(height: unknown, stillStyleRefused: boolean, wrapperStyleRefused: boolean): void;
     flush(): void;
     startWatchdogs(): void;
     startAutoResize(): void;
@@ -680,12 +777,13 @@ function runEffect(host: LifecycleHost, effect: Effect, stampGen: Generation): v
                 host.step({ t: 'buildFailed', gen: stampGen, reason: host.failureReason(error, 'build') });
             }
             return;
+        case 'checkFile': host.checkFile(); return;
         case 'startLoadDeadline': host.startLoadDeadline(); return;
         case 'stopLoadDeadline': host.stopLoadDeadline(); return;
         case 'sendInitView': host.sendInitView(effect.target); return;
         case 'openChannel': host.openChannel(effect.port); return;
         case 'closePort': host.closePort(effect.port); return;
-        case 'checkView': host.checkView(effect.height, effect.stillStyleRefused); return;
+        case 'checkView': host.checkView(effect.height, effect.stillStyleRefused, effect.wrapperStyleRefused); return;
         case 'flush': host.flush(); return;
         case 'startWatchdogs': host.startWatchdogs(); return;
         case 'startAutoResize': host.startAutoResize(); return;
