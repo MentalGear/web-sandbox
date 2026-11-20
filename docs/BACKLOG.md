@@ -564,6 +564,12 @@ shard beside it, and passed in the next run. The probe loads no source of the li
 so the time it measured is the machine's. It bounds one wall-clock time by a constant, which neither T9's scan nor the
 scan for scaled ceilings (above) sees.
 
+**A spec that loads the machine itself.** `test/e2e/policy-check.spec.ts`, part 4, keeps three cores busy for 200
+starts (about a minute an engine) to show that the policy check never ends a healthy sandbox under load. It does so
+beside the shard's other worker, whose tests then run on a loaded machine. It does not import `test/e2e/host-share.ts`,
+so [T10](#t10)'s first step, which is derived from that import, does not set it apart: a spec that loads the machine
+needs a worker to itself as much as one that measures it.
+
 **Fix, by construction** (candidates). (a) Positive controls wait until N deliveries arrive, with a timeout, plus a scan
 (beside T9's) for count-in-window controls. (b) The local CI mirror and the e2e fixture record the load at the start and
 refuse or annotate a run above a threshold. (c) The exhaustive exploration in `lifecycle-transitions` gets a
@@ -857,7 +863,9 @@ and the probes beside the first shard. Each shard's result is keyed by its input
 minutes for its browsers where it waited about 29 (2026-11-20, GitHub's runners, two runs: the shards' jobs took 5 to
 8, 8 and 12 minutes on Chromium, 7, 10 to 14 and 15 to 18 on Firefox, 6 to 7, 8 and 14 to 30 on WebKit; 90 to 115
 minutes of machine time against about 80). Two later runs the same day took 15 minutes each from the push to the last
-browser job, with the third shard at 12 to 13 minutes on Chromium and 15 on Firefox and WebKit. The third shard is the longest on every engine, and on WebKit it is as
+browser job, with the third shard at 12 to 13 minutes on Chromium and 15 on Firefox and WebKit. A further run took 32
+minutes, by WebKit's first shard alone (31 minutes, where it took 7 before; its other shards 9 and 15): a long shard is
+not always the third, and what made that one long is not known. The third shard is the longest on every engine, and on WebKit it is as
 long as the whole suite was in one of the two runs: Playwright divides the files by their number of tests, the specs
 that measure the host page are late in their order and so share that shard's two workers, and on one machine they slow
 each other (below).
