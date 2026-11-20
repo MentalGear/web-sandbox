@@ -56,7 +56,9 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
 - **The port.** CI serves on 4444. Locally the port is derived from the checkout's absolute path, in 20000–29999
   (`test/e2e/server.ts`; `bun -e 'import("./test/e2e/server.ts").then(m => console.log(m.E2E_ORIGIN))'` prints it), and
   `WEB_SANDBOX_E2E_PORT` overrides it. Specs never name a port: they use `ORIGIN` and `HARNESS` from
-  `test/e2e/fixture.ts`, or a path relative to `baseURL`. `bun run dev` stays on 4444.
+  `test/e2e/fixture.ts`, or a path relative to `baseURL`. `bun run dev` stays on 4444. The e2e server listens on
+  127.0.0.1, so `ORIGIN` (`localhost`) and `OFFSITE_ORIGIN` (`127.0.0.1`, the same server as another site) both reach it
+  on a machine whose `localhost` is `::1` first.
 - **The bundles.** The server's start builds `dist/` (the default build) and `dist-network/` (the bundle of the build
   with the network modes); `package.spec.ts` mounts each from its bundle.
 - **The served file.** Sealed mode's view is each build's `sealed-document.html`, which the server answers at

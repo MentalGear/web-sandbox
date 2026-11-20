@@ -45,7 +45,11 @@ export default defineConfig({
     }
   },
   server: {
-    // host: 'localhost',
+    // The e2e server listens on the IPv4 loopback address, so both of the fixture's names reach it: `localhost`, the
+    // host page's origin, and `127.0.0.1`, the same server as another site (test/e2e/fixture.ts, OFFSITE_ORIGIN). Left to
+    // `localhost`, it listens on whichever address that name resolves to first, and where that is `::1` alone,
+    // 127.0.0.1 answers nothing.
+    ...(e2e ? { host: '127.0.0.1' } : {}),
     port: e2ePort,
     // open: '/playground/index.html',
     strictPort: true,
