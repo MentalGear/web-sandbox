@@ -40,10 +40,16 @@ jobs:
       fail-fast: false
       matrix:
         browser: [chromium, firefox, webkit]
+        # The suite's two groups (test/e2e/groups.ts; backlog T10), each on a machine of its own: the specs that measure
+        # the host page, on half of the cores and beside nothing else, with the probes, which measure it too; and the rest,
+        # on all of the cores.
+        group: [rest, measuring]
+    env:
+      WEB_SANDBOX_E2E_GROUP: ${{ matrix.group }}
     steps:
       - uses: actions/checkout@v4
       # A run's inputs are the checkout's files, but the Markdown ones: no page, spec or probe reads one (the unit job
-      # checks the docs). The suite's result on an engine is keyed by their hash (backlog T10): a key that has passed is
+      # checks the docs). A group's result on an engine is keyed by their hash (backlog T10): a key that has passed is
       # not run again, so a commit that changes only docs runs no browser. The marker is written after the last test
       # step and saved only by a job that succeeded, so a failed or cancelled run leaves no key behind.
       - id: inputs
@@ -52,7 +58,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .e2e-passed
-          key: e2e-passed-${{ matrix.browser }}-${{ steps.inputs.outputs.hash }}
+          key: e2e-passed-${{ matrix.browser }}-${{ matrix.group }}-${{ steps.inputs.outputs.hash }}
       - if: steps.passed.outputs.cache-hit != 'true'
         uses: oven-sh/setup-bun@v2
       - if: steps.passed.outputs.cache-hit != 'true'
@@ -65,14 +71,14 @@ jobs:
       - if: steps.passed.outputs.cache-hit != 'true'
         run: bunx playwright test --project=${{ matrix.browser }}
       # the strict-mode design probes (research 15) that ADR-005 rests on; skipped under the root config above
-      - if: steps.passed.outputs.cache-hit != 'true'
+      - if: steps.passed.outputs.cache-hit != 'true' && matrix.group == 'measuring'
         run: bun run test:probes --project=${{ matrix.browser }}
       - if: steps.passed.outputs.cache-hit != 'true'
         run: mkdir -p .e2e-passed && git rev-parse HEAD > .e2e-passed/commit
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report-${{ matrix.browser }}
+          name: playwright-report-${{ matrix.browser }}-${{ matrix.group }}
           path: |
             playwright-report/
             test-results/

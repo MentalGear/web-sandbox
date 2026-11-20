@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test"
 import { join } from "node:path"
 import { E2E_ORIGIN, E2E_PORT, E2E_PROBE, E2E_ROOT } from "./test/e2e/server"
 import { NETWORK_MODES_FLAG } from "./src/lib/build-flag"
+import { E2E_GROUP_VARIABLE, groupSelection, measuringSpecs, selectedGroup } from "./test/e2e/groups"
 
 // A run tests its own checkout, by construction (backlog T8; CONTRIBUTING.md, "End-to-end tests"):
 // - the server: on E2E_PORT (4444 in CI; locally a port derived from this checkout's path, or WEB_SANDBOX_E2E_PORT), and
@@ -14,11 +15,16 @@ import { NETWORK_MODES_FLAG } from "./src/lib/build-flag"
 const escapeRegExp = (text: string) => text.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")
 const NESTED = new RegExp(`^${escapeRegExp(join(E2E_ROOT, ".claude"))}[\\\\/]`)
 
+// A run is the whole suite, or one of its two groups (test/e2e/groups.ts; backlog T10): the specs that measure the host
+// page, on half of the cores, or the rest, on all of them.
+const selection = groupSelection(selectedGroup(process.env[E2E_GROUP_VARIABLE]), measuringSpecs(E2E_ROOT))
+
 export default defineConfig({
     // e2e specs and the research reproductions both run against test/e2e/harness.html
     testDir: ".",
-    testMatch: ["test/e2e/**/*.spec.ts", "docs/research/**/*.spec.ts"],
-    testIgnore: ["**/node_modules/**", NESTED],
+    testMatch: [...selection.match],
+    testIgnore: ["**/node_modules/**", NESTED, ...selection.ignore],
+    workers: selection.workers,
     timeout: 30000,
     // in CI a suite that has not finished in 40 minutes stops and names the tests still running (a whole run takes ~25)
     globalTimeout: process.env.CI ? 40 * 60_000 : 0,
