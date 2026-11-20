@@ -28,8 +28,6 @@
     "test": "bun run test:unit && bun run test:e2e",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
-    "test:e2e:rest": "WEB_SANDBOX_E2E_GROUP=rest playwright test",
-    "test:e2e:measuring": "WEB_SANDBOX_E2E_GROUP=measuring playwright test",
     "test:probes": "playwright test -c docs/research/15_strict_mode",
     "build:lib": "rm -rf dist && bun scripts/build-lib.ts && bun scripts/emit-declarations.ts && bun scripts/declaration-specifiers.ts && bun scripts/declaration-base.ts",
     "typecheck": "tsc --noEmit -p .",
