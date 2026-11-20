@@ -13,7 +13,9 @@
  *   *    /api/S/NAME       the host app's own API: answers { name, n } (n counts the session's hits on that name) and records the
  *                          request with every header the browser sent, so a spec reads the Cookie and Authorization headers and the Referer that
  *                          reached it. CORS for any origin, as a public API's would be
- *   POST /report/S         the page's CSP report-uri, recorded
+ *   GET  /file/S/sealed-document.html?h=name:value
+ *                          sealed mode's file (the default build's) with the response headers named, and no CORS
+ *   POST /report/S         the page's CSP report-uri, recorded (and the file's, where a header on it names it)
  *   POST /sw-seen/S        the Service Worker's own log of the requests it handled
  *   GET  /hits/S           everything recorded for the session (?clear=1 empties it)
  *
@@ -155,6 +157,19 @@ export function realisticHostMiddleware() {
             const n = (record.counters.get(name) ?? 0) + 1;
             record.counters.set(name, n);
             json(res, { name, n });
+            return;
+        }
+        // sealed mode's file with the response headers a spec names (`h=name:value`), and no CORS, so the check of the file
+        // cannot read it and what decides is the view's policy check (design 03, "The policies in force")
+        if (route === 'file' && rest.join('/') === DOCUMENT_API_NAME) {
+            res.setHeader('content-type', 'text/html');
+            res.setHeader('cache-control', 'no-store');
+            res.removeHeader('access-control-allow-origin');
+            for (const pair of url.searchParams.getAll('h')) {
+                const colon = pair.indexOf(':');
+                res.setHeader(pair.slice(0, colon), pair.slice(colon + 1));
+            }
+            res.end(readFileSync(SEALED_DOCUMENT));
             return;
         }
         if (route === 'report') {

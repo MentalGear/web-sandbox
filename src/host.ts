@@ -36,7 +36,7 @@ import { hostPage, readDocumentUrl, registeredDocumentUrl, storeRegistration } f
 import { canCheckDocument, checkDocument, keptDocumentCheck } from "./lib/document-check";
 import { sealedDocumentDigest } from "./lib/document-digest";
 import { gatesOf, gateViolations, takeGateViolations, workerGates, type GateMode } from "./lib/startup-gates";
-import { announcementFinding, verdictFinding } from "./lib/startup-verdicts";
+import { announcementFinding, policyFinding, verdictFinding } from "./lib/startup-verdicts";
 import type { Holds } from "./lib/utils";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
@@ -1326,8 +1326,8 @@ export class WebSandbox extends ElementBase {
 
     // What the view's announcement says against this element's registries: the version, for the served file (the digest
     // this library was built with: a library loaded without one cannot compare, and ends the build with its error's
-    // name), then the verdicts of the gates of this build's mode.
-    private _announcementFinding(data: { version?: unknown; verdicts?: unknown }): string | null {
+    // name), then the verdicts of the gates of this build's mode, then the served view's policy check's.
+    private _announcementFinding(data: { version?: unknown; verdicts?: unknown; policy?: unknown }): string | null {
         if (!this._viewIsServed()) return announcementFinding(data, 'strict', null);
         let expected: string;
         try {
@@ -1430,6 +1430,14 @@ export class WebSandbox extends ElementBase {
             // workerGates): the build is ready only once they held, and a failed gate ends it, before anything that
             // waited for `ready` is sent (the reducer's `workerVerdicts`).
             step(this, { t: 'workerVerdicts', gen, finding: verdictFinding(data.verdicts, 'worker', this._gateMode()) });
+            return;
+        }
+        if (data?.type === 'VIEW_POLICY') {
+            // The served view saw a policy that is not the file's own after it announced itself (policy-check.ts; design
+            // 03, "What the policy check provokes"): the build ends with the reason of the first finding, whatever its
+            // state. Strict mode's view runs no policy check, so its build reads nothing here.
+            const finding = this._viewIsServed() ? policyFinding(data.policy) : null;
+            if (finding !== null) step(this, { t: 'terminate', reason: finding, gen });
             return;
         }
         if (data?.type === 'VIEW_LINK') {

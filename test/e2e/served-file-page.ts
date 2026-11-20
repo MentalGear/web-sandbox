@@ -72,15 +72,19 @@ w.startWithCall = () => new Promise(resolve => {
     el.addEventListener('terminated', (event: any) => settle('terminated', event.detail.reason), { once: true });
 });
 
-/** Starts a sealed app on a new element; resolves with its first lifecycle event and the time from insertion to it. */
-w.startSandbox = () => new Promise(resolve => {
+/**
+ * Starts `app` (a sealed app, by default one that renders a paragraph) on a new element; resolves with its first
+ * lifecycle event and the time from insertion to it. A later termination of the same element is kept in `lastEnd`.
+ */
+w.startSandbox = (app: object = { html: '<p id="hello">hello</p>' }) => new Promise(resolve => {
     const el = document.createElement('web-sandbox') as HTMLElement & { start(app: object): void };
     el.style.cssText = 'display:block;width:400px;height:300px';
     let inserted = 0;
     const settle = (outcome: string, reason: string | null) => resolve({ outcome, reason, ms: performance.now() - inserted, framed: el.shadowRoot!.querySelectorAll('iframe').length });
+    w.lastEnd = null;
     el.addEventListener('ready', () => settle('ready', null), { once: true });
-    el.addEventListener('terminated', (event: any) => settle('terminated', event.detail.reason), { once: true });
-    el.start({ html: '<p id="hello">hello</p>' });
+    el.addEventListener('terminated', (event: any) => { w.lastEnd = event.detail.reason; settle('terminated', event.detail.reason); }, { once: true });
+    el.start(app);
     inserted = performance.now();
     document.body.append(el);
 });

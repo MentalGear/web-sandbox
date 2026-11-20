@@ -80,6 +80,7 @@ export const BUILD_MODULES = {
     'src/lib/network-modes.ts': 'sealed',
     'src/lib/network-types.ts': 'network',
     'src/lib/origin.ts': 'sealed',
+    'src/lib/policy-check.ts': 'sealed',
     'src/lib/presets.ts': 'data',
     'src/lib/rate-limit.ts': 'sealed',
     'src/lib/realms.ts': 'data',

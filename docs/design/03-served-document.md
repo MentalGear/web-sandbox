@@ -458,10 +458,97 @@ Where it cannot, each is closed by a rule of the renderer, which is why I18 is t
 Step 3.6 brings the test of those rules: a guest font, media, frame, object and form under each of the five headers,
 enforced and report-only, and no report that carries guest text.
 
+**As built (step 3.6).** `src/lib/policy-check.ts` holds the file's policy (POLICY_DIRECTIVES, which the generator reads),
+the canaries derived from it (POLICY_CANARIES, rendered below) and what the check finds (POLICY_FINDINGS); the view runs
+the check (`inSandboxView`: its violation listener and `runPolicyCheck`), the host reads it (`policyFinding`,
+startup-verdicts.ts), and a finding ends the build with `viewCsp` or `viewCspReportOnly`; the INHERITED_CONTEXT row
+`fileHeaders` has its column in SEALED_REACH. The specs are `test/e2e/policy-check.spec.ts` (three engines),
+`test/unit/policy-check.test.ts`, and the sealed cases of the directive matrix and the realistic host on the file's
+response. What the text above left open:
+
+- **The canaries have a registry of their own, derived from POLICY_DIRECTIVES, not rows of STARTUP_GATES.** Its rows
+  are the `<meta>`'s directives, all of them (`satisfies` a record of every directive, and the unit test holds the
+  `<meta>`'s text to it), so a directive added to the policy is a type error until it is classified. A gate is a
+  verdict on the browser, final at start-up, in both modes; a finding of the check names a policy, can come at any time,
+  and exists in sealed mode only. What reaches the host is the same kind of value: a name and a boolean per row of
+  POLICY_FINDINGS (`csp`, `cspReportOnly`), true where no policy of that kind was seen, and the host takes the reason
+  from its own registry.
+- **How a finding reaches the host, whenever it comes.** Before the announcement it is in the announcement (`policy`,
+  read after the version and the gates). After it, the view posts VIEW_POLICY on the view port, once; one that came
+  between the announcement and INIT_VIEW is posted first on the port, and the view then shows nothing and starts no
+  worker. The host ends the build with a `terminate`, in whatever state it is: no second announcement, so no
+  `secondAnnouncement`.
+- **The view knows the file's policy because the file states it.** The generator writes the `<meta>`'s text, from the
+  one value, into an attribute of C's root element beside the version (`POLICY_ATTRIBUTE`), outside every hashed text;
+  the view compares every violation's `originalPolicy`, its directives with their words separated by one space, with
+  it. No hash is computed in the view (`crypto.subtle` is absent under an insecure host page, and the view cannot hash a
+  text that holds its own hash). A copy whose `<meta>` a tool changed, and not the attribute, is another policy to its
+  own view.
+- **Which events are the canaries'.** Until INIT_VIEW nothing of the guest's exists in the view, so every violation of
+  the file's text is the library's: taken, neither reported nor charged, and counted by the check; after it, a refused
+  canary's late one is known by its host, and a gate's by the rule of step 3.5. An event of another text, or with the
+  disposition `report`, is a finding, never a `violation` of the guest's. A refused media canary's `error`, which the
+  view otherwise reports as a failed load, is known by its host too. The guest's worker hears none of the check's
+  events: the canaries run in the view and its own canary worker.
+- **One host per load and scheme** (`font-http.canary.invalid`, `font-https.canary.invalid`), not per load: an engine that
+  upgrades the `http:` canary (`upgrade-insecure-requests`, Chromium's upgrade of mixed media) or cuts it to its origin
+  still names the canary it was issued as. The check waits for each refused load in one scheme at least: on an `https:`
+  host page the `http:` twin is blocked as mixed content, which no policy is asked about, so it may raise nothing.
+- **The worker's half is the view's canary worker.** A `blob:` worker inherits the policies of the document that makes
+  it, which are fixed when that document is created, so the guest's worker, made later by the same view, runs under
+  exactly the policies the canary worker ran under, and the canary worker's findings come before anything of the guest's
+  is sent. Canaries in the guest's prelude could not answer before the entry: their events come in tasks, after the
+  worker's whole script. On Firefox the worker's refusals are filed in the view's document anyway (research 31, Q8), where
+  the listener reads them as every other.
+- **After the gates, only where they held.** A browser that does not enforce the file's policy has ended the build with
+  a gate's reason already, and the check's network canaries are made only where the policy refuses them.
+- **No clock.** The check answers once each refused load has raised the file's own violation, every admitted load has
+  settled and the canary worker has answered, or at once on a finding; the elements, URLs and workers it made go then.
+  The only time limit is the load deadline.
+- **What the engines did that the text above did not say.** Under an enforced header the file's own `<base>`, which
+  precedes its `<meta>`, is refused too, so a header with `base-uri` (the `<meta>`'s exact text among them) ends the build
+  with `environmentBase` before the check; a `trusted-types` list that does not name `web-sandbox` is seen once the view
+  makes its Trusted Types policy, after its announcement, and ends the build then; Firefox logs the admitted font's
+  rejection by its font sanitizer. WebKit sees a header that names the canaries' host (`policy-canary-host` in the engine
+  ledger).
+- **Measured** (2026-11-20, `test/e2e/policy-check.spec.ts`): 200 starts per engine with three cores busy, none refused;
+  its cost from insertion to `ready` against a file whose check provokes nothing is within the spread of a first start on
+  Chromium and WebKit and 10 to 16 ms on Firefox (docs/API.md#registering-the-element). Against the check's mutants: with
+  another policy's violations ignored, 38 of the 43 tests of parts 1 and 3 failed on Chromium (the five that passed expect
+  an outcome that is not the check's); with no late VIEW_POLICY, both of part 3; with the URL rule keeping network URLs,
+  the four font and media cases of part 2, each with a report that carried the guest's URL.
+
+<!-- describes: policy-canaries, policy-findings sig:7893720b -->
+<!-- generated:begin policy-canaries -->
+| Directive | The `<meta>`'s sources | Admitted canary | Refused canary | Why one is missing | What the check does not see, and what stands behind it |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `default-src` | `'none'` | none | none | it governs no load of the view's: the file names every fetch directive a load of the view's is checked against. A header's `default-src` is seen through the canaries of the directives it stands for |  |
+| `script-src` | the hash of the guard text, the hash of the view text | the view's own bootstrap | `script`: `http://script-http.canary.invalid/web-sandbox-canary` and `https://script-https.canary.invalid/web-sandbox-canary` | the admitted load is the view's own bootstrap: a policy that refuses it stops the view before it runs (`documentSilent`), and one that only reports it raises its event in the view. Code from strings is the `stringCode` gate's canary, whose events are read as every other |  |
+| `script-src-attr` | `'none'` | none | none | an event handler attribute is no load: its refusal names no URL, and the view compiles none (the renderer keeps no handler attribute) | a header that names `script-src-attr` alone: no handler of the guest's exists in the view for it to refuse or sample (the renderer drops every `on*` attribute) |
+| `style-src` | the hash of the still text, the hash of the sizing text, `blob:` | `style`: from a `blob:` URL of the view's own | `style`: `http://style-http.canary.invalid/web-sandbox-canary` and `https://style-https.canary.invalid/web-sandbox-canary` |  |  |
+| `img-src` | `blob:` | `image`: from a `blob:` URL of the view's own | `image`: `http://image-http.canary.invalid/web-sandbox-canary` and `https://image-https.canary.invalid/web-sandbox-canary` |  |  |
+| `font-src` | `blob:` | `font`: from a `blob:` URL of the view's own | `font`: `http://font-http.canary.invalid/web-sandbox-canary` and `https://font-https.canary.invalid/web-sandbox-canary` |  | a header that names the canaries' own host (`*.canary.invalid`), on Chromium and Firefox: the view loads a font only from a `blob:` URL it minted (keepsUrl, the cut of CSS URLs), which carries nothing of the guest's |
+| `media-src` | `blob:` | `media`: from a `blob:` URL of the view's own | `media`: `http://media-http.canary.invalid/web-sandbox-canary` and `https://media-https.canary.invalid/web-sandbox-canary` |  | a header that names the canaries' own host, on Chromium and Firefox: the view loads media only from a `blob:` URL it minted (keepsUrl) |
+| `connect-src` | `'none'` | none | `connect`: `http://connect-http.canary.invalid/web-sandbox-canary` and `https://connect-https.canary.invalid/web-sandbox-canary` | `'none'` admits nothing to load |  |
+| `worker-src` | `blob:` | `worker`: from a `blob:` URL of the view's own | `dataWorker`: a `data:` worker | the refused canary is a `data:` worker: a worker of a network URL fails before the policy is asked, with no request (research 31, Q6) |  |
+| `frame-src` | `'none'` | none | `frame`: `http://frame-http.canary.invalid/web-sandbox-canary` and `https://frame-https.canary.invalid/web-sandbox-canary` | `'none'` admits nothing to load | a header that names the canaries' own host, on Chromium and Firefox: the renderer removes every nested browsing context (RENDER_REMOVED_ELEMENTS) |
+| `object-src` | `'none'` | none | `object`: `http://object-http.canary.invalid/web-sandbox-canary` and `https://object-https.canary.invalid/web-sandbox-canary` | `'none'` admits nothing to load | a header that names the canaries' own host, on Chromium and Firefox: the renderer removes every object and embed (RENDER_REMOVED_ELEMENTS) |
+| `base-uri` | `'none'` | none | `base`: `http://base-http.canary.invalid/web-sandbox-canary` and `https://base-https.canary.invalid/web-sandbox-canary` | `'none'` admits no `<base>`; the `base` gate's `<base>` is refused too |  |
+| `form-action` | `'none'` | none | none | a refused form replaced the view with an error page on Chromium (research 31, Q6), so the check submits no form on any engine | any `form-action` header: the renderer drops `action`, `formaction`, `method` and `target`, and the view cancels every `submit` in the capture phase, so no form of the guest's navigates |
+| `manifest-src` | `'none'` | none | none | no engine fetches a manifest a framed document links, so there is no load to refuse, and none of a guest's to report |  |
+<!-- generated:end -->
+
+<!-- generated:begin policy-findings -->
+| Finding | Violations of | Ends the build with |
+| :--- | :--- | :--- |
+| `csp` | another policy, disposition `enforce` (a `Content-Security-Policy` header) | `viewCsp`: the view of the file at documentUrl runs under a Content-Security-Policy that is not the file's own (a header on the file's response, which the view and its worker inherit beside the file's <meta>): serve the file with no Content-Security-Policy header (see docs/API.md#registering-the-element) |
+| `cspReportOnly` | another policy, disposition `report` (a `Content-Security-Policy-Report-Only` header) | `viewCspReportOnly`: the view of the file at documentUrl runs under a Content-Security-Policy-Report-Only header on the file's response, which would report the view's loads to its endpoint: serve the file without one (see docs/API.md#registering-the-element) |
+<!-- generated:end -->
+
 **Not measured:** a form canary aimed at a frame of the view's own, which might leave the view standing on Chromium; a
 header with both scheme sources (`font-src http: https: blob:`), which admits both canaries as `*` does; a header that
-refuses only the canary whose event arrives last; the check with no time limit of its own on a loaded WebKit; the
-check in the library's bundle.
+refuses only the canary whose event arrives last; the check on an `https:` host page, where the `http:` twins are
+mixed content (the check waits for one scheme per load, so it answers there by construction, but no engine was run so).
 
 What "serve it unchanged" excludes, for the docs: a `Content-Security-Policy` or
 `Content-Security-Policy-Report-Only` header on the file, `X-Frame-Options` or a `frame-ancestors` that refuses the host
@@ -659,7 +746,8 @@ What the text above left open:
   listener that reports violations, so a start dispatches no violation of the library's canaries (the view takes them
   in its listener; the worker's prelude adds one, ahead of the bootstrap's, which reads through getters captured before
   any guest code and leaves once it took them all). Under a second policy that refuses a canary too, its second event is
-  reported: that is the policy check's subject (step 3.6).
+  the policy check's finding, never a report of the guest's: in the view by its text (step 3.6); in the worker the same
+  policies are the view's, which the check saw first.
 - **What the browser logs.** Every engine logs each refusal a canary provokes to its developer console (four to seven
   lines a sealed start; no page script reads them, the element's `violation` events carry none). The design did not
   foresee it, and step 3.6's per-directive canaries add more; the realistic host's and the package's specs take exactly
@@ -749,9 +837,10 @@ own name; `viewScriptHash()` there is strict mode's.
 - The file as it will ship: research 28's spike ran the library's per-build wrapper as a served file, and research 31
   a fixture of this design with no bundle of the library's: its guest loads reached the browser directly, not through
   the renderer, the cut of CSS URLs or the view's `submit` handling.
-- The policy check in the library's bundle, with no time limit of its own on a loaded machine; and a form canary that
+- The policy check on an `https:` host page, and a form canary that
   leaves the view standing on Chromium.
-- The worker's gates and its half of the check in a worker made from the app's source.
+- The worker's gates in a worker made from the app's source (its half of the check is the view's canary worker:
+  [above](#what-the-policy-check-provokes)).
 - The Reporting API (`report-to`) on Chromium, whose positive control failed; downloads on Firefox and WebKit, the
   same.
 - The check of the file in Safari, and on a network with latency (its cost was measured on loopback: step 3.3).

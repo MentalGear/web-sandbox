@@ -243,9 +243,9 @@ export const HOST_PASSES = {
         cost: 'linear in the report, whose strings VIOLATION_MAX_STRING caps',
     },
     viewFrames: {
-        does: "the view's frames: its check-in's numbers, its worker's verdicts (one boolean per name of the start-up gates' registry, read by the registry's names only: verdictFinding), the notes of what it dropped of the initial view (three constants, which decide the element's warning), the guest's error texts, cut again (viewErrorLine), and a link's request: its index, an integer within the element's own `links`, opens that list's URL (listedLink), never a string of the view's",
+        does: "the view's frames: its check-in's numbers, its worker's verdicts (one boolean per name of the start-up gates' registry, read by the registry's names only: verdictFinding), a late finding of its policy check (one boolean per name of POLICY_FINDINGS, read the same way: policyFinding), the notes of what it dropped of the initial view (three constants, which decide the element's warning), the guest's error texts, cut again (viewErrorLine), and a link's request: its index, an integer within the element's own `links`, opens that list's URL (listedLink), never a string of the view's",
         takes: ['viewFrames'], modes: VIEW_MODES, rule: 'pure',
-        units: ['src/host.ts#this._onViewMessage', 'src/lib/startup-verdicts.ts#verdictFinding', 'src/lib/startup-verdicts.ts#hasOwn', 'src/host.ts#this._warnAboutStrictHtml', 'src/host.ts#dropsScript', 'src/host.ts#viewErrorLine', 'src/host.ts#uncaughtLine', 'src/host.ts#this._openListedLink', 'src/host.ts#this._openTab', 'src/lib/links.ts#openWhenActivated', 'src/lib/links.ts#listedLink'],
+        units: ['src/host.ts#this._onViewMessage', 'src/lib/startup-verdicts.ts#verdictFinding', 'src/lib/startup-verdicts.ts#policyFinding', 'src/lib/startup-verdicts.ts#firstFailed', 'src/lib/startup-verdicts.ts#hasOwn', 'src/host.ts#this._warnAboutStrictHtml', 'src/host.ts#dropsScript', 'src/host.ts#viewErrorLine', 'src/host.ts#uncaughtLine', 'src/host.ts#this._openListedLink', 'src/host.ts#this._openTab', 'src/lib/links.ts#openWhenActivated', 'src/lib/links.ts#listedLink'],
         cost: "constant, or linear in a text the view cut to guestText.maxLength",
     },
     fetchBridge: {

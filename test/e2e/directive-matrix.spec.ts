@@ -3,7 +3,7 @@ import { BRIDGE_FRAME_REFUSED } from '@src/lib/bridge-frame';
 import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { inFrames, recordFrameEvents, waitInView } from './strict-view';
 import { RealisticHost, covering, guestBattery, hitsNamed, type Directives, type HostOptions } from './realistic-host';
-import { DIRECTIVE_CASES, HEADER_CASES, outcomeOn, type MatrixCase, type MatrixWarning, type Outcome } from './directive-matrix';
+import { DIRECTIVE_CASES, FILE_ROW, fileOutcomeOn, HEADER_CASES, outcomeOn, type MatrixCase, type MatrixWarning, type Outcome } from './directive-matrix';
 import { VIEW_MODES, type ViewMode } from './view-modes';
 import type { Page } from '@playwright/test';
 
@@ -48,10 +48,12 @@ async function runCase(
     mode: ViewMode,
     matrixCase: MatrixCase,
     label: string,
-    hostOptions: Pick<HostOptions, 'directives' | 'headers'>,
+    hostOptions: Pick<HostOptions, 'directives' | 'headers' | 'fileHeaders'>,
+    onFile?: Outcome,
 ) {
-    const outcome: Outcome = outcomeOn(matrixCase, browserName, mode);
-    const row = matrixCase.row;
+    // a case on the served file's response (onFile) has its own outcome, and covers the file's row
+    const outcome: Outcome = onFile ?? outcomeOn(matrixCase, browserName, mode);
+    const row = onFile ? FILE_ROW : matrixCase.row;
     const host = await RealisticHost.open(sandbox, { mode, ...hostOptions });
     // (the page's own first build, before the sandbox below, can already have ended on a policy that refuses the library's)
     const terminatedBefore = (await host.sandbox.terminations()).length;
@@ -69,6 +71,13 @@ async function runCase(
     const events = await host.embed(mode, mode === 'strict' ? { fetchBridge: { allow: [ORIGIN] }, guest } : { guest });
     const eventsNow = () => page.evaluate(() => (window as any).sandboxEvents as { type: string; reason: string | null }[]);
 
+    // A directive on the file's response names the page's report endpoint: no report it receives carries guest text (I18).
+    const noGuestText = async () => {
+        if (!onFile) return;
+        await page.waitForTimeout(1000); // a report is sent once its refusal happened
+        const reports = (await host.hits()).reports.filter(report => /HOSTGUEST|matrix-direct|matrix-bridge/.test(JSON.stringify(report)));
+        expect(reports, covering(row, `${label}: no report carries guest text`)).toEqual([]);
+    };
     if (outcome.kind === 'terminates') {
         const reason = TERMINATION_REASONS[outcome.reason].text;
         await expect.poll(async () => (await eventsNow()).at(-1), { timeout: 15000, message: covering(row, `${label}: the sandbox ends with the named reason (${outcome.reason}), not a silent state`) }).toEqual({ type: 'terminated', reason });
@@ -78,6 +87,7 @@ async function runCase(
         expect(all.slice(0, -1).every(event => event.type === 'ready'), covering(row, `${label}: only a ready may precede it`)).toBe(true);
         expect(await host.frames(), covering(row, `${label}: no frame is left`)).toBe(0);
         expect(await host.sandbox.logs(), covering(row, `${label}: nothing of the guest ran`)).not.toContainEqual(expect.stringContaining('HOSTGUEST'));
+        await noGuestText();
         return;
     }
 
@@ -114,6 +124,7 @@ async function runCase(
         expect(warnings.filter(line => line.includes(BRIDGE_FRAME_REFUSED)), covering(row, `${label}: the bridge's frame started`)).toEqual([]);
     }
 
+    await noGuestText();
     await page.evaluate(() => (document.querySelector('web-sandbox') as any).terminate());
     expect(await host.state(), covering(row, `${label}: terminate() ends it`)).toBe('terminated');
     expect(await host.frames(), covering(row, `${label}: and leaves no frame`)).toBe(0);
@@ -132,6 +143,25 @@ for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
                 test(`${directive} ${matrixCase.value}`, async ({ sandbox, page, browserName }) => {
                     await runCase({ sandbox, page, browserName }, mode, matrixCase, `${directive} ${matrixCase.value} (${mode}, ${browserName})`, { directives: replacing(directive, matrixCase.value) });
                 });
+            }
+        }
+    });
+
+    // Sealed mode: the directive on the served file's response, enforced and report-only (design 03, "The policies in
+    // force"; the fileHeaders row), from another origin with no CORS, so the view's policy check decides; the page's own
+    // policy is the base. A directive the check sees ends the build with its finding's reason, before anything of the
+    // guest's is sent.
+    if (mode === 'sealed') test.describe("directive matrix: CSP directives on the served file's response", () => {
+        for (const [directive, cases] of Object.entries(DIRECTIVE_CASES)) {
+            for (const matrixCase of cases as readonly MatrixCase[]) {
+                for (const [header, disposition] of [['content-security-policy', 'enforce'], ['content-security-policy-report-only', 'report']] as const) {
+                    test(`${header}: ${directive} ${matrixCase.value}`, async ({ sandbox, page, browserName }) => {
+                        const value = `${directive} ${matrixCase.value}`.trim();
+                        // a reporting directive names its own target; every other names the page's endpoint
+                        const text = directive.startsWith('report-') ? value : `${value}; report-uri REPORT`;
+                        await runCase({ sandbox, page, browserName }, mode, matrixCase, `${header}: ${value} (${mode}, ${browserName})`, { directives: matrixBase, fileHeaders: { [header]: text } }, fileOutcomeOn(matrixCase, disposition));
+                    });
+                }
             }
         }
     });

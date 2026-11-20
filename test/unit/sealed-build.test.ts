@@ -461,7 +461,7 @@ describe("T6: the egress table's sealed column: every surface of sealed mode is 
 // ---- T9: INHERITED_CONTEXT's sealed field
 
 describe("T9: every row of the host page's context says what it is in sealed mode, and the build bears out the rows sealed mode drops", () => {
-    it('every row has its standing; a row that does not apply says why; 15 remain, 3 are reduced, 5 do not apply (research 24, §1.4; the autofill row, research 29)', () => {
+    it('every row has its standing; a row that does not apply says why; 15 remain, 4 are reduced, 5 do not apply (research 24, §1.4; the autofill row, research 29; the headers of the served file, design 03)', () => {
         const rows = inheritedContextRows();
         for (const row of rows) {
             expect(['remains', 'reduced', 'not-applicable'], row.id).toContain(row.sealed?.standing);
@@ -470,7 +470,7 @@ describe("T9: every row of the host page's context says what it is in sealed mod
         }
         const by = (standing: string) => rows.filter(row => row.sealed.standing === standing).map(row => row.id).sort();
         expect(by('not-applicable')).toEqual(['ancestorOrigins', 'cookies', 'referrer', 'serviceWorker', 'uiSurfaces']);
-        expect(by('reduced')).toEqual(['autofill', 'cspFetch', 'cspReporting']);
+        expect(by('reduced')).toEqual(['autofill', 'cspFetch', 'cspReporting', 'fileHeaders']);
         expect(by('remains')).toHaveLength(15);
         expect(rows).toHaveLength(Object.keys(INHERITED_CONTEXT).length);
     });

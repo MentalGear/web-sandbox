@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { NETWORK_MODES_FLAG } from '@src/lib/build-flag';
 import { VIEW_STILL_STYLE } from '@src/lib/in-sandbox-view';
 import { VERSION_ATTRIBUTE } from '@src/lib/document-digest';
+import { POLICY_ATTRIBUTE } from '@src/lib/policy-check';
 import { HASHED_TEXTS, POLICY_DIRECTIVES, type PolicyDirectiveRow, renderSealedDocument, SEALED_DOCUMENT_FILE, SEALED_DOCUMENT_GUARD, SEALED_DOCUMENT_STYLE, SEALED_VIEW_FLAGS, sealedDocument, sealedDocumentPolicy, sealedViewBootstrap } from '@src/lib/sealed-document';
 
 /**
@@ -47,7 +48,7 @@ const LISTENS = /addEventListener|\bon\w+\s*=|onmessage|postMessage|MessageChann
 /** I13's scan: every way the file is not one guard in F and one bootstrap in C, with nothing in F that listens. */
 function scanViolations(html: string): string[] {
     const found: string[] = [];
-    const { f, frames, c } = readFile(html);
+    const { f, frames, c, policy } = readFile(html);
     const rawScripts = html.match(/<script\b/gi) ?? [];
     if (rawScripts.length !== 1) found.push(`F's text has ${rawScripts.length} script tags`);
     const fScripts = [...f.querySelectorAll('script')];
@@ -76,8 +77,10 @@ function scanViolations(html: string): string[] {
     for (const element of elementsOf(c)) {
         if (!C_ELEMENTS.includes(element.localName)) found.push(`C holds a <${element.localName}>`);
         for (const name of element.getAttributeNames()) {
-            // the one attribute C has: the version its root element states, a digest (document-digest.ts)
+            // the two attributes C has, on its root element: the version it states, a digest (document-digest.ts), and the
+            // <meta>'s text, the same as F's policy (policy-check.ts, POLICY_ATTRIBUTE)
             if (element.localName === 'html' && name === VERSION_ATTRIBUTE && /^[A-Za-z0-9+/]{43}=$/.test(element.getAttribute(name)!)) continue;
+            if (element.localName === 'html' && name === POLICY_ATTRIBUTE && policy.length === 1 && element.getAttribute(name) === policy[0]) continue;
             found.push(`C's <${element.localName}> has an attribute, ${name}`);
         }
     }

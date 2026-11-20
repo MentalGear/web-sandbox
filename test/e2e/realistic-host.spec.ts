@@ -276,6 +276,29 @@ test.describe("sealed mode's check of the served file on the production host (de
     });
 });
 
+// The production app's site-wide policy, put on the served file's response as a site-wide header puts it on every path
+// (design 03, "The policies in force"), from another origin with no CORS, so the view's policy check decides.
+test.describe("sealed mode under the site's policy on the served file's response (design 03, \"The policies in force\")", () => {
+    test.use({ build: 'default' });
+    const SITE_POLICY = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; report-uri REPORT";
+    const cases = [
+        ['content-security-policy-report-only', 'viewCspReportOnly', 'report-only: the view sees it, and the build ends before anything of the app is sent'],
+        ['content-security-policy', 'documentSilent', "enforced: it refuses the file's guard and the view's bootstrap, so no view runs"],
+    ] as const;
+    for (const [header, reason, what] of cases) {
+        test(`${header}: ${what}`, async ({ sandbox, page }) => {
+            const host = await RealisticHost.open(sandbox, { mode: 'sealed', fileHeaders: { [header]: SITE_POLICY } });
+            await host.hits(true);
+            await host.embed('sealed', { guest: "sandboxView.render('<p>HOSTGUEST-render</p>'); return { ran: true };" });
+            await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents.at(-1)), { timeout: 15000 }).toEqual({ type: 'terminated', reason: TERMINATION_REASONS[reason].text });
+            expect(await host.sandbox.logs(), covering('fileHeaders', 'nothing of the guest ran')).not.toContainEqual(expect.stringContaining('HOSTGUEST'));
+            await page.waitForTimeout(1000); // the reports of the canaries' refusals, sent as they happened
+            const reports = (await host.hits()).reports.map(report => JSON.stringify(report));
+            expect(reports.filter(report => /HOSTGUEST|HOST-SESSION-TOKEN/.test(report)), covering('fileHeaders', 'no report carries guest text or the app\'s state')).toEqual([]);
+        });
+    }
+});
+
 test.describe('cooperative mode', () => {
     test("starts on the production host (script-src 'unsafe-inline', Trusted Types enforced), runs the guest's inline script, and stops cleanly", async ({ sandbox, page, browserName }) => {
         const host = await RealisticHost.open(sandbox, { mode: 'cooperative' });

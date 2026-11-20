@@ -26,7 +26,11 @@
  *                          for the start-up gates' spec (test/e2e/startup-gates.spec.ts), the mutants of research 31 (Q2):
  *                          `meta=none` takes the file's `<meta>` policy out, `set=directive:sources` gives a directive of it
  *                          other sources and `add=directive:source` one more, and `viewSameOrigin=1` gives the view's
- *                          `sandbox` attribute `allow-same-origin` in a copy without its guard
+ *                          `sandbox` attribute `allow-same-origin` in a copy without its guard;
+ *                          for the policy check's spec (test/e2e/policy-check.spec.ts): `noCheck`, a view whose policy
+ *                          check provokes nothing
+ *   POST /S/report         a CSP report endpoint (a header on the file names it in `report-uri`); GET /S/reports lists
+ *                          what it received, each body parsed
  *   GET /S/hits            what reached the file's path: each request's variant, Sec-Fetch-Dest and the headers that
  *                          carry the page's or the user's state (Cookie, Authorization, Referer)
  *   GET /S/release?key=…   answers the requests held with `hold=key`
@@ -39,11 +43,12 @@ import { renderSealedDocument } from '../../src/lib/sealed-document';
 import { statedDigest } from '../../src/lib/document-digest';
 import { gatesOf } from '../../src/lib/startup-gates';
 import { scriptHashSource } from '../../src/lib/csp/script-hash';
+import { POLICY_ATTRIBUTE } from '../../src/lib/policy-check';
 
 export const SERVED_FILE_PATH = '/__served-file';
 
 /** The ways the file is served wrong, and right. */
-export const FILE_VARIANTS = ['library', 'missing', 'plain', 'fallback', 'devClient', 'minified', 'noGuard', 'noSandbox', 'otherVersion', 'checkGetsFile', 'frameGetsFile', 'fAnnounces', 'secondFrame', 'fallbackFrame'] as const;
+export const FILE_VARIANTS = ['library', 'missing', 'plain', 'fallback', 'devClient', 'minified', 'noGuard', 'noSandbox', 'otherVersion', 'checkGetsFile', 'frameGetsFile', 'fAnnounces', 'secondFrame', 'fallbackFrame', 'noCheck'] as const;
 export type FileVariant = (typeof FILE_VARIANTS)[number];
 
 export interface FileHit {
@@ -58,6 +63,13 @@ export interface FileHit {
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const sessions = new Map<string, FileHit[]>();
+// The CSP reports each session's endpoint received (`report`), as their bodies parsed.
+const reportsOf = new Map<string, unknown[]>();
+const reportList = (session: string) => {
+    let list = reportsOf.get(session);
+    if (!list) reportsOf.set(session, list = []);
+    return list;
+};
 const hitsOf = (session: string) => {
     let list = sessions.get(session);
     if (!list) sessions.set(session, list = []);
@@ -96,9 +108,15 @@ function announcement(version: string): string {
     return JSON.stringify({ type: 'VIEW_ANNOUNCE', version, verdicts });
 }
 
-/** F with one more script admitted by its policy: `script` at the end of F's head, or as a frame's document after C. */
+/**
+ * F with one more script admitted by its policy: `script` at the end of F's head, or as a frame's document after C. The
+ * view's document states the changed policy as F's `<meta>` holds it (POLICY_ATTRIBUTE), so the view's policy check sees
+ * one policy, the file's own, as in the library's file: what these variants test is the order, not the check.
+ */
 function withScriptInFile(file: string, script: string, where: 'head' | 'frame'): string {
-    const admitted = file.replace("script-src '", `script-src ${scriptHashSource(script)} '`);
+    const source = `script-src ${scriptHashSource(script)} '`;
+    const stated = new RegExp(`(${POLICY_ATTRIBUTE}=&quot;[^&]*?)script-src '`);
+    const admitted = file.replace("script-src '", source).replace(stated, (_all, before: string) => `${before}${source}`);
     if (where === 'head') return admitted.replace('</head>', `<script>${script}</script></head>`);
     const srcdoc = `<script>${script}</script>`.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     return admitted.replace('</iframe>', `</iframe><iframe srcdoc="${srcdoc}"></iframe>`);
@@ -128,6 +146,15 @@ function mutated(file: string, query: URLSearchParams): string {
     return text;
 }
 
+/** The view's bootstrap with the policy check's canaries taken out of its options (in-sandbox-view.ts, ViewOptions.policy). */
+function withoutCanaries(bootstrap: string): string {
+    const open = `"policy":{"attribute":"${POLICY_ATTRIBUTE}","refused":`;
+    const start = bootstrap.indexOf(open);
+    const end = bootstrap.indexOf(',"findings":', start);
+    if (start === -1 || end === -1) throw new Error('withoutCanaries: the bootstrap has no policy check where it is expected');
+    return `${bootstrap.slice(0, start)}${open}[],"admitted":[]${bootstrap.slice(end)}`;
+}
+
 /** The file's text as `variant` serves it to a request whose Sec-Fetch-Dest is `dest`; `spied`, with the spy in its view. */
 function fileText(variant: FileVariant, dest: string | null, spied = false): string {
     const built = readFileSync(join(ROOT, 'dist', 'sealed-document.html'), 'utf8');
@@ -143,6 +170,9 @@ function fileText(variant: FileVariant, dest: string | null, spied = false): str
         case 'noSandbox': return file.replace(/<iframe sandbox="[^"]*"/, '<iframe');
         // another version's file: the generator's output for another bootstrap, its policy admitting that one
         case 'otherVersion': return renderSealedDocument(bootstrapOf(file).replace("'use strict';", "'use strict'; "));
+        // the policy check's spec (test/e2e/policy-check.spec.ts): a view whose check provokes nothing (its lists of
+        // canaries empty), stating the library's version: the mutant of a check that is gone, and the baseline of its cost
+        case 'noCheck': return withBootstrap(withoutCanaries(bootstrapOf(file)), versionOf(built));
         // (the spy stays in the other version's view: it states its own version)
         case 'fallback': return FALLBACK_PAGE;
         case 'checkGetsFile': return dest === 'empty' ? file : FALLBACK_PAGE;
@@ -230,6 +260,26 @@ export function servedFileMiddleware() {
             release(url.searchParams.get('key') ?? '');
             res.setHeader('cache-control', 'no-store');
             res.end('released');
+            return;
+        }
+        // the endpoint a header on the file names in `report-uri` (the policy check's spec), and what it received
+        if (route === 'report' && req.method === 'POST') {
+            const chunks: Buffer[] = [];
+            req.on('data', (chunk: Buffer) => chunks.push(chunk));
+            req.on('end', () => {
+                const body = Buffer.concat(chunks).toString('utf8');
+                let parsed: unknown = body;
+                try { parsed = JSON.parse(body); } catch { /* kept as text */ }
+                reportList(session).push(parsed);
+                res.statusCode = 204;
+                res.end();
+            });
+            return;
+        }
+        if (route === 'reports') {
+            res.setHeader('content-type', 'application/json');
+            res.setHeader('cache-control', 'no-store');
+            res.end(JSON.stringify(reportList(session)));
             return;
         }
         if (route === 'hits') {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Page, Request } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { test, expect, ORIGIN, OFFSITE_ORIGIN } from './fixture';
 import { SERVED_FILE_PATH } from './served-file-server';
 import { reasonText, type FixedReasonId } from '@src/lib/reasons';
@@ -103,16 +103,21 @@ test.describe('2. the library\'s file is never refused, and its canaries are nev
 
 test.describe('3. no canary reaches the network', () => {
     test('the requests of a start are the page\'s and the file\'s alone, with the library\'s file and under a mutant that admits every canary', async ({ page, context }) => {
+        // What reaches the network is what the browser routes: a load a policy refused is never routed (Chromium's
+        // `request` event reports one all the same, as a request that failed, blocked by the policy).
         const requests: string[] = [];
-        const record = (request: Request) => requests.push(request.url());
-        context.on('request', record);
+        let recording = true;
+        await context.route('**/*', (route) => {
+            if (recording) requests.push(route.request().url());
+            return route.continue();
+        });
         const server = session();
         expect(await startAt(page, server.page(server.file()))).toEqual({ outcome: 'ready', reason: null });
         const admitted = session();
         const outcome = await startAt(page, admitted.page(admitted.file({ meta: 'none' })));
         expect(outcome.outcome).toBe('terminated');
         await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
-        context.off('request', record);
+        recording = false;
         const foreign = requests.filter(url => !url.startsWith(ORIGIN) && !url.startsWith(OFFSITE_ORIGIN) && !url.startsWith('blob:') && !url.startsWith('data:'));
         expect(foreign).toEqual([]);
         expect(requests.filter(url => url.includes('gate.invalid'))).toEqual([]);

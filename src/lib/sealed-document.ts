@@ -20,8 +20,9 @@ import { assertHashableScript, scriptHashSource } from './csp/script-hash';
 import { documentDigest, VERSION_ATTRIBUTE } from './document-digest';
 import { FRAME_REFERRER_POLICY, SEALED_DOCUMENT_FILE, WRAPPER_BASE, WRAPPER_STYLE } from './frame-documents';
 import { VIEW_OPTIONS, VIEW_STILL_STYLE, STRICT_DIRECTIVE, viewBootstrapSource } from './in-sandbox-view';
+import { HASHED_TEXTS, POLICY_ATTRIBUTE, POLICY_DIRECTIVES, policyText as policyOf, type HashedText, type PolicyDirective, type PolicyDirectiveRow, type PolicySource } from './policy-check';
 
-export { SEALED_DOCUMENT_FILE };
+export { SEALED_DOCUMENT_FILE, HASHED_TEXTS, POLICY_DIRECTIVES, type HashedText, type PolicyDirective, type PolicyDirectiveRow, type PolicySource };
 
 /**
  * F's one script (design 03, "the guard"): a document that is not opaque, or that is the top-level document, stops
@@ -45,45 +46,6 @@ export const SEALED_VIEW_FLAGS: readonly string[] = [...new Set<string>([...STRI
  */
 export const SEALED_DOCUMENT_STYLE = WRAPPER_STYLE;
 
-/** The texts of the file that its policy admits by hash. */
-export const HASHED_TEXTS = ['guard', 'view', 'still', 'sizing'] as const;
-export type HashedText = (typeof HASHED_TEXTS)[number];
-
-/** A source of the file's policy: `blob:`, or the hash of one of the file's own texts. */
-export type PolicySource = 'blob:' | { readonly hash: HashedText };
-
-export interface PolicyDirectiveRow {
-    /** The directive's sources, in order; with none, the directive is `'none'`. */
-    readonly sources: readonly PolicySource[];
-    /** Why the directive has these sources. */
-    readonly why: string;
-}
-
-/**
- * The file's constant policy, one row per directive, in the order of the `<meta>`'s text (design 03, "A constant
- * policy"): scripts by hash, the still stylesheet by hash, `blob:` for the four kinds of file, `worker-src blob:`,
- * `connect-src 'none'`, everything else `'none'`. No `'unsafe-inline'`, no `'unsafe-eval'`, no report directive, and no
- * input: the generator reads this table and the hashes of the library's own texts, nothing else.
- */
-export const POLICY_DIRECTIVES = {
-    'default-src': { sources: [], why: 'every fetch directive not listed here falls back to it' },
-    'script-src': { sources: [{ hash: 'guard' }, { hash: 'view' }], why: "F's guard and C's bootstrap, by hash: no other script runs in F, C or a document either makes" },
-    'script-src-attr': { sources: [], why: 'no event handler attribute runs' },
-    'style-src': { sources: [{ hash: 'still' }, { hash: 'sizing' }, 'blob:'], why: "the still stylesheet the view inserts for `allowAnimations: false` (VIEW_STILL_STYLE), F's sizing sheet (SEALED_DOCUMENT_STYLE), and the guest's stylesheets as the blob: URLs the view mints; guest styles otherwise go through the CSSOM" },
-    'img-src': { sources: ['blob:'], why: "images, from the blob: URLs the view mints for the app's files and writes" },
-    'font-src': { sources: ['blob:'], why: "fonts, from the blob: URLs the view mints for the app's files" },
-    'media-src': { sources: ['blob:'], why: "media, from the blob: URLs the view mints for the app's files" },
-    'connect-src': { sources: [], why: 'sealed mode has no network: the worker reads its files with sandboxFiles.read(), which makes no request' },
-    'worker-src': { sources: ['blob:'], why: "the guest's worker, which C starts from a blob: URL" },
-    'frame-src': { sources: [], why: 'no frame of the view loads a URL (C itself is a srcdoc)' },
-    'object-src': { sources: [], why: 'no plugin content' },
-    'base-uri': { sources: [], why: "no <base> after the policy: F's own, about:blank, precedes it, and C inherits that base URL" },
-    'form-action': { sources: [], why: 'no form submits anywhere' },
-    'manifest-src': { sources: [], why: 'no manifest' },
-} as const satisfies Record<string, PolicyDirectiveRow>;
-
-export type PolicyDirective = keyof typeof POLICY_DIRECTIVES;
-
 /**
  * Sealed mode's view bootstrap: the view alone, with no fetch bridge frame's part, so it is one text in every build (I12).
  * The default build's element runs this very text (scripts/build-lib.ts checks it); the network build's element runs its
@@ -106,21 +68,9 @@ function hashesOf(bootstrap: string): Record<HashedText, string> {
     };
 }
 
-/** A source of the table as it is written in the policy's text. */
-function sourceText(source: PolicySource, hashes: Record<HashedText, string>): string {
-    return typeof source === 'string' ? source : hashes[source.hash];
-}
-
-/** The `<meta>`'s policy text for a file whose view runs `bootstrap`: POLICY_DIRECTIVES, in order. */
+/** The `<meta>`'s policy text for a file whose view runs `bootstrap`: POLICY_DIRECTIVES, in order (policy-check.ts). */
 function policyText(bootstrap: string): string {
-    const hashes = hashesOf(bootstrap);
-    const parts: string[] = [];
-    for (const [name, row] of Object.entries(POLICY_DIRECTIVES) as [PolicyDirective, PolicyDirectiveRow][]) {
-        const sources: string[] = [];
-        for (const source of row.sources) sources.push(sourceText(source, hashes));
-        parts.push(`${name} ${sources.length === 0 ? "'none'" : sources.join(' ')}`);
-    }
-    return parts.join('; ');
+    return policyOf(hashesOf(bootstrap));
 }
 
 /** The file's `<meta>` policy text: constant for a library version. */
@@ -138,11 +88,12 @@ function escapeFileAttribute(text: string): string {
 }
 
 /**
- * C's document: the version it states (VERSION_ATTRIBUTE, on its root element, which the bootstrap reads and announces),
- * the bootstrap and an empty body. Its policy, base URL and referrer policy are F's, which it inherits.
+ * C's document: the version it states (VERSION_ATTRIBUTE) and the `<meta>`'s text (POLICY_ATTRIBUTE), on its root
+ * element, which the bootstrap reads (it announces the version, and holds every violation's policy to the text), the
+ * bootstrap and an empty body. Its policy, base URL and referrer policy are F's, which it inherits.
  */
 function viewDocument(bootstrap: string, version: string): string {
-    return `<!DOCTYPE html><html ${VERSION_ATTRIBUTE}="${version}"><head><script>${bootstrap}</script></head><body></body></html>`;
+    return `<!DOCTYPE html><html ${VERSION_ATTRIBUTE}="${version}" ${POLICY_ATTRIBUTE}="${policyText(bootstrap)}"><head><script>${bootstrap}</script></head><body></body></html>`;
 }
 
 /**

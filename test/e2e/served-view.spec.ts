@@ -156,11 +156,12 @@ test.describe('1. the twelve ways of opening the shipped file (I11, I14)', () =>
                 expect([result.view.url, result.view.base, result.view.scripts]).toEqual(['about:srcdoc', 'about:blank', 1]);
                 for (const [name, outcome] of Object.entries(result.view.tries)) expect(outcome, name).not.toBe('reached');
                 // its one message goes to whatever page framed the file: the announcement, with nothing in it but the
-                // version the file states and its gates' verdicts, booleans (design 03, the start-up order)
+                // version the file states, its gates' verdicts and its policy check's, booleans (design 03, the start-up order)
                 expect(result.heard).toHaveLength(1);
-                const announcement = JSON.parse(result.heard[0]!) as { type: string; version: string; verdicts: Record<string, unknown> };
-                expect([Object.keys(announcement), announcement.type, announcement.version]).toEqual([['type', 'version', 'verdicts'], 'VIEW_ANNOUNCE', statedDigest(servedFileBytes().toString('utf8'))]);
+                const announcement = JSON.parse(result.heard[0]!) as { type: string; version: string; verdicts: Record<string, unknown>; policy: Record<string, unknown> };
+                expect([Object.keys(announcement), announcement.type, announcement.version]).toEqual([['type', 'version', 'verdicts', 'policy'], 'VIEW_ANNOUNCE', statedDigest(servedFileBytes().toString('utf8'))]);
                 for (const verdict of Object.values(announcement.verdicts)) expect(typeof verdict).toBe('boolean');
+                for (const verdict of Object.values(announcement.policy)) expect(typeof verdict).toBe('boolean'); // the policy check's (policy-check.ts)
                 return;
             }
             // the guard stopped F: no view was built, and F ran nothing but the guard, whatever origin it holds

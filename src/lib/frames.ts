@@ -94,6 +94,14 @@ export const FRAMES = {
         fields: {
             version: { bound: 'constant', how: "the digest the view's document states (VERSION_ATTRIBUTE, document-digest.ts), or null where it states none (strict mode's srcdoc view); compared whole with the library's own" },
             verdicts: { bound: 'not a string', how: "one boolean per start-up gate of the view's (startup-gates.ts), keyed by the registry's names; the host reads only the names its registry gives, each as exactly true" },
+            policy: { bound: 'not a string', how: "the served file's view: one boolean per finding of the policy check (policy-check.ts, POLICY_FINDINGS), keyed by its names, true where no policy of that kind was seen; null in strict mode's view. The host reads only the registry's names, each as exactly true" },
+        },
+    },
+    VIEW_POLICY: {
+        purpose: "The served file's view saw a policy that is not the file's own after it announced itself (policy-check.ts; design 03, \"What the policy check provokes\"): posted once, whenever the violation came, and first on the view port when it came before INIT_VIEW, which then starts nothing. The host ends the build with the reason of the first finding.",
+        routes: [{ channel: 'view-port', from: ['view'], to: ['host'] }],
+        fields: {
+            policy: { bound: 'not a string', how: "one boolean per finding of POLICY_FINDINGS, keyed by its names, as in VIEW_ANNOUNCE; the host reads only the registry's names" },
         },
     },
     WORKER_VERDICTS: {

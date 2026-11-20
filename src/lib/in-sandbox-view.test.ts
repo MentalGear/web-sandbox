@@ -286,7 +286,7 @@ describe('the view bootstrap', () => {
         expect((globalThis as any).__sandboxViewRuns).toBe(2);
         expect(announced.mock.calls).toHaveLength(1);
         const [message, target] = announced.mock.calls[0]! as [{ type: string; version: unknown; verdicts: Record<string, unknown> }, string];
-        expect([Object.keys(message), message.type, message.version, target]).toEqual([['type', 'version', 'verdicts'], VIEW_ANNOUNCEMENT_TYPE, null, '*']);
+        expect([Object.keys(message), message.type, message.version, (message as { policy?: unknown }).policy, target]).toEqual([['type', 'version', 'verdicts', 'policy'], VIEW_ANNOUNCEMENT_TYPE, null, null, '*']); // strict mode's view: no version, and no policy check
         for (const verdict of Object.values(message.verdicts)) expect(typeof verdict).toBe('boolean');
         announced.mockRestore();
 

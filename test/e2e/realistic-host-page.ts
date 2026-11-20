@@ -86,8 +86,10 @@ if (params.get('sw') !== '0' && 'serviceWorker' in navigator && appPolicy) {
 
 // ---- the element and the events the specs read ------------------------------------------------------------------------
 // sealed mode's view: the build's own sealed-document.html, on the page's origin, which its policy admits in frame-src
-// (`?doc=api`: a name of the app's API, which its Service Worker, its fetch wrapper and its backend all see)
-defineWebSandbox({ documentUrl: params.get('doc') === 'api' ? `${API}sealed-document.html` : pageDocumentUrl() });
+// (`?doc=api`: a name of the app's API, which its Service Worker, its fetch wrapper and its backend all see; `?docUrl=`: a
+// copy of the file with headers on its response, on another origin, which the page's policy admits too)
+const documentUrl = params.get('docUrl') ?? (params.get('doc') === 'api' ? `${API}sealed-document.html` : pageDocumentUrl());
+defineWebSandbox({ documentUrl });
 w.sandboxLogs = [];
 w.sandboxEvents = [];
 // the events that carry guest data do not bubble (design 01, I5): heard in the capture phase

@@ -203,9 +203,15 @@ describe('the host reads the verdicts by its own registry (startup-verdicts.ts)'
         expect(verdictFinding(Object.create(allHeld('view', 'strict')), 'view', 'strict')).toBe(reasonText('gateFraming'));
     });
 
-    it("the version first, then the verdicts; strict mode's view states none and is not asked for one", () => {
+    it("the version first, then the verdicts, then the served view's policy check; strict mode's view states none and is not asked for one", () => {
         const verdicts = allHeld('view', 'sealed');
-        expect(announcementFinding({ version: 'v1', verdicts }, 'sealed', 'v1')).toBeNull();
+        const policy = { csp: true, cspReportOnly: true };
+        expect(announcementFinding({ version: 'v1', verdicts, policy }, 'sealed', 'v1')).toBeNull();
+        expect(announcementFinding({ version: 'v1', verdicts, policy: { ...policy, cspReportOnly: false } }, 'sealed', 'v1')).toBe(reasonText('viewCspReportOnly'));
+        expect(announcementFinding({ version: 'v1', verdicts, policy: { csp: false, cspReportOnly: false } }, 'sealed', 'v1')).toBe(reasonText('viewCsp'));
+        expect(announcementFinding({ version: 'v1', verdicts }, 'sealed', 'v1')).toBe(reasonText('viewCsp'));
+        expect(announcementFinding({ version: 'v1', verdicts: { ...verdicts, image: false }, policy: { csp: false } }, 'sealed', 'v1')).toBe(reasonText('gateImage'));
+        expect(announcementFinding({ version: null, verdicts: allHeld('view', 'strict'), policy: null }, 'strict', null)).toBeNull();
         expect(announcementFinding({ version: 'v2', verdicts: {} }, 'sealed', 'v1')).toBe(reasonText('documentVersion'));
         expect(announcementFinding({ verdicts }, 'sealed', 'v1')).toBe(reasonText('documentVersion'));
         expect(announcementFinding({ version: 'v1', verdicts: {} }, 'sealed', 'v1')).toBe(reasonText('gateFraming'));

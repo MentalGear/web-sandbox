@@ -104,6 +104,27 @@ the page frames it.
   machine (load average 3.9), loopback, from insertion to `ready` for a later build of a page (the file checked, the
   check kept), medians of 12: Chromium 159 41 ms, Firefox 159 74 ms, WebKit 27.2 31 ms, against 35, 67 and 38 ms
   before them on the same machine (the first run above).
+- **The policy check.** A `Content-Security-Policy` or `Content-Security-Policy-Report-Only` header on the file's
+  response (a site-wide one reaches it too) applies to the view and its worker beside the file's own policy, and would
+  report the view's loads to its endpoint. So, before it announces itself, the view makes per directive of its policy a
+  load the policy admits (a `blob:` URL of its own, and a worker of its own) and one it refuses (a fixed URL on the
+  reserved name `canary.invalid`, in `http:` and `https:`), and reads every violation its document hears by the policy
+  text and disposition it carries ([design 03](design/03-served-document.md#what-the-policy-check-provokes)): one of
+  another policy ends the build with `viewCsp` or `viewCspReportOnly`, before anything of the app is sent, or whenever
+  it comes after. Where the check of the file can read the answer it names the header first; an enforced header that
+  refuses the view's script stops the view before it runs (`the document … did not answer`). No canary reaches the
+  network, and the element dispatches no `violation` for one. What such an endpoint receives before the build ends are
+  the canaries' own reports, library strings only, with no referrer; the check does not see a header that names
+  `canary.invalid` itself, any `form-action`, or `script-src-attr` alone, and under those no load of the guest's exists to
+  report. The browser logs each refusal to its developer console: a sealed start shows, besides the gates' lines,
+  one or two per refused canary (`script`, `style`, `image`, `font`, `media`, `connect`, `frame`, `object` and `base`,
+  each to a `*.canary.invalid` host, and a `data:` worker), all naming the file's own policy, and on Firefox one for
+  the check's own font, which its font sanitizer rejects. Its cost is once per
+  build, bounded by `LOAD_TIMEOUT_MS`, with no time limit of its own. Measured 2026-11-20 on a shared 4-core
+  machine, loopback, from insertion to `ready` on a new page each (medians of 24, alternating with a file whose check
+  provokes nothing; three runs): Chromium 159 98 to 105 ms against 103 to 113, Firefox 159 157 to 167 against 144 to
+  151, WebKit 27.2 88 to 108 against 103 to 126: on Firefox 10 to 16 ms, on the others within the spread of a first start.
+  With three cores kept busy, 200 starts per engine were all `ready`, and none dispatched a `violation`.
 - **In the build with the network modes** it may be left out (`defineWebSandbox({})`): strict, cooperative and worker
   mode keep documents of their own, and `start()` of a sealed app on such an element throws.
 
@@ -197,8 +218,8 @@ The package has two builds, chosen by one build flag that is off by default
 <!-- generated:begin builds -->
 | Build | How it is built | Entry | Modes | What it has |
 | :--- | :--- | :--- | :--- | :--- |
-| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 55 modules of `src/` |
-| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 73 modules of `src/` |
+| default (the package as published) | `bun run build:lib` | `src/index.ts` | `sealed` | sealed mode alone; `origins` and `fetchBridge` are refused; 56 modules of `src/` |
+| network | `WEB_SANDBOX_NETWORK_MODES=1 bun run build:lib` | `src/network.ts` | `sealed`, `strict`, `cooperative`, `worker` | every mode, with `origins` and `fetchBridge`; 74 modules of `src/` |
 <!-- generated:end -->
 
 - **The default build is sealed mode alone.** It is what `bun run build:lib` writes and what the package is as
@@ -1203,6 +1224,8 @@ type FetchRecord = {
 | `a start-up gate failed: the sandbox's view or its worker opened a store, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent` | Strict and sealed mode, a start-up gate: `localStorage` in the view or `indexedDB.open` in the worker did not throw. Nothing of the app was sent to that view, or no guest code ran in that worker. |
 | `a start-up gate failed: the sandbox's view read its parent's document: this browser did not keep its frames apart, so nothing of the app was sent` | Strict and sealed mode, a start-up gate: the view read its parent's document. Nothing of the app was sent. |
 | `a start-up gate failed: the sandbox's worker still had a name off its globals allowlist after the allowlist ran: the guest's entry did not run, and no call was sent` | Strict and sealed mode, a start-up gate: after the worker's globals allowlist a name off it was still on the worker's global or its prototypes (in sealed mode the allowlist has no name that makes a request: `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `importScripts`). The worker's script stopped there: the entry did not run, and no call or `execute()` was sent to it. |
+| `the view of the file at documentUrl runs under a Content-Security-Policy that is not the file's own (a header on the file's response, which the view and its worker inherit beside the file's <meta>): serve the file with no Content-Security-Policy header (see docs/API.md#registering-the-element)` | Sealed mode, the policy check ([design 03](design/03-served-document.md#what-the-policy-check-provokes)): a violation in the view's document carried a policy text that is not the file's own `<meta>`, with the disposition `enforce`, or a load the `<meta>` admits was refused by another policy: an enforced `Content-Security-Policy` on the file's response (or a `<meta>` the file was changed to). Before the announcement nothing of the app was sent; a violation after it ends the build whenever it comes. Where the check of the file could read the answer, it names the header first (`documentCsp`). |
+| `the view of the file at documentUrl runs under a Content-Security-Policy-Report-Only header on the file's response, which would report the view's loads to its endpoint: serve the file without one (see docs/API.md#registering-the-element)` | Sealed mode, the policy check: a violation in the view's document had the disposition `report`: a `Content-Security-Policy-Report-Only` header on the file's response, whose endpoint receives the view's refusals. What it received before the build ended were the canaries' own reports, library strings only. Before the announcement nothing of the app was sent; a violation after it ends the build whenever it comes. Where the check of the file could read the answer, it names the header first (`documentCspReportOnly`). |
 <!-- generated:end -->
 
 Branch on `state` and the event, not on these texts. A reason names the problem, never a value: it is a fixed text
@@ -1816,7 +1839,7 @@ page in Chromium and Firefox, with no user activation (measured; cooperative mod
 
 ### Forms and the browser's autofill
 
-<!-- describes: view-forms, inherited-context sig:5378b441 -->
+<!-- describes: view-forms, inherited-context sig:5378fc24 -->
 
 A guest's form gets nothing of the browser's autofill or autocomplete, in strict and sealed mode, and the guest's worker
 receives from a control only what the user entered into that control ([research 29](research/29_autofill/README.md); the

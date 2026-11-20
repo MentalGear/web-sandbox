@@ -3,7 +3,7 @@
 **Status: a design, partly built.** The code as it is: [API.md](../API.md), [THREAT-MODEL.md](../THREAT-MODEL.md),
 [ARCHITECTURE.md](../../ARCHITECTURE.md). What is built is named as such where it appears: the view's value model for
 form controls ([04](04-forms-and-autofill.md)), and of step 1 the rows [05](05-build-order.md) marks built
-(`start(app, grants)`, one app per element) and of step 2 the rows it marks built, and of step 3 the rows 3.1 to 3.5.
+(`start(app, grants)`, one app per element) and of step 2 the rows it marks built, and of step 3 the rows 3.1 to 3.6.
 
 **Decided by the owner.** Sealed mode alone is the default build (D9, [ADR-009](../ADR-009-network-modes-build-flag.md)).
 Sealed mode's document becomes a static file the embedder serves, with its policy in a `<meta>` tag and no `srcdoc`
@@ -195,7 +195,7 @@ Stated once here; each file repeats what concerns it.
 - The served file as it will ship: one static file per library version, with the library's real bootstrap. Research
   28's spike served the library's per-build wrapper; research 31 built this design's shape and start-up as a fixture,
   with no bundle of the library's.
-- The policy check in the library's bundle, and with no time limit of its own on a loaded WebKit
+- The policy check on an `https:` host page
   ([03](03-served-document.md#what-the-policy-check-provokes)).
 - `links` as designed: the click as the request, in the served file. Research 30 measured a call from the worker, in
   today's view.

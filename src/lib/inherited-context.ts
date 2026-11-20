@@ -90,7 +90,7 @@ export const INHERITED_CONTEXT = {
         by: ['reason', 'documented'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/e2e/directive-matrix.spec.ts'],
-        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6); the file's own policy admits the view's bootstrap by its hash" },
+        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the policy check and the same mitigations stand (the `fileHeaders` row); the file's own policy admits the view's bootstrap by its hash" },
     },
     cspWorker: {
         channel: "The host page's CSP `worker-src` (and `script-src`, `child-src`, `default-src` as its fallbacks)",
@@ -99,7 +99,7 @@ export const INHERITED_CONTEXT = {
         by: ['reason', 'documented'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/directive-matrix.spec.ts'],
-        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6)" },
+        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the policy check and the same mitigations stand (the `fileHeaders` row)" },
     },
     cspStyle: {
         channel: "The host page's CSP `style-src` (and its fallbacks)",
@@ -108,7 +108,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'warn', 'documented'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/e2e/directive-matrix.spec.ts', 'test/e2e/sealed-host-policy.spec.ts', 'test/unit/inline-styles.test.ts', 'test/e2e/sealed-reach.spec.ts'],
-        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6); the file sizes the view with a stylesheet of its own, by its hash" },
+        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the policy check and the same mitigations stand (the `fileHeaders` row); the file sizes the view with a stylesheet of its own, by its hash" },
     },
     cspBaseUri: {
         channel: "The host page's CSP `base-uri`, and with it the document's base URL (a refused `<base>` leaves the host page's URL)",
@@ -118,7 +118,7 @@ export const INHERITED_CONTEXT = {
         engines: ALL,
         environmentChecks: ['base'],
         tests: ['test/e2e/environment-check.spec.ts', 'test/unit/environment-check.test.ts', 'test/unit/environment-gate.test.ts', 'test/e2e/directive-matrix.spec.ts'],
-        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6); the file sets its own `<base href=\"about:blank\">` before its policy, and the check stays; defence in depth: the view's policy admits no network source, so a wrong base can load nothing" },
+        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the policy check and the same mitigations stand (the `fileHeaders` row); the file sets its own `<base href=\"about:blank\">` before its policy, and the check stays; defence in depth: the view's policy admits no network source, so a wrong base can load nothing" },
     },
     cspFetch: {
         channel: "The host page's CSP fetch directives (`img-src`, `connect-src`, `font-src`, `media-src`, `default-src`, `frame-src`): a copy narrows `origins`, in some engines and not in others (connect-facts.ts)",
@@ -127,7 +127,7 @@ export const INHERITED_CONTEXT = {
         by: ['refuse', 'documented'],
         engines: ALL,
         tests: ['test/unit/host-connect.test.ts', 'test/unit/host-policy-source.test.ts', 'test/unit/host.test.ts', 'test/unit/connect-facts.test.ts', 'test/e2e/connect-uniform.spec.ts', 'test/e2e/no-plaintext.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/unit/policy-guarantees.test.ts', 'test/unit/request-gate.test.ts', 'test/e2e/request-gate.spec.ts', 'test/unit/sealed-build.test.ts', 'test/e2e/directive-matrix.spec.ts', 'test/e2e/sealed-no-network.spec.ts', 'test/e2e/sealed-reach.spec.ts', 'test/e2e/served-file-check.spec.ts'],
-        sealed: { standing: 'reduced', note: "no origin is narrowed and no `connect-src` is read: the view's policy has no network source, the worker has no `fetch`, `XMLHttpRequest` or `WebSocket`, and the view keeps no URL of the guest's but a registered file's it minted (keepsUrl, BD7:ISO-1), whatever its scheme. The served view does not inherit the host page's fetch directives; what is left is a policy on the file's own response that refuses `blob:` (design 05, step 3.6): those loads are then refused in the view and reported as `violation`. The element's check of the served file (document-check.ts; design 03) is a request of the host page's own, under its `connect-src`: one that does not admit `documentUrl` refuses it, with a violation on the page (and a report to its endpoint, naming `documentUrl`) at each build that asks, and there is no check; the build goes on" },
+        sealed: { standing: 'reduced', note: "no origin is narrowed and no `connect-src` is read: the view's policy has no network source, the worker has no `fetch`, `XMLHttpRequest` or `WebSocket`, and the view keeps no URL of the guest's but a registered file's it minted (keepsUrl, BD7:ISO-1), whatever its scheme. The served view does not inherit the host page's fetch directives; what is left is a policy on the file's own response that refuses `blob:`, which the policy check sees and ends the build for (the `fileHeaders` row). The element's check of the served file (document-check.ts; design 03) is a request of the host page's own, under its `connect-src`: one that does not admit `documentUrl` refuses it, with a violation on the page (and a report to its endpoint, naming `documentUrl`) at each build that asks, and there is no check; the build goes on" },
         residuals: {
             blobLoads: {
                 what: "a registered file's load in the view (a `blob:` URL the view minted) is checked against the `img-src`, `font-src`, `media-src` or `style-src` of a policy on the served file's own response (the host page's no longer reaches the view: test/e2e/sealed-reach.spec.ts shows that channel gone): one that does not admit `blob:` refuses it, and the element reports it as a `violation`; the guest learns only that its file did not show",
@@ -142,7 +142,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'refuse', 'reason', 'documented'],
         engines: ['chromium', 'firefox'],
         tests: ['test/e2e/sealed-host-policy.spec.ts', 'test/unit/code-from-strings.test.ts', 'test/unit/entry-imports.test.ts', 'src/lib/in-sandbox-script.test.ts', 'test/unit/sealed-mode.test.ts', 'test/unit/egress.test.ts'],
-        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6); the worker reaches no refusing check of a policy, by construction, and reads no field of a violation; the view runs no guest code" },
+        sealed: { standing: 'remains', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the policy check and the same mitigations stand (the `fileHeaders` row); the worker reaches no refusing check of a policy, by construction, and reads no field of a violation; the view runs no guest code" },
     },
     cspReporting: {
         channel: "The host page's CSP reporting endpoints (`report-uri`, `report-to`): every refusing check of the inherited list makes the browser POST a report to the page's endpoint, with fields of the refused action (the blocked URL with its path and query, a sample of a script or a style with `'report-sample'`, and Chromium's Trusted Types sample without it)",
@@ -151,7 +151,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'refuse', 'reason', 'documented'],
         engines: ['chromium', 'firefox'],
         tests: ['test/e2e/sealed-host-policy.spec.ts', 'test/e2e/sealed-no-network.spec.ts', 'test/unit/entry-imports.test.ts', 'test/unit/code-from-strings.test.ts', 'test/unit/inline-styles.test.ts', 'test/e2e/sealed-reach.spec.ts', 'test/e2e/view-urls.spec.ts', 'test/unit/url-keep-rule.test.ts', 'test/unit/host-passes.test.ts', 'test/e2e/host-realm-passes.spec.ts'],
-        sealed: { standing: 'reduced', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the same mitigations stand (that row is design 05's step 3.6): no report from the worker, none of a guest style, and none of a URL the guest wrote; the view's `blob:` loads of registered files remain, under a policy on the file's response that refuses `blob:` and names an endpoint, each report naming only `blob`" },
+        sealed: { standing: 'reduced', note: "the served view (design 03) does not inherit the host page's policy: what reaches it in its place is the policy of the file's own response, against which the policy check and the same mitigations stand (the `fileHeaders` row): no report from the worker, none of a guest style, and none of a URL the guest wrote; the view's `blob:` loads of registered files remain, under a policy on the file's response that refuses `blob:` and names an endpoint, each report naming only `blob`" },
         residuals: {
             blobLoads: {
                 what: "each refusal of a registered file's load in the view, under a policy on the served file's response, is reported to that policy's endpoint, naming `blob` as blocked; how many there are, and when, is the guest's choice",
@@ -166,7 +166,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'reason', 'refuse'],
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/trusted-types-uniform.spec.ts', 'test/e2e/directive-matrix.spec.ts', 'test/unit/host-trusted-types.test.ts'],
-        sealed: { standing: 'remains', note: "the served view inherits no Trusted Types requirement of the host page's, and the element writes no HTML for it, so `hostContentSecurityPolicy` is read for nothing in sealed mode; a requirement on the file's own response is the policy row of step 3.6" },
+        sealed: { standing: 'remains', note: "the served view inherits no Trusted Types requirement of the host page's, and the element writes no HTML for it, so `hostContentSecurityPolicy` is read for nothing in sealed mode; a requirement on the file's own response is the `fileHeaders` row" },
     },
     trustedTypesDefault: {
         channel: "The host page's Trusted Types default policy (host code that runs inside a library sink)",
@@ -176,6 +176,21 @@ export const INHERITED_CONTEXT = {
         engines: ALL,
         tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/trusted-types-uniform.spec.ts'],
         sealed: { standing: 'remains', note: "the element writes no string to a sink for sealed mode's view: it sets the frame's URL, so the host page's default policy is never asked" },
+    },
+    fileHeaders: {
+        channel: "The response headers of sealed mode's served file: a `Content-Security-Policy` or `Content-Security-Policy-Report-Only` header on it (a site-wide one, the usual way to roll a policy out) applies to the file's document, and the view and its workers inherit it beside the file's `<meta>`; under one that names an endpoint, every refusal of the view's is reported there, with a URL or a sample of whatever the view loaded (design 03, \"The policies in force\")",
+        inheritedBy: "sealed mode: the served file, its view, the view's canary worker and the guest's worker (a `blob:` worker inherits the policies of the document that makes it)",
+        how: "Two checks, and the renderer's rules behind them (I18). The check of the file names such a header, and `X-Frame-Options` and `frame-ancestors`, where the host page can read the answer, before anything is framed (document-check.ts). The view's policy check runs before the view announces itself (policy-check.ts, POLICY_CANARIES, one row per directive of POLICY_DIRECTIVES): per directive a load the `<meta>` admits and one it refuses, in both schemes on a reserved name, and every violation the view's document hears is read by its policy text and its disposition, whenever it comes: one that is not the file's own ends the build with `viewCsp` or `viewCspReportOnly`, before anything of the guest's is sent, or once it is ready. The guest's worker is made by the same view after the check, so it runs under the policies the canary worker ran under. What leaves the browser before the build ends are the canaries' own reports, library strings only, with no referrer (the frame's `no-referrer`). Behind the check, where it sees nothing (a header that names the canaries' reserved host, on Chromium and Firefox; any `form-action` header; one with `script-src-attr` alone; `upgrade-insecure-requests`; a header `sandbox`), no load of the guest's exists for such a header to report: the view loads a font or media only from a `blob:` URL it minted (keepsUrl, the cut of CSS URLs), removes every nested browsing context and plugin (RENDER_REMOVED_ELEMENTS), drops every form target and cancels every `submit`, and keeps no handler attribute",
+        by: ['reason', 'construct', 'documented'],
+        engines: ALL,
+        tests: ['test/e2e/policy-check.spec.ts', 'test/unit/policy-check.test.ts', 'test/e2e/served-file-check.spec.ts', 'test/e2e/directive-matrix.spec.ts'],
+        sealed: { standing: 'reduced', note: "the row is sealed mode's own: strict, cooperative and worker mode have no served file. A header the check sees ends the build, before anything of the guest's is sent or whenever its violation comes; one it cannot provoke is in force unseen where the check of the file cannot read the answer, and no load of the guest's exists for it to report" },
+        residuals: {
+            lateFinding: {
+                what: "a header whose violation of a canary comes after the view announced itself (the order of two policies' events for one load is observed, not guaranteed: research 31, Q8) ends the build once it comes; until then the view shows the app, and the guest's loads of registered files under it are refused or reported naming only `blob`",
+                tests: ['test/e2e/policy-check.spec.ts'],
+            },
+        },
     },
     coep: {
         channel: "The host page's Cross-Origin-Embedder-Policy and cross-origin isolation (`require-corp`, `credentialless`; COOP)",
