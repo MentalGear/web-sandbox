@@ -847,11 +847,13 @@ the time is.
 
 **Built: an engine's suite runs in three shards in CI, each on a machine of its own**
 (`.github/workflows/ci.yml`, Playwright's `--shard`), with the workers and the mix of specs a machine has always had,
-and the probes beside the first shard. Each shard's result is keyed by its inputs as above. A push waits about 15
-minutes for its browsers where it waited about 29 (2026-11-20, GitHub's runners: the shards' jobs took 7, 8 and 12
-minutes on Chromium, 7, 10 and 15 on Firefox, 7, 8 and 14 on WebKit, about 90 minutes of machine time against about
-80). The third shard is the longest on every engine: Playwright divides the files by their number of tests, and the
-specs that take longest are late in their order.
+and the probes beside the first shard. Each shard's result is keyed by its inputs as above. A push waits 15 to 30
+minutes for its browsers where it waited about 29 (2026-11-20, GitHub's runners, two runs: the shards' jobs took 5 to
+8, 8 and 12 minutes on Chromium, 7, 10 to 14 and 15 to 18 on Firefox, 6 to 7, 8 and 14 to 30 on WebKit; 90 to 115
+minutes of machine time against about 80). The third shard is the longest on every engine, and on WebKit it is as
+long as the whole suite was in one of the two runs: Playwright divides the files by their number of tests, the specs
+that measure the host page are late in their order and so share that shard's two workers, and on one machine they slow
+each other (below).
 
 **Measured, and what it ruled out** (2026-11-20, GitHub's runners unless said).
 - *The specs that measure the host page as a group of their own, the rest beside it.* On two workers the measuring
@@ -867,15 +869,19 @@ specs that take longest are late in their order.
   14 of them read a clock. More workers on a machine is not sound until S81's scans can say which do.
 
 **Fix, by construction**, what is left, in this order, each measured before and after on three engines:
-1. **More workers on a machine**, once S81's scans hold every spec that asserts on a time or on the order of two
-   tasks to a measure that does not depend on the load.
-2. **The tests load the built bundle.** The server already builds `dist/` and `dist-network/` when it starts
+1. **No two specs that measure the host page side by side.** They are the specs that import `test/e2e/host-share.ts`
+   (derived from the import, never listed): one worker for them, on as many machines as their time asks for, and the
+   other specs in shards as now. To measure first: their time on one worker on WebKit in CI, which decides the number
+   of machines.
+2. **More workers on a machine**, for the other specs, once S81's scans hold every spec that asserts on a time or on
+   the order of two tasks to a measure that does not depend on the load.
+3. **The tests load the built bundle.** The server already builds `dist/` and `dist-network/` when it starts
    (`package.spec.ts` mounts from them). Every harness page takes its build's bundle, so a run tests the code as it was
    built at its start whatever is edited meanwhile, and the tests run what the package ships. This is for that
    guarantee, not for speed. To settle first: what the specs that read a source module directly need (a helper imported
    from `src/`), and source maps for a failure's stack.
-3. **A key per spec**, where CI's is the whole suite's: its build's bundle (a hash), the spec and the helpers it
-   imports, the harness pages, the engine's version and the Playwright config. It needs 2, and is worth building only
+4. **A key per spec**, where CI's is the whole suite's: its build's bundle (a hash), the spec and the helpers it
+   imports, the harness pages, the engine's version and the Playwright config. It needs 3, and is worth building only
    if the key of a shard and the shards leave a wait that matters: a change of one spec would run that spec, and a
    change confined to `network` modules no spec of the default build (`BUILD_MODULES`: a `sealed` module imports no
    `network` module). The specs that measure the host page stay out of it: the machine's load is one of their inputs.
