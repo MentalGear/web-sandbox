@@ -250,8 +250,10 @@ test.describe('4. a cross-site page that frames the host page finds no frame of 
 
 test.describe('5. one load of the frame per build', () => {
     test('a reset() loads the file again, nothing else does, and a second load of the frame ends the build', async ({ sandbox, page, browserName }) => {
+        // the frame's loads: its navigations of the file (the check of the file, the host page's own request for it, is
+        // not a load of the frame: test/e2e/served-file-check.spec.ts)
         const loads: string[] = [];
-        page.on('request', request => { if (request.url() === FILE) loads.push(request.url()); });
+        page.on('request', request => { if (request.url() === FILE && request.isNavigationRequest()) loads.push(request.url()); });
         await sandbox.registerFiles({ 'main.js': `sandboxView.render('<p id="n">0</p>', 'root'); let n = 0; bridge.expose('add', () => { n++; sandboxView.text('n', String(n)); return n; });` });
         expect(await sandbox.mount({ mode: 'sealed', entry: 'main.js', autoResize: true })).toBe('ready');
         expect(loads).toHaveLength(1);

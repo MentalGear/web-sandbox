@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import { readFileSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { realisticHostMiddleware, REALISTIC_HOST_PATH } from './test/e2e/realistic-host-server';
+import { servedDocumentDigestPlugin } from './scripts/served-document';
+import { servedFileMiddleware, SERVED_FILE_PATH } from './test/e2e/served-file-server';
 
 // The e2e server (playwright.config.ts sets WEB_SANDBOX_E2E): no HMR websocket, and no page with the dev client that
 // would open one. Through the socket the dev server reloads every connected page whenever a file in its module graph
@@ -59,7 +61,9 @@ export default defineConfig({
       input: 'playground/index.html',
     },
   },
-  plugins: [{
+  // The served file's digest in src/lib/document-digest.ts, from the generation the build writes dist/ from
+  // (scripts/served-document.ts): the check of the file compares what this server answers at documentUrl with it.
+  plugins: [servedDocumentDigestPlugin(), {
     name: 'dev-server',
     transformIndexHtml: {
       order: 'post',
@@ -119,6 +123,9 @@ export default defineConfig({
       // Test endpoint (test/e2e/realistic-host.ts): the realistic host page and the backend it talks to, which records what
       // reaches it per test session (test/e2e/realistic-host-server.ts).
       if (e2e) server.middlewares.use(REALISTIC_HOST_PATH, realisticHostMiddleware());
+      // Test endpoint (test/e2e/served-file-check.ts): sealed mode's file served the ways a deployment gets it wrong, and
+      // what reaches its path, per test session (test/e2e/served-file-server.ts).
+      if (e2e) server.middlewares.use(SERVED_FILE_PATH, servedFileMiddleware());
       server.httpServer?.once('listening', () => {
         const { port, host } = server.config.server;
         const protocol = server.config.server.https ? 'https' : 'http';
