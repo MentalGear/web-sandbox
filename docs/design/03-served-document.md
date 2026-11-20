@@ -120,7 +120,7 @@ was built with, and reads the response's headers.
 body, on all three engines, so each case of the table can be told from the others before the file is framed, and under
 a report-only header no canary's report is ever sent.
 
-**As built (step 3.3).** `src/lib/document-check.ts`, with the reasons `documentMissing`, `documentChanged`,
+**As built (step 3.3).** `src/lib/document-check.ts`, with the reasons `documentMissing`, `documentNotHtml`, `documentChanged`,
 `documentFrameAncestors`, `documentFrameOptions`, `documentCsp` and `documentCspReportOnly`; the specs are
 `test/e2e/served-file-check.spec.ts` (three engines), `test/unit/document-check.test.ts`,
 `test/unit/document-check-kept.test.ts` and `test/unit/lifecycle-file-check.test.ts`. What the text above left open:
@@ -164,7 +164,13 @@ a report-only header no canary's report is ever sent.
   (CORS-safelisted, so no preflight), so a server that answers by what is accepted answers as it answers the frame. It is
   made with the platform's `fetch` as the library's module found it when it was evaluated: a wrapper the page installs
   afterwards never sees it, one installed before is the page's `fetch` to the library and adds what it adds (measured:
-  the Authorization header of such a wrapper reached the server; none from one installed after). The host page's
+  the Authorization header of such a wrapper reached the server; none from one installed after). That stays a
+  documented limit (docs/API.md, the registration section, says how to avoid it). An `XMLHttpRequest` is no better (the
+  page can wrap it as well), and a `fetch` taken from a fresh realm, a same-origin `about:blank` frame of the host page's,
+  would make the library's one frame that is not a sandbox's (`test/unit/frame-isolation.test.ts` holds every frame of
+  `src/` to being one), would still be under a Service Worker that controls the page, and would not stop a page that
+  patches frame creation: the wrapper is the embedder's own code, and the header it adds goes to `documentUrl`'s host,
+  which is trusted with the app already. The host page's
   `connect-src` applies to it, and so does a Service Worker whose scope holds `documentUrl`, whose answer is then what is
   checked (one that answers with another page ended the build with `documentChanged`, the server seeing no request).
 - **Which headers are refused, and why those** (`REFUSED_DOCUMENT_HEADERS`): `Content-Security-Policy` (the view and its

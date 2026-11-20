@@ -5,8 +5,11 @@ import { builtinEnvironments, type Environment } from 'vitest/environments';
  *
  * No network: jsdom has no `fetch`, and the one vitest leaves on the global is Node's, which reaches the machine's own
  * network (the element's check of sealed mode's served file requests `documentUrl`, src/lib/document-check.ts, and the
- * jsdom page's origin is `http://localhost:3000`, whatever answers there). So the global has none, as a document without
- * the API, and a test that needs one installs its own; it is put back at the teardown.
+ * jsdom page's origin is `http://localhost:3000`, whatever answers there). So the global has none, as a document
+ * without the API: the element's check cannot be made, and a sealed build frames at once, as before any check existed
+ * in a realm without `fetch`. A file whose subject is a realm that has one (the fetch bridge's frame, whose `fetch` its
+ * tests replace) declares it, `// @vitest-environment-options {"unitFetch":"refuse"}`: its global then has a `fetch`
+ * that refuses every request, as a network failure does. Node's is put back at the teardown.
  *
  * A unit test that runs a bootstrap runs it on jsdom's global, and the bootstrap stays as it would in a sandbox document:
  *
@@ -26,7 +29,8 @@ export default <Environment>{
     async setup(global, options) {
         const nodeFetch = Object.getOwnPropertyDescriptor(global, 'fetch');
         const { teardown } = await builtinEnvironments.jsdom.setup(global, options);
-        Reflect.deleteProperty(global, 'fetch');
+        if (asksForFetch(options)) Object.defineProperty(global, 'fetch', { value: unitFetch, writable: true, configurable: true });
+        else Reflect.deleteProperty(global, 'fetch');
         const clearTimers = trackTimers(global);
         const pinned = (key: PropertyKey) => Object.getOwnPropertyDescriptor(global, key)?.configurable === false;
         const view = new Proxy({}, {
@@ -38,11 +42,26 @@ export default <Environment>{
             teardown: async () => {
                 clearTimers();
                 await teardown(view);
-                if (nodeFetch && Object.getOwnPropertyDescriptor(global, 'fetch') === undefined) Object.defineProperty(global, 'fetch', nodeFetch);
+                const left = Object.getOwnPropertyDescriptor(global, 'fetch');
+                if (nodeFetch && (left === undefined || left.value === unitFetch)) Object.defineProperty(global, 'fetch', nodeFetch);
             },
         };
     },
 };
+
+// Whether a file's environment options ask for a fetch: vitest files a file's `@vitest-environment-options` under the
+// name of its environment, which for this one is its path.
+function asksForFetch(options: Record<string, unknown>): boolean {
+    for (const value of Object.values(options)) {
+        if (typeof value === 'object' && value !== null && (value as { unitFetch?: unknown }).unitFetch === 'refuse') return true;
+    }
+    return false;
+}
+
+// The unit environment's fetch: no request reaches a network; each is refused as a network failure is.
+async function unitFetch(): Promise<never> {
+    throw new TypeError('the unit environment makes no request');
+}
 
 // Replaces the global's setTimeout and setInterval with ones that record what is pending; returns a function that
 // clears it all. The replacements keep the originals' own properties (util.promisify's custom one among them).

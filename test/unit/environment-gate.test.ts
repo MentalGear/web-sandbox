@@ -1,3 +1,4 @@
+// @vitest-environment-options {"unitFetch":"refuse"}
 import '@src/network'; // the network build: this file tests modes and options the default build does not have (ADR-009)
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

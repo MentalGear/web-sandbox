@@ -113,6 +113,15 @@ describe('the transitions listed from the declaration (lifecycleTransitions)', (
             const result = runReducerSequence(forTheReducer(generate(seed)), { onStep });
             expect(result.ok, `seed ${seed}: ${result.divergence}`).toBe(true);
         }
+        // and the strict view as sealed mode's served file, whose check answers each way (reducer-runner.ts, servedFile)
+        for (const servedFile of ['library', 'finding', 'unanswered'] as const) {
+            for (let seed = 1; seed <= RUNS / 4; seed++) {
+                const sequence = forTheReducer(generate(seed));
+                if (sequence.mode !== 'strict') continue;
+                const result = runReducerSequence(sequence, { onStep, servedFile });
+                expect(result.ok, `seed ${seed} (${servedFile}): ${result.divergence}`).toBe(true);
+            }
+        }
         expect([...new Set(unlisted)]).toEqual([]);
         // and what the list says and the runs never make is exactly NEVER_MADE, each with its reason
         const unmade = [...listed].filter(key => !made.has(key)).sort();

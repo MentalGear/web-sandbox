@@ -1,3 +1,4 @@
+// @vitest-environment-options {"unitFetch":"refuse"}
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { BRIDGE_FRAME_REFUSED, createBridgeFrame, prepareBridgeFrame } from '@src/lib/bridge-frame';
 import { createFetchBridge, toFetchPolicy, type FetchRecord } from '@src/lib/fetch-bridge';

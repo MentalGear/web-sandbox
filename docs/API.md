@@ -69,8 +69,11 @@ the page frames it.
   failure) there is no check, the build goes on, and the next build asks again; such a `connect-src` raises one
   violation on the page per build that asks, so admit `documentUrl` there too. The request carries no cookie, no
   referrer and no header of the page's: it is made with `fetch` as the library found it when it was loaded, so a `fetch`
-  wrapper of the app's installed later does not see it (one installed before does), and a Service Worker of the page's
-  whose scope holds `documentUrl` can answer it, which is then what is checked.
+  wrapper of the app's installed later does not see it. One installed before the library is the page's `fetch` as far as
+  the library can tell, and adds what it adds: a wrapper that puts the user's token on every request sends it to
+  `documentUrl`'s host, which is trusted with the app already. Load the library before such a wrapper, or have the
+  wrapper leave `documentUrl` alone. A Service Worker of the page's whose scope holds `documentUrl` can answer the
+  request, and what it answers is what is checked (a stale cached copy ends the build as another version's file).
 - **In the build with the network modes** it may be left out (`defineWebSandbox({})`): strict, cooperative and worker
   mode keep documents of their own, and `start()` of a sealed app on such an element throws.
 
@@ -1148,7 +1151,8 @@ type FetchRecord = {
 | `the guest frame is missing` | The library's frame has no guest frame. |
 | `the guest raised more uncaught errors or unhandled rejections in one second than their budget allows` | Worker, strict and sealed mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)). |
 | `the document at documentUrl did not answer: the file is missing, the server answers its path with another page, a header on it refuses the framing or the view's script, or the host page's frame-src does not admit it (see docs/API.md#registering-the-element)` | Sealed mode: no view announced itself from the first frame of the element's frame within `LOAD_TIMEOUT_MS`, or the frame loaded a document with no frame in it. From outside the frame the causes look alike: the file is not at `documentUrl`, the server answers that path with another page (an app's fallback page), a header on the file refuses the framing (`X-Frame-Options`, `frame-ancestors`) or the view's script, or the host page's own `frame-src` does not admit `documentUrl` (see [Registering the element](#registering-the-element) and [Host page policy](#host-page-policy)). Where the element could read the file's answer, the check of the file names the first four causes instead (the reasons below); this reason is what is left where it could not: another origin that does not allow the read, a host page whose `connect-src` refuses the request, a network failure, or a server that answers the frame otherwise than the check. |
-| `the file at documentUrl is missing: … (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the element's own request for `documentUrl` was answered with a status that is not 2xx, or with a `Content-Type` that is not `text/html` (none counts as not HTML); the text after the colon says which. Nothing was framed. |
+| `the file at documentUrl is missing: the server answered with a status that is not 2xx (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the element's own request for `documentUrl` was answered with a status that is not 2xx. Nothing was framed. |
+| `the file at documentUrl is not served as HTML: its Content-Type is not text/html (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the element's own request for `documentUrl` was answered with a `Content-Type` that is not `text/html` (none counts as not HTML). Nothing was framed. |
 | `the file at documentUrl is not this version's sealed-document.html: its bytes differ from the library's. It is another version's, or a tool rewrote it (a dev server that inserts its client's script, such as Vite's; a bundler that processes HTML, such as webpack's HTML support or Parcel; a minifier; a CDN that rewrites pages), or a cache holds an old copy: serve the package's file unchanged (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: `documentUrl` answered with bytes that are not this version's `sealed-document.html`, compared whole, by their SHA-256. Every change counts: a script a dev server inserts, a minified or reformatted copy, a copy without the guard or whose view lost its `sandbox` attribute, an app's own page, another version's file. Nothing was framed. |
 | `the file at documentUrl is served with a frame-ancestors directive (in a Content-Security-Policy header): serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: a `Content-Security-Policy` or `Content-Security-Policy-Report-Only` header on the file has a `frame-ancestors` directive. Nothing was framed. |
 | `the file at documentUrl is served with an X-Frame-Options header: serve it without one (see docs/API.md#registering-the-element)` | Sealed mode, the check of the file: the file is served with `X-Frame-Options`, whatever its value. Nothing was framed. |
@@ -1764,7 +1768,7 @@ page in Chromium and Firefox, with no user activation (measured; cooperative mod
 
 ### Forms and the browser's autofill
 
-<!-- describes: view-forms, inherited-context sig:5378cf44 -->
+<!-- describes: view-forms, inherited-context sig:5378b441 -->
 
 A guest's form gets nothing of the browser's autofill or autocomplete, in strict and sealed mode, and the guest's worker
 receives from a control only what the user entered into that control ([research 29](research/29_autofill/README.md); the

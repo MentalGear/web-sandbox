@@ -24,7 +24,7 @@
  *   allow the read) is no answer: the next build asks again.
  */
 import { documentDigest, sealedDocumentDigest } from './document-digest';
-import { fixedDetail, reasonText, type ReasonId } from './reasons';
+import { reasonText, type ReasonId } from './reasons';
 
 /** A function with the platform's fetch's signature. */
 type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
@@ -113,20 +113,14 @@ export function headerFinding(header: (name: string) => string | null): string |
     return null;
 }
 
-/** What `documentMissing` says after its colon: which of the two ways the file is missing. */
-export const MISSING_DETAILS = {
-    status: fixedDetail('the server answered with a status that is not 2xx'),
-    type: fixedDetail('its Content-Type is not text/html'),
-} as const;
-
 /**
  * The finding of an answer, or null when it is the library's file with no refused header. In order: the status and the
  * type (the file is missing), the bytes against `digest` (another file), then the headers: a fallback page that carries
  * the site's policy is named as another page, the cause to fix first.
  */
 export async function documentFinding(answer: DocumentAnswer, digest: string): Promise<string | null> {
-    if (answer.status < 200 || answer.status > 299) return reasonText('documentMissing', MISSING_DETAILS.status);
-    if (!isHtmlType(answer.header('content-type'))) return reasonText('documentMissing', MISSING_DETAILS.type);
+    if (answer.status < 200 || answer.status > 299) return reasonText('documentMissing');
+    if (!isHtmlType(answer.header('content-type'))) return reasonText('documentNotHtml');
     if (documentDigest(await answer.bytes()) !== digest) return reasonText('documentChanged');
     return headerFinding(answer.header);
 }

@@ -7,6 +7,9 @@
  *                          names, a Permissions-Policy, a Referrer-Policy, nosniff, and the PAGE_HEADERS a spec sets) and, unless cookies=0, the host site's cookies with SameSite None, Lax and Strict.
  *                          Its one script is external (realistic-host-page.ts), so a policy without 'unsafe-inline' runs it.
  *   GET  /sw.js            the host app's Service Worker: cache-first for its API, reporting what it handled
+ *   GET  /api/S/sealed-document.html
+ *                          sealed mode's file (the default build's), served as a name of the API (`?doc=api` on the page
+ *                          registers it as documentUrl), recorded as every API request is
  *   *    /api/S/NAME       the host app's own API: answers { name, n } (n counts the session's hits on that name) and records the
  *                          request with every header the browser sent, so a spec reads the Cookie and Authorization headers and the Referer that
  *                          reached it. CORS for any origin, as a public API's would be
@@ -16,9 +19,15 @@
  *
  * A session is a test's own: tests running at once on one server never see each other's requests.
  */
+import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { fileURLToPath } from 'node:url';
 
 export const REALISTIC_HOST_PATH = '/__realistic-host';
+
+/** The API name under which the server answers with sealed mode's file (the page's `?doc=api`). */
+export const DOCUMENT_API_NAME = 'sealed-document.html';
+const SEALED_DOCUMENT = fileURLToPath(new URL('../../dist/sealed-document.html', import.meta.url));
 
 /** The host app's cookies and what each says about its SameSite attribute (the page sets them at load). */
 export const HOST_COOKIES = [
@@ -135,6 +144,12 @@ export function realisticHostMiddleware() {
                 res.setHeader('access-control-allow-headers', '*');
                 res.setHeader('access-control-max-age', '0');
                 res.end();
+                return;
+            }
+            if (name === DOCUMENT_API_NAME) {
+                res.setHeader('content-type', 'text/html');
+                res.setHeader('cache-control', 'no-store');
+                res.end(readFileSync(SEALED_DOCUMENT));
                 return;
             }
             const n = (record.counters.get(name) ?? 0) + 1;

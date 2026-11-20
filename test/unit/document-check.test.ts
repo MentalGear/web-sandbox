@@ -99,7 +99,7 @@ describe('the digest: one generation for every loader', () => {
     it('the bundle carries the digest and none of the file: no module of the default build imports the generator', () => {
         const source = readFileSync(path.resolve(import.meta.dirname, '../../src/lib/document-digest.ts'), 'utf8');
         expect(source).toContain('declare const __WEB_SANDBOX_DOCUMENT_DIGEST__');
-        expect(source).not.toMatch(/sealed-document/);
+        expect(source).not.toMatch(/from '\.\/sealed-document'/);
         expect(readFileSync(path.resolve(import.meta.dirname, '../../src/lib/document-check.ts'), 'utf8')).not.toMatch(/from '\.\/sealed-document'/);
     });
 });
@@ -119,8 +119,8 @@ describe('what the check finds in an answer (documentFinding)', () => {
     });
 
     it('no file: a status that is not 2xx, or a type that is not HTML (none included)', async () => {
-        const status = reasonText('documentMissing', check.MISSING_DETAILS.status);
-        const type = reasonText('documentMissing', check.MISSING_DETAILS.type);
+        const status = reasonText('documentMissing');
+        const type = reasonText('documentNotHtml');
         expect(await finding({ status: 404 })).toBe(status);
         expect(await finding({ status: 500, body: 'oops' })).toBe(status);
         expect(await finding({ type: 'text/plain' })).toBe(type);
@@ -156,7 +156,7 @@ describe('what the check finds in an answer (documentFinding)', () => {
     });
 
     it('the order: the file missing, then its bytes, then its headers (a fallback page with the site\'s policy is another page)', async () => {
-        expect(await finding({ status: 404, headers: { 'content-security-policy': "default-src 'self'" } })).toBe(reasonText('documentMissing', check.MISSING_DETAILS.status));
+        expect(await finding({ status: 404, headers: { 'content-security-policy': "default-src 'self'" } })).toBe(reasonText('documentMissing'));
         expect(await finding({ body: '<p>app</p>', headers: { 'content-security-policy': "default-src 'self'" } })).toBe(changed);
     });
 

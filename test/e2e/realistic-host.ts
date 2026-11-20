@@ -5,7 +5,7 @@ import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 import { VIEW_STILL_STYLE } from '@src/lib/in-sandbox-view';
 import type { InheritedContextId } from '@src/lib/inherited-context';
 import { buildOfPage, expect, ORIGIN, type Build, type SandboxDriver } from './fixture';
-import { HOST_COOKIES, REALISTIC_HOST_PATH, type ApiHit, type PageHeader, type SessionRecord } from './realistic-host-server';
+import { DOCUMENT_API_NAME, HOST_COOKIES, REALISTIC_HOST_PATH, type ApiHit, type PageHeader, type SessionRecord } from './realistic-host-server';
 
 /**
  * A host page that looks like a production application, for every test that wants one (S74, class A; CONTRIBUTING.md,
@@ -64,6 +64,12 @@ export interface HostOptions {
     serviceWorker?: boolean;
     /** The host site's cookies (default: on). */
     cookies?: boolean;
+    /**
+     * Where the page serves sealed mode's file: the build's own copy (default), or `'api'`, a name of the application's
+     * API (`DOCUMENT_API_NAME`), which its Service Worker answers cache-first, its fetch wrapper adds the user's token to,
+     * and the backend records with every header: the check of the file's request is then seen by each of them.
+     */
+    documentAt?: 'build' | 'api';
     /** Edits the policy the page would send (the directive matrix sets one directive; a test adds the origins it lists to connect-src). */
     directives?: (base: Directives) => Directives;
     /**
@@ -180,6 +186,9 @@ export class RealisticHost {
     /** The policy the page was sent with. */
     csp!: string;
 
+    /** The documentUrl the page registered with `documentAt: 'api'`. */
+    get documentApiUrl() { return this.api(DOCUMENT_API_NAME); }
+
     /** The URL of one of the host's API names on its own origin. */
     api(name: string) { return `${HOST_BASE}/api/${this.session}/${name}`; }
 
@@ -207,6 +216,7 @@ export class RealisticHost {
         for (const [header, value] of Object.entries(options.headers ?? {})) query.set(`h-${header}`, value);
         if (options.cookies === false) query.set('cookies', '0');
         if (options.serviceWorker === false) query.set('sw', '0');
+        if (options.documentAt === 'api') query.set('doc', 'api');
         if (options.guestCode !== 'execute' && options.ttDefault !== false) query.set('tt-default', '1');
         await page.goto(`${options.origin ?? ORIGIN}${REALISTIC_HOST_PATH}/page?${query}`);
         await page.waitForFunction(() => (window as any).harnessReady === true);

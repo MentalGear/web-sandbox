@@ -242,6 +242,37 @@ test.describe('the view modes: sealed (the default) and strict', () => {
     }
 });
 
+test.describe("sealed mode's check of the served file on the production host (design 03, \"The check of the file\")", () => {
+    test.use({ build: 'default' });
+
+    test("the check's request goes past the app's fetch wrapper, carries no cookie, token or referrer, and the app's Service Worker answers it; the frame's navigation it never answers", async ({ sandbox, browserName }) => {
+        const host = await RealisticHost.open(sandbox, { mode: 'sealed', documentAt: 'api' });
+        const worker = await ownRequestControl(host, 'check-control', browserName);
+        await host.hits(true);
+        expect(await host.embed('sealed', { guest: 'return { ran: true };' }), covering('hostRealmGlobals', 'the library\'s file, checked: ready')).toEqual(READY);
+        const hits = hitsNamed((await host.hits()).api, 'sealed-document.html');
+        // the frame's navigation reaches the server (no Service Worker answers an opaque frame's navigation); the check's
+        // request does too, unless the cache-first worker answered it
+        const navigations = hits.filter(hit => hit.headers['sec-fetch-dest'] === 'iframe');
+        expect(navigations, covering('serviceWorker', "the frame's navigation is never the Service Worker's")).toHaveLength(1);
+        const checks = hits.filter(hit => hit.headers['sec-fetch-dest'] !== 'iframe');
+        expect(checks, covering('serviceWorker', "the check's request, from the network the first time (through the worker where it controls the page)")).toHaveLength(1);
+        const check = checks[0]!.headers;
+        expect(check.authorization, covering('hostRealmGlobals', "the app's fetch wrapper, installed after the library, never sees the check's request")).toBeUndefined();
+        expect(check.cookie, covering('hostRealmGlobals', 'the request carries no cookie of the host site')).toBeUndefined();
+        expect(check.referer, covering('hostRealmGlobals', 'nor the host page\'s URL')).toBeUndefined();
+        if (worker.controlled) await expectServiceWorkerLog(host, 'sealed-document.html', ['network']);
+    });
+
+    test("a connect-src that does not admit documentUrl: no check, a violation on the page per build that asks, and the build runs", async ({ sandbox }) => {
+        const host = await RealisticHost.open(sandbox, { mode: 'sealed', directives: (base) => ({ ...base, 'connect-src': ['https://api.example'] }) });
+        const before = (await host.cspViolations()).length;
+        expect(await host.embed('sealed', { guest: 'return { ran: true };' }), covering('cspFetch', 'the build runs without the check')).toEqual(READY);
+        const added = (await host.cspViolations()).slice(before);
+        expect(added.map(line => line.split(' ').slice(0, 2).join(' ')), covering('cspFetch', 'the refused request is one connect-src violation on the page, naming documentUrl')).toEqual([`connect-src ${ORIGIN}/dist/sealed-document.html`]);
+    });
+});
+
 test.describe('cooperative mode', () => {
     test("starts on the production host (script-src 'unsafe-inline', Trusted Types enforced), runs the guest's inline script, and stops cleanly", async ({ sandbox, page, browserName }) => {
         const host = await RealisticHost.open(sandbox, { mode: 'cooperative' });

@@ -26,7 +26,7 @@ import { join, relative, resolve } from 'node:path';
 import { BUILD_ENTRIES, buildFor, NETWORK_MODES_FLAG } from '../src/lib/build-flag';
 import { modulesOf } from '../src/lib/build-modules';
 import { SEALED_DOCUMENT_FILE, sealedDocument, sealedViewBootstrap } from '../src/lib/sealed-document';
-import { DOCUMENT_DIGEST_DEFINE, servedDocument } from './served-document';
+import { DOCUMENT_DIGEST_DEFINE, servedDocument as generatedDocument } from './served-document';
 
 const root = join(import.meta.dir, '..');
 const build = buildFor(process.env[NETWORK_MODES_FLAG.env]);
@@ -44,9 +44,10 @@ if (build === 'default' && bootstrap !== sealedViewBootstrap()) {
     console.error("build-lib: the default build's view bootstrap is not sealed mode's, which the served document holds: nothing was written");
     process.exit(1);
 }
-const served = servedDocument();
+const servedDocument = sealedDocument();
 // the generation every loader takes the digest from prints the view as this process does
-if (served.text !== sealedDocument()) {
+const served = generatedDocument();
+if (served.text !== servedDocument) {
     console.error('build-lib: the served document of scripts/served-document.ts is not the one this process generates: nothing was written');
     process.exit(1);
 }
@@ -92,6 +93,6 @@ if (!bundleText.includes(JSON.stringify(served.digest)) || bundleText.includes(D
     console.error(`build-lib: ${relative(root, outdir)}/index.js does not hold the served document's digest ${served.digest}: nothing was written`);
     process.exit(1);
 }
-writeFileSync(join(outdir, SEALED_DOCUMENT_FILE), served.text);
+writeFileSync(join(outdir, SEALED_DOCUMENT_FILE), servedDocument);
 console.log(`build-lib: ${relative(root, outdir)}/index.js, the ${build} build, view bootstrap ${viewBootstrapHash()} (${bootstrap.length} characters)`);
 console.log(`build-lib: ${relative(root, outdir)}/${SEALED_DOCUMENT_FILE}, sealed mode's served document (${served.text.length} characters, digest ${served.digest})`);

@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { test, expect, ORIGIN, OFFSITE_ORIGIN } from './fixture';
 import { reasonText } from '@src/lib/reasons';
-import { MISSING_DETAILS } from '@src/lib/document-check';
 import { SERVED_FILE_PATH, type FileHit, type FileVariant } from './served-file-server';
 
 /**
@@ -55,8 +54,8 @@ const changed = reasonText('documentChanged');
 
 test.describe('1. each finding ends the build with its own reason, before anything is framed', () => {
     const cases: [string, FileVariant, Record<string, string | string[]>, string][] = [
-        ['a 404', 'missing', {}, reasonText('documentMissing', MISSING_DETAILS.status)],
-        ['a 200 that is not HTML (text/plain)', 'plain', {}, reasonText('documentMissing', MISSING_DETAILS.type)],
+        ['a 404', 'missing', {}, reasonText('documentMissing')],
+        ['a 200 that is not HTML (text/plain)', 'plain', {}, reasonText('documentNotHtml')],
         ["another page at the URL (an app's fallback page)", 'fallback', {}, changed],
         ["a dev server's client script ahead of the policy tag", 'devClient', {}, changed],
         ['a minified copy', 'minified', {}, changed],

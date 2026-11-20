@@ -231,7 +231,7 @@ export const INHERITED_CONTEXT = {
         by: ['construct', 'documented'],
         engines: ALL,
         tests: ['test/e2e/fetch-bridge-isolation.spec.ts', 'test/e2e/security.spec.ts', 'test/e2e/sealed-no-network.spec.ts', 'test/e2e/served-file-check.spec.ts'],
-        sealed: { standing: 'reduced', note: "no request and no bridge frame of the sandbox's; the check of the served file is the host page's request, which its Service Worker can answer: what it answers is what is checked" },
+        sealed: { standing: 'not-applicable', because: 'no-network', note: "no request and no bridge frame of the sandbox's; the element's check of the served file is a request of the host page's own, which its Service Worker can answer: what it answers is what is checked" },
     },
     hostRealmGlobals: {
         channel: "The host realm's globals and prototypes that the library's host code uses (`fetch`, `console`, built-ins)",

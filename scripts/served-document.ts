@@ -19,7 +19,8 @@ import { documentDigest } from '../src/lib/document-digest';
 /** The identifier src/lib/document-digest.ts declares, which every loader replaces with the digest's string literal. */
 export const DOCUMENT_DIGEST_DEFINE = '__WEB_SANDBOX_DOCUMENT_DIGEST__';
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
+// (vitest gives a module its directory, and its URL in a scheme of its own)
+const ROOT = typeof import.meta.dirname === 'string' ? resolve(import.meta.dirname, '..') : fileURLToPath(new URL('..', import.meta.url));
 const SCRIPT = join(ROOT, 'scripts', 'served-document.ts');
 // the bootstrap is a few hundred kilobytes of text: room for it on stdout
 const MAX_BUFFER = 64 * 1024 * 1024;
