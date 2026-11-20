@@ -624,6 +624,10 @@ What the text above left open:
   in its listener; the worker's prelude adds one, ahead of the bootstrap's, which reads through getters captured before
   any guest code and leaves once it took them all). Under a second policy that refuses a canary too, its second event is
   reported: that is the policy check's subject (step 3.6).
+- **What the browser logs.** Every engine logs each refusal a canary provokes to its developer console (four to seven
+  lines a sealed start; no page script reads them, the element's `violation` events carry none). The design did not
+  foresee it, and step 3.6's per-directive canaries add more; the realistic host's and the package's specs take exactly
+  those lines out of their quiet-console checks (`test/e2e/startup-canaries.ts`).
 - **No canary reaches the network.** Every canary's URL is `data:`, a `blob:` URL of the view's own (its one `fetch`,
   `connectCanary`, which class E-net's scan lists), or
   `http://gate.invalid/` as a base URL, which requests nothing; the spec records every request of a start, under the

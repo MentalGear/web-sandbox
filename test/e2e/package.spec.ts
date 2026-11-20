@@ -1,3 +1,4 @@
+import { withoutStartupCanaries } from './startup-canaries';
 import { test, expect, ORIGIN } from './fixture';
 import type { Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
@@ -45,7 +46,8 @@ test.describe('the package as published: the default build', () => {
         await page.waitForFunction(() => (window as any).sandboxLogs.includes('from the package undefined undefined'));
         // auto-sizing is the view's own report back to the host, so the element's height is the evidence that the render reached it
         await expect.poll(() => page.evaluate(() => (document.querySelector('packaged-sandbox') as HTMLElement).style.height)).toMatch(/^3[45]\d?px$/);
-        expect(violations).toEqual([]);
+        // nothing but the start-up gates' own canaries, whose refusals every engine logs (startup-canaries.ts)
+        expect(withoutStartupCanaries(violations)).toEqual([]);
     });
 
     test("its viewScriptHash(), in Node without a DOM and in the page, is the hash of the bootstrap the served file's policy admits, and that bootstrap has no fetch bridge frame", async ({ page }) => {

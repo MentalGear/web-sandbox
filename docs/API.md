@@ -88,7 +88,11 @@ the page frames it.
   before the entry and ends the build, and no call reaches it. The gates are canaries that confirm the browser enforces
   the file's policy, the view's sandbox and the worker's allowlist ([design 03](design/03-served-document.md#the-start-up-gates)):
   defence in depth after those constructions, never in their place, and run in sealed mode where they provoke the file's
-  policy, since strict mode's view inherits your page's policy. No canary reaches the network. Their cost, and the wait
+  policy, since strict mode's view inherits your page's policy. No canary reaches the network, and the element dispatches
+  no `violation` for one; but the browser logs each refusal it makes to its developer console, which no page script can
+  read or silence: a sealed start shows four to seven such lines there (a `blob:` connection, a `data:` image, an
+  inline style, a `<base>` to `http://gate.invalid/`, and on Firefox the code-from-string canaries), all naming the file's
+  own policy. Their cost, and the wait
   for the worker's verdicts, are once per build and bounded by `LOAD_TIMEOUT_MS`. Measured 2026-11-20 on a 4-core
   machine (load average 3.9), loopback, from insertion to `ready` for a later build of a page (the file checked, the
   check kept), medians of 12: Chromium 159 41 ms, Firefox 159 74 ms, WebKit 27.2 31 ms, against 35, 67 and 38 ms

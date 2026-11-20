@@ -1,3 +1,4 @@
+import { withoutStartupCanaries } from './startup-canaries';
 import { test, expect, ORIGIN, buildOfMode } from './fixture';
 import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { waitInView, inFrames } from './strict-view';
@@ -65,7 +66,9 @@ async function expectQuiet(host: RealisticHost, baseline: Awaited<ReturnType<typ
     expect((await host.hits()).reports.length, covering('trustedTypesRequirement', `${label}: nor a CSP report to the page's report-uri`)).toBe(baseline.reports);
     // WebKit does not know `allow-orientation-lock`, which the served file's view carries in its static attribute (design 03,
     // "The sandbox flags"), and logs it as invalid while it applies the others: the one line of the file's own markup
-    const errors = host.consoleErrors.filter(line => line !== WEBKIT_UNKNOWN_FLAG);
+    // and sealed mode's start-up gates refuse their canaries under the file's own policy, which every engine logs: the
+    // lines of those canaries alone (startup-canaries.ts)
+    const errors = withoutStartupCanaries(host.consoleErrors.filter(line => line !== WEBKIT_UNKNOWN_FLAG));
     expect(errors, covering('trustedTypesRequirement', `${label}: nor a console error`)).toEqual(baseline.consoleErrors);
     expect(await host.ttDefaultCalls(), covering('trustedTypesDefault', `${label}: the host's Trusted Types default policy is never asked for a string of the library's`)).toEqual([]);
     expect(await host.reportedErrors(), covering('hostRealmGlobals', `${label}: the host's error reporter sees no error or rejection of the library's host code`)).toEqual([]);
