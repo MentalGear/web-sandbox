@@ -15,7 +15,7 @@ import { styleMarkup, type StyleMarkup } from './style-markup';
 import { GUEST_IMAGE_TYPES } from './guest-bytes';
 import type { FrameType } from './frames';
 import { VERSION_ATTRIBUTE } from './document-digest';
-import { gateNames, type GateName } from './startup-gates';
+import { GATE_CANARIES, gateNames, gateViolations, type GateName } from './startup-gates';
 
 /**
  * Strict mode's view and worker prelude (ADR-005).
@@ -1836,7 +1836,14 @@ export interface ViewOptions {
      * The start-up gates (startup-gates.ts, STARTUP_GATES): the view's own per mode, and every gate of the worker's, whose
      * verdicts the view hands on.
      */
-    gates: { view: { sealed: readonly GateName[]; strict: readonly GateName[] }; worker: readonly GateName[] };
+    gates: { view: { sealed: readonly GateName[]; strict: readonly GateName[] }; worker: readonly GateName[]; violations: Readonly<Record<string, string>> };
+    /** The start-up gates' fixed canaries (startup-gates.ts, GATE_CANARIES): the image, the stylesheet and its target and colour, the base URL and the cookie's name. */
+    gateImage: string;
+    gateStyle: string;
+    gateStyleTarget: string;
+    gateStyleColor: string;
+    gateBase: string;
+    gateCookie: string;
 }
 
 /**
@@ -1930,11 +1937,33 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // work, and each is charged. Like a load the platform reports (observeLoads), it takes from the credit of the CSS
     // the view prepaid first (S73; viewBudget), and is charged once that is spent.
     // Each field is read once (the view runs no guest code, so its getters are the platform's).
+    // The violations the start-up gates' own canaries raise (startup-gates.ts, `raises`), taken here, neither reported
+    // nor charged. The gates fill the lists before they provoke anything. Until INIT_VIEW nothing of the guest's exists in
+    // this document, so every violation of a gate's directive is the library's (an engine may raise two for one canary:
+    // Chromium's <base>); after it, one of each directive not yet taken still is, as its event can come late.
+    const gateDirectives: string[] = [];
+    const gateViolations: string[] = [];
+    const takenByGate = (directive: string): boolean => {
+        for (let i = 0; !initialised && i < gateDirectives.length; i++) {
+            if (directive.indexOf(gateDirectives[i]!) !== 0) continue;
+            const left = gateViolations.indexOf(gateDirectives[i]!);
+            if (left !== -1) gateViolations.splice(left, 1);
+            return true;
+        }
+        for (let i = 0; i < gateViolations.length; i++) {
+            if (directive.indexOf(gateViolations[i]!) !== 0) continue;
+            gateViolations.splice(i, 1);
+            return true;
+        }
+        return false;
+    };
     addEventListener('securitypolicyviolation', (event: any) => {
         if (!event.isTrusted) return;
+        const directive = event.effectiveDirective || event.violatedDirective;
+        if (takenByGate(String(directive))) return;
         const blockedURI = event.blockedURI;
         if (!renderedLoads.has(String(blockedURI))) budget.observed(1, performance.now());
-        reportViolation(event.effectiveDirective || event.violatedDirective, blockedURI, event.sourceFile, event.lineNumber, event.columnNumber);
+        reportViolation(directive, blockedURI, event.sourceFile, event.lineNumber, event.columnNumber);
     }, true);
 
     // The directive of a kind of load (options.render.kinds and directives), as the renderer reports its refusals.
@@ -2892,7 +2921,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const styleOfElement = getter(HTMLElement.prototype, 'style');
     // The one place the view makes a <style>: a text of the library's own (the still stylesheet, or the wrapper's sizing
     // sheet it tries), never one of the guest's.
-    const librarySheet = (text: typeof options.stillStyle | typeof options.wrapperStyle): HTMLStyleElement => {
+    const librarySheet = (text: typeof options.stillStyle | typeof options.wrapperStyle | typeof options.gateStyle): HTMLStyleElement => {
         const sheet = call(D.createElement, document, ['style']);
         call(Object.getOwnPropertyDescriptor(Node.prototype, 'textContent')!.set!, sheet, [text]);
         return sheet as HTMLStyleElement;
@@ -4090,9 +4119,79 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // name; the registry gives the names this mode runs (options.gates). A name with no canary here is a failed gate, so
     // this table and the registry are one list (test/unit/startup-gates.test.ts). A canary answers whether the browser
     // refused what it provoked, at once or once its load has answered; the announcement waits for every answer.
-    const canaries: Record<string, () => boolean | Promise<boolean>> = {};
+    // The connect gate's canary, the view's one use of `fetch` (class E-net: test/unit/structural.test.ts lists it): a
+    // `blob:` URL of its own, which `connect-src 'none'` refuses before anything is read, and which names no host.
+    function connectCanary(): Promise<boolean> {
+        const url = URL.createObjectURL(new Blob(['x'], { type: 'text/plain' }));
+        const done = (refused: boolean) => {
+            URL.revokeObjectURL(url);
+            return refused;
+        };
+        return fetch(url).then(() => done(false), () => done(true));
+    }
+    const throws = (act: () => unknown): boolean => {
+        try {
+            act();
+            return false;
+        } catch {
+            return true;
+        }
+    };
+    const canaries: Record<string, () => boolean | Promise<boolean>> = {
+        framing: () => parent !== g && parent.parent !== parent,
+        stringCode: () => throws(() => new Function('')),
+        connect: connectCanary,
+        image: () => new Promise<boolean>((resolve) => {
+            const image = new Image();
+            image.onload = () => resolve(false);
+            image.onerror = () => resolve(true);
+            image.src = options.gateImage;
+        }),
+        style: () => {
+            // the bootstrap runs in the head, before the body exists: the target is in the head, whose elements render
+            // nothing and still compute their style
+            const head = call(headOf, document, []);
+            if (!head) return false;
+            const target = call(D.createElement, document, ['p']);
+            call(Object.getOwnPropertyDescriptor(Element.prototype, 'id')!.set!, target, [options.gateStyleTarget]);
+            call(Node.prototype.appendChild, head, [target]);
+            const sheet = librarySheet(options.gateStyle);
+            call(Node.prototype.appendChild, head, [sheet]);
+            const applied = getComputedStyle(target).getPropertyValue('color') === options.gateStyleColor;
+            call(Node.prototype.removeChild, head, [sheet]);
+            call(Node.prototype.removeChild, head, [target]);
+            return !applied;
+        },
+        base: () => {
+            const head = call(headOf, document, []);
+            if (!head) return false;
+            const before = document.baseURI;
+            const base = call(D.createElement, document, ['base']);
+            call(E.setAttribute, base, ['href', options.gateBase]);
+            call(Node.prototype.appendChild, head, [base]);
+            const moved = document.baseURI !== before;
+            call(Node.prototype.removeChild, head, [base]);
+            return !moved;
+        },
+        cookie: () => {
+            try {
+                document.cookie = options.gateCookie + '=1; max-age=5';
+                return document.cookie.indexOf(options.gateCookie + '=1') === -1;
+            } catch {
+                return true;
+            }
+        },
+        storage: () => throws(() => localStorage.length),
+        parent: () => throws(() => parent.document.title),
+    };
     const verdicts: Record<string, boolean> = {};
     const answers: Promise<void>[] = [];
+    for (let i = 0; i < gates.length; i++) {
+        const raised = options.gates.violations[gates[i]!];
+        if (typeof raised !== 'string') continue;
+        gateDirectives.push(raised);
+        gateViolations.push(raised);
+    }
     for (let i = 0; i < gates.length; i++) {
         const name = gates[i]!;
         const canary = Object.prototype.hasOwnProperty.call(canaries, name) ? canaries[name]! : null;
@@ -4700,7 +4799,8 @@ export const VIEW_OPTIONS: ViewOptions = {
     linkStops: VIEW_LINK_CLICK_STOPS,
     wrapperStyle: WRAPPER_STYLE,
     versionAttribute: VERSION_ATTRIBUTE,
-    gates: { view: gateNames('view'), worker: [...new Set([...gateNames('worker').sealed, ...gateNames('worker').strict])] },
+    gates: { view: gateNames('view'), worker: [...new Set([...gateNames('worker').sealed, ...gateNames('worker').strict])], violations: gateViolations() },
+    ...GATE_CANARIES,
 };
 
 // The bootstrap's text and its hash, with the bridge frame's part they were built for (the network modes', or none).

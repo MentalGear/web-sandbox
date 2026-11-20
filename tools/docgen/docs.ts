@@ -12,6 +12,7 @@ import { config } from './extractors/config';
 import { connectFacts } from './extractors/connect-facts';
 import { cookieFacts } from './extractors/cookie-facts';
 import { csp } from './extractors/csp';
+import { startupGates } from './extractors/startup-gates';
 import { engineLedger } from './extractors/engine-ledger';
 import { examples } from './extractors/examples';
 import { frames } from './extractors/frames';
@@ -25,7 +26,7 @@ import { reasons } from './extractors/reasons';
 import { sealedReach } from './extractors/sealed-reach';
 import { surface } from './extractors/surface';
 
-export const EXTRACTORS: readonly Extractor[] = [api, budgets, build, config, connectFacts, cookieFacts, csp, engineLedger, examples, frames, guestValues, inheritedContext, lifecycle, limits, modules, reasons, sealedReach, surface];
+export const EXTRACTORS: readonly Extractor[] = [api, budgets, build, config, connectFacts, cookieFacts, csp, engineLedger, examples, frames, guestValues, inheritedContext, lifecycle, limits, modules, reasons, sealedReach, startupGates, surface];
 
 export const plugin: Plugin = {
     extractors: {},

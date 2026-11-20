@@ -169,7 +169,7 @@ export const HOST_PASSES = {
         takes: ['html', 'entry', 'files'], modes: VIEW_MODES, rule: 'pure',
         units: [
             'src/host.ts#this._prepareBuild', 'src/host.ts#this._prepareSealedFrame', 'src/lib/network-host.ts#this._prepareNetworkBuild', 'src/lib/network-host.ts#this._prepareStrictFrame', 'src/host.ts#this._prepareViewFrame', 'src/host.ts#this._viewInit',
-            'src/host.ts#this._getStrictWorkerSource', 'src/lib/startup-gates.ts#gatesOf', 'src/lib/frame-documents.ts#toInlineScriptLiteral', 'src/lib/in-sandbox-view.ts#buildViewDocument',
+            'src/host.ts#this._getStrictWorkerSource', 'src/lib/startup-gates.ts#gatesOf', 'src/lib/startup-gates.ts#gateViolations', 'src/lib/frame-documents.ts#toInlineScriptLiteral', 'src/lib/in-sandbox-view.ts#buildViewDocument',
             'src/lib/frame-documents.ts#buildWrapperDocument', 'src/lib/frame-documents.ts#escapeAttribute',
             'src/host.ts#workerGlobalsStatement', 'src/host.ts#workerGlobalsCall', 'src/lib/worker-globals.ts#workerGlobalsFor',
         ],

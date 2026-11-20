@@ -55,8 +55,9 @@ async function open(page: Page, url: string) {
 
 /** Starts one sealed app, and waits until the element's frame is in its shadow root (its file not necessarily loaded). */
 async function start(page: Page) {
-    await page.evaluate(() => { (window as any).pending = (window as any).startSandbox(); });
-    await page.waitForFunction(() => !!document.querySelector('web-sandbox')?.shadowRoot?.querySelector('iframe'));
+    await page.evaluate(() => { const w = window as any; w.pending = w.startSandbox(); w.pending.then(() => { w.settled = true; }); });
+    // the frame, or an end that came before the test could see it (a page with no frame ends at its load)
+    await page.waitForFunction(() => (window as any).settled === true || !!document.querySelector('web-sandbox')?.shadowRoot?.querySelector('iframe'));
 }
 const outcomeOf = (page: Page): Promise<Outcome> => page.evaluate(async () => { const { outcome, reason } = await (window as any).pending; return { outcome, reason }; });
 const heard = (page: Page): Promise<Heard[]> => page.evaluate(() => (window as any).heard);

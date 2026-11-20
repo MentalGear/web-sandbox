@@ -575,6 +575,70 @@ browser does not refuse ends the build with a termination reason.
 The gates are defence in depth after the construction, never in place of it: they answer "the browser has a bug or a
 setting that dissolves the policy", for the cases a canary can provoke.
 
+**As built (step 3.5).** One registry, `STARTUP_GATES` (`src/lib/startup-gates.ts`), rendered here; the view's canaries
+(a table in `inSandboxView`) and the worker's (`workerGates`, two tables around the allowlist) are keyed by its names, the
+bootstrap and the worker's source are given the names each mode runs (`gatesOf`), and the host reads the verdicts by them
+(`startup-verdicts.ts`); `test/unit/startup-gates.test.ts` holds the tables to the registry, and
+`test/e2e/startup-gates.spec.ts` runs each gate under its mutant on three engines.
+
+<!-- describes: startup-gates sig:6a94 -->
+<!-- generated:begin startup-gates -->
+| Gate | Runs in | Modes | Provokes | Passes | Fails | Ends the build with | Its mutant |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `opaque` | worker | sealed, strict | reads the worker's `self.origin` (the view's own is the environment check's, environment-check.ts, the `origin` row: it runs first, and ends the build with `environmentOrigin`) | `'null'`: the worker has an opaque origin | an origin: the worker holds an origin's authority | `gateOpaque`: a start-up gate failed: the sandbox's worker has an origin, not an opaque one: this browser did not keep the sandbox sandboxed, so the guest's entry did not run | none through the element alone: a view that is not opaque (its `sandbox` attribute with `allow-same-origin`, in a copy without its guard, framed without `sandbox`) is refused by the environment check before it starts a worker; test/unit/startup-gates.test.ts runs the canary |
+| `framing` | view | sealed, strict | compares the view's window with its parent and its parent's parent | all three differ: the view is a frame of a frame, as the file or the wrapper holds it | the view is the top-level document, or its frame is | `gateFraming`: a start-up gate failed: the sandbox's view is not a frame of a frame: it is not in the frame the library built, so nothing of the app was sent | none through the element, which always frames the file: a file opened at the top level without its guard has no host page to announce itself to; test/unit/startup-gates.test.ts runs the view top-level, where it fails |
+| `stringCode` | view, worker | sealed (it provokes a refusal of the view's policy: strict mode's view inherits the host page's policy, which would report the canary to the host page's endpoint, and admits what the embedder's network options name) | builds a function from the empty string (`new Function('')`) | it throws: the policy runs no code from strings | the function is built | `gateStringCode`: a start-up gate failed: the sandbox's view or its worker can run a string as code, which its policy forbids: this browser did not enforce it, so nothing of the app was sent | `'unsafe-eval'` in `script-src`; no `<meta>` |
+| `connect` | view | sealed (it provokes a refusal of the view's policy: strict mode's view inherits the host page's policy, which would report the canary to the host page's endpoint, and admits what the embedder's network options name) | requests a `blob:` URL of the view's own with `fetch` (the worker has no name that makes a request: the allowlist took them, and `allowlist` confirms it) | the request is refused, before it leaves the realm | the request is answered | `gateConnect`: a start-up gate failed: a request of the sandbox's view was not refused, though its policy forbids every connection: this browser did not enforce it, so nothing of the app was sent | `connect-src * data: blob:`; no `<meta>` |
+| `image` | view | sealed (it provokes a refusal of the view's policy: strict mode's view inherits the host page's policy, which would report the canary to the host page's endpoint, and admits what the embedder's network options name) | loads a `data:` image (an empty SVG) | the image's `error` event | its `load` event | `gateImage`: a start-up gate failed: the sandbox's view loaded an image its policy forbids: this browser did not enforce it, so nothing of the app was sent | `img-src * data: blob:`; no `<meta>` |
+| `style` | view | sealed (it provokes a refusal of the view's policy: strict mode's view inherits the host page's policy, which would report the canary to the host page's endpoint, and admits what the embedder's network options name) | inserts a `<style>` of a text the policy does not admit by hash, for an element of its own | the element's computed colour is not the sheet's | it is the sheet's | `gateStyle`: a start-up gate failed: the sandbox's view applied a stylesheet its policy forbids: this browser did not enforce it, so nothing of the app was sent | `style-src 'unsafe-inline' blob:`; no `<meta>` |
+| `base` | view | sealed (it provokes a refusal of the view's policy: strict mode's view inherits the host page's policy, which would report the canary to the host page's endpoint, and admits what the embedder's network options name) | inserts a `<base href="http://gate.invalid/">` (a reserved name: nothing is requested) | the document's base URL is unchanged | it is the canary's | `gateBase`: a start-up gate failed: the sandbox's view took a <base> its policy forbids: this browser did not enforce it, so nothing of the app was sent | `base-uri *`; no `<meta>` |
+| `cookie` | view | sealed, strict | writes a cookie of a fixed name, for 5 seconds | the write throws, or the cookie is not kept | it is kept | `gateCookie`: a start-up gate failed: the sandbox's view kept a cookie, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent | none through the element: the environment check refuses a view that is not opaque first (`opaque`); test/unit/startup-gates.test.ts runs the canary |
+| `storage` | view, worker | sealed, strict | `localStorage` in the view, `indexedDB.open` in the worker | it throws | a store opens | `gateStorage`: a start-up gate failed: the sandbox's view or its worker opened a store, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent | none through the element: the environment check refuses a view that is not opaque first (`opaque`); test/unit/startup-gates.test.ts runs the canary |
+| `parent` | view | sealed, strict | reads its parent's document | the read throws: the parent is of another origin | the parent's document is read | `gateParent`: a start-up gate failed: the sandbox's view read its parent's document: this browser did not keep its frames apart, so nothing of the app was sent | none through the element: the environment check refuses a view that is not opaque first (`opaque`); test/unit/startup-gates.test.ts runs the canary |
+| `allowlist` | worker | sealed, strict | reads, right after the globals allowlist, every name of the worker's global and of its prototypes (what the allowlist prunes) | each is a name of the allowlist (sealed mode's has none that makes a request: no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` or `importScripts`), a prototype's `constructor`, or a constant | a name off the allowlist is still there | `gateAllowlist`: a start-up gate failed: the sandbox's worker still had a name off its globals allowlist after the allowlist ran: the guest's entry did not run, and no call was sent | a name off the allowlist given back between the allowlist and this gate (the worker's source with `fetch` put back) |
+<!-- generated:end -->
+
+What the text above left open:
+
+- **Which gates strict mode runs.** Its view runs the same bootstrap, but its document is a `srcdoc` of the host page's,
+  which inherits the host page's policy: a canary that provokes a policy (`raises`) would be refused, and reported to the
+  host page's endpoint, by a policy the library did not write, and strict mode's own policy admits what the embedder's
+  network options name. So those gates run in sealed mode only, and strict mode runs the ones that read the sandbox:
+  framing, cookie, storage, parent, and in the worker opaque, storage and the allowlist. The view tells which list is its own
+  by the version its document states (the served file states one, strict mode's view none); the host reads the verdicts
+  of its build's mode only, so no gate can end a healthy strict build.
+- **The view's origin is the environment check's.** The view's bootstrap checks its origin first (environment-check.ts,
+  the `origin` row, S74), before any gate, and ends the build with `environmentOrigin`; so the view runs no opaque gate,
+  and its cookie, storage and parent gates, which a view that is not opaque would trip, are reached only past a browser
+  whose origin reads opaque and is not: no mutant through the element provokes them, and the unit test runs them.
+- **Where the worker's gates run.** First in the prelude, right after the scope check: the canaries that need the
+  worker's own names (opaque, code from strings, storage) before the globals allowlist; the allowlist gate right after
+  it; then the verdicts are the worker's first message, and a failed gate throws there, so nothing after it in the
+  worker's script runs. The worker has no connect canary: a sealed worker's source names no request maker
+  (`test/unit/sealed-no-network-names.test.ts`), and needs none, since the allowlist took every one; what research 31
+  ran as the worker's "network names" gate is the allowlist gate, which checks that every name of the worker's global
+  and its prototypes is the allowlist's, in both modes, without naming the request makers it confirms are gone.
+- **The canaries' own violations.** Five view canaries and one of the worker's are refused by the file's policy and raise
+  a `securitypolicyviolation`. The realm takes one event per such gate, by its directive (`raises`), ahead of the
+  listener that reports violations, so a start dispatches no violation of the library's canaries (the view takes them
+  in its listener; the worker's prelude adds one, ahead of the bootstrap's, which reads through getters captured before
+  any guest code and leaves once it took them all). Under a second policy that refuses a canary too, its second event is
+  reported: that is the policy check's subject (step 3.6).
+- **No canary reaches the network.** Every canary's URL is `data:`, a `blob:` URL of the view's own (its one `fetch`,
+  `connectCanary`, which class E-net's scan lists), or
+  `http://gate.invalid/` as a base URL, which requests nothing; the spec records every request of a start, under the
+  library's file and under a file with no `<meta>`, and finds none but the page's and the file's.
+- **Cost.** Once per build, bounded by `LOAD_TIMEOUT_MS` (no constant of its own: a gate that never answers leaves the
+  view silent, and the build ends as the document that did not answer). With the wait for the worker's verdicts, a page's
+  later build went from 35, 67 and 38 ms to 41, 74 and 31 ms from insertion to `ready` (Chromium, Firefox, WebKit;
+  2026-11-20, medians of 12, load average 3.9; docs/API.md#registering-the-element). Not compared in one page: there is
+  no build without the gates to compare with.
+- **The mutants.** A mutated file states the library's version (a tool that rewrote the file leaves it so) and is served
+  where the check of the file cannot read it. "F framed without `sandbox`" is the host page's own code keeping the
+  attribute off the element's frame, and "the worker's allowlist step skipped" is the page's code giving the worker
+  `fetch` back between the allowlist and its gate: a host page's script reaches the element's members
+  ([01](01-one-element-one-app.md#what-leaves-the-element)), so each precondition is one the test makes.
+
 ## A thinner host
 
 With the view in a document of its own, the passes over guest content that run in the host page's realm today

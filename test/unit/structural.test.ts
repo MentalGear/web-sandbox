@@ -437,8 +437,9 @@ describe("the fetch bridge's requests are made by its frame, and only there (BD1
     // The functions that may name the platform's fetch: the request gate of the network modes, which guards the guest's own fetch
     // (keepalive; the bootstrap itself names none), the bridge's frame, which makes every bridge request, and the capture of
     // the check of sealed mode's served file (design 03), the host page's one request, for documentUrl, which carries nothing
-    // of the app's and learns nothing of the page's policy (test/unit/host-policy-source.test.ts).
-    const MAY_FETCH: readonly [string, string][] = [['src/lib/request-gate.ts', 'requestGate'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame'], ['src/lib/document-check.ts', 'platformFetchOf']];
+    // of the app's and learns nothing of the page's policy (test/unit/host-policy-source.test.ts), and the view's connect gate
+    // (startup-gates.ts), which fetches a blob: URL of the view's own that its policy refuses (design 03, the start-up gates).
+    const MAY_FETCH: readonly [string, string][] = [['src/lib/request-gate.ts', 'requestGate'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame'], ['src/lib/document-check.ts', 'platformFetchOf'], ['src/lib/in-sandbox-view.ts', 'connectCanary']];
     const unixOf = (file: string) => file.split(path.sep).join('/');
 
     it("no code of src/ names the platform's fetch outside those two functions, and the bridge's host-side modules name no other request API: the host never makes a bridge request itself", () => {

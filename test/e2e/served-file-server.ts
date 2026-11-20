@@ -22,7 +22,11 @@
  *                          nothing); `spy=1` gives the view a listener, ahead of its bootstrap's, that tells the host page
  *                          what it was posted (`__spy`), and every window these variants add reports the same; `hold=key`
  *                          answers the frame's navigation only once `release?key=` was asked. A file changed this way states the library's
- *                          version still, as a tool that rewrote the file would leave it
+ *                          version still, as a tool that rewrote the file would leave it;
+ *                          for the start-up gates' spec (test/e2e/startup-gates.spec.ts), the mutants of research 31 (Q2):
+ *                          `meta=none` takes the file's `<meta>` policy out, `set=directive:sources` gives a directive of it
+ *                          other sources and `add=directive:source` one more, and `viewSameOrigin=1` gives the view's
+ *                          `sandbox` attribute `allow-same-origin` in a copy without its guard
  *   GET /S/hits            what reached the file's path: each request's variant, Sec-Fetch-Dest and the headers that
  *                          carry the page's or the user's state (Cookie, Authorization, Referer)
  *   GET /S/release?key=…   answers the requests held with `hold=key`
@@ -103,6 +107,27 @@ function withScriptInFile(file: string, script: string, where: 'head' | 'frame')
 /** An app's own page with a frame of its own, at index 0, that says nothing and reports whatever it is posted. */
 const fallbackWithFrame = () => `<!DOCTYPE html><html><head><meta charset="utf-8"><title>The app</title></head><body><iframe srcdoc="${`<script>${spy('fallbackFrame', 'parent.parent')}</script>`.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')}"></iframe></body></html>\n`;
 
+/**
+ * The file with its `<meta>` policy changed as `query` asks (research 31, Q2's mutants): taken out, a directive given
+ * other sources, or one more source. The view's version and every other byte stay.
+ */
+function mutated(file: string, query: URLSearchParams): string {
+    let text = file;
+    if (query.get('meta') === 'none') text = text.replace(/<meta http-equiv="Content-Security-Policy" content="[^"]*">/, '');
+    for (const pair of query.getAll('set')) {
+        const colon = pair.indexOf(':');
+        text = text.replace(new RegExp(`(content="[^"]*?)(${pair.slice(0, colon)} [^;"]*)`), (_all, before: string) => `${before}${pair.slice(0, colon)} ${pair.slice(colon + 1)}`);
+    }
+    for (const pair of query.getAll('add')) {
+        const colon = pair.indexOf(':');
+        text = text.replace(new RegExp(`(content="[^"]*?${pair.slice(0, colon)} [^;"]*)`), (all: string) => `${all} ${pair.slice(colon + 1)}`);
+    }
+    if (query.get('viewSameOrigin') === '1') {
+        text = text.replace(/<script>[^<]*<\/script>/, '').replace(/<iframe sandbox="([^"]*)"/, (_all, flags: string) => `<iframe sandbox="${flags} allow-same-origin"`);
+    }
+    return text;
+}
+
 /** The file's text as `variant` serves it to a request whose Sec-Fetch-Dest is `dest`; `spied`, with the spy in its view. */
 function fileText(variant: FileVariant, dest: string | null, spied = false): string {
     const built = readFileSync(join(ROOT, 'dist', 'sealed-document.html'), 'utf8');
@@ -160,7 +185,7 @@ async function serveFile(req: IncomingMessage, res: ServerResponse, session: str
         return;
     }
     res.setHeader('content-type', variant === 'plain' ? 'text/plain' : 'text/html');
-    res.end(fileText(variant, dest, query.get('spy') === '1'));
+    res.end(mutated(fileText(variant, dest, query.get('spy') === '1'), query));
 }
 
 // The Service Worker of /S/: it answers the file's requests that ask for it with a page of its own.

@@ -33,9 +33,44 @@ if (params.get('sw')) {
     w.controlled = !!navigator.serviceWorker.controller;
 }
 if (params.get('wrap') === 'before') wrap();
+// The start-up gates' spec (test/e2e/startup-gates.spec.ts), research 31's mutant "F framed without sandbox": the page's
+// own code keeps a `sandbox` attribute off every frame, the element's included, before the library exists.
+if (params.get('unsandboxed')) {
+    const setAttribute = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function (this: Element, name: string, value: string) {
+        if (this instanceof HTMLIFrameElement && name === 'sandbox') return;
+        Reflect.apply(setAttribute, this, [name, value]);
+    };
+}
 const { defineWebSandbox } = await loadLibrary();
 if (params.get('wrap') === 'after') wrap();
 defineWebSandbox({ documentUrl: params.get('doc')! });
+// The mutant "a network name the allowlist left" (startup-gates.ts, `networkNames`): the page's own code (a host page's
+// script reaches the element's members, design 01) gives the worker `fetch` back between the allowlist and its gate.
+if (params.get('mutant') === 'networkName') {
+    const prototype = customElements.get('web-sandbox')!.prototype as any;
+    const source = prototype._getStrictWorkerSource;
+    prototype._getStrictWorkerSource = function (this: unknown, ...args: unknown[]) {
+        return String(Reflect.apply(source, this, args)).replace('gates();', 'g.fetch = function () {};gates();');
+    };
+}
+
+/**
+ * Starts a sealed app whose entry logs and exposes a method, and calls it at once, while the build is loading; resolves
+ * with the build's first lifecycle event, the call's outcome, and every guest line (`sandbox-log` with source `guest`).
+ */
+w.startWithCall = () => new Promise(resolve => {
+    const el = document.createElement('web-sandbox') as HTMLElement & { start(app: object): void; call(method: string): Promise<unknown> };
+    el.style.cssText = 'display:block;width:400px;height:300px';
+    const lines: string[] = [];
+    el.addEventListener('sandbox-log', (event: any) => { if (event.detail.source === 'guest') lines.push(event.detail.args.map(String).join(' ')); });
+    el.start({ html: '<p>app</p>', entry: 'entry.js', files: { 'entry.js': "console.log('the entry ran'); bridge.expose('ping', () => 'pong');" } });
+    document.body.append(el);
+    const call = el.call('ping').then(value => `answered ${String(value)}`, (error: any) => `rejected ${error?.code}`);
+    const settle = (outcome: string, reason: string | null) => call.then(settled => setTimeout(() => resolve({ outcome, reason, call: settled, lines }), 200));
+    el.addEventListener('ready', () => settle('ready', null), { once: true });
+    el.addEventListener('terminated', (event: any) => settle('terminated', event.detail.reason), { once: true });
+});
 
 /** Starts a sealed app on a new element; resolves with its first lifecycle event and the time from insertion to it. */
 w.startSandbox = () => new Promise(resolve => {

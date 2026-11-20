@@ -83,6 +83,19 @@ export const TERMINATION_REASONS = {
     // The view's announcement (startup-verdicts.ts; design 03, "A file of another version"): the version the served view
     // states is not this library's, where the check of the file could not read the bytes
     documentVersion: { text: `the file at documentUrl is another version's ${SEALED_DOCUMENT_FILE}: its view states another version than this library's, so it was given nothing. Serve the file of the package this page loads, at a URL that changes with the version (${REGISTRATION})`, decidedBy: 'host' },
+    // The start-up gates (startup-gates.ts, STARTUP_GATES; design 03, "The start-up gates"): a canary the browser did not
+    // refuse, in the view before it announced itself or in the worker before the entry ran. One reason per gate.
+    gateOpaque: { text: "a start-up gate failed: the sandbox's worker has an origin, not an opaque one: this browser did not keep the sandbox sandboxed, so the guest's entry did not run", decidedBy: 'host' },
+    gateFraming: { text: "a start-up gate failed: the sandbox's view is not a frame of a frame: it is not in the frame the library built, so nothing of the app was sent", decidedBy: 'host' },
+    gateStringCode: { text: "a start-up gate failed: the sandbox's view or its worker can run a string as code, which its policy forbids: this browser did not enforce it, so nothing of the app was sent", decidedBy: 'host' },
+    gateConnect: { text: "a start-up gate failed: a request of the sandbox's view was not refused, though its policy forbids every connection: this browser did not enforce it, so nothing of the app was sent", decidedBy: 'host' },
+    gateImage: { text: "a start-up gate failed: the sandbox's view loaded an image its policy forbids: this browser did not enforce it, so nothing of the app was sent", decidedBy: 'host' },
+    gateStyle: { text: "a start-up gate failed: the sandbox's view applied a stylesheet its policy forbids: this browser did not enforce it, so nothing of the app was sent", decidedBy: 'host' },
+    gateBase: { text: "a start-up gate failed: the sandbox's view took a <base> its policy forbids: this browser did not enforce it, so nothing of the app was sent", decidedBy: 'host' },
+    gateCookie: { text: "a start-up gate failed: the sandbox's view kept a cookie, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent", decidedBy: 'host' },
+    gateStorage: { text: "a start-up gate failed: the sandbox's view or its worker opened a store, which an opaque document cannot: this browser did not keep its frames sandboxed, so nothing of the app was sent", decidedBy: 'host' },
+    gateParent: { text: "a start-up gate failed: the sandbox's view read its parent's document: this browser did not keep its frames apart, so nothing of the app was sent", decidedBy: 'host' },
+    gateAllowlist: { text: "a start-up gate failed: the sandbox's worker still had a name off its globals allowlist after the allowlist ran: the guest's entry did not run, and no call was sent", decidedBy: 'host' },
     noDocumentUrl: { text: `sealed mode's view is the served ${SEALED_DOCUMENT_FILE}, and this element was registered without documentUrl: pass it to defineWebSandbox() (${REGISTRATION})`, decidedBy: 'start' },
     // defineWebSandbox(): the definition, read before anything is defined or stored
     definitionRefused: { text: 'defineWebSandbox() takes one object, { tagName, documentUrl }, whose tagName is a string when given', decidedBy: 'define' },
@@ -132,6 +145,17 @@ export const reasonCauses = () => ({
     documentCsp: 'Sealed mode, the check of the file: the file is served with `Content-Security-Policy`, whatever its text: the view and its worker would run under it beside the file\'s own `<meta>` policy. Nothing was framed.',
     documentCspReportOnly: "Sealed mode, the check of the file: the file is served with `Content-Security-Policy-Report-Only`, whatever its text: the view's loads would be reported to its endpoint. Nothing was framed.",
     documentVersion: "Sealed mode: the view of the file at `documentUrl` announced itself with a version other than this library's (the digest of the file it was generated as, which the file states of itself), or with none. It received no port and nothing of the app. The check of the file names such a file `documentChanged` where it can read its bytes; this reason is what is left where it could not: another origin that does not allow the read, or a server that answers the frame otherwise than the check.",
+    gateOpaque: "Strict and sealed mode, a start-up gate ([design 03](design/03-served-document.md#the-start-up-gates)): the guest's worker read an origin other than `'null'` (the view's own origin is the environment check's: `environmentOrigin`). Defence in depth after the construction: the view is sandboxed by its own attribute, and its worker shares its origin. No guest code ran in that worker, and no call was sent to it.",
+    gateFraming: "Strict and sealed mode, a start-up gate: the view's window is its parent, or its parent's parent: it is not a frame of the file or the wrapper. Nothing of the app was sent.",
+    gateStringCode: "Sealed mode, a start-up gate: `new Function('')` did not throw in the view or the worker, though the file's policy has no `'unsafe-eval'`. Nothing of the app was sent to that view, or no guest code ran in that worker.",
+    gateConnect: "Sealed mode, a start-up gate: the view's `fetch` of a `blob:` URL of its own was answered, though the file's policy has `connect-src 'none'`. Nothing of the app was sent.",
+    gateImage: "Sealed mode, a start-up gate: a `data:` image loaded in the view, though the file's policy admits only `blob:` images. Nothing of the app was sent.",
+    gateStyle: "Sealed mode, a start-up gate: a `<style>` the file's policy does not admit by hash applied in the view. Nothing of the app was sent.",
+    gateBase: "Sealed mode, a start-up gate: a `<base>` changed the view's base URL, though the file's policy has `base-uri 'none'`. Nothing of the app was sent.",
+    gateCookie: 'Strict and sealed mode, a start-up gate: the view wrote a cookie and read it back. Nothing of the app was sent.',
+    gateStorage: 'Strict and sealed mode, a start-up gate: `localStorage` in the view or `indexedDB.open` in the worker did not throw. Nothing of the app was sent to that view, or no guest code ran in that worker.',
+    gateParent: "Strict and sealed mode, a start-up gate: the view read its parent's document. Nothing of the app was sent.",
+    gateAllowlist: "Strict and sealed mode, a start-up gate: after the worker's globals allowlist a name off it was still on the worker's global or its prototypes (in sealed mode the allowlist has no name that makes a request: `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `importScripts`). The worker's script stopped there: the entry did not run, and no call or `execute()` was sent to it.",
     noDocumentUrl: "In a build with the network modes: `mode` is `'sealed'` or left out, and the element was registered without `documentUrl`. Sealed mode has no view but the served file; strict, cooperative and worker mode need none.",
     definitionRefused: '`defineWebSandbox()` was given something other than an object, or a `tagName` that is not a string.',
     documentUrlMissing: 'In the default build, `defineWebSandbox()` was given no `documentUrl`: sealed mode, the only mode of that build, has no view without it.',
