@@ -161,6 +161,16 @@ TS
     else
         cp "$served" "$work/sealed-document.html"
     fi
+    # The check of the file (design 03) compares a served file with the digest the bundle carries: the installed bundle
+    # holds the SHA-256 of the installed file, in base64, and so does a consumer's bundle of it.
+    local digest
+    digest="$(openssl dgst -sha256 -binary "$served" | base64 -w0)"
+    for bundle in "$(dirname "$served")/index.js" out/consumer.js; do
+        if ! grep -qF "\"$digest\"" "$bundle"; then
+            echo "package smoke test failed ($build build): $bundle does not hold the digest of sealed-document.html ($digest)" >&2
+            exit 1
+        fi
+    done
     echo "package smoke test passed: $(basename "$tarball"), the $build build, view bootstrap $plain, sealed-document.html $(sha256sum "$served" | cut -c1-16)"
 }
 

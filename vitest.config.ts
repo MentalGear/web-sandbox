@@ -1,7 +1,10 @@
 import { configDefaults, defineConfig } from 'vitest/config'
 import {join} from 'path'
+import { servedDocumentDigestPlugin } from './scripts/served-document'
 
 export default defineConfig({
+    // the served file's digest in src/lib/document-digest.ts, as the build and the e2e server have it (scripts/served-document.ts)
+    plugins: [servedDocumentDigestPlugin()],
     resolve: {
         alias: {
             '@src': join(__dirname, 'src'),

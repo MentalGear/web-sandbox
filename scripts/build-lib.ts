@@ -16,13 +16,17 @@
  * Beside the bundle it writes sealed mode's served document (src/lib/sealed-document.ts; design 03), generated from
  * sealed mode's view bootstrap, which is one text in both builds: `sealedDocument()` takes no input, so both builds write
  * the same bytes (I12; scripts/smoke-package.sh compares the two). In the default build the element's own bootstrap is
- * that very text, and a build where it is not writes nothing.
+ * that very text, and a build where it is not writes nothing. The file comes from `servedDocument()`
+ * (scripts/served-document.ts), the one generation every loader of the library takes the file's digest from, and the
+ * bundle gets that digest as the value of __WEB_SANDBOX_DOCUMENT_DIGEST__ (document-digest.ts): the check of the file
+ * compares the served bytes with it. The bundle carries the digest, never the file's text.
  */
-import { rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { BUILD_ENTRIES, buildFor, NETWORK_MODES_FLAG } from '../src/lib/build-flag';
 import { modulesOf } from '../src/lib/build-modules';
 import { SEALED_DOCUMENT_FILE, sealedDocument, sealedViewBootstrap } from '../src/lib/sealed-document';
+import { DOCUMENT_DIGEST_DEFINE, servedDocument } from './served-document';
 
 const root = join(import.meta.dir, '..');
 const build = buildFor(process.env[NETWORK_MODES_FLAG.env]);
@@ -40,7 +44,12 @@ if (build === 'default' && bootstrap !== sealedViewBootstrap()) {
     console.error("build-lib: the default build's view bootstrap is not sealed mode's, which the served document holds: nothing was written");
     process.exit(1);
 }
-const servedDocument = sealedDocument();
+const served = servedDocument();
+// the generation every loader takes the digest from prints the view as this process does
+if (served.text !== sealedDocument()) {
+    console.error('build-lib: the served document of scripts/served-document.ts is not the one this process generates: nothing was written');
+    process.exit(1);
+}
 
 const result = await Bun.build({
     entrypoints: [entry],
@@ -49,7 +58,7 @@ const result = await Bun.build({
     target: 'browser',
     format: 'esm',
     metafile: true,
-    define: { __WEB_SANDBOX_VIEW_BOOTSTRAP__: JSON.stringify(bootstrap) },
+    define: { __WEB_SANDBOX_VIEW_BOOTSTRAP__: JSON.stringify(bootstrap), [DOCUMENT_DIGEST_DEFINE]: JSON.stringify(served.digest) },
 });
 if (!result.success) {
     for (const message of result.logs) console.error(message);
@@ -76,6 +85,13 @@ if (built.viewScriptHash() !== viewBootstrapHash()) {
     console.error(`build-lib: ${relative(root, outdir)}/index.js hashes its view bootstrap as ${built.viewScriptHash()}, not ${viewBootstrapHash()}: the literal is missing`);
     process.exit(1);
 }
-writeFileSync(join(outdir, SEALED_DOCUMENT_FILE), servedDocument);
+// and it compares the served file with the digest of the very bytes written beside it: the literal, and no identifier
+const bundleText = readFileSync(join(outdir, 'index.js'), 'utf8');
+if (!bundleText.includes(JSON.stringify(served.digest)) || bundleText.includes(DOCUMENT_DIGEST_DEFINE)) {
+    rmSync(join(outdir, 'index.js'), { force: true });
+    console.error(`build-lib: ${relative(root, outdir)}/index.js does not hold the served document's digest ${served.digest}: nothing was written`);
+    process.exit(1);
+}
+writeFileSync(join(outdir, SEALED_DOCUMENT_FILE), served.text);
 console.log(`build-lib: ${relative(root, outdir)}/index.js, the ${build} build, view bootstrap ${viewBootstrapHash()} (${bootstrap.length} characters)`);
-console.log(`build-lib: ${relative(root, outdir)}/${SEALED_DOCUMENT_FILE}, sealed mode's served document (${servedDocument.length} characters)`);
+console.log(`build-lib: ${relative(root, outdir)}/${SEALED_DOCUMENT_FILE}, sealed mode's served document (${served.text.length} characters, digest ${served.digest})`);
