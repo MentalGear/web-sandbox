@@ -73,7 +73,13 @@ the page frames it.
   the library can tell, and adds what it adds: a wrapper that puts the user's token on every request sends it to
   `documentUrl`'s host, which is trusted with the app already. Load the library before such a wrapper, or have the
   wrapper leave `documentUrl` alone. A Service Worker of the page's whose scope holds `documentUrl` can answer the
-  request, and what it answers is what is checked (a stale cached copy ends the build as another version's file).
+  request, and what it answers is what is checked (a page of its own ended the build with the reason for other bytes).
+  Its cost is one request and one SHA-256 of the file per page, before the first frame, bounded by `LOAD_TIMEOUT_MS`
+  (a check that has not answered by then ends the build as the document that did not answer). Measured 2026-11-20 on a
+  shared 4-core machine, loopback, from insertion to `ready` (medians of 12): Chromium 159 41 ms for a page's first
+  build (cold or warm cache) and 35 ms for a later one, which makes no check; Firefox 159 74 and 77 ms against 67 ms;
+  WebKit 27.2 90 and 82 ms against 38 ms. With a cacheable file, Chromium's frame took the check's response from the
+  cache (one request reached the server); Firefox and WebKit requested the file again for the frame (two).
 - **In the build with the network modes** it may be left out (`defineWebSandbox({})`): strict, cooperative and worker
   mode keep documents of their own, and `start()` of a sealed app on such an element throws.
 

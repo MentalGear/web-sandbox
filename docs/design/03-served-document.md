@@ -188,8 +188,12 @@ a report-only header no canary's report is ever sent.
 - **Not built:** a `Content-Disposition: attachment` on the file is not named (the frame shows nothing, and the build
   ends with "the document did not answer").
 
-**Measured** (step 3.3, `test/e2e/served-file-check.spec.ts`): see [docs/API.md](../API.md#registering-the-element) for the
-start-up cost per engine. A server that answers the check and the frame's navigation otherwise is judged by what the
+**Measured** (step 3.3, `test/e2e/served-file-check.spec.ts`, 2026-11-20): the check adds 6 ms to a page's first build
+on Chromium, 7 to 10 ms on Firefox and 44 to 52 ms on WebKit, against a later build that makes none (medians of 12;
+docs/API.md#registering-the-element has the figures). With a cacheable file Chromium's frame took the check's response
+from the cache, and Firefox and WebKit requested the file again. Against a library that makes no check, 23 of the
+spec's and the realistic host's 26 tests of it failed on Chromium (the three that passed are the positive control, the
+40 clean starts and the measure). A server that answers the check and the frame's navigation otherwise is judged by what the
 check read: the file to the check and another page to the frame ended with "the document did not answer"; the reverse,
 with `documentChanged`, a frame that would have worked refused, on all three engines.
 
