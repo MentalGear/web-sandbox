@@ -10,8 +10,9 @@
  *   empty, takes that text's SHA-256, and writes it into the attribute. The view reads the attribute and announces it
  *   (in-sandbox-view.ts): a copy states the version it was generated as, and nothing more, since a document can say
  *   whatever it likes about itself.
- * - **The check reads it.** The served bytes are this version's file exactly when they hold this digest once and the
- *   bytes without it hash to it ({@link holdsDigest}): every other byte is compared, the stated version among them.
+ * - **The check reads it.** The served bytes are this version's file exactly when they state this digest, once, in that
+ *   attribute, and the bytes without it hash to it ({@link holdsDigest}): every other byte is compared, the stated
+ *   version and its place among them.
  *
  * The file's bytes depend on how the view's functions are printed (in-sandbox-view.ts, viewBootstrapSource), which is the
  * printing of whatever loaded the sources: Bun's for the build, Vite's for the e2e server's pages, vitest's for the unit
@@ -58,18 +59,26 @@ function onlyOccurrence(bytes: Uint8Array, needle: Uint8Array): number {
     return found;
 }
 
+// The file's statement of a digest, as its text holds it: the attribute inside the view's `srcdoc`, its quotes escaped.
+const STATEMENT_OPEN = `${VERSION_ATTRIBUTE}=&quot;`;
+const STATEMENT_CLOSE = '&quot;';
+
 /**
- * Whether `bytes` are the file whose digest is `digest`: the digest occurs in them exactly once, and the bytes without
- * it hash to it. So the stated version is compared with every other byte of the file.
+ * Whether `bytes` are the file whose digest is `digest`: the file states it, in its one statement of a version, exactly
+ * once, and the bytes without the digest hash to it. So the stated version is compared with every other byte of the
+ * file, and with where it stands: the same bytes with the digest anywhere else are another file.
  */
 export function holdsDigest(bytes: Uint8Array, digest: string): boolean {
     if (digest === '') return false;
-    const needle = new TextEncoder().encode(digest);
-    const at = onlyOccurrence(bytes, needle);
+    const encoder = new TextEncoder();
+    const statement = encoder.encode(STATEMENT_OPEN + digest + STATEMENT_CLOSE);
+    const at = onlyOccurrence(bytes, statement);
     if (at === -1) return false;
-    const rest = new Uint8Array(bytes.length - needle.length);
-    rest.set(bytes.subarray(0, at), 0);
-    rest.set(bytes.subarray(at + needle.length), at);
+    const from = at + encoder.encode(STATEMENT_OPEN).length;
+    const length = encoder.encode(digest).length;
+    const rest = new Uint8Array(bytes.length - length);
+    rest.set(bytes.subarray(0, from), 0);
+    rest.set(bytes.subarray(from + length), from);
     return documentDigest(rest) === digest;
 }
 
@@ -79,7 +88,7 @@ export function holdsDigest(bytes: Uint8Array, digest: string): boolean {
  * not hold ({@link holdsDigest}).
  */
 export function statedDigest(text: string): string | null {
-    const found = new RegExp(`${VERSION_ATTRIBUTE}=&quot;([A-Za-z0-9+/=]*)&quot;`).exec(text);
+    const found = new RegExp(`${STATEMENT_OPEN}([A-Za-z0-9+/=]*)${STATEMENT_CLOSE}`).exec(text);
     if (found === null) return null;
     const digest = found[1]!;
     return holdsDigest(new TextEncoder().encode(text), digest) ? digest : null;

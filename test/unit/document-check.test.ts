@@ -36,7 +36,7 @@ const server = vi.hoisted(() => {
 const { defineWebSandbox } = await import('@src/host');
 const { servedDocument } = await import('../../scripts/served-document');
 const check = await import('@src/lib/document-check');
-const { sealedDocumentDigest, documentDigest, holdsDigest } = await import('@src/lib/document-digest');
+const { sealedDocumentDigest, documentDigest, holdsDigest, VERSION_ATTRIBUTE } = await import('@src/lib/document-digest');
 const { reasonText } = await import('@src/lib/reasons');
 const { registeredDocumentUrl } = await import('@src/lib/document-url');
 
@@ -99,6 +99,19 @@ describe('the digest: one generation for every loader', () => {
         const at = FILE.text.indexOf(FILE.digest);
         expect(FILE.text.indexOf(FILE.digest, at + 1)).toBe(-1);
         expect(documentDigest(new TextEncoder().encode(FILE.text.slice(0, at) + FILE.text.slice(at + FILE.digest.length)))).toBe(FILE.digest);
+    });
+
+    it("the digest holds only where the file states it: the same bytes with the digest anywhere else, stated twice, or with another byte changed, are another file", () => {
+        const encode = (text: string) => new TextEncoder().encode(text);
+        const at = FILE.text.indexOf(FILE.digest);
+        const without = FILE.text.slice(0, at) + FILE.text.slice(at + FILE.digest.length);
+        const places = [0, without.indexOf('<body'), without.length];
+        for (const place of places) expect(holdsDigest(encode(without.slice(0, place) + FILE.digest + without.slice(place)), FILE.digest), `the digest at ${place}`).toBe(false);
+        const statement = FILE.text.slice(FILE.text.lastIndexOf(VERSION_ATTRIBUTE, at), at + FILE.digest.length + '&quot;'.length);
+        expect(statement).toBe(`${VERSION_ATTRIBUTE}=&quot;${FILE.digest}&quot;`);
+        expect(holdsDigest(encode(FILE.text + statement), FILE.digest)).toBe(false);
+        expect(holdsDigest(encode(FILE.text.replace('</body>', ' </body>')), FILE.digest)).toBe(false);
+        expect(holdsDigest(encode(FILE.text), '')).toBe(false);
     });
 
     it('the bundle carries the digest and none of the file: no module of the default build imports the generator', () => {

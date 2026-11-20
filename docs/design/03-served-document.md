@@ -478,8 +478,9 @@ registry is `STARTUP_GATES` (`src/lib/startup-gates.ts`, filled by step 3.5); th
   check of the file must compare every byte, so the file states its digest of itself: the generator lays the file out
   with the version empty, takes that text's SHA-256, and writes it into one attribute of C's root element
   (`VERSION_ATTRIBUTE`, `data-web-sandbox-version`), outside every text the policy admits by hash, so the policy is the
-  same whatever the attribute says (`renderSealedDocument`). The check of the file holds a file to it by removing the
-  digest's one occurrence and hashing the rest (`holdsDigest`, `src/lib/document-digest.ts`), and the view announces the
+  same whatever the attribute says (`renderSealedDocument`). The check of the file holds a file to it by taking the
+  digest out of that attribute, the file's one statement of a version, and hashing the rest (`holdsDigest`,
+  `src/lib/document-digest.ts`): the same bytes with the digest anywhere else are another file. The view announces the
   attribute as its version. So the library carries one constant, given to every loader as row 3.3's digest is
   (`scripts/served-document.ts` reads it from the generated file, `statedDigest`), and there are no two values that must
   agree. Rejected: a version written into the bootstrap (it changes the script's hash, so the file could not hold the
